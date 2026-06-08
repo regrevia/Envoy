@@ -145,6 +145,45 @@ def _persist_generated_sample(db, project_id: str, unit: SemanticUnit | None, pa
     return sample
 
 
+def _semantic_unit_export_row(unit: SemanticUnit):
+    return {
+        "record_type": "semantic_unit",
+        "id": unit.id,
+        "project_id": unit.project_id,
+        "asset_id": unit.asset_id,
+        "segment_id": unit.segment_id,
+        "unit_type": unit.unit_type,
+        "title": unit.title,
+        "content": unit.content,
+        "labels": unit.labels or {},
+        "confidence": unit.confidence,
+    }
+
+
+def _generated_sample_export_row(sample: GeneratedSample):
+    return {
+        "record_type": "generated_sample",
+        "id": sample.id,
+        "project_id": sample.project_id,
+        "source_unit_id": sample.source_unit_id,
+        "sample_type": sample.sample_type,
+        "input_text": sample.input_text,
+        "output_text": sample.output_text,
+        "quality_score": sample.quality_score,
+    }
+
+
+def _trace_link_export_row(link: TraceLink):
+    return {
+        "id": link.id,
+        "source_type": link.source_type,
+        "source_id": link.source_id,
+        "target_type": link.target_type,
+        "target_id": link.target_id,
+        "relation_type": link.relation_type,
+    }
+
+
 @celery_app.task(bind=True, max_retries=2)
 def ping_job(self):
     return {"status": "ok"}
@@ -295,19 +334,34 @@ def export_job(self, payload: dict):
         out_dir.mkdir(parents=True, exist_ok=True)
         jsonl_path = out_dir / f"{task_id}.jsonl"
         md_path = out_dir / f"{task_id}.md"
-        rows = [{"project_id": project_id, "task_id": task_id, "status": "exported"}]
-        semantic_units = []
-        samples = []
-        trace_links = []
+        semantic_unit_models = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.asc()).all() if project_id else []
+        sample_models = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.asc()).all() if project_id else []
+        semantic_unit_ids = {unit.id for unit in semantic_unit_models}
+        sample_ids = {sample.id for sample in sample_models}
+        trace_link_models = (
+            db.query(TraceLink)
+            .filter(
+                TraceLink.source_id.in_(list(semantic_unit_ids | {task_id})),
+                TraceLink.target_id.in_(list(sample_ids | semantic_unit_ids | {task_id})),
+            )
+            .order_by(TraceLink.created_at.asc())
+            .all()
+            if semantic_unit_ids or sample_ids or task_id
+            else []
+        )
+        semantic_units = [_semantic_unit_export_row(unit) for unit in semantic_unit_models]
+        samples = [_generated_sample_export_row(sample) for sample in sample_models]
+        trace_links = [_trace_link_export_row(link) for link in trace_link_models]
+        rows = semantic_units + samples
         build_dataset_jsonl(rows, str(jsonl_path))
-        build_rich_export_report("Export Report", {"task_id": task_id, "project_id": project_id, "row_count": len(rows)}, semantic_units, samples, trace_links, str(md_path))
+        build_rich_export_report("Export Report", {"task_id": task_id, "project_id": project_id, "row_count": len(rows), "trace_link_count": len(trace_links)}, semantic_units, samples, trace_links, str(md_path))
         dataset_artifact = create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="dataset", name=jsonl_path.name, file_path=str(jsonl_path), version="v1"))
         report_artifact = create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="report", name=md_path.name, file_path=str(md_path), version="v1"))
         db.add(TraceLink(id=str(uuid4()), source_type="processing_task", source_id=task_id, target_type="artifact", target_id=dataset_artifact.id, relation_type="exported_to"))
         db.add(TraceLink(id=str(uuid4()), source_type="processing_task", source_id=task_id, target_type="artifact", target_id=report_artifact.id, relation_type="exported_to"))
         db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="export done")
-        return {"status": "exported", "payload": payload}
+        return {"status": "exported", "payload": payload, "row_count": len(rows), "paths": {"dataset": str(jsonl_path), "report": str(md_path)}}
     except Exception as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)

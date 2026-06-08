@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+
 from app.core.config import EXPORT_DIR
 
 
@@ -27,7 +28,25 @@ def build_markdown_report(title: str, content: str, out_path: str):
 
 def build_rich_export_report(title: str, summary: dict, semantic_units: list[dict], samples: list[dict], trace_links: list[dict], out_path: str):
     ensure_export_dir(Path(out_path).parent.as_posix())
-    content = [f"# {title}", "", "## 摘要", "", json.dumps(summary, ensure_ascii=False, indent=2), "", "## 语义单元", "", json.dumps(semantic_units, ensure_ascii=False, indent=2), "", "## 样本", "", json.dumps(samples, ensure_ascii=False, indent=2), "", "## 追溯关系", "", json.dumps(trace_links, ensure_ascii=False, indent=2)]
+    content = [
+        f"# {title}",
+        "",
+        "## 摘要",
+        "",
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        "",
+        "## 语义单元",
+        "",
+        json.dumps(semantic_units, ensure_ascii=False, indent=2),
+        "",
+        "## 样本",
+        "",
+        json.dumps(samples, ensure_ascii=False, indent=2),
+        "",
+        "## 追踪关系",
+        "",
+        json.dumps(trace_links, ensure_ascii=False, indent=2),
+    ]
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(content) + "\n")
     return out_path
