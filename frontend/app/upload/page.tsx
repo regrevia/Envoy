@@ -45,14 +45,29 @@ type Project = {
   name: string;
 };
 
+type TaskResponse = {
+  id?: string;
+  status?: string;
+  task_type?: string;
+  progress?: number;
+  result_summary?: string | null;
+  error_message?: string | null;
+};
+
+function uploadedAsset(result: any) {
+  return result && typeof result === 'object' && 'asset' in result ? result.asset : null;
+}
+
 export default function UploadPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
   const [assetType, setAssetType] = useState('video');
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [preprocessResult, setPreprocessResult] = useState<any>(null);
   const [message, setMessage] = useState('Ready');
   const [uploading, setUploading] = useState(false);
+  const [preprocessing, setPreprocessing] = useState(false);
 
   useEffect(() => {
     apiJson<Project[]>('/api/v1/projects')
@@ -75,6 +90,7 @@ export default function UploadPage() {
     try {
       const data = await apiJson('/api/v1/assets/upload', { method: 'POST', body: form });
       setResult(data);
+      setPreprocessResult(null);
       setMessage('Upload complete');
     } catch (error) {
       const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : 'Upload failed';
@@ -84,6 +100,39 @@ export default function UploadPage() {
       setUploading(false);
     }
   };
+
+  const onPreprocess = async () => {
+    const asset = uploadedAsset(result);
+    if (!asset?.id || !asset?.project_id || preprocessing) {
+      setMessage('Upload an asset before preprocessing');
+      return;
+    }
+
+    setPreprocessing(true);
+    setMessage('Starting preprocessing...');
+    try {
+      const data = await apiJson<TaskResponse>('/api/v1/tasks/preprocess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: asset.project_id,
+          asset_id: asset.id,
+          task_type: 'preprocess',
+          input_config: {},
+        }),
+      });
+      setPreprocessResult(data);
+      setMessage(`Preprocessing task ${data.status || 'created'}`);
+    } catch (error) {
+      const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : 'Preprocessing failed';
+      setPreprocessResult({ error: errorMessage });
+      setMessage(`Preprocessing failed: ${errorMessage}`);
+    } finally {
+      setPreprocessing(false);
+    }
+  };
+
+  const asset = uploadedAsset(result);
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -127,10 +176,29 @@ export default function UploadPage() {
 
         {result ? (
           <section style={{ ...panelStyle, marginTop: 20 }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>Upload result</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18 }}>Upload result</h2>
+                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{asset?.id ? `Asset ${asset.id}` : 'Upload response'}</p>
+              </div>
+              {asset?.id ? (
+                <button
+                  onClick={onPreprocess}
+                  disabled={preprocessing}
+                  style={{ ...buttonStyle, background: preprocessing ? '#6b7280' : '#111827', color: '#ffffff', flex: '0 0 auto', opacity: preprocessing ? 0.78 : 1, cursor: preprocessing ? 'not-allowed' : 'pointer' }}
+                >
+                  {preprocessing ? 'Starting...' : 'Start preprocessing'}
+                </button>
+              ) : null}
+            </div>
             <pre style={{ marginTop: 14, padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
               {JSON.stringify(result, null, 2)}
             </pre>
+            {preprocessResult ? (
+              <pre style={{ marginTop: 12, padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+                {JSON.stringify(preprocessResult, null, 2)}
+              </pre>
+            ) : null}
           </section>
         ) : null}
       </section>

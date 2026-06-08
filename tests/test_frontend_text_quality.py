@@ -1,0 +1,44 @@
+import unittest
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+class FrontendTextQualityTests(unittest.TestCase):
+    def test_frontend_source_has_no_mojibake_copy(self):
+        checked_roots = [ROOT_DIR / "frontend" / "app"]
+        suspicious_fragments = [
+            "鎽",
+            "璇",
+            "鐢",
+            "浜",
+            "绗",
+            "椤",
+            "杩",
+            "鏍",
+            "鍒",
+            "鍔",
+            "鏌",
+            "鏆",
+            "瀵",
+            "绱",
+            "浠",
+            "瑙",
+            "丼kill",
+            "丷AG",
+        ]
+        offenders = []
+
+        for root in checked_roots:
+            for path in root.rglob("*.tsx"):
+                text = path.read_text(encoding="utf-8")
+                matches = [fragment for fragment in suspicious_fragments if fragment in text]
+                if matches:
+                    offenders.append(f"{path.relative_to(ROOT_DIR)}: {', '.join(matches)}")
+
+        self.assertEqual(offenders, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
