@@ -29,7 +29,31 @@ def _is_text_asset(asset):
     if asset is None:
         return False
     mime_type = asset.mime_type or ""
-    return asset.asset_type in {"text", "markdown", "document"} or mime_type.startswith("text/") or asset.file_name.lower().endswith((".txt", ".md", ".markdown"))
+    text_extensions = (".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".log", ".srt", ".vtt")
+    return asset.asset_type in {"text", "markdown"} or mime_type.startswith("text/") or asset.file_name.lower().endswith(text_extensions)
+
+
+def _is_document_asset(asset):
+    if asset is None:
+        return False
+    mime_type = asset.mime_type or ""
+    document_extensions = (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")
+    return asset.asset_type == "document" or mime_type in {
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    } or asset.file_name.lower().endswith(document_extensions)
+
+
+def _is_image_asset(asset):
+    if asset is None:
+        return False
+    mime_type = asset.mime_type or ""
+    return asset.asset_type == "image" or mime_type.startswith("image/") or asset.file_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"))
 
 
 def _resolve_source_path(payload: dict, asset: Asset | None) -> str:
@@ -50,6 +74,34 @@ def _is_remote_source(source_path: str) -> bool:
 
 def _local_source_file_missing(source_path: str) -> bool:
     return not source_path or (not _is_remote_source(source_path) and not Path(source_path).is_file())
+
+
+def _build_file_semantic_payload(asset: Asset | None, source_path: str, source: str):
+    size_bytes = None
+    if source_path and not _is_remote_source(source_path):
+        path = Path(source_path)
+        if path.is_file():
+            size_bytes = path.stat().st_size
+    return {
+        "file_name": asset.file_name if asset else None,
+        "mime_type": asset.mime_type if asset else None,
+        "asset_type": asset.asset_type if asset else None,
+        "size_bytes": size_bytes,
+        "source_path": source_path,
+        "stage": "preprocess",
+        "source": source,
+        "extraction_status": "metadata_only",
+    }
+
+
+def _persist_single_semantic_unit(db, project_id: str, asset_id: str | None, unit_type: str, title: str, content: str, labels: dict, confidence: float):
+    unit = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type=unit_type, title=title, content=content, labels=labels, confidence=confidence)
+    db.add(unit)
+    db.commit()
+    db.refresh(unit)
+    db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
+    db.commit()
+    return unit
 
 
 def _text_chunks(content: str, chunk_chars: int = TEXT_PREPROCESS_CHUNK_CHARS, overlap_chars: int = TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS):
@@ -233,6 +285,30 @@ def preprocess_job(self, payload: dict):
             message = f"Source file not found: {source_path or '(empty)'}"
             _safe_update(db, task_id, "failed", 100, error_message=message)
             return {"status": "failed", "payload": payload, "error": message}
+        if _is_document_asset(asset) or _is_image_asset(asset):
+            unit_type = "image" if _is_image_asset(asset) else "document"
+            source = f"{unit_type}_asset"
+            semantic_payload = _build_file_semantic_payload(asset, source_path, source)
+            labels = {
+                "stage": "preprocess",
+                "source": source,
+                "mime_type": semantic_payload["mime_type"],
+                "asset_type": semantic_payload["asset_type"],
+                "size_bytes": semantic_payload["size_bytes"],
+                "extraction_status": semantic_payload["extraction_status"],
+            }
+            _persist_single_semantic_unit(
+                db,
+                project_id,
+                asset_id,
+                unit_type,
+                asset.file_name if asset else "uploaded file",
+                json.dumps(semantic_payload, ensure_ascii=False),
+                labels,
+                0.7,
+            )
+            _safe_update(db, task_id, "success", 100, result_summary=f"{unit_type} preprocess done: metadata captured")
+            return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
         frame_paths = extract_frames(source_path, str(FRAME_DIR))
         transcription = transcribe_audio(source_path)
