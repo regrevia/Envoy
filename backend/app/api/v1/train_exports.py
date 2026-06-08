@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.train_export import TrainExportRequest
@@ -31,7 +31,7 @@ def list_train_exports_history(db: Session = Depends(get_db)):
 def auto_build_train_export(payload: TrainExportRequest, db: Session = Depends(get_db)):
     project_id = payload.project_id or payload.source_asset_id or payload.source_task_id
     if not project_id:
-        return {'error': 'project_id or source context required'}
+        raise HTTPException(status_code=400, detail="project_id or source context required")
     auto_rows = build_auto_payload_from_project(db, project_id, payload.export_type)
     payload = payload.model_copy(update={'payload': auto_rows})
     return create_train_export(payload, db)
@@ -43,6 +43,8 @@ def create_train_export(payload: TrainExportRequest, db: Session = Depends(get_d
     out_dir = payload.out_dir or str(EXPORT_DIR)
     task_id = payload.source_task_id or payload.source_asset_id or 'manual'
     project_id = payload.project_id or payload.source_asset_id or 'unknown'
+    if project_id == "unknown":
+        raise HTTPException(status_code=400, detail="project_id or source context required")
     if payload.export_type == "sft":
         return export_sft_dataset(samples, out_dir, task_id, payload.task_name, db=db, project_id=project_id)
     if payload.export_type == "instruction":
