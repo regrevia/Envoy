@@ -53,10 +53,10 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
     return body as T;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiError(`请求超时：${timeoutMs}ms`);
+      throw new ApiError(`Request timed out after ${timeoutMs}ms`);
     }
     if (error instanceof ApiError) throw error;
-    const message = error instanceof Error ? error.message : '请求失败';
+    const message = error instanceof Error ? error.message : 'Request failed';
     throw new ApiError(message);
   } finally {
     window.clearTimeout(timer);

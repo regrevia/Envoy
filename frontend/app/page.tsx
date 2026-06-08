@@ -45,19 +45,20 @@ export default function HomePage() {
   }, []);
 
   const metrics = [
-    { label: '项目数', value: projects.length },
-    { label: '素材数', value: assets.length },
-    { label: '任务数', value: tasks.length },
-    { label: '产物数', value: artifacts.length },
+    { label: 'Projects', value: projects.length },
+    { label: 'Assets', value: assets.length },
+    { label: 'Tasks', value: tasks.length },
+    { label: 'Artifacts', value: artifacts.length },
   ];
 
   const entries = [
-    { href: '/projects', label: '项目管理', detail: '组织项目、领域和素材归属' },
-    { href: '/upload', label: '素材上传', detail: '接入视频、长文本和多模态文件' },
-    { href: '/tasks', label: '任务中心', detail: '跟踪预处理、分析、生成和导出' },
-    { href: '/artifacts', label: '产物中心', detail: '查看 Markdown、RAG、Skill 等结果' },
-    { href: '/train-exports', label: '训练导出', detail: '生成 SFT、Instruction、Preference 数据集' },
-    { href: '/trace', label: '追溯查询', detail: '查看素材到语义单元和产物的链路' },
+    { href: '/projects', label: 'Projects', detail: 'Organize domains, source material, and generated work.' },
+    { href: '/upload', label: 'Upload', detail: 'Ingest video, long text, markdown, audio, and other source files.' },
+    { href: '/tasks', label: 'Tasks', detail: 'Track preprocessing, analysis, sample generation, and exports.' },
+    { href: '/semantic-units', label: 'Semantic Units', detail: 'Inspect extracted text chunks, scenes, rules, and concepts.' },
+    { href: '/artifacts', label: 'Artifacts', detail: 'Open Markdown, RAG, Skill, and dataset outputs.' },
+    { href: '/train-exports', label: 'Training Exports', detail: 'Create SFT, instruction, preference, RAG, Skill, and Markdown files.' },
+    { href: '/trace', label: 'Trace', detail: 'Follow links from assets to semantic units and artifacts.' },
   ];
 
   return (
@@ -65,14 +66,14 @@ export default function HomePage() {
       <section style={{ maxWidth: 1180, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'flex-start', paddingBottom: 24, borderBottom: '1px solid #e5e7eb' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>Envoy v1.0</h1>
-            <p style={{ margin: '10px 0 0', maxWidth: 620, color: '#4b5563', lineHeight: 1.7 }}>
-              面向视频、长文本和多模态文件的 AI 素材生产工作台，将原始材料转换为 Markdown、Skill、RAG 和训练数据。
+            <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>Envoy Workspace</h1>
+            <p style={{ margin: '10px 0 0', maxWidth: 680, color: '#4b5563', lineHeight: 1.7 }}>
+              Convert raw video, long text, and multimodal files into structured AI materials: Markdown, Skill packages, RAG corpora, and training datasets.
             </p>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <Link href="/upload" style={{ ...actionStyle, background: '#111827', color: '#fff' }}>上传素材</Link>
-            <Link href="/tasks" style={{ ...actionStyle, background: '#fff', color: '#111827', border: '1px solid #d1d5db' }}>查看任务</Link>
+            <Link href="/upload" style={{ ...actionStyle, background: '#111827', color: '#fff' }}>Upload asset</Link>
+            <Link href="/tasks" style={{ ...actionStyle, background: '#fff', color: '#111827', border: '1px solid #d1d5db' }}>View tasks</Link>
           </div>
         </header>
 
@@ -85,9 +86,9 @@ export default function HomePage() {
           ))}
         </section>
 
-        <section style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 20, marginTop: 20 }}>
+        <section style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 20, marginTop: 20 }}>
           <div style={panelStyle}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>最近项目</h2>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Recent projects</h2>
             <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb' }}>
               {projects.slice(0, 5).map((project) => (
                 <div key={project.id} style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb' }}>
@@ -95,12 +96,12 @@ export default function HomePage() {
                   <div style={{ marginTop: 4, color: '#6b7280', fontSize: 13 }}>{project.id}</div>
                 </div>
               ))}
-              {projects.length === 0 ? <div style={{ padding: '18px 0', color: '#6b7280' }}>暂无项目</div> : null}
+              {projects.length === 0 ? <div style={{ padding: '18px 0', color: '#6b7280' }}>No projects yet</div> : null}
             </div>
           </div>
 
           <nav style={panelStyle}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>产品入口</h2>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Workspace areas</h2>
             <div style={{ marginTop: 16, borderTop: '1px solid #e5e7eb' }}>
               {entries.map((entry) => (
                 <Link key={entry.href} href={entry.href} style={{ display: 'block', padding: '13px 0', borderBottom: '1px solid #e5e7eb', textDecoration: 'none' }}>
