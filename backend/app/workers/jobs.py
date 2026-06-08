@@ -12,7 +12,7 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
-from app.core.config import TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -122,6 +122,27 @@ def _build_generated_sample(unit: SemanticUnit | None, payload: dict):
         "output_text": output_text.strip(),
         "quality_score": quality_score,
     }
+
+
+def _persist_generated_sample(db, project_id: str, unit: SemanticUnit | None, payload: dict):
+    source_unit_id = unit.id if unit else None
+    sample_payload = _build_generated_sample(unit, payload)
+    sample = GeneratedSample(
+        id=str(uuid4()),
+        project_id=project_id,
+        source_unit_id=source_unit_id,
+        sample_type=sample_payload["sample_type"],
+        input_text=sample_payload["input_text"],
+        output_text=sample_payload["output_text"],
+        quality_score=sample_payload["quality_score"],
+    )
+    db.add(sample)
+    db.commit()
+    db.refresh(sample)
+    if source_unit_id:
+        db.add(TraceLink(id=str(uuid4()), source_type="semantic_unit", source_id=source_unit_id, target_type="generated_sample", target_id=sample.id, relation_type="derived_from"))
+        db.commit()
+    return sample
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -234,25 +255,28 @@ def sample_job(self, payload: dict):
         input_config = payload.get("input_config") or {}
         source_unit_id = payload.get("source_unit_id") or input_config.get("source_unit_id")
         _safe_update(db, task_id, "running", 30)
-        unit = db.query(SemanticUnit).filter(SemanticUnit.id == source_unit_id).first() if source_unit_id else None
-        sample_payload = _build_generated_sample(unit, payload)
-        sample = GeneratedSample(
-            id=str(uuid4()),
-            project_id=project_id,
-            source_unit_id=source_unit_id,
-            sample_type=sample_payload["sample_type"],
-            input_text=sample_payload["input_text"],
-            output_text=sample_payload["output_text"],
-            quality_score=sample_payload["quality_score"],
-        )
-        db.add(sample)
-        db.commit()
-        db.refresh(sample)
         if source_unit_id:
-            db.add(TraceLink(id=str(uuid4()), source_type="semantic_unit", source_id=source_unit_id, target_type="generated_sample", target_id=sample.id, relation_type="derived_from"))
-            db.commit()
-        _safe_update(db, task_id, "success", 100, result_summary="1 sample generated")
-        return {"status": "samples_generated", "payload": payload, "sample_id": sample.id}
+            unit = db.query(SemanticUnit).filter(SemanticUnit.id == source_unit_id).first()
+            sample = _persist_generated_sample(db, project_id, unit, payload)
+            _safe_update(db, task_id, "success", 100, result_summary="1 sample generated")
+            return {"status": "samples_generated", "payload": payload, "sample_id": sample.id, "sample_count": 1}
+
+        batch_limit = max(int(input_config.get("limit") or SAMPLE_GENERATION_BATCH_LIMIT), 1)
+        units = (
+            db.query(SemanticUnit)
+            .filter(SemanticUnit.project_id == project_id)
+            .order_by(SemanticUnit.created_at.asc())
+            .limit(batch_limit)
+            .all()
+            if project_id
+            else []
+        )
+        samples = [_persist_generated_sample(db, project_id, unit, payload) for unit in units]
+        if not samples:
+            samples = [_persist_generated_sample(db, project_id, None, payload)]
+        sample_count = len(samples)
+        _safe_update(db, task_id, "success", 100, result_summary=f"{sample_count} sample{'s' if sample_count != 1 else ''} generated")
+        return {"status": "samples_generated", "payload": payload, "sample_ids": [sample.id for sample in samples], "sample_count": sample_count}
     except Exception as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)
