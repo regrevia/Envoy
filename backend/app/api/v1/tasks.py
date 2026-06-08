@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.task import TaskCreate
@@ -23,7 +23,7 @@ def _dispatch_task(db: Session, task, celery_task, payload: dict):
     try:
         celery_task.delay({"task_id": task.id, **payload})
     except Exception as exc:
-        task = update_task_status(db, task.id, "dispatch_failed", 0, error_message=f"任务派发失败：{exc}")
+        task = update_task_status(db, task.id, "dispatch_failed", 0, error_message=f"Task dispatch failed: {exc}")
     return _task_payload(task)
 
 
@@ -36,14 +36,16 @@ def list_tasks_api(db: Session = Depends(get_db)):
 def get_task_api(task_id: str, db: Session = Depends(get_db)):
     task = get_task(db, task_id)
     if task is None:
-        return None
+        raise HTTPException(status_code=404, detail="Task not found")
     return _task_payload(task)
 
 
 @router.post("/tasks/{task_id}/status")
 def set_task_status(task_id: str, payload: dict, db: Session = Depends(get_db)):
     task = update_task_status(db, task_id, payload.get("status", "pending"), payload.get("progress"), payload.get("result_summary"), payload.get("error_message"))
-    return None if task is None else _task_payload(task)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return _task_payload(task)
 
 
 @router.post("/tasks/preprocess")
