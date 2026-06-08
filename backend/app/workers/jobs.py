@@ -10,6 +10,7 @@ from app.services.export_service import build_dataset_jsonl, build_rich_export_r
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
+from app.core.config import TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -49,6 +50,24 @@ def _local_source_file_missing(source_path: str) -> bool:
     return not source_path or (not _is_remote_source(source_path) and not Path(source_path).is_file())
 
 
+def _text_chunks(content: str, chunk_chars: int = TEXT_PREPROCESS_CHUNK_CHARS, overlap_chars: int = TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS):
+    text = content or ""
+    size = max(int(chunk_chars or 1), 1)
+    overlap = max(min(int(overlap_chars or 0), size - 1), 0)
+    if len(text) <= size:
+        return [{"content": text, "start": 0, "end": len(text)}]
+
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + size, len(text))
+        chunks.append({"content": text[start:end], "start": start, "end": end})
+        if end >= len(text):
+            break
+        start = end - overlap
+    return chunks
+
+
 @celery_app.task(bind=True, max_retries=2)
 def ping_job(self):
     return {"status": "ok"}
@@ -66,20 +85,33 @@ def preprocess_job(self, payload: dict):
         source_path = _resolve_source_path(payload, asset)
         if _is_text_asset(asset):
             content = storage_client.read_text(asset.file_path)
+            chunks = _text_chunks(content)
+            chunk_count = len(chunks)
             semantic_payload = {
-                "text": content,
                 "char_count": len(content),
                 "preview": content[:500],
                 "stage": "preprocess",
                 "source": "text_asset",
+                "chunk_count": chunk_count,
             }
-            su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="text", title=asset.file_name, content=content, labels={"stage": "preprocess", "source": "text_asset"}, confidence=0.92)
-            db.add(su)
+            units = []
+            for index, chunk in enumerate(chunks):
+                title = asset.file_name if chunk_count == 1 else f"{asset.file_name} chunk {index + 1}/{chunk_count}"
+                labels = {
+                    "stage": "preprocess",
+                    "source": "text_asset",
+                    "chunk_index": index,
+                    "chunk_count": chunk_count,
+                    "char_start": chunk["start"],
+                    "char_end": chunk["end"],
+                }
+                units.append(SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="text", title=title, content=chunk["content"], labels=labels, confidence=0.92))
+            db.add_all(units)
             db.commit()
-            db.refresh(su)
-            db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=su.id, relation_type="derived_from"))
+            for unit in units:
+                db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
             db.commit()
-            _safe_update(db, task_id, "success", 100, result_summary=f"text preprocess done: {semantic_payload['char_count']} chars")
+            _safe_update(db, task_id, "success", 100, result_summary=f"text preprocess done: {semantic_payload['char_count']} chars, {chunk_count} chunks")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         if _local_source_file_missing(source_path):
             message = f"Source file not found: {source_path or '(empty)'}"
