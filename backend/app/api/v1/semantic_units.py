@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.semantic_unit import SemanticUnit
@@ -28,7 +28,7 @@ def list_semantic_units(db: Session = Depends(get_db)):
 def get_semantic_unit(semantic_unit_id: str, db: Session = Depends(get_db)):
     row = db.query(SemanticUnit).filter(SemanticUnit.id == semantic_unit_id).first()
     if row is None:
-        return None
+        raise HTTPException(status_code=404, detail="Semantic unit not found")
     return {
         "id": row.id,
         "project_id": row.project_id,

@@ -20,7 +20,7 @@ def list_artifacts_api(db: Session = Depends(get_db)):
 def get_artifact(artifact_id: str, db: Session = Depends(get_db)):
     artifact = db.query(Artifact).filter(Artifact.id == artifact_id).first()
     if artifact is None:
-        return None
+        raise HTTPException(status_code=404, detail="Artifact not found")
     return {
         "id": artifact.id,
         "project_id": artifact.project_id,
@@ -36,10 +36,10 @@ def get_artifact(artifact_id: str, db: Session = Depends(get_db)):
 def download_artifact(artifact_id: str, db: Session = Depends(get_db)):
     artifact = db.query(Artifact).filter(Artifact.id == artifact_id).first()
     if artifact is None:
-        raise HTTPException(status_code=404, detail="artifact not found")
+        raise HTTPException(status_code=404, detail="Artifact not found")
     path = Path(artifact.file_path)
     if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail="artifact file not found")
+        raise HTTPException(status_code=404, detail="Artifact file not found")
     return FileResponse(path=str(path), filename=artifact.name)
 
 
