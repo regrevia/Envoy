@@ -5,7 +5,7 @@ from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.services.crud_service import update_task_status, create_artifact
 from app.core.storage import storage_client
-from app.services.media_service import split_video, extract_frames, transcribe_audio, run_ocr_on_frames
+from app.services.media_service import MediaProcessingError, split_video, extract_frames, transcribe_audio, run_ocr_on_frames
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
@@ -98,6 +98,9 @@ def preprocess_job(self, payload: dict):
         db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="preprocess done")
         return {"status": "preprocessed", "payload": payload}
+    except MediaProcessingError as exc:
+        _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
+        return {"status": "failed", "payload": payload, "error": str(exc)}
     except Exception as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)

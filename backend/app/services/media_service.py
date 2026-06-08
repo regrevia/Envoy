@@ -4,8 +4,30 @@ from pathlib import Path
 from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC
 
 
+class MediaProcessingError(RuntimeError):
+    pass
+
+
 def ensure_dir(path: str):
     Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def _error_detail(exc: Exception) -> str:
+    stderr = getattr(exc, "stderr", None)
+    if isinstance(stderr, bytes):
+        decoded = stderr.decode("utf-8", errors="replace").strip()
+        if decoded:
+            return decoded
+    if isinstance(stderr, str) and stderr.strip():
+        return stderr.strip()
+    return str(exc)
+
+
+def _run_media_command(stage: str, cmd: list[str]):
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
+    except Exception as exc:
+        raise MediaProcessingError(f"{stage} failed: {_error_detail(exc)}") from exc
 
 
 def split_video(video_path: str, output_dir: str):
@@ -13,10 +35,7 @@ def split_video(video_path: str, output_dir: str):
     output_path = os.path.join(output_dir, "segment_000001.mp4")
     if video_path:
         cmd = ["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
-        except Exception:
-            pass
+        _run_media_command("split_video", cmd)
     else:
         Path(output_path).touch(exist_ok=True)
     return [output_path]
@@ -27,10 +46,7 @@ def extract_frames(video_path: str, output_dir: str):
     output_pattern = os.path.join(output_dir, "frame_%06d.jpg")
     if video_path:
         cmd = ["ffmpeg", "-y", "-i", video_path, "-vf", "fps=1", output_pattern]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
-        except Exception:
-            pass
+        _run_media_command("extract_frames", cmd)
     else:
         Path(output_pattern.replace("%06d", "000001")).touch(exist_ok=True)
     return [output_pattern]

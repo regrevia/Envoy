@@ -30,6 +30,22 @@ class RuntimeSafetyTests(unittest.TestCase):
             self.assertIn("timeout", kwargs)
             self.assertGreater(kwargs["timeout"], 0)
 
+    def test_media_command_failure_is_reported_with_stderr(self):
+        from app.services import media_service
+
+        error = media_service.subprocess.CalledProcessError(
+            returncode=1,
+            cmd=["ffmpeg", "-i", "broken.mp4"],
+            stderr=b"invalid media data",
+        )
+
+        with patch("app.services.media_service.subprocess.run", side_effect=error):
+            with self.assertRaises(media_service.MediaProcessingError) as ctx:
+                media_service.split_video("broken.mp4", "tmp/test-segments")
+
+        self.assertIn("split_video failed", str(ctx.exception))
+        self.assertIn("invalid media data", str(ctx.exception))
+
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""
         sys.modules.pop("app.core.config", None)
