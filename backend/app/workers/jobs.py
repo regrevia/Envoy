@@ -3,12 +3,14 @@ from pathlib import Path
 from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.services.crud_service import update_task_status, create_artifact
+from app.core.storage import storage_client
 from app.services.media_service import split_video, extract_frames, transcribe_audio, run_ocr_on_frames
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
 from app.models.semantic_unit import SemanticUnit
+from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
 from app.models.trace_link import TraceLink
 from app.schemas.artifact import ArtifactCreate
@@ -17,6 +19,13 @@ from app.schemas.artifact import ArtifactCreate
 def _safe_update(db, task_id, status, progress=None, result_summary=None, error_message=None):
     if task_id:
         update_task_status(db, task_id, status, progress, result_summary, error_message)
+
+
+def _is_text_asset(asset):
+    if asset is None:
+        return False
+    mime_type = asset.mime_type or ""
+    return asset.asset_type in {"text", "markdown", "document"} or mime_type.startswith("text/") or asset.file_name.lower().endswith((".txt", ".md", ".markdown"))
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -33,6 +42,24 @@ def preprocess_job(self, payload: dict):
         project_id = payload.get("project_id")
         source_path = payload.get("source_path", "")
         _safe_update(db, task_id, "running", 10)
+        asset = db.query(Asset).filter(Asset.id == asset_id).first() if asset_id else None
+        if _is_text_asset(asset):
+            content = storage_client.read_text(asset.file_path)
+            semantic_payload = {
+                "text": content,
+                "char_count": len(content),
+                "preview": content[:500],
+                "stage": "preprocess",
+                "source": "text_asset",
+            }
+            su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="text", title=asset.file_name, content=content, labels={"stage": "preprocess", "source": "text_asset"}, confidence=0.92)
+            db.add(su)
+            db.commit()
+            db.refresh(su)
+            db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=su.id, relation_type="derived_from"))
+            db.commit()
+            _safe_update(db, task_id, "success", 100, result_summary=f"text preprocess done: {semantic_payload['char_count']} chars")
+            return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
         frame_paths = extract_frames(source_path, str(FRAME_DIR))
         transcription = transcribe_audio(source_path)

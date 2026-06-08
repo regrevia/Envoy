@@ -74,8 +74,9 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["json"]["model"], "qwen2.5:7b")
         self.assertIn("raw content", client.calls[0]["json"]["prompt"])
 
-    def test_storage_local_mode_skips_remote_client(self):
+    def test_storage_local_mode_persists_uploaded_bytes(self):
         os.environ["ENVOY_STORAGE_MODE"] = "local"
+        os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(ROOT_DIR / "tmp" / "test-local-storage")
         sys.modules.pop("app.core.config", None)
         sys.modules.pop("app.core.storage", None)
         from app.core.storage import StorageClient
@@ -84,8 +85,9 @@ class RuntimeSafetyTests(unittest.TestCase):
         result = storage.upload_bytes("sample.txt", b"hello", "text/plain")
 
         self.assertIsNone(storage.client)
-        self.assertEqual(result["storage"], "local-placeholder")
-        self.assertEqual(result["reason"], "local-storage-mode")
+        self.assertEqual(result["storage"], "local")
+        self.assertEqual(Path(result["file_path"]).read_bytes(), b"hello")
+        self.assertEqual(storage.read_text(result["object_name"]), "hello")
 
 
 if __name__ == "__main__":
