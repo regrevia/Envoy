@@ -1,5 +1,5 @@
 from uuid import uuid4
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.project import ProjectCreate
@@ -23,5 +23,5 @@ def create_project_api(payload: ProjectCreate, db: Session = Depends(get_db)):
 def get_project_api(project_id: str, db: Session = Depends(get_db)):
     project = get_project(db, project_id)
     if project is None:
-        return None
+        raise HTTPException(status_code=404, detail="Project not found")
     return {"id": project.id, "name": project.name, "description": project.description, "domain_type": project.domain_type, "status": project.status}
