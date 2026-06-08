@@ -4,6 +4,7 @@ from app.db.session import get_db
 from app.schemas.train_export import TrainExportRequest
 from app.services.train_export_service import export_sft_dataset, export_instruction_dataset, export_preference_dataset, export_rag_corpus, export_skill_markdown, export_markdown_from_video_summary, build_auto_payload_from_project
 from app.services.crud_service import list_export_records
+from app.core.config import EXPORT_DIR
 
 router = APIRouter()
 
@@ -39,7 +40,7 @@ def auto_build_train_export(payload: TrainExportRequest, db: Session = Depends(g
 @router.post("/train-exports")
 def create_train_export(payload: TrainExportRequest, db: Session = Depends(get_db)):
     samples = payload.payload or []
-    out_dir = payload.out_dir or "e:/2026/Envoy/tmp/exports"
+    out_dir = payload.out_dir or str(EXPORT_DIR)
     task_id = payload.source_task_id or payload.source_asset_id or 'manual'
     project_id = payload.project_id or payload.source_asset_id or 'unknown'
     if payload.export_type == "sft":

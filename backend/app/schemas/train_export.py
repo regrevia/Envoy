@@ -3,6 +3,7 @@ from typing import Optional, Literal, Any
 
 
 class TrainExportRequest(BaseModel):
+    project_id: Optional[str] = None
     export_type: Literal['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']
     payload: Optional[list[dict[str, Any]]] = None
     out_dir: Optional[str] = None

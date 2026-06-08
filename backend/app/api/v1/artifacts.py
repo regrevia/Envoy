@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -31,8 +33,14 @@ def get_artifact(artifact_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/artifacts/{artifact_id}/download")
-def download_artifact(artifact_id: str):
-    return FileResponse(path=f"e:/2026/Envoy/tmp/export/{artifact_id}.jsonl", filename=f"{artifact_id}.jsonl")
+def download_artifact(artifact_id: str, db: Session = Depends(get_db)):
+    artifact = db.query(Artifact).filter(Artifact.id == artifact_id).first()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    path = Path(artifact.file_path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact file not found")
+    return FileResponse(path=str(path), filename=artifact.name)
 
 
 @router.post("/artifacts")

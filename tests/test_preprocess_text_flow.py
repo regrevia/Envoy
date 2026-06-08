@@ -39,7 +39,8 @@ class PreprocessTextFlowTests(unittest.TestCase):
             db = SessionLocal()
             try:
                 project = create_project(db, ProjectCreate(name="长文本项目", description="", domain_type="knowledge", status="active"))
-                storage_info = storage_client.upload_bytes("long-note.txt", "第一段核心知识。\n第二段可训练内容。".encode("utf-8"), "text/plain")
+                text = "第一段核心知识。\n第二段可训练内容。"
+                storage_info = storage_client.upload_bytes("long-note.txt", text.encode("utf-8"), "text/plain")
                 asset = create_asset(
                     db,
                     AssetCreate(

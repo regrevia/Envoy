@@ -5,7 +5,8 @@ from app.core.config import EXPORT_DIR
 from app.models.generated_sample import GeneratedSample
 from app.models.semantic_unit import SemanticUnit
 from app.models.trace_link import TraceLink
-from app.services.crud_service import create_export_record
+from app.schemas.artifact import ArtifactCreate
+from app.services.crud_service import create_artifact, create_export_record
 from app.services.export_paths import build_export_root, build_subdir
 from app.services.export_service import build_dataset_jsonl, build_markdown_report
 
@@ -38,6 +39,15 @@ def _write_record(db, project_id: str, task_id: str, export_type: str, task_name
     if db is None:
         return None
     return create_export_record(db, project_id, task_id, export_type, task_name, str(root), json.dumps(file_list, ensure_ascii=False))
+
+
+def _write_artifacts(db, project_id: str | None, artifact_type: str, paths: list[Path]):
+    if db is None or not project_id:
+        return []
+    return [
+        create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type=artifact_type, name=path.name, file_path=str(path), version="v1"))
+        for path in paths
+    ]
 
 
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
@@ -78,6 +88,12 @@ def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     }
 
 
+def _finalize_export(db, project_id: str | None, task_id: str, export_type: str, task_name: str | None, root: Path, paths: list[Path]):
+    if db and project_id:
+        _write_record(db, project_id, task_id, export_type, task_name, root, [str(path) for path in paths])
+        _write_artifacts(db, project_id, export_type, paths)
+
+
 def export_sft_dataset(rows: list[dict], out_dir: str, task_id: str, task_name: str | None = None, db=None, project_id: str | None = None):
     clean_rows = _dedupe_rows(rows)
     parts = _split_rows(clean_rows)
@@ -89,8 +105,7 @@ def export_sft_dataset(rows: list[dict], out_dir: str, task_id: str, task_name: 
     build_dataset_jsonl(parts["train"], str(train_path))
     build_dataset_jsonl(parts["val"], str(val_path))
     build_dataset_jsonl(parts["test"], str(test_path))
-    if db and project_id:
-        _write_record(db, project_id, task_id, "sft", task_name, root, [str(train_path), str(val_path), str(test_path)])
+    _finalize_export(db, project_id, task_id, "sft", task_name, root, [train_path, val_path, test_path])
     return {"export_type": "sft", "root": str(root), "paths": {"train": str(train_path), "val": str(val_path), "test": str(test_path)}, "count": len(clean_rows)}
 
 
@@ -105,8 +120,7 @@ def export_instruction_dataset(rows: list[dict], out_dir: str, task_id: str, tas
     build_dataset_jsonl(parts["train"], str(train_path))
     build_dataset_jsonl(parts["val"], str(val_path))
     build_dataset_jsonl(parts["test"], str(test_path))
-    if db and project_id:
-        _write_record(db, project_id, task_id, "instruction", task_name, root, [str(train_path), str(val_path), str(test_path)])
+    _finalize_export(db, project_id, task_id, "instruction", task_name, root, [train_path, val_path, test_path])
     return {"export_type": "instruction", "root": str(root), "paths": {"train": str(train_path), "val": str(val_path), "test": str(test_path)}, "count": len(clean_rows)}
 
 
@@ -121,8 +135,7 @@ def export_preference_dataset(rows: list[dict], out_dir: str, task_id: str, task
     build_dataset_jsonl(parts["train"], str(train_path))
     build_dataset_jsonl(parts["val"], str(val_path))
     build_dataset_jsonl(parts["test"], str(test_path))
-    if db and project_id:
-        _write_record(db, project_id, task_id, "preference", task_name, root, [str(train_path), str(val_path), str(test_path)])
+    _finalize_export(db, project_id, task_id, "preference", task_name, root, [train_path, val_path, test_path])
     return {"export_type": "preference", "root": str(root), "paths": {"train": str(train_path), "val": str(val_path), "test": str(test_path)}, "count": len(clean_rows)}
 
 
@@ -132,8 +145,7 @@ def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: s
     data_dir = build_subdir(root, "rag")
     out_path = data_dir / "rag_corpus.jsonl"
     build_dataset_jsonl(clean_rows, str(out_path))
-    if db and project_id:
-        _write_record(db, project_id, task_id, "rag", task_name, root, [str(out_path)])
+    _finalize_export(db, project_id, task_id, "rag", task_name, root, [out_path])
     return {"root": str(root), "path": str(out_path)}
 
 
@@ -146,8 +158,7 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
     for idx, row in enumerate(clean_rows, 1):
         content_lines.append(f"- 样本 {idx}: {json.dumps(row, ensure_ascii=False)}")
     build_markdown_report(title, "\n".join(content_lines), str(out_path))
-    if db and project_id:
-        _write_record(db, project_id, task_id, "skill", task_name, root, [str(out_path)])
+    _finalize_export(db, project_id, task_id, "skill", task_name, root, [out_path])
     return {"root": str(root), "path": str(out_path)}
 
 
@@ -159,8 +170,7 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
     for row in summary_rows:
         content.append(f"- {json.dumps(row, ensure_ascii=False)}")
     build_markdown_report(title, "\n".join(content), str(out_path))
-    if db and project_id:
-        _write_record(db, project_id, task_id, "markdown", task_name, root, [str(out_path)])
+    _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path])
     return {"root": str(root), "path": str(out_path)}
 
 
