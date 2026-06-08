@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 from pathlib import Path
 from urllib.parse import urlparse
@@ -9,6 +10,7 @@ from app.services.media_service import MediaProcessingError, split_video, extrac
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
+from app.services.ollama_service import generate_with_ollama
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
 from app.core.config import TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
@@ -66,6 +68,60 @@ def _text_chunks(content: str, chunk_chars: int = TEXT_PREPROCESS_CHUNK_CHARS, o
             break
         start = end - overlap
     return chunks
+
+
+def _sample_fallback(unit: SemanticUnit | None, payload: dict):
+    title = (unit.title if unit else None) or payload.get("title") or "source material"
+    content = (unit.content if unit else None) or payload.get("content") or payload.get("text") or ""
+    content = str(content).strip()
+    prompt = f"What are the key points from {title}?"
+    answer = content[:1200] if content else "No source content was available."
+    return {
+        "sample_type": "qa",
+        "input_text": f"{title}\n\n{prompt}",
+        "output_text": answer,
+        "quality_score": 0.78 if content else 0.45,
+    }
+
+
+def _parse_sample_text(text: str):
+    if not text.strip():
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _build_generated_sample(unit: SemanticUnit | None, payload: dict):
+    fallback = _sample_fallback(unit, payload)
+    source_text = unit.content if unit else fallback["output_text"]
+    llm_result = generate_with_ollama(
+        "Create one high-quality training sample from the source material. Return JSON with sample_type, input, output, and quality_score.",
+        str(source_text or ""),
+    )
+    if llm_result.get("status") != "success":
+        return fallback
+
+    parsed = _parse_sample_text(llm_result.get("text", ""))
+    input_text = parsed.get("input") or parsed.get("input_text")
+    output_text = parsed.get("output") or parsed.get("output_text")
+    if not isinstance(input_text, str) or not input_text.strip() or not isinstance(output_text, str) or not output_text.strip():
+        return fallback
+
+    try:
+        quality_score = float(parsed.get("quality_score", fallback["quality_score"]))
+    except (TypeError, ValueError):
+        quality_score = fallback["quality_score"]
+    quality_score = max(0.0, min(quality_score, 1.0))
+
+    return {
+        "sample_type": str(parsed.get("sample_type") or fallback["sample_type"]),
+        "input_text": input_text.strip(),
+        "output_text": output_text.strip(),
+        "quality_score": quality_score,
+    }
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -175,17 +231,28 @@ def sample_job(self, payload: dict):
     try:
         task_id = payload.get("task_id")
         project_id = payload.get("project_id")
-        source_unit_id = payload.get("source_unit_id")
+        input_config = payload.get("input_config") or {}
+        source_unit_id = payload.get("source_unit_id") or input_config.get("source_unit_id")
         _safe_update(db, task_id, "running", 30)
-        sample = GeneratedSample(id=str(uuid4()), project_id=project_id, source_unit_id=source_unit_id, sample_type="qa", input_text="sample input", output_text="sample output", quality_score=0.8)
+        unit = db.query(SemanticUnit).filter(SemanticUnit.id == source_unit_id).first() if source_unit_id else None
+        sample_payload = _build_generated_sample(unit, payload)
+        sample = GeneratedSample(
+            id=str(uuid4()),
+            project_id=project_id,
+            source_unit_id=source_unit_id,
+            sample_type=sample_payload["sample_type"],
+            input_text=sample_payload["input_text"],
+            output_text=sample_payload["output_text"],
+            quality_score=sample_payload["quality_score"],
+        )
         db.add(sample)
         db.commit()
         db.refresh(sample)
         if source_unit_id:
             db.add(TraceLink(id=str(uuid4()), source_type="semantic_unit", source_id=source_unit_id, target_type="generated_sample", target_id=sample.id, relation_type="derived_from"))
             db.commit()
-        _safe_update(db, task_id, "success", 100, result_summary="samples generated")
-        return {"status": "samples_generated", "payload": payload}
+        _safe_update(db, task_id, "success", 100, result_summary="1 sample generated")
+        return {"status": "samples_generated", "payload": payload, "sample_id": sample.id}
     except Exception as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)
