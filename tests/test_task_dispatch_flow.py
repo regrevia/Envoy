@@ -42,6 +42,7 @@ class TaskDispatchFlowTests(unittest.TestCase):
             body = response.json()
             self.assertEqual(body["status"], "dispatch_failed")
             self.assertEqual(body["progress"], 0)
+            self.assertIn("Task dispatch failed", body["error_message"])
             self.assertIn("redis offline", body["error_message"])
 
             db = SessionLocal()
@@ -49,9 +50,39 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 stored = get_task(db, body["id"])
                 self.assertIsNotNone(stored)
                 self.assertEqual(stored.status, "dispatch_failed")
+                self.assertIn("Task dispatch failed", stored.error_message)
                 self.assertIn("redis offline", stored.error_message)
             finally:
                 db.close()
+                engine.dispose()
+
+    def test_task_detail_and_status_update_return_404_when_task_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-404-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+
+                detail_response = client.get("/api/v1/tasks/missing-task")
+                status_response = client.post("/api/v1/tasks/missing-task/status", json={"status": "success"})
+
+                self.assertEqual(detail_response.status_code, 404)
+                self.assertEqual(status_response.status_code, 404)
+                self.assertEqual(detail_response.json()["detail"], "Task not found")
+                self.assertEqual(status_response.json()["detail"], "Task not found")
+            finally:
                 engine.dispose()
 
 
