@@ -5,12 +5,12 @@ import { useEffect, useState } from 'react';
 import { ApiError, apiJson } from '../../lib/api';
 
 const fileTypeOptions = [
-  { id: 'video', label: 'Video' },
+  { id: 'video', label: '视频' },
   { id: 'markdown', label: 'Markdown' },
-  { id: 'text', label: 'Text' },
-  { id: 'audio', label: 'Audio' },
-  { id: 'document', label: 'Document' },
-  { id: 'image', label: 'Image' },
+  { id: 'text', label: '长文本' },
+  { id: 'audio', label: '音频' },
+  { id: 'document', label: '文档' },
+  { id: 'image', label: '图片' },
 ];
 
 const panelStyle = {
@@ -65,11 +65,17 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<any>(null);
   const [preprocessResult, setPreprocessResult] = useState<any>(null);
-  const [message, setMessage] = useState('Ready');
+  const [message, setMessage] = useState('请选择任务/项目并上传素材');
   const [uploading, setUploading] = useState(false);
   const [preprocessing, setPreprocessing] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const projectFromQuery = params.get('project_id');
+    if (projectFromQuery) {
+      setProjectId(projectFromQuery);
+    }
+
     apiJson<Project[]>('/api/v1/projects')
       .then(setProjects)
       .catch(() => setProjects([]));
@@ -77,7 +83,7 @@ export default function UploadPage() {
 
   const onSubmit = async () => {
     if (!file || !projectId || uploading) {
-      setMessage('Choose a project and file before uploading');
+      setMessage('请先选择任务/项目和文件');
       return;
     }
     const form = new FormData();
@@ -86,16 +92,16 @@ export default function UploadPage() {
     form.append('file', file);
 
     setUploading(true);
-    setMessage('Uploading asset...');
+    setMessage('正在上传素材...');
     try {
       const data = await apiJson('/api/v1/assets/upload', { method: 'POST', body: form });
       setResult(data);
       setPreprocessResult(null);
-      setMessage('Upload complete');
+      setMessage('上传完成，可以启动预处理');
     } catch (error) {
-      const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : 'Upload failed';
+      const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : '上传失败';
       setResult({ error: errorMessage });
-      setMessage(`Upload failed: ${errorMessage}`);
+      setMessage(`上传失败：${errorMessage}`);
     } finally {
       setUploading(false);
     }
@@ -104,12 +110,12 @@ export default function UploadPage() {
   const onPreprocess = async () => {
     const asset = uploadedAsset(result);
     if (!asset?.id || !asset?.project_id || preprocessing) {
-      setMessage('Upload an asset before preprocessing');
+      setMessage('请先上传素材再启动预处理');
       return;
     }
 
     setPreprocessing(true);
-    setMessage('Starting preprocessing...');
+    setMessage('正在启动预处理转换...');
     try {
       const data = await apiJson<TaskResponse>('/api/v1/tasks/preprocess', {
         method: 'POST',
@@ -122,11 +128,11 @@ export default function UploadPage() {
         }),
       });
       setPreprocessResult(data);
-      setMessage(`Preprocessing task ${data.status || 'created'}`);
+      setMessage(`预处理任务已创建：${data.status || 'created'}`);
     } catch (error) {
-      const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : 'Preprocessing failed';
+      const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : '预处理失败';
       setPreprocessResult({ error: errorMessage });
-      setMessage(`Preprocessing failed: ${errorMessage}`);
+      setMessage(`预处理失败：${errorMessage}`);
     } finally {
       setPreprocessing(false);
     }
@@ -135,51 +141,52 @@ export default function UploadPage() {
   const asset = uploadedAsset(result);
 
   return (
-    <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
+    <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section style={{ maxWidth: 960, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>Upload</h1>
+          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>第 2 步</div>
+          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>上传素材</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            Add source files to a project before preprocessing. Video, long text, Markdown, audio, PDFs, and images can all enter the material pipeline.
+            将视频、音频、图片、文档、Markdown 或长文本放入当前任务，上传后可直接启动预处理转换。
           </p>
         </header>
 
-        <div style={{ marginTop: 18, padding: '12px 14px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#ffffff', color: '#374151', display: 'flex', gap: 10, alignItems: 'center' }}>
-          <strong style={{ fontSize: 14 }}>Status</strong>
+        <div style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', color: '#374151', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: 14 }}>状态</strong>
           <span style={{ fontSize: 14 }}>{message}</span>
         </div>
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'grid', gap: 14 }}>
             <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ color: '#4b5563', fontSize: 13 }}>Project</span>
+              <span style={{ color: '#4b5563', fontSize: 13 }}>选择任务/项目</span>
               <select value={projectId} onChange={(event) => setProjectId(event.target.value)} style={inputStyle}>
-                <option value="">Choose project</option>
+                <option value="">请选择任务/项目</option>
                 {projects.map((project) => <option key={project.id} value={project.id}>{project.name} ({project.id})</option>)}
               </select>
             </label>
             <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ color: '#4b5563', fontSize: 13 }}>Asset type</span>
+              <span style={{ color: '#4b5563', fontSize: 13 }}>素材类型</span>
               <select value={assetType} onChange={(event) => setAssetType(event.target.value)} style={inputStyle}>
                 {fileTypeOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </select>
             </label>
             <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ color: '#4b5563', fontSize: 13 }}>File</span>
+              <span style={{ color: '#4b5563', fontSize: 13 }}>文件</span>
               <input type="file" accept=".mp4,.md,.txt,.wav,.mp3,.pdf,image/*" onChange={(event) => setFile(event.target.files?.[0] ?? null)} style={inputStyle} />
             </label>
             <button onClick={onSubmit} disabled={uploading} style={{ ...buttonStyle, width: 'fit-content', opacity: uploading ? 0.72 : 1, cursor: uploading ? 'not-allowed' : 'pointer' }}>
-              {uploading ? 'Uploading...' : 'Upload asset'}
+              {uploading ? '正在上传...' : '上传素材'}
             </button>
           </div>
         </section>
 
         {result ? (
-          <section style={{ ...panelStyle, marginTop: 20 }}>
+          <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: 18 }}>Upload result</h2>
-                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{asset?.id ? `Asset ${asset.id}` : 'Upload response'}</p>
+                <h2 style={{ margin: 0, fontSize: 18 }}>上传结果</h2>
+                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{asset?.id ? `素材 ${asset.id}` : '上传响应'}</p>
               </div>
               {asset?.id ? (
                 <button
@@ -187,15 +194,15 @@ export default function UploadPage() {
                   disabled={preprocessing}
                   style={{ ...buttonStyle, background: preprocessing ? '#6b7280' : '#111827', color: '#ffffff', flex: '0 0 auto', opacity: preprocessing ? 0.78 : 1, cursor: preprocessing ? 'not-allowed' : 'pointer' }}
                 >
-                  {preprocessing ? 'Starting...' : 'Start preprocessing'}
+                  {preprocessing ? '正在启动...' : '启动预处理'}
                 </button>
               ) : null}
             </div>
-            <pre style={{ marginTop: 14, padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            <pre style={{ marginTop: 14, padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
               {JSON.stringify(result, null, 2)}
             </pre>
             {preprocessResult ? (
-              <pre style={{ marginTop: 12, padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+              <pre style={{ marginTop: 12, padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
                 {JSON.stringify(preprocessResult, null, 2)}
               </pre>
             ) : null}
