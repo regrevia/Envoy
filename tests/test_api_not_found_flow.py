@@ -37,6 +37,7 @@ class ApiNotFoundFlowTests(unittest.TestCase):
                     ("/api/v1/projects/missing-project", "Project not found"),
                     ("/api/v1/artifacts/missing-artifact", "Artifact not found"),
                     ("/api/v1/semantic-units/missing-unit", "Semantic unit not found"),
+                    ("/api/v1/generated-samples/missing-sample", "Generated sample not found"),
                 ]
 
                 for path, detail in expectations:

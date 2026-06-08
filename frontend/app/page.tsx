@@ -29,6 +29,7 @@ export default function HomePage() {
   const [assets, setAssets] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [artifacts, setArtifacts] = useState<any[]>([]);
+  const [samples, setSamples] = useState<any[]>([]);
 
   useEffect(() => {
     Promise.all([
@@ -36,11 +37,13 @@ export default function HomePage() {
       apiJson<any[]>('/api/v1/assets').catch(() => []),
       apiJson<any[]>('/api/v1/tasks').catch(() => []),
       apiJson<any[]>('/api/v1/artifacts').catch(() => []),
-    ]).then(([p, a, t, ar]) => {
+      apiJson<any[]>('/api/v1/generated-samples').catch(() => []),
+    ]).then(([p, a, t, ar, s]) => {
       setProjects(p);
       setAssets(a);
       setTasks(t);
       setArtifacts(ar);
+      setSamples(s);
     });
   }, []);
 
@@ -48,6 +51,7 @@ export default function HomePage() {
     { label: 'Projects', value: projects.length },
     { label: 'Assets', value: assets.length },
     { label: 'Tasks', value: tasks.length },
+    { label: 'Samples', value: samples.length },
     { label: 'Artifacts', value: artifacts.length },
   ];
 
@@ -56,6 +60,7 @@ export default function HomePage() {
     { href: '/upload', label: 'Upload', detail: 'Ingest video, long text, markdown, audio, and other source files.' },
     { href: '/tasks', label: 'Tasks', detail: 'Track preprocessing, analysis, sample generation, and exports.' },
     { href: '/semantic-units', label: 'Semantic Units', detail: 'Inspect extracted text chunks, scenes, rules, and concepts.' },
+    { href: '/generated-samples', label: 'Generated Samples', detail: 'Review generated training examples before export.' },
     { href: '/artifacts', label: 'Artifacts', detail: 'Open Markdown, RAG, Skill, and dataset outputs.' },
     { href: '/train-exports', label: 'Training Exports', detail: 'Create SFT, instruction, preference, RAG, Skill, and Markdown files.' },
     { href: '/trace', label: 'Trace', detail: 'Follow links from assets to semantic units and artifacts.' },
@@ -77,7 +82,7 @@ export default function HomePage() {
           </div>
         </header>
 
-        <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', marginTop: 24, background: '#fff' }}>
+        <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', marginTop: 24, background: '#fff' }}>
           {metrics.map((metric, index) => (
             <div key={metric.label} style={{ padding: 20, borderLeft: index === 0 ? 'none' : '1px solid #e5e7eb' }}>
               <div style={{ color: '#6b7280', fontSize: 13 }}>{metric.label}</div>

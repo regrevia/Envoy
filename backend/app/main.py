@@ -7,6 +7,7 @@ from app.api.v1.assets import router as assets_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.semantic_units import router as semantic_units_router
+from app.api.v1.generated_samples import router as generated_samples_router
 from app.api.v1.trace import router as trace_router
 from app.api.v1.train_exports import router as train_exports_router
 
@@ -31,5 +32,6 @@ app.include_router(assets_router, prefix="/api/v1", tags=["assets"])
 app.include_router(tasks_router, prefix="/api/v1", tags=["tasks"])
 app.include_router(artifacts_router, prefix="/api/v1", tags=["artifacts"])
 app.include_router(semantic_units_router, prefix="/api/v1", tags=["semantic-units"])
+app.include_router(generated_samples_router, prefix="/api/v1", tags=["generated-samples"])
 app.include_router(trace_router, prefix="/api/v1", tags=["trace"])
 app.include_router(train_exports_router, prefix="/api/v1", tags=["train-exports"])
