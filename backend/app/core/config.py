@@ -10,6 +10,7 @@ MINIO_BUCKET = os.getenv("MINIO_BUCKET", "envoy")
 STORAGE_MODE = os.getenv("ENVOY_STORAGE_MODE", "minio").lower()
 
 BASE_DIR = Path(__file__).resolve().parents[3]
+LOCAL_STORAGE_DIR = Path(os.getenv("ENVOY_LOCAL_STORAGE_DIR", str(BASE_DIR / "tmp" / "storage")))
 EXPORT_DIR = Path(os.getenv("ENVOY_EXPORT_DIR", str(BASE_DIR / "tmp" / "exports")))
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
