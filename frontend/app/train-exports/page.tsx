@@ -1,10 +1,9 @@
 "use client";
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { apiJson } from '@/lib/api';
-import { downloadFile, openDownloadUrl } from '@/lib/download';
 
 const exportTypes = [
   { id: 'sft', label: 'SFT' },
@@ -15,7 +14,45 @@ const exportTypes = [
   { id: 'markdown', label: 'Markdown' },
 ] as const;
 
-const BASE_EXPORT_DIR = 'e:/2026/Envoy/tmp/exports';
+const inputStyle = {
+  width: '100%',
+  padding: '11px 12px',
+  borderRadius: 6,
+  border: '1px solid #d1d5db',
+  background: '#ffffff',
+  color: '#111827',
+} as const;
+
+const panelStyle = {
+  background: '#ffffff',
+  border: '1px solid #e5e7eb',
+  borderRadius: 8,
+  padding: 24,
+} as const;
+
+const buttonStyle = {
+  minHeight: 40,
+  padding: '0 14px',
+  borderRadius: 6,
+  border: '1px solid #d1d5db',
+  background: '#ffffff',
+  color: '#111827',
+  fontWeight: 600,
+  cursor: 'pointer',
+} as const;
+
+type ExportType = (typeof exportTypes)[number]['id'];
+
+type ExportRecord = {
+  id: string;
+  project_id: string;
+  task_id: string;
+  export_type: string;
+  task_name?: string | null;
+  root_dir: string;
+  file_list: string;
+  created_at?: string | null;
+};
 
 function safeSlug(input: string) {
   return (input || 'default')
@@ -27,7 +64,7 @@ function safeSlug(input: string) {
 }
 
 export default function TrainExportsPage() {
-  const [exportType, setExportType] = useState<(typeof exportTypes)[number]['id']>('sft');
+  const [exportType, setExportType] = useState<ExportType>('sft');
   const [projectId, setProjectId] = useState('');
   const [assetId, setAssetId] = useState('');
   const [taskName, setTaskName] = useState('');
@@ -35,89 +72,110 @@ export default function TrainExportsPage() {
   const [sourceTaskId, setSourceTaskId] = useState('');
   const [result, setResult] = useState<any>(null);
   const [samplesText, setSamplesText] = useState('[{"instruction":"示例问题","input":"","output":"示例答案"}]');
-  const [history, setHistory] = useState<any[]>([]);
+  const [history, setHistory] = useState<ExportRecord[]>([]);
+  const [message, setMessage] = useState('准备就绪');
 
   const previewPath = useMemo(() => {
     const folder = `${safeSlug(taskName || exportType)}_${safeSlug(sourceTaskId || assetId || projectId || 'manual')}`;
     const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
-    return `${BASE_EXPORT_DIR}/${date}/${folder}`;
+    return `${date}/${folder}`;
   }, [assetId, exportType, projectId, sourceTaskId, taskName]);
 
   const loadHistory = async () => {
-    const data = await apiJson<any[]>('/api/v1/train-exports/history');
-    setHistory(data);
+    try {
+      const data = await apiJson<ExportRecord[]>('/api/v1/train-exports/history');
+      setHistory(data);
+    } catch {
+      setHistory([]);
+    }
   };
 
+  useEffect(() => {
+    void loadHistory();
+  }, []);
+
   const onExport = async () => {
-    const payload = {
-      export_type: exportType,
-      project_id: projectId,
-      source_asset_id: assetId,
-      source_task_id: sourceTaskId,
-      title,
-      task_name: taskName,
-      payload: JSON.parse(samplesText),
-      out_dir: BASE_EXPORT_DIR,
-    };
-    const data = await apiJson('/api/v1/train-exports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    setResult(data);
-    loadHistory();
+    try {
+      const payload = {
+        export_type: exportType,
+        project_id: projectId || undefined,
+        source_asset_id: assetId || undefined,
+        source_task_id: sourceTaskId || undefined,
+        title,
+        task_name: taskName || undefined,
+        payload: JSON.parse(samplesText),
+      };
+      const data = await apiJson('/api/v1/train-exports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setResult(data);
+      setMessage('导出完成');
+      void loadHistory();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '导出失败');
+    }
   };
 
   const onAutoExport = async () => {
-    const payload = {
-      export_type: exportType,
-      source_asset_id: assetId || projectId,
-      source_task_id: sourceTaskId,
-      title,
-      task_name: taskName,
-      out_dir: BASE_EXPORT_DIR,
-    };
-    const data = await apiJson('/api/v1/train-exports/auto', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    setResult(data);
-    loadHistory();
-  };
-
-  const openDir = async (path?: string) => {
-    const target = path || result?.root || previewPath;
-    await downloadFile(`/api/v1/train-exports/open?path=${encodeURIComponent(String(target))}`, 'open-result.txt');
+    try {
+      const payload = {
+        export_type: exportType,
+        project_id: projectId || undefined,
+        source_asset_id: assetId || undefined,
+        source_task_id: sourceTaskId || undefined,
+        title,
+        task_name: taskName || undefined,
+      };
+      const data = await apiJson('/api/v1/train-exports/auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setResult(data);
+      setMessage('自动导出完成');
+      void loadHistory();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '自动导出失败');
+    }
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: '#f5f7fb', fontFamily: 'Inter, sans-serif', color: '#0f172a' }}>
-      <section style={{ maxWidth: 1100, margin: '0 auto', padding: '48px 24px' }}>
-        <h1 style={{ fontSize: 36, marginBottom: 8 }}>训练导出</h1>
-        <p style={{ color: '#475569' }}>一键选择导出格式，生成训练资产或 Skill / Markdown 产物。</p>
+    <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
+      <section style={{ maxWidth: 1160, margin: '0 auto', padding: '44px 24px' }}>
+        <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
+          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>训练导出</h1>
+          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
+            将项目语义单元和样本导出为 SFT、Instruction、Preference、RAG、Skill 或 Markdown 产物。
+          </p>
+        </header>
 
-        <div style={{ background: '#fff', borderRadius: 18, padding: 24, boxShadow: '0 10px 30px rgba(15,23,42,0.06)', marginTop: 24, display: 'grid', gap: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-            <input placeholder="项目 ID" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ padding: 12, borderRadius: 10, border: '1px solid #cbd5e1' }} />
-            <input placeholder="素材 ID（可选）" value={assetId} onChange={(e) => setAssetId(e.target.value)} style={{ padding: 12, borderRadius: 10, border: '1px solid #cbd5e1' }} />
-            <input placeholder="源任务 ID（可选）" value={sourceTaskId} onChange={(e) => setSourceTaskId(e.target.value)} style={{ padding: 12, borderRadius: 10, border: '1px solid #cbd5e1' }} />
-            <input placeholder="任务目录名（可重命名）" value={taskName} onChange={(e) => setTaskName(e.target.value)} style={{ padding: 12, borderRadius: 10, border: '1px solid #cbd5e1' }} />
+        <div style={{ marginTop: 18, padding: '12px 14px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#ffffff', color: '#374151', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <strong style={{ fontSize: 14 }}>状态</strong>
+          <span style={{ fontSize: 14 }}>{message}</span>
+        </div>
+
+        <section style={{ ...panelStyle, marginTop: 20, display: 'grid', gap: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <input placeholder="项目 ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} style={inputStyle} />
+            <input placeholder="素材 ID（可选）" value={assetId} onChange={(event) => setAssetId(event.target.value)} style={inputStyle} />
+            <input placeholder="源任务 ID（可选）" value={sourceTaskId} onChange={(event) => setSourceTaskId(event.target.value)} style={inputStyle} />
+            <input placeholder="任务目录名（可选）" value={taskName} onChange={(event) => setTaskName(event.target.value)} style={inputStyle} />
           </div>
 
-          <input placeholder="导出标题" value={title} onChange={(e) => setTitle(e.target.value)} style={{ padding: 12, borderRadius: 10, border: '1px solid #cbd5e1' }} />
+          <input placeholder="导出标题" value={title} onChange={(event) => setTitle(event.target.value)} style={inputStyle} />
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {exportTypes.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setExportType(item.id)}
                 style={{
-                  padding: '10px 14px',
-                  borderRadius: 999,
-                  border: exportType === item.id ? '1px solid #0f172a' : '1px solid #cbd5e1',
-                  background: exportType === item.id ? '#0f172a' : '#fff',
-                  color: exportType === item.id ? '#fff' : '#0f172a',
+                  ...buttonStyle,
+                  background: exportType === item.id ? '#111827' : '#ffffff',
+                  color: exportType === item.id ? '#ffffff' : '#111827',
+                  borderColor: exportType === item.id ? '#111827' : '#d1d5db',
                 }}
               >
                 {item.label}
@@ -125,54 +183,59 @@ export default function TrainExportsPage() {
             ))}
           </div>
 
-          <div style={{ padding: 14, background: '#f8fafc', borderRadius: 12, border: '1px dashed #cbd5e1' }}>
+          <div style={{ padding: 14, background: '#f9fafb', borderRadius: 8, border: '1px dashed #d1d5db' }}>
             <strong>任务目录预览</strong>
-            <div style={{ marginTop: 8, fontFamily: 'monospace', wordBreak: 'break-all' }}>{previewPath}</div>
+            <div style={{ marginTop: 8, fontFamily: 'monospace', wordBreak: 'break-all', color: '#4b5563' }}>
+              后端导出根目录 / {previewPath}
+            </div>
           </div>
 
           <textarea
             value={samplesText}
-            onChange={(e) => setSamplesText(e.target.value)}
+            onChange={(event) => setSamplesText(event.target.value)}
             rows={6}
-            style={{ padding: 12, borderRadius: 10, border: '1px solid #cbd5e1', fontFamily: 'monospace' }}
+            style={{ ...inputStyle, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', minHeight: 140 }}
           />
 
-          <div style={{ display: 'flex', gap: 12 }}>
-            <button onClick={onExport} style={{ padding: '12px 16px', borderRadius: 10, background: '#0f172a', color: '#fff', border: 0, width: 'fit-content' }}>开始导出</button>
-            <button onClick={onAutoExport} style={{ padding: '12px 16px', borderRadius: 10, background: '#1d4ed8', color: '#fff', border: 0, width: 'fit-content' }}>自动读取导出</button>
-            <button onClick={() => openDir()} style={{ padding: '12px 16px', borderRadius: 10, background: '#e2e8f0', color: '#0f172a', border: 0, width: 'fit-content' }}>打开输出目录</button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button onClick={onExport} style={{ ...buttonStyle, background: '#111827', color: '#fff', borderColor: '#111827' }}>开始导出</button>
+            <button onClick={onAutoExport} style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }}>自动读取导出</button>
+            <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物中心</Link>
           </div>
-        </div>
+        </section>
 
         {result ? (
-          <div style={{ marginTop: 24, background: '#fff', borderRadius: 18, padding: 20, boxShadow: '0 10px 30px rgba(15,23,42,0.06)' }}>
-            <h2>导出结果</h2>
-            <pre style={{ whiteSpace: 'pre-wrap', overflowX: 'auto' }}>{JSON.stringify(result, null, 2)}</pre>
-            {result.root ? <div style={{ marginTop: 12 }}>目录：{result.root}</div> : null}
-            {result.path ? <div style={{ marginTop: 12 }}>文件：{result.path}</div> : null}
-            {result.paths ? <pre style={{ marginTop: 12 }}>{JSON.stringify(result.paths, null, 2)}</pre> : null}
-            {result.root ? <button onClick={() => void openDir(result.root)} style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: '#0f172a', color: '#fff', border: 0 }}>点击打开结果目录</button> : null}
-          </div>
+          <section style={{ ...panelStyle, marginTop: 20 }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>导出结果</h2>
+            <pre style={{ marginTop: 14, padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </section>
         ) : null}
 
-        <div style={{ marginTop: 32, background: '#fff', borderRadius: 18, padding: 20, boxShadow: '0 10px 30px rgba(15,23,42,0.06)' }}>
-          <h2>导出历史记录</h2>
-          <button onClick={loadHistory} style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 10, background: '#e2e8f0', color: '#0f172a', border: 0 }}>刷新历史</button>
-          <div style={{ display: 'grid', gap: 12 }}>
-            {history.length === 0 ? <div>暂无历史记录</div> : null}
-            {history.map((item) => (
-              <div key={item.id} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 14 }}>
-                <div><strong>{item.export_type}</strong> · {item.task_name ?? '未命名'}</div>
-                <div>目录：{item.root_dir}</div>
-                <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>文件：{item.file_list}</div>
-                <div style={{ marginTop: 8, display: 'flex', gap: 10 }}>
-                  <button onClick={() => void openDir(item.root_dir)} style={{ padding: '8px 12px', borderRadius: 10, background: '#0f172a', color: '#fff', border: 0 }}>打开目录</button>
-                </div>
-              </div>
-            ))}
+        <section style={{ ...panelStyle, marginTop: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18 }}>导出历史</h2>
+              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>共 {history.length} 条记录</p>
+            </div>
+            <button onClick={loadHistory} style={buttonStyle}>刷新历史</button>
           </div>
-        </div>
 
+          {history.length === 0 ? <div style={{ padding: '22px 0', color: '#6b7280' }}>暂无历史记录</div> : null}
+          {history.map((item) => (
+            <div key={item.id} style={{ padding: '16px 0', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <Link href={`/train-exports/${item.id}`} style={{ fontWeight: 700, textDecoration: 'none' }}>
+                  {item.export_type}
+                </Link>
+                <span style={{ color: '#6b7280', fontSize: 13 }}>{item.task_name || '未命名'}</span>
+              </div>
+              <div style={{ marginTop: 8, color: '#4b5563', wordBreak: 'break-all' }}>目录：{item.root_dir}</div>
+              <div style={{ marginTop: 6, color: '#6b7280', fontSize: 13, wordBreak: 'break-all' }}>文件：{item.file_list}</div>
+            </div>
+          ))}
+        </section>
       </section>
     </main>
   );
