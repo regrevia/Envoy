@@ -1,5 +1,6 @@
 from uuid import uuid4
 from pathlib import Path
+from urllib.parse import urlparse
 from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.services.crud_service import update_task_status, create_artifact
@@ -28,6 +29,26 @@ def _is_text_asset(asset):
     return asset.asset_type in {"text", "markdown", "document"} or mime_type.startswith("text/") or asset.file_name.lower().endswith((".txt", ".md", ".markdown"))
 
 
+def _resolve_source_path(payload: dict, asset: Asset | None) -> str:
+    explicit_path = payload.get("source_path") or (payload.get("input_config") or {}).get("source_path")
+    if explicit_path:
+        return str(explicit_path)
+    if asset is not None and asset.file_path:
+        if storage_client.mode == "local":
+            return str(storage_client._local_path(asset.file_path))
+        return str(asset.file_path)
+    return ""
+
+
+def _is_remote_source(source_path: str) -> bool:
+    scheme = urlparse(source_path).scheme.lower()
+    return scheme in {"http", "https", "s3"}
+
+
+def _local_source_file_missing(source_path: str) -> bool:
+    return not source_path or (not _is_remote_source(source_path) and not Path(source_path).is_file())
+
+
 @celery_app.task(bind=True, max_retries=2)
 def ping_job(self):
     return {"status": "ok"}
@@ -40,9 +61,9 @@ def preprocess_job(self, payload: dict):
         task_id = payload.get("task_id")
         asset_id = payload.get("asset_id")
         project_id = payload.get("project_id")
-        source_path = payload.get("source_path", "")
         _safe_update(db, task_id, "running", 10)
         asset = db.query(Asset).filter(Asset.id == asset_id).first() if asset_id else None
+        source_path = _resolve_source_path(payload, asset)
         if _is_text_asset(asset):
             content = storage_client.read_text(asset.file_path)
             semantic_payload = {
@@ -60,12 +81,16 @@ def preprocess_job(self, payload: dict):
             db.commit()
             _safe_update(db, task_id, "success", 100, result_summary=f"text preprocess done: {semantic_payload['char_count']} chars")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
+        if _local_source_file_missing(source_path):
+            message = f"Source file not found: {source_path or '(empty)'}"
+            _safe_update(db, task_id, "failed", 100, error_message=message)
+            return {"status": "failed", "payload": payload, "error": message}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
         frame_paths = extract_frames(source_path, str(FRAME_DIR))
         transcription = transcribe_audio(source_path)
         ocr_results = run_ocr_on_frames(frame_paths)
-        semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess"}
-        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess"}, confidence=0.8)
+        semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
+        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset"}, confidence=0.8)
         db.add(su)
         db.commit()
         db.refresh(su)
