@@ -146,6 +146,74 @@ class SampleGenerationFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_sample_job_generates_samples_for_project_units_when_source_is_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-batch-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="batch sample project", description="", domain_type="knowledge", status="active"))
+                units = [
+                    SemanticUnit(
+                        id=f"unit-batch-{index}",
+                        project_id=project.id,
+                        asset_id="asset-batch",
+                        segment_id=None,
+                        unit_type="text",
+                        title=f"Policy chunk {index}",
+                        content=f"Policy chunk {index} says reviewers must check evidence item {index}.",
+                        labels={"source": "text_asset", "stage": "preprocess", "chunk_index": index},
+                        confidence=0.91,
+                    )
+                    for index in range(3)
+                ]
+                db.add_all(units)
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-batch", task_type="generate_samples", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = sample_job.run({"task_id": task_id, "project_id": project_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.source_unit_id.asc()).all()
+                trace_links = db.query(TraceLink).filter(TraceLink.target_type == "generated_sample").all()
+
+                self.assertEqual(result["status"], "samples_generated")
+                self.assertEqual(result["sample_count"], 3)
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(len(samples), 3)
+                self.assertEqual({sample.source_unit_id for sample in samples}, {"unit-batch-0", "unit-batch-1", "unit-batch-2"})
+                self.assertTrue(all("Policy chunk" in sample.input_text for sample in samples))
+                self.assertTrue(all("evidence item" in sample.output_text for sample in samples))
+                self.assertEqual(len(trace_links), 3)
+            finally:
+                db.close()
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
