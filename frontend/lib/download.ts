@@ -3,7 +3,7 @@ import { apiUrl } from '@/lib/api';
 export async function downloadFile(path: string, filename?: string) {
   const response = await fetch(apiUrl(path));
   if (!response.ok) {
-    throw new Error(`下载失败：HTTP ${response.status}`);
+    throw new Error(`Download failed: HTTP ${response.status}`);
   }
 
   const blob = await response.blob();
