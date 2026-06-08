@@ -13,6 +13,93 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class PreprocessMediaFlowTests(unittest.TestCase):
+    def test_preprocess_builds_semantic_units_for_pdf_and_image_without_media_commands(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-document-image-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="multimodal project", description="", domain_type="knowledge", status="active"))
+                pdf_storage = storage_client.upload_bytes("source.pdf", b"%PDF-1.4 fake pdf bytes", "application/pdf")
+                image_storage = storage_client.upload_bytes("diagram.png", b"\x89PNG\r\n\x1a\nfake image bytes", "image/png")
+                pdf_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="source.pdf",
+                        file_path=pdf_storage["object_name"],
+                        mime_type="application/pdf",
+                        metadata={"storage": pdf_storage["storage"]},
+                    ),
+                )
+                image_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="image",
+                        file_name="diagram.png",
+                        file_path=image_storage["object_name"],
+                        mime_type="image/png",
+                        metadata={"storage": image_storage["storage"]},
+                    ),
+                )
+                pdf_task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                image_task = create_task(db, TaskCreate(project_id=project.id, asset_id=image_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                pdf_asset_id = pdf_asset.id
+                image_asset_id = image_asset.id
+                pdf_task_id = pdf_task.id
+                image_task_id = image_task.id
+            finally:
+                db.close()
+
+            with patch("app.workers.jobs.split_video", side_effect=AssertionError("document and image preprocessing should not run video commands")):
+                pdf_result = preprocess_job.run({"task_id": pdf_task_id, "project_id": project_id, "asset_id": pdf_asset_id})
+                image_result = preprocess_job.run({"task_id": image_task_id, "project_id": project_id, "asset_id": image_asset_id})
+
+            db = SessionLocal()
+            try:
+                pdf_task = get_task(db, pdf_task_id)
+                image_task = get_task(db, image_task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.asc()).all()
+                traces = db.query(TraceLink).filter(TraceLink.source_type == "asset", TraceLink.target_type == "semantic_unit").all()
+
+                self.assertEqual(pdf_result["status"], "preprocessed")
+                self.assertEqual(image_result["status"], "preprocessed")
+                self.assertEqual(pdf_task.status, "success")
+                self.assertEqual(image_task.status, "success")
+                self.assertEqual(len(units), 2)
+                self.assertEqual({unit.unit_type for unit in units}, {"document", "image"})
+                self.assertEqual({unit.labels["source"] for unit in units}, {"document_asset", "image_asset"})
+                self.assertTrue(any(unit.title == "source.pdf" and "application/pdf" in unit.content for unit in units))
+                self.assertTrue(any(unit.title == "diagram.png" and "image/png" in unit.content for unit in units))
+                self.assertEqual(len(traces), 2)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_resolves_media_asset_file_when_source_path_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-test.db'}"
