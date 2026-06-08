@@ -1,0 +1,21 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

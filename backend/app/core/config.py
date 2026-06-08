@@ -1,0 +1,18 @@
+import os
+from pathlib import Path
+
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@127.0.0.1:3307/envoy_v1")
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio123456")
+MINIO_BUCKET = os.getenv("MINIO_BUCKET", "envoy")
+STORAGE_MODE = os.getenv("ENVOY_STORAGE_MODE", "minio").lower()
+
+BASE_DIR = Path(__file__).resolve().parents[3]
+EXPORT_DIR = Path(os.getenv("ENVOY_EXPORT_DIR", str(BASE_DIR / "tmp" / "exports")))
+
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
+OLLAMA_TIMEOUT_SEC = int(os.getenv("OLLAMA_TIMEOUT_SEC", "120"))
+MEDIA_COMMAND_TIMEOUT_SEC = int(os.getenv("MEDIA_COMMAND_TIMEOUT_SEC", "300"))
