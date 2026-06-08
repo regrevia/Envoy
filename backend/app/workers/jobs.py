@@ -6,6 +6,7 @@ from app.services.crud_service import update_task_status, create_artifact
 from app.services.media_service import split_video, extract_frames, transcribe_audio, run_ocr_on_frames
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
+from app.services.analysis_service import build_analysis_payload
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
 from app.models.semantic_unit import SemanticUnit
 from app.models.generated_sample import GeneratedSample
@@ -60,27 +61,7 @@ def analyze_job(self, payload: dict):
         project_id = payload.get("project_id")
         asset_id = payload.get("asset_id")
         _safe_update(db, task_id, "running", 20)
-        structured = {
-            "scenes": [
-                {"scene_id": "scene_001", "start_ms": 0, "end_ms": 1000, "summary": "scene summary"},
-                {"scene_id": "scene_002", "start_ms": 1000, "end_ms": 2000, "summary": "scene summary"},
-            ],
-            "events": [
-                {"event_id": "event_001", "scene_id": "scene_001", "name": "event name"},
-            ],
-            "rules": [
-                {"rule_id": "rule_001", "text": "rule text"},
-            ],
-            "concepts": [
-                {"concept_id": "concept_001", "name": "concept name"},
-            ],
-            "questions": [
-                {"question": "what happened?", "answer": "a summarized answer"},
-            ],
-            "labels": ["scene", "event", "rule", "concept"],
-            "confidence": 0.76,
-            "stage": "analyze",
-        }
+        structured = build_analysis_payload(payload.get("input_config") or payload, payload.get("asset_type"))
         scene_unit = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="scene split", content=str(structured), labels={"stage": "analyze", "kind": "scene"}, confidence=0.78)
         rule_unit = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="rule", title="rule extraction", content=str({"rules": structured["rules"]}), labels={"stage": "analyze", "kind": "rule"}, confidence=0.76)
         concept_unit = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="concept", title="concept extraction", content=str({"concepts": structured["concepts"]}), labels={"stage": "analyze", "kind": "concept"}, confidence=0.75)
