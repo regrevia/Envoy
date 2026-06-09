@@ -152,6 +152,24 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("已有任务</div>", text)
         self.assertNotIn("已选择生成</div>", text)
 
+    def test_home_page_explains_complete_conversion_chain(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "完整转换链路",
+            "上传素材 -> 预处理转换 -> 语义单元审查 -> 生成训练样本 -> 自动导出 AI 素材 -> 追溯审查",
+            "预处理转换",
+            "长任务诊断",
+            "自动导出 AI 素材",
+            "产物追溯",
+            "查看产物中心",
+            "查看追溯链路",
+            "href=\"/artifacts\"",
+            "href=\"/trace\"",
+        ]:
+            self.assertIn(copy, text)
+
     def test_home_page_uses_vertical_divider_flow_not_card_grid(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")

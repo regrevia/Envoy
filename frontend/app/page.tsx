@@ -291,6 +291,32 @@ export default function HomePage() {
               <Link href={exportHref} style={{ ...buttonStyle, background: '#111827', color: '#ffffff', borderColor: '#111827' }}>进入导出</Link>
             </div>
           </article>
+
+          <article className="flow-step">
+            <div style={{ color: '#6b7280', fontSize: 13 }}>完整转换链路</div>
+            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>从原始素材到可用 AI 素材</h2>
+            <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
+              {'上传素材 -> 预处理转换 -> 语义单元审查 -> 生成训练样本 -> 自动导出 AI 素材 -> 追溯审查。'}
+            </p>
+            <div style={{ marginTop: 14, display: 'grid', gap: 0 }}>
+              {[
+                ['预处理转换', '视频、音频、图片、文档和长文本会先转成语义单元，长任务可在任务页查看进度、取消、重试和疑似卡住状态。'],
+                ['长任务诊断', '任务列表会持续展示自动刷新、卡住阈值和未更新时间，便于处理长视频或大文件。'],
+                ['自动导出 AI 素材', '训练导出页可基于项目自动读取语义单元和生成样本，输出 Markdown、Skill、RAG 或数据集。'],
+                ['产物追溯', '产物中心和追溯审查会展示素材、语义单元、生成样本和导出产物之间的链路。'],
+              ].map(([title, detail]) => (
+                <div key={title} style={{ padding: '12px 0', borderTop: '1px solid #e5e7eb' }}>
+                  <strong>{title}</strong>
+                  <div style={{ marginTop: 4, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>{detail}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <Link href="/tasks" style={buttonStyle}>查看转换任务</Link>
+              <Link href="/artifacts" style={buttonStyle}>查看产物中心</Link>
+              <Link href="/trace" style={buttonStyle}>查看追溯链路</Link>
+            </div>
+          </article>
         </section>
       </section>
 
