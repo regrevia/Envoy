@@ -189,6 +189,28 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_train_exports_page_uses_core_chain_divider_layout(self):
+        page = ROOT_DIR / "frontend" / "app" / "train-exports" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "从语义单元到 AI 素材",
+            "1. 确认来源",
+            "2. 选择产物",
+            "3. 导出并审查",
+            "查看产物来源统计",
+            "Markdown",
+            "Skill",
+            "RAG",
+            "自动读取导出",
+            "borderTop: '1px solid #e5e7eb'",
+            "borderBottom: '1px solid #e5e7eb'",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertNotIn("panelStyle", text)
+        self.assertNotIn("borderRadius: 8", text)
+
     def test_home_page_exposes_ollama_runtime_status(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
