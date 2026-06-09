@@ -659,6 +659,8 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             os.environ["ENVOY_STORAGE_MODE"] = "local"
             os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
             os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["MEDIA_SEGMENT_SECONDS"] = "300"
+            os.environ["MEDIA_MAX_SEGMENT_COUNT"] = "2"
             os.environ["OLLAMA_MODEL"] = ""
 
             for name in list(sys.modules):
@@ -742,6 +744,9 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(calls["extract_frames"], expected_path)
                 self.assertEqual(calls["transcribe_audio"], result["semantic"]["segments"])
                 self.assertEqual(len(calls["transcribe_audio"]), 2)
+                self.assertEqual(result["semantic"]["segment_seconds"], 300)
+                self.assertEqual(result["semantic"]["max_segment_count"], 2)
+                self.assertEqual(result["semantic"]["max_input_seconds"], 600)
                 sources = {unit.labels["source"] for unit in units}
                 self.assertIn("media_asset", sources)
                 self.assertIn("media_transcript", sources)
@@ -926,6 +931,8 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             os.environ["ENVOY_STORAGE_MODE"] = "local"
             os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
             os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["MEDIA_SEGMENT_SECONDS"] = "300"
+            os.environ["MEDIA_MAX_SEGMENT_COUNT"] = "2"
             os.environ["OLLAMA_MODEL"] = ""
 
             for name in list(sys.modules):
@@ -1011,6 +1018,9 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(len(calls["transcribe_audio"]), 2)
                 self.assertEqual(calls["transcribe_audio"], result["semantic"]["segments"])
                 self.assertEqual(result["semantic"]["segment_count"], 2)
+                self.assertEqual(result["semantic"]["segment_seconds"], 300)
+                self.assertEqual(result["semantic"]["max_segment_count"], 2)
+                self.assertEqual(result["semantic"]["max_input_seconds"], 600)
                 self.assertEqual(result["semantic"]["source"], "audio_transcript")
                 self.assertIn("audio split done: 2 segment(s)", summaries)
                 self.assertIn("audio transcription done: 2/2 segment(s)", summaries)

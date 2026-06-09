@@ -18,7 +18,7 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
-from app.core.config import SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -215,6 +215,16 @@ def _build_file_semantic_payload(asset: Asset | None, source_path: str, source: 
         "stage": "preprocess",
         "source": source,
         "extraction_status": "metadata_only",
+    }
+
+
+def _media_limit_metadata():
+    segment_seconds = max(int(MEDIA_SEGMENT_SECONDS or 1), 1)
+    max_segment_count = max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
+    return {
+        "segment_seconds": segment_seconds,
+        "max_segment_count": max_segment_count,
+        "max_input_seconds": segment_seconds * max_segment_count,
     }
 
 
@@ -803,7 +813,7 @@ def preprocess_job(self, payload: dict):
                 error = next((str(item.get("error")) for item in failed_transcriptions if item.get("error")), "unknown transcription error")
                 message = f"audio transcription failed: {error}"
                 _safe_update(db, task_id, "failed", 100, error_message=message)
-                return {"status": "failed", "payload": payload, "error": message, "semantic": {"transcript": transcription, "extraction_status": "failed"}}
+                return {"status": "failed", "payload": payload, "error": message, "semantic": {"transcript": transcription, "extraction_status": "failed", **_media_limit_metadata()}}
             if transcript_text:
                 segments = transcription.get("segments", []) if isinstance(transcription, dict) else []
                 chunk_count = len(_text_chunks(transcript_text))
@@ -822,6 +832,7 @@ def preprocess_job(self, payload: dict):
                     "transcript": transcription,
                     "transcript_segment_count": len(segments) if isinstance(segments, list) else 0,
                     "extraction_status": "text_extracted",
+                    **_media_limit_metadata(),
                 }
                 if _task_is_canceled(db, task_id):
                     return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
@@ -829,6 +840,7 @@ def preprocess_job(self, payload: dict):
                 _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                 return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, "audio_asset")
+            semantic_payload.update(_media_limit_metadata())
             labels = {
                 "stage": "preprocess",
                 "source": "audio_asset",
@@ -903,7 +915,14 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
-        semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
+        semantic_payload = {
+            "segments": segment_paths,
+            "transcript": transcription,
+            "ocr": ocr_results,
+            "stage": "preprocess",
+            "source_path": source_path,
+            **_media_limit_metadata(),
+        }
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         failed_transcriptions = [
             item["transcript"]
