@@ -12,6 +12,45 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class ApiAssetFlowTests(unittest.TestCase):
+    def test_asset_upload_rejects_missing_project_without_creating_asset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-missing-project-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+
+                response = client.post(
+                    "/api/v1/assets/upload",
+                    data={"project_id": "missing-project", "asset_type": "text", "language": "zh"},
+                    files={"file": ("source.txt", b"orphan content", "text/plain")},
+                )
+
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.json()["detail"], "Project not found")
+
+                assets_response = client.get("/api/v1/assets")
+                self.assertEqual(assets_response.status_code, 200)
+                self.assertEqual(assets_response.json(), [])
+                storage_dir = Path(tmp_dir) / "storage"
+                stored_files = [path for path in storage_dir.rglob("*") if path.is_file()] if storage_dir.exists() else []
+                self.assertEqual(stored_files, [])
+            finally:
+                engine.dispose()
+
     def test_project_and_text_asset_upload_flow(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-test.db'}"

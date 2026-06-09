@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.asset import AssetCreate
-from app.services.crud_service import create_asset, list_assets
+from app.services.crud_service import create_asset, get_project, list_assets
 from app.services.minio_service import upload_to_storage
 
 router = APIRouter()
@@ -23,6 +23,9 @@ async def upload_asset_api(
     language: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
+    if get_project(db, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     file_bytes = await file.read()
     storage_info = upload_to_storage(file.filename, file_bytes, file.content_type or "application/octet-stream")
     payload = AssetCreate(
