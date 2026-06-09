@@ -355,6 +355,27 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("panelStyle", text)
         self.assertNotIn("borderRadius: 8", text)
 
+    def test_trace_page_uses_core_chain_divider_layout(self):
+        page = ROOT_DIR / "frontend" / "app" / "trace" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "追溯审查",
+            "素材 -> 语义单元 -> 生成样本 -> AI 产物",
+            "来源类型",
+            "来源 ID",
+            "查询追溯",
+            "追溯结果",
+            "导出产物",
+            "处理任务",
+            "borderTop: '1px solid #e5e7eb'",
+            "borderBottom: '1px solid #e5e7eb'",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertNotIn("panelStyle", text)
+        self.assertNotIn("borderRadius: 8", text)
+
 
 if __name__ == "__main__":
     unittest.main()
