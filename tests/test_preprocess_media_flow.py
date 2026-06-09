@@ -275,6 +275,80 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_stops_media_pipeline_when_task_is_canceled_after_split(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-cancel-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="cancel media project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("cancel-me.mp4", b"fake video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="cancel-me.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            def cancel_after_split(video_path, output_dir):
+                db = SessionLocal()
+                try:
+                    update_task_status(db, task_id, "canceled", 35, result_summary="Task canceled by user")
+                finally:
+                    db.close()
+                return [str(Path(output_dir) / "segment_000001.mp4")]
+
+            with patch("app.workers.jobs.split_video", side_effect=cancel_after_split), \
+                patch("app.workers.jobs.extract_frames", side_effect=AssertionError("canceled media task should not extract frames")), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=AssertionError("canceled media task should not transcribe audio")), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("canceled media task should not run OCR")):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "canceled")
+                self.assertEqual(stored_task.status, "canceled")
+                self.assertEqual(stored_task.progress, 35)
+                self.assertEqual(stored_task.result_summary, "Task canceled by user")
+                self.assertEqual(units, [])
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_fails_fast_when_media_source_file_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-missing-test.db'}"

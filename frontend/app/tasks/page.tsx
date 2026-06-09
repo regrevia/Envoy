@@ -43,6 +43,7 @@ function statusColor(status?: string | null) {
   if (status === 'success') return '#166534';
   if (status === 'failed' || status === 'dispatch_failed') return '#b91c1c';
   if (status === 'running') return '#1d4ed8';
+  if (status === 'canceled') return '#6b7280';
   return '#4b5563';
 }
 
@@ -52,7 +53,12 @@ function statusLabel(status?: string | null) {
   if (status === 'dispatch_failed') return '投递失败';
   if (status === 'running') return '运行中';
   if (status === 'pending') return '等待中';
+  if (status === 'canceled') return '已取消';
   return status || '-';
+}
+
+function canCancel(task: Task) {
+  return task.status === 'pending' || task.status === 'running' || task.status === 'dispatch_failed';
 }
 
 function staleLabel(task: Task) {
@@ -85,6 +91,8 @@ function formatTime(value?: string | null) {
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
 
   const loadTasks = async () => {
     try {
@@ -102,6 +110,21 @@ export default function TasksPage() {
     const timer = setInterval(loadTasks, 4000);
     return () => clearInterval(timer);
   }, []);
+
+  const cancelTask = async (taskId: string) => {
+    setCancelingId(taskId);
+    setMessage('');
+    try {
+      await apiJson(`/api/v1/tasks/${taskId}/cancel`, { method: 'POST' });
+      setMessage('任务已取消');
+      await loadTasks();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '取消任务失败';
+      setMessage(text);
+    } finally {
+      setCancelingId(null);
+    }
+  };
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -121,6 +144,7 @@ export default function TasksPage() {
             </div>
             <button onClick={() => void loadTasks()} style={buttonStyle}>刷新</button>
           </div>
+          {message ? <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: message.includes('失败') ? '#b91c1c' : '#166534' }}>{message}</div> : null}
 
           {loading ? <div style={{ padding: '22px 0', color: '#6b7280' }}>正在加载...</div> : null}
           {!loading && tasks.length === 0 ? <div style={{ padding: '22px 0', color: '#6b7280' }}>暂无任务。请先创建项目、上传素材并启动转换。</div> : null}
@@ -148,7 +172,18 @@ export default function TasksPage() {
                     {task.error_message ? <div style={{ marginTop: 8, color: '#b91c1c', wordBreak: 'break-word' }}>{task.error_message}</div> : null}
                     {task.result_summary ? <div style={{ marginTop: 8, color: '#4b5563', wordBreak: 'break-word' }}>{task.result_summary}</div> : null}
                   </div>
-                  <Link href={`/tasks/${task.id}`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', flex: '0 0 auto' }}>详情</Link>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', flex: '0 0 auto' }}>
+                    {canCancel(task) ? (
+                      <button
+                        onClick={() => void cancelTask(task.id)}
+                        disabled={cancelingId === task.id}
+                        style={{ ...buttonStyle, color: '#991b1b', borderColor: '#fecaca', opacity: cancelingId === task.id ? 0.7 : 1 }}
+                      >
+                        {cancelingId === task.id ? '正在取消...' : '取消任务'}
+                      </button>
+                    ) : null}
+                    <Link href={`/tasks/${task.id}`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>详情</Link>
+                  </div>
                 </div>
               </div>
             );

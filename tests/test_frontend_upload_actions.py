@@ -174,6 +174,15 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_task_pages_expose_cancel_action_for_long_running_work(self):
+        task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
+        task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for text in [task_list, task_detail]:
+            self.assertIn("/cancel", text)
+            self.assertIn("取消任务", text)
+            self.assertIn("已取消", text)
+
 
 if __name__ == "__main__":
     unittest.main()
