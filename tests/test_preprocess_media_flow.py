@@ -428,6 +428,84 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_extracts_image_ocr_text_into_semantic_unit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-image-ocr-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="image ocr project", description="", domain_type="knowledge", status="active"))
+                image_storage = storage_client.upload_bytes("receipt.png", b"\x89PNG\r\n\x1a\nfake image bytes", "image/png")
+                image_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="image",
+                        file_name="receipt.png",
+                        file_path=image_storage["object_name"],
+                        mime_type="image/png",
+                        metadata={"storage": image_storage["storage"]},
+                    ),
+                )
+                image_task = create_task(db, TaskCreate(project_id=project.id, asset_id=image_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                image_asset_id = image_asset.id
+                image_task_id = image_task.id
+                expected_path = str(storage_client._local_path(image_storage["object_name"]))
+            finally:
+                db.close()
+
+            ocr_payload = [
+                {
+                    "frame": expected_path,
+                    "text": "Invoice approval requires manager review.",
+                    "confidence": 0.86,
+                }
+            ]
+            with patch("app.workers.jobs.split_video", side_effect=AssertionError("image preprocessing should not run video commands")), \
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=ocr_payload) as ocr_mock:
+                result = preprocess_job.run({"task_id": image_task_id, "project_id": project_id, "asset_id": image_asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, image_task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == image_asset_id).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "text_extracted")
+                self.assertEqual(result["semantic"]["source"], "image_text")
+                self.assertEqual(result["semantic"]["ocr_result_count"], 1)
+                ocr_mock.assert_called_once_with([expected_path])
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0].unit_type, "image")
+                self.assertEqual(units[0].labels["source"], "image_text")
+                self.assertEqual(units[0].labels["extraction_status"], "text_extracted")
+                self.assertIn("Invoice approval requires manager review.", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_resolves_media_asset_file_when_source_path_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-test.db'}"
