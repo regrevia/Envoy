@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -45,10 +46,15 @@ class ExportConfigurationTests(unittest.TestCase):
             report = export_markdown_from_video_summary([{"summary": "beta"}], tmp_dir, "task-002", "Report Title")
 
             skill_text = Path(skill["path"]).read_text(encoding="utf-8")
+            skill_manifest = json.loads(Path(skill["paths"]["manifest"]).read_text(encoding="utf-8"))
             report_text = Path(report["path"]).read_text(encoding="utf-8")
 
             self.assertIn("## 输入摘要", skill_text)
             self.assertIn("样本 1", skill_text)
+            self.assertEqual(skill_manifest["schema_version"], "envoy.skill.v1")
+            self.assertEqual(skill_manifest["title"], "Skill Title")
+            self.assertEqual(skill_manifest["source_task_id"], "task-001")
+            self.assertEqual(skill_manifest["materials"][0]["topic"], "alpha")
             self.assertIn("## 视频转化摘要", report_text)
             self.assertIn("task-001", skill["root"])
             self.assertIn("task-002", report["root"])
