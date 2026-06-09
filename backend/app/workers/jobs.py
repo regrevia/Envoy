@@ -96,6 +96,13 @@ def _is_image_asset(asset):
     return asset.asset_type == "image" or mime_type.startswith("image/") or asset.file_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"))
 
 
+def _is_audio_asset(asset):
+    if asset is None:
+        return False
+    mime_type = asset.mime_type or ""
+    return asset.asset_type == "audio" or mime_type.startswith("audio/") or asset.file_name.lower().endswith((".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".wma"))
+
+
 def _resolve_source_path(payload: dict, asset: Asset | None) -> str:
     explicit_path = payload.get("source_path") or (payload.get("input_config") or {}).get("source_path")
     if explicit_path:
@@ -535,6 +542,48 @@ def preprocess_job(self, payload: dict):
                 0.7,
             )
             _safe_update(db, task_id, "success", 100, result_summary=f"{unit_type} preprocess done: metadata captured")
+            return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
+        if _is_audio_asset(asset):
+            if _task_is_canceled(db, task_id):
+                return _canceled_result(payload)
+            transcription = transcribe_audio(source_path)
+            if _task_is_canceled(db, task_id):
+                return _canceled_result(payload)
+            transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
+            if transcript_text:
+                segments = transcription.get("segments", []) if isinstance(transcription, dict) else []
+                units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86)
+                semantic_payload = {
+                    "char_count": len(transcript_text),
+                    "preview": transcript_text[:500],
+                    "stage": "preprocess",
+                    "source": "audio_transcript",
+                    "chunk_count": len(units),
+                    "segment_count": len(segments) if isinstance(segments, list) else 0,
+                    "extraction_status": "text_extracted",
+                }
+                _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
+                return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
+            semantic_payload = _build_file_semantic_payload(asset, source_path, "audio_asset")
+            labels = {
+                "stage": "preprocess",
+                "source": "audio_asset",
+                "mime_type": semantic_payload["mime_type"],
+                "asset_type": semantic_payload["asset_type"],
+                "size_bytes": semantic_payload["size_bytes"],
+                "extraction_status": semantic_payload["extraction_status"],
+            }
+            _persist_single_semantic_unit(
+                db,
+                project_id,
+                asset_id,
+                "audio",
+                asset.file_name if asset else "uploaded audio",
+                json.dumps(semantic_payload, ensure_ascii=False),
+                labels,
+                0.7,
+            )
+            _safe_update(db, task_id, "success", 100, result_summary="audio preprocess done: metadata captured")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
