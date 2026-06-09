@@ -300,6 +300,31 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["json"]["model"], "qwen2.5:7b")
         self.assertIn("raw content", client.calls[0]["json"]["prompt"])
 
+    def test_ollama_empty_response_is_reported_as_failed(self):
+        os.environ["OLLAMA_BASE_URL"] = "http://ollama.local:11434"
+        os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+        sys.modules.pop("app.core.config", None)
+        sys.modules.pop("app.services.ollama_service", None)
+        from app.services.ollama_service import generate_with_ollama
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"response": "   "}
+
+        class FakeClient:
+            def post(self, url, json, timeout):
+                return FakeResponse()
+
+        result = generate_with_ollama("Improve", "raw content", client=FakeClient())
+
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["text"], "")
+        self.assertEqual(result["error"], "ollama returned empty response")
+
     def test_ollama_truncates_long_content_before_generation(self):
         os.environ["OLLAMA_BASE_URL"] = "http://ollama.local:11434"
         os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
