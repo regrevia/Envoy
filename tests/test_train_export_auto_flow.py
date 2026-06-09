@@ -70,6 +70,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
 
                 markdown_text = Path(results["markdown"]["path"]).read_text(encoding="utf-8")
                 skill_text = Path(results["skill"]["path"]).read_text(encoding="utf-8")
+                skill_manifest = json.loads(Path(results["skill"]["paths"]["manifest"]).read_text(encoding="utf-8"))
                 rag_rows = [
                     json.loads(line)
                     for line in Path(results["rag"]["path"]).read_text(encoding="utf-8").splitlines()
@@ -81,6 +82,9 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertIn("## 输入摘要", skill_text)
                 self.assertIn("样本 1", skill_text)
                 self.assertIn("第一段核心知识", skill_text)
+                self.assertEqual(skill_manifest["schema_version"], "envoy.skill.v1")
+                self.assertEqual(skill_manifest["title"], "skill export")
+                self.assertEqual(skill_manifest["materials"][0]["content"], "第一段核心知识。第二段可训练内容。")
                 self.assertEqual(rag_rows[0]["text"], "第一段核心知识。第二段可训练内容。")
                 self.assertEqual(rag_rows[0]["metadata"]["source"], "text_asset")
 
@@ -89,6 +93,8 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertIn("markdown", artifact_types)
                 self.assertIn("skill", artifact_types)
                 self.assertIn("rag", artifact_types)
+                skill_artifacts = [item for item in artifacts if item["artifact_type"] == "skill"]
+                self.assertEqual({Path(item["file_path"]).name for item in skill_artifacts}, {"skill.md", "skill.json"})
 
                 markdown_artifact = next(item for item in artifacts if item["artifact_type"] == "markdown")
                 download = client.get(f"/api/v1/artifacts/{markdown_artifact['id']}/download")
@@ -223,12 +229,16 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 )
 
                 self.assertEqual(response.status_code, 200)
-                skill_text = Path(response.json()["path"]).read_text(encoding="utf-8")
+                body = response.json()
+                skill_text = Path(body["path"]).read_text(encoding="utf-8")
+                skill_manifest_text = Path(body["paths"]["manifest"]).read_text(encoding="utf-8")
                 self.assertIn("target-trace", skill_text)
                 self.assertIn("target-unit", skill_text)
                 self.assertNotIn("other-trace", skill_text)
                 self.assertNotIn("other-unit", skill_text)
                 self.assertNotIn("其他项目内容", skill_text)
+                self.assertIn("target-trace", skill_manifest_text)
+                self.assertNotIn("other-trace", skill_manifest_text)
             finally:
                 engine.dispose()
 

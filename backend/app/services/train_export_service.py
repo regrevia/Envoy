@@ -179,12 +179,33 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
     root = _resolve_root(out_dir, "skill", task_id, task_name)
     skill_dir = build_subdir(root, "skill")
     out_path = skill_dir / "skill.md"
+    manifest_path = skill_dir / "skill.json"
     content_lines = ["## 输入摘要", ""]
     for idx, row in enumerate(clean_rows, 1):
         content_lines.append(f"- 样本 {idx}: {json.dumps(row, ensure_ascii=False)}")
     build_markdown_report(title, "\n".join(content_lines), str(out_path))
-    _finalize_export(db, project_id, task_id, "skill", task_name, root, [out_path])
-    return {"root": str(root), "path": str(out_path)}
+    manifest = {
+        "schema_version": "envoy.skill.v1",
+        "title": title,
+        "source_task_id": task_id,
+        "task_name": task_name,
+        "project_id": project_id,
+        "materials": clean_rows,
+        "files": {
+            "markdown": str(out_path),
+            "manifest": str(manifest_path),
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _finalize_export(db, project_id, task_id, "skill", task_name, root, [out_path, manifest_path])
+    return {
+        "root": str(root),
+        "path": str(out_path),
+        "paths": {
+            "markdown": str(out_path),
+            "manifest": str(manifest_path),
+        },
+    }
 
 
 def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, task_id: str, title: str = "Video Markdown Report", task_name: str | None = None, db=None, project_id: str | None = None):
