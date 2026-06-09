@@ -179,6 +179,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                     for line in Path(results["rag"]["path"]).read_text(encoding="utf-8").splitlines()
                     if line.strip()
                 ]
+                rag_manifest = json.loads(Path(results["rag"]["paths"]["manifest"]).read_text(encoding="utf-8"))
 
                 self.assertIn("## 视频转化摘要", markdown_text)
                 self.assertIn("第一段核心知识", markdown_text)
@@ -196,6 +197,12 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(rag_rows[0]["metadata"]["title"], "核心知识片段")
                 self.assertEqual(rag_rows[0]["metadata"]["unit_type"], "text")
                 self.assertEqual(rag_rows[0]["metadata"]["confidence"], 0.91)
+                self.assertEqual(rag_manifest["schema_version"], "envoy.rag.v1")
+                self.assertEqual(rag_manifest["source_task_id"], results["rag"]["task_id"])
+                self.assertEqual(rag_manifest["project_id"], project_id)
+                self.assertEqual(rag_manifest["row_count"], 1)
+                self.assertEqual(Path(rag_manifest["files"]["corpus"]).name, "rag_corpus.jsonl")
+                self.assertEqual(Path(rag_manifest["files"]["manifest"]).name, "rag_manifest.json")
 
                 artifacts = client.get("/api/v1/artifacts").json()
                 artifact_types = {item["artifact_type"] for item in artifacts}
@@ -204,6 +211,8 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertIn("rag", artifact_types)
                 skill_artifacts = [item for item in artifacts if item["artifact_type"] == "skill"]
                 self.assertEqual({Path(item["file_path"]).name for item in skill_artifacts}, {"skill.md", "skill.json"})
+                rag_artifacts = [item for item in artifacts if item["artifact_type"] == "rag"]
+                self.assertEqual({Path(item["file_path"]).name for item in rag_artifacts}, {"rag_corpus.jsonl", "rag_manifest.json"})
 
                 markdown_artifact = next(item for item in artifacts if item["artifact_type"] == "markdown")
                 download = client.get(f"/api/v1/artifacts/{markdown_artifact['id']}/download")
