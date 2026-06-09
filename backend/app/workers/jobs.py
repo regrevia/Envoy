@@ -644,6 +644,47 @@ def preprocess_job(self, payload: dict):
         if _task_is_canceled(db, task_id):
             return _canceled_result(payload)
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
+        transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
+        if transcript_text:
+            _persist_text_semantic_units(
+                db,
+                project_id,
+                asset_id,
+                "media transcript",
+                "transcript",
+                transcript_text,
+                "media_transcript",
+                0.86,
+                task_id=task_id,
+                progress_label="media transcript chunks persisted",
+                progress_start=75,
+                progress_end=85,
+            )
+            if _task_is_canceled(db, task_id):
+                return _canceled_result(payload, semantic_payload)
+        ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
+        if ocr_text:
+            confidence_values = [
+                float(item.get("confidence", 0.0))
+                for item in ocr_results
+                if isinstance(item, dict) and isinstance(item.get("confidence", 0.0), (int, float))
+            ]
+            _persist_text_semantic_units(
+                db,
+                project_id,
+                asset_id,
+                "media OCR",
+                "ocr",
+                ocr_text,
+                "media_ocr",
+                max(confidence_values) if confidence_values else 0.78,
+                task_id=task_id,
+                progress_label="media ocr chunks persisted",
+                progress_start=90,
+                progress_end=95,
+            )
+            if _task_is_canceled(db, task_id):
+                return _canceled_result(payload, semantic_payload)
         su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset"}, confidence=0.8)
         db.add(su)
         db.commit()
