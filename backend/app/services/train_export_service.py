@@ -3,6 +3,9 @@ import json
 
 from app.core.config import EXPORT_DIR
 from app.models.generated_sample import GeneratedSample
+from app.models.artifact import Artifact
+from app.models.asset import Asset
+from app.models.processing_task import ProcessingTask
 from app.models.semantic_unit import SemanticUnit
 from app.models.trace_link import TraceLink
 from app.schemas.artifact import ArtifactCreate
@@ -53,7 +56,28 @@ def _write_artifacts(db, project_id: str | None, artifact_type: str, paths: list
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     semantic_units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.desc()).all()
     samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.desc()).all()
-    trace_links = db.query(TraceLink).filter(TraceLink.source_type.in_(["semantic_unit", "processing_task", "asset"])) if db else []
+    assets = db.query(Asset).filter(Asset.project_id == project_id).all()
+    tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all()
+    artifacts = db.query(Artifact).filter(Artifact.project_id == project_id).all()
+    project_entity_ids = {
+        *(row.id for row in semantic_units),
+        *(row.id for row in samples),
+        *(row.id for row in assets),
+        *(row.id for row in tasks),
+        *(row.id for row in artifacts),
+        *(row.asset_id for row in semantic_units if row.asset_id),
+    }
+    trace_links = (
+        db.query(TraceLink)
+        .filter(
+            (TraceLink.source_id.in_(project_entity_ids))
+            | (TraceLink.target_id.in_(project_entity_ids))
+        )
+        .order_by(TraceLink.created_at.desc())
+        .all()
+        if project_entity_ids
+        else []
+    )
     return {
         "semantic_units": [
             {
@@ -76,6 +100,7 @@ def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
         ],
         "trace_links": [
             {
+                "id": row.id,
                 "source_type": row.source_type,
                 "source_id": row.source_id,
                 "target_type": row.target_type,
