@@ -327,6 +327,52 @@ class SampleGenerationFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_sample_job_rejects_missing_source_unit_without_creating_placeholder_sample(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-missing-unit-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="missing source unit project", description="", domain_type="knowledge", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="generate_samples", input_config={"source_unit_id": "missing-unit"}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = sample_job.run({"task_id": task_id, "project_id": project_id, "source_unit_id": "missing-unit"})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "Source semantic unit not found for project")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "Source semantic unit not found for project")
+                self.assertEqual(samples, [])
+            finally:
+                db.close()
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

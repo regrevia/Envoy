@@ -486,7 +486,11 @@ def sample_job(self, payload: dict):
         source_unit_id = payload.get("source_unit_id") or input_config.get("source_unit_id")
         _safe_update(db, task_id, "running", 30)
         if source_unit_id:
-            unit = db.query(SemanticUnit).filter(SemanticUnit.id == source_unit_id).first()
+            unit = db.query(SemanticUnit).filter(SemanticUnit.id == source_unit_id, SemanticUnit.project_id == project_id).first()
+            if unit is None:
+                message = "Source semantic unit not found for project"
+                _safe_update(db, task_id, "failed", 100, error_message=message)
+                return {"status": "failed", "payload": payload, "error": message}
             sample = _persist_generated_sample(db, project_id, unit, payload)
             _safe_update(db, task_id, "success", 100, result_summary="1 sample generated")
             return {"status": "samples_generated", "payload": payload, "sample_id": sample.id, "sample_count": 1}
