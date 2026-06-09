@@ -192,6 +192,16 @@ class FrontendUploadActionsTests(unittest.TestCase):
             self.assertIn("重试任务", text)
             self.assertIn("正在重试", text)
 
+    def test_task_pages_use_divider_layout_over_cards(self):
+        task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
+        task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for text in [task_list, task_detail]:
+            self.assertIn("borderTop: '1px solid #e5e7eb'", text)
+            self.assertIn("borderBottom: '1px solid #e5e7eb'", text)
+            self.assertNotIn("panelStyle", text)
+            self.assertNotIn("borderRadius: 8", text)
+
     def test_artifact_detail_exposes_manifest_quality_metadata(self):
         page = (ROOT_DIR / "frontend" / "app" / "artifacts" / "[artifact_id]" / "page.tsx").read_text(encoding="utf-8")
 
