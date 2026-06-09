@@ -493,6 +493,137 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_skill_export_uses_ollama_quality_review_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-skill-ollama-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="Skill Ollama project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-skill-ollama",
+                        project_id=project.id,
+                        asset_id="asset-skill-ollama",
+                        segment_id=None,
+                        unit_type="rule",
+                        title="Refund workflow",
+                        content="Refund approvals require receipt review and manager approval.",
+                        labels={"source": "text_asset"},
+                        confidence=0.93,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.services.train_export_service.generate_with_ollama") as generate:
+                    generate.return_value = {
+                        "enabled": True,
+                        "status": "success",
+                        "text": '{"summary":"Refund workflow skill is actionable.","usage":"Support agent refund approval guidance","risks":["Needs manager policy version"]}',
+                        "error": None,
+                    }
+                    response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "skill", "title": "Refund Skill"})
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                skill_text = Path(body["path"]).read_text(encoding="utf-8")
+                manifest = json.loads(Path(body["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+                self.assertIn("## AI 质检", skill_text)
+                self.assertIn("Refund workflow skill is actionable.", skill_text)
+                self.assertEqual(manifest["ollama_status"], "success")
+                self.assertEqual(manifest["llm_summary"], "Refund workflow skill is actionable.")
+                self.assertEqual(manifest["llm_usage"], "Support agent refund approval guidance")
+                self.assertEqual(manifest["llm_risks"], ["Needs manager policy version"])
+                generate.assert_called_once()
+            finally:
+                engine.dispose()
+
+    def test_auto_skill_export_keeps_package_when_ollama_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-skill-ollama-failure-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="Skill Ollama fallback project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-skill-fallback",
+                        project_id=project.id,
+                        asset_id="asset-skill-fallback",
+                        segment_id=None,
+                        unit_type="rule",
+                        title="Stable skill",
+                        content="Skill package must remain exportable.",
+                        labels={"source": "text_asset"},
+                        confidence=0.87,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.services.train_export_service.generate_with_ollama") as generate:
+                    generate.return_value = {"enabled": True, "status": "failed", "text": "", "error": "ollama overloaded"}
+                    response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "skill", "title": "Stable Skill"})
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                skill_text = Path(body["path"]).read_text(encoding="utf-8")
+                manifest = json.loads(Path(body["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+                self.assertIn("Skill package must remain exportable.", skill_text)
+                self.assertNotIn("## AI 质检", skill_text)
+                self.assertEqual(manifest["ollama_status"], "failed")
+                self.assertEqual(manifest["ollama_error"], "ollama overloaded")
+                self.assertNotIn("llm_summary", manifest)
+            finally:
+                engine.dispose()
+
     def test_train_export_requires_project_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-context-test.db'}"

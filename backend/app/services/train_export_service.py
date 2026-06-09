@@ -164,6 +164,29 @@ def _ollama_markdown_summary(rows: list[dict]):
     return metadata
 
 
+def _ollama_skill_review(rows: list[dict]):
+    source_text = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
+    result = generate_with_ollama(
+        "Review this skill package. Return JSON with summary, usage, and risks.",
+        source_text,
+    )
+    metadata = {"ollama_status": result.get("status")}
+    if result.get("status") != "success":
+        if result.get("error"):
+            metadata["ollama_error"] = result["error"]
+        return metadata
+
+    parsed = parse_ollama_json_object(result.get("text", ""))
+    if isinstance(parsed.get("summary"), str) and parsed["summary"].strip():
+        metadata["llm_summary"] = parsed["summary"].strip()
+    if isinstance(parsed.get("usage"), str) and parsed["usage"].strip():
+        metadata["llm_usage"] = parsed["usage"].strip()
+    risks = parsed.get("risks")
+    if isinstance(risks, list):
+        metadata["llm_risks"] = [str(item).strip() for item in risks if str(item).strip()]
+    return metadata
+
+
 def export_sft_dataset(rows: list[dict], out_dir: str, task_id: str, task_name: str | None = None, db=None, project_id: str | None = None):
     clean_rows = _dedupe_rows(rows)
     parts = _split_rows(clean_rows)
@@ -246,9 +269,16 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
     skill_dir = build_subdir(root, "skill")
     out_path = skill_dir / "skill.md"
     manifest_path = skill_dir / "skill.json"
+    llm_metadata = _ollama_skill_review(clean_rows)
     content_lines = ["## 输入摘要", ""]
     for idx, row in enumerate(clean_rows, 1):
         content_lines.append(f"- 样本 {idx}: {json.dumps(row, ensure_ascii=False)}")
+    if llm_metadata.get("llm_summary"):
+        content_lines.extend(["", "## AI 质检", "", str(llm_metadata["llm_summary"])])
+        if llm_metadata.get("llm_usage"):
+            content_lines.extend(["", f"用途：{llm_metadata['llm_usage']}"])
+        if llm_metadata.get("llm_risks"):
+            content_lines.extend(["", "风险：", *[f"- {item}" for item in llm_metadata["llm_risks"]]])
     build_markdown_report(title, "\n".join(content_lines), str(out_path))
     manifest = {
         "schema_version": "envoy.skill.v1",
@@ -261,6 +291,7 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
             "markdown": str(out_path),
             "manifest": str(manifest_path),
         },
+        **llm_metadata,
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     _finalize_export(db, project_id, task_id, "skill", task_name, root, [out_path, manifest_path])
