@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.task import TaskCreate
 from app.services.crud_service import create_task, list_tasks, get_task, update_task_status
+from app.services.task_dispatcher import dispatch_task
 from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job
 
 router = APIRouter()
@@ -17,14 +18,6 @@ def _task_payload(task):
         "result_summary": task.result_summary,
         "error_message": task.error_message,
     }
-
-
-def _dispatch_task(db: Session, task, celery_task, payload: dict):
-    try:
-        celery_task.delay({"task_id": task.id, **payload})
-    except Exception as exc:
-        task = update_task_status(db, task.id, "dispatch_failed", 0, error_message=f"Task dispatch failed: {exc}")
-    return _task_payload(task)
 
 
 @router.get("/tasks")
@@ -51,34 +44,34 @@ def set_task_status(task_id: str, payload: dict, db: Session = Depends(get_db)):
 @router.post("/tasks/preprocess")
 def create_preprocess_task(payload: TaskCreate, db: Session = Depends(get_db)):
     task = create_task(db, payload)
-    return _dispatch_task(db, task, preprocess_job, payload.model_dump())
+    return dispatch_task(db, task, preprocess_job, payload.model_dump())
 
 
 @router.post("/tasks/analyze")
 def create_analyze_task(payload: TaskCreate, db: Session = Depends(get_db)):
     task = create_task(db, payload)
-    return _dispatch_task(db, task, analyze_job, payload.model_dump())
+    return dispatch_task(db, task, analyze_job, payload.model_dump())
 
 
 @router.post("/tasks/generate-samples")
 def create_sample_task(payload: TaskCreate, db: Session = Depends(get_db)):
     task = create_task(db, payload)
-    return _dispatch_task(db, task, sample_job, payload.model_dump())
+    return dispatch_task(db, task, sample_job, payload.model_dump())
 
 
 @router.post("/tasks/export")
 def create_export_task(payload: TaskCreate, db: Session = Depends(get_db)):
     task = create_task(db, payload)
-    return _dispatch_task(db, task, export_job, payload.model_dump())
+    return dispatch_task(db, task, export_job, payload.model_dump())
 
 
 @router.post("/tasks/export-skill")
 def create_export_skill_task(payload: dict, db: Session = Depends(get_db)):
     task = create_task(db, TaskCreate(project_id=payload.get("project_id"), asset_id=payload.get("asset_id"), task_type="export_skill", input_config=payload))
-    return _dispatch_task(db, task, export_skill_job, payload)
+    return dispatch_task(db, task, export_skill_job, payload)
 
 
 @router.post("/tasks/export-markdown")
 def create_export_markdown_task(payload: dict, db: Session = Depends(get_db)):
     task = create_task(db, TaskCreate(project_id=payload.get("project_id"), asset_id=payload.get("asset_id"), task_type="export_markdown", input_config=payload))
-    return _dispatch_task(db, task, export_markdown_job, payload)
+    return dispatch_task(db, task, export_markdown_job, payload)
