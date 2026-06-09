@@ -35,6 +35,34 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("Upload asset", text)
         self.assertNotIn("Choose project", text)
 
+    def test_upload_page_shows_full_conversion_flow_without_card_shell(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "多媒体转换任务",
+            "1. 确认任务/项目",
+            "2. 上传素材",
+            "3. 选择生成内容",
+            "AI 素材",
+            "Markdown",
+            "Skill",
+            "RAG",
+            "训练样本",
+            "视频/音频/图片/文档/长文本",
+            "预处理转换",
+            "查看转换任务",
+            "查看语义单元",
+            "训练导出",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertIn("borderTop: '1px solid #e5e7eb'", text)
+        self.assertIn("borderBottom: '1px solid #e5e7eb'", text)
+        self.assertNotIn("panelStyle", text)
+        self.assertNotIn("borderRadius: 8", text)
+        self.assertNotIn("上传响应", text)
+
     def test_semantic_units_page_exposes_generate_sample_action(self):
         page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
         text = page.read_text(encoding="utf-8")
