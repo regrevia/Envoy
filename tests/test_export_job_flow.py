@@ -169,6 +169,58 @@ class ExportJobFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_export_job_rejects_empty_project_without_creating_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-empty-export-job-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.artifact import Artifact
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import export_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="empty export project", description="", domain_type="knowledge", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="export", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = export_job.run({"task_id": task_id, "project_id": project_id})
+
+            jsonl_path = export_dir / f"{task_id}.jsonl"
+            md_path = export_dir / f"{task_id}.md"
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                artifacts = db.query(Artifact).filter(Artifact.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "No exportable rows found for project")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "No exportable rows found for project")
+                self.assertFalse(jsonl_path.exists())
+                self.assertFalse(md_path.exists())
+                self.assertEqual(artifacts, [])
+            finally:
+                db.close()
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
