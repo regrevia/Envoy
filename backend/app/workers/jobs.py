@@ -982,7 +982,13 @@ def preprocess_job(self, payload: dict):
         db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=su.id, relation_type="derived_from"))
         db.commit()
         _successful_preprocess_replaces_previous(db, asset_id, task_id)
-        _safe_update(db, task_id, "success", 100, result_summary="preprocess done")
+        _safe_update(
+            db,
+            task_id,
+            "success",
+            100,
+            result_summary=f"media preprocess done: {len(segment_paths)} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec",
+        )
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
