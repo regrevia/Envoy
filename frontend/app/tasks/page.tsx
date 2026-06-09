@@ -13,6 +13,10 @@ type Task = {
   status?: string | null;
   progress?: number | null;
   created_at?: string | null;
+  updated_at?: string | null;
+  is_stale?: boolean;
+  stale_seconds?: number;
+  stale_after_seconds?: number;
   result_summary?: string | null;
   error_message?: string | null;
 };
@@ -49,6 +53,13 @@ function statusLabel(status?: string | null) {
   if (status === 'running') return '运行中';
   if (status === 'pending') return '等待中';
   return status || '-';
+}
+
+function staleLabel(task: Task) {
+  if (!task.is_stale) return '';
+  const seconds = Math.max(Number(task.stale_seconds ?? 0), 0);
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `疑似卡住：${minutes} 分钟未更新` : '疑似卡住：长时间未更新';
 }
 
 function taskTypeLabel(taskType?: string | null) {
@@ -131,7 +142,9 @@ export default function TasksPage() {
                       <span>项目: {task.project_id || '-'}</span>
                       <span>素材: {task.asset_id || '-'}</span>
                       <span>创建: {formatTime(task.created_at)}</span>
+                      <span>最后更新: {formatTime(task.updated_at)}</span>
                     </div>
+                    {task.is_stale ? <div style={{ marginTop: 8, color: '#b91c1c', fontWeight: 600 }}>{staleLabel(task)}</div> : null}
                     {task.error_message ? <div style={{ marginTop: 8, color: '#b91c1c', wordBreak: 'break-word' }}>{task.error_message}</div> : null}
                     {task.result_summary ? <div style={{ marginTop: 8, color: '#4b5563', wordBreak: 'break-word' }}>{task.result_summary}</div> : null}
                   </div>

@@ -13,6 +13,7 @@ def _env_positive_int(name: str, default: int) -> int:
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@127.0.0.1:3307/envoy_v1")
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 TASK_EXECUTION_MODE = os.getenv("ENVOY_TASK_EXECUTION_MODE", "local").lower()
+TASK_STALE_AFTER_SECONDS = _env_positive_int("TASK_STALE_AFTER_SECONDS", 1800)
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio123456")

@@ -23,6 +23,7 @@ class ExportConfigurationTests(unittest.TestCase):
     def test_numeric_configuration_falls_back_when_environment_is_invalid(self):
         values = {
             "OLLAMA_TIMEOUT_SEC": "abc",
+            "TASK_STALE_AFTER_SECONDS": "0",
             "MEDIA_COMMAND_TIMEOUT_SEC": "",
             "MEDIA_SEGMENT_SECONDS": "-1",
             "MEDIA_FRAME_INTERVAL_SECONDS": "bad",
@@ -36,6 +37,7 @@ class ExportConfigurationTests(unittest.TestCase):
             config = reload_backend_modules("app.core.config")[0]
 
             self.assertEqual(config.OLLAMA_TIMEOUT_SEC, 120)
+            self.assertEqual(config.TASK_STALE_AFTER_SECONDS, 1800)
             self.assertEqual(config.MEDIA_COMMAND_TIMEOUT_SEC, 300)
             self.assertEqual(config.MEDIA_SEGMENT_SECONDS, 600)
             self.assertEqual(config.MEDIA_FRAME_INTERVAL_SECONDS, 15)

@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
 from sqlalchemy.orm import Session
+from app.core.config import TASK_STALE_AFTER_SECONDS
 from app.db.session import get_db
 from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
@@ -11,6 +13,9 @@ router = APIRouter()
 
 
 def _task_payload(task):
+    stale_seconds = 0
+    if task.status == "running" and task.updated_at is not None:
+        stale_seconds = max(int((datetime.utcnow() - task.updated_at).total_seconds()), 0)
     return {
         "id": task.id,
         "project_id": task.project_id,
@@ -23,6 +28,9 @@ def _task_payload(task):
         "error_message": task.error_message,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
+        "is_stale": task.status == "running" and stale_seconds >= TASK_STALE_AFTER_SECONDS,
+        "stale_seconds": stale_seconds,
+        "stale_after_seconds": TASK_STALE_AFTER_SECONDS,
     }
 
 
