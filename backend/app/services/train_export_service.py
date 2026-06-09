@@ -38,6 +38,7 @@ def _split_rows(rows: list[dict]):
 def _semantic_source_metadata(rows: list[dict]):
     source_counts = {}
     unit_type_counts = {}
+    media_limit_counts = {}
     for row in rows:
         labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
         metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
@@ -47,7 +48,24 @@ def _semantic_source_metadata(rows: list[dict]):
             source_counts[str(source)] = source_counts.get(str(source), 0) + 1
         if unit_type:
             unit_type_counts[str(unit_type)] = unit_type_counts.get(str(unit_type), 0) + 1
-    return {"source_counts": source_counts, "unit_type_counts": unit_type_counts}
+        segment_seconds = labels.get("segment_seconds") or metadata.get("segment_seconds")
+        max_segment_count = labels.get("max_segment_count") or metadata.get("max_segment_count")
+        max_input_seconds = labels.get("max_input_seconds") or metadata.get("max_input_seconds")
+        if segment_seconds and max_segment_count and max_input_seconds:
+            key = (int(segment_seconds), int(max_segment_count), int(max_input_seconds))
+            media_limit_counts[key] = media_limit_counts.get(key, 0) + 1
+    metadata = {"source_counts": source_counts, "unit_type_counts": unit_type_counts}
+    if media_limit_counts:
+        metadata["media_processing_limits"] = [
+            {
+                "segment_seconds": segment_seconds,
+                "max_segment_count": max_segment_count,
+                "max_input_seconds": max_input_seconds,
+                "unit_count": count,
+            }
+            for (segment_seconds, max_segment_count, max_input_seconds), count in sorted(media_limit_counts.items())
+        ]
+    return metadata
 
 
 def _resolve_root(out_dir: str | None, task_type: str, task_id: str, task_name: str | None = None):
