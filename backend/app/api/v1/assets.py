@@ -8,6 +8,9 @@ from app.services.minio_service import upload_to_storage
 router = APIRouter()
 
 
+SUPPORTED_ASSET_TYPES = {"text", "markdown", "document", "image", "audio", "video"}
+
+
 def _asset_payload(asset):
     return {
         "id": asset.id,
@@ -40,12 +43,19 @@ async def upload_asset_api(
 ):
     if get_project(db, project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    normalized_asset_type = asset_type.strip().lower()
+    if normalized_asset_type not in SUPPORTED_ASSET_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported asset type")
+    if not file.filename or not file.filename.strip():
+        raise HTTPException(status_code=400, detail="Uploaded file name is empty")
 
     file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
     storage_info = upload_to_storage(file.filename, file_bytes, file.content_type or "application/octet-stream")
     payload = AssetCreate(
         project_id=project_id,
-        asset_type=asset_type,
+        asset_type=normalized_asset_type,
         file_name=file.filename,
         file_path=storage_info["object_name"],
         mime_type=mime_type or file.content_type,

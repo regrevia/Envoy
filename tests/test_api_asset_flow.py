@@ -51,6 +51,88 @@ class ApiAssetFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_asset_upload_rejects_empty_file_without_creating_asset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-empty-upload-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+                project_response = client.post(
+                    "/api/v1/projects",
+                    json={"name": "空文件上传项目", "description": "", "domain_type": "knowledge", "status": "active"},
+                )
+                project_id = project_response.json()["id"]
+
+                response = client.post(
+                    "/api/v1/assets/upload",
+                    data={"project_id": project_id, "asset_type": "text", "language": "zh"},
+                    files={"file": ("empty.txt", b"", "text/plain")},
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["detail"], "Uploaded file is empty")
+                self.assertEqual(client.get("/api/v1/assets").json(), [])
+                storage_dir = Path(tmp_dir) / "storage"
+                stored_files = [path for path in storage_dir.rglob("*") if path.is_file()] if storage_dir.exists() else []
+                self.assertEqual(stored_files, [])
+            finally:
+                engine.dispose()
+
+    def test_asset_upload_rejects_unknown_asset_type_without_creating_asset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-unknown-asset-type-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+                project_response = client.post(
+                    "/api/v1/projects",
+                    json={"name": "未知素材类型项目", "description": "", "domain_type": "knowledge", "status": "active"},
+                )
+                project_id = project_response.json()["id"]
+
+                response = client.post(
+                    "/api/v1/assets/upload",
+                    data={"project_id": project_id, "asset_type": "unknown", "language": "zh"},
+                    files={"file": ("source.bin", b"raw bytes", "application/octet-stream")},
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["detail"], "Unsupported asset type")
+                self.assertEqual(client.get("/api/v1/assets").json(), [])
+                storage_dir = Path(tmp_dir) / "storage"
+                stored_files = [path for path in storage_dir.rglob("*") if path.is_file()] if storage_dir.exists() else []
+                self.assertEqual(stored_files, [])
+            finally:
+                engine.dispose()
+
     def test_project_and_text_asset_upload_flow(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-test.db'}"
