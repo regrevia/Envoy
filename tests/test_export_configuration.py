@@ -20,6 +20,32 @@ def reload_backend_modules(*names: str):
 
 
 class ExportConfigurationTests(unittest.TestCase):
+    def test_numeric_configuration_falls_back_when_environment_is_invalid(self):
+        values = {
+            "OLLAMA_TIMEOUT_SEC": "abc",
+            "MEDIA_COMMAND_TIMEOUT_SEC": "",
+            "TEXT_PREPROCESS_CHUNK_CHARS": "-20",
+            "TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS": "bad",
+            "SAMPLE_GENERATION_BATCH_LIMIT": "0",
+        }
+        previous = {key: os.environ.get(key) for key in values}
+        try:
+            os.environ.update(values)
+            config = reload_backend_modules("app.core.config")[0]
+
+            self.assertEqual(config.OLLAMA_TIMEOUT_SEC, 120)
+            self.assertEqual(config.MEDIA_COMMAND_TIMEOUT_SEC, 300)
+            self.assertEqual(config.TEXT_PREPROCESS_CHUNK_CHARS, 6000)
+            self.assertEqual(config.TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, 400)
+            self.assertEqual(config.SAMPLE_GENERATION_BATCH_LIMIT, 50)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            sys.modules.pop("app.core.config", None)
+
     def test_export_dir_comes_from_environment(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["ENVOY_EXPORT_DIR"] = tmp_dir
