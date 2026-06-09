@@ -70,18 +70,8 @@ function TraceWorkspace() {
   const [result, setResult] = useState<TraceLink[]>([]);
   const [message, setMessage] = useState('输入来源 ID 后查询相关记录');
 
-  useEffect(() => {
-    const typeFromQuery = searchParams.get('type');
-    const idFromQuery = searchParams.get('id');
-    if (typeFromQuery) setSourceType(typeFromQuery);
-    if (idFromQuery) {
-      setSourceId(idFromQuery);
-      setMessage('已从链接带入追溯对象，请点击查询追溯');
-    }
-  }, [searchParams]);
-
-  const queryTrace = async () => {
-    const trimmedId = sourceId.trim();
+  const queryTrace = async (typeValue = sourceType, idValue = sourceId) => {
+    const trimmedId = idValue.trim();
     if (!trimmedId) {
       setMessage('请输入来源 ID');
       setResult([]);
@@ -90,7 +80,7 @@ function TraceWorkspace() {
 
     setMessage('正在查询追溯关系...');
     try {
-      const data = await apiJson<TraceLink[]>(`/api/v1/trace/${sourceType}/${trimmedId}`);
+      const data = await apiJson<TraceLink[]>(`/api/v1/trace/${typeValue}/${trimmedId}`);
       setResult(data);
       setMessage(`找到 ${data.length} 条追溯关系`);
     } catch (error) {
@@ -99,6 +89,23 @@ function TraceWorkspace() {
       setMessage(`追溯查询失败：${text}`);
     }
   };
+
+  useEffect(() => {
+    const typeFromQuery = searchParams.get('type');
+    const idFromQuery = searchParams.get('id');
+    if (typeFromQuery) setSourceType(typeFromQuery);
+    if (idFromQuery) {
+      setSourceId(idFromQuery);
+      setMessage('已从链接带入追溯对象，正在自动查询');
+      if (typeFromQuery) {
+        void queryTrace(typeFromQuery, idFromQuery);
+      } else {
+        void queryTrace(sourceType, idFromQuery);
+      }
+    }
+  // Run only when URL parameters change; queryTrace reads explicit values here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -139,7 +146,7 @@ function TraceWorkspace() {
             <span style={{ color: '#4b5563', fontSize: 13 }}>来源 ID</span>
             <input placeholder="输入素材、语义单元、任务或样本 ID" value={sourceId} onChange={(event) => setSourceId(event.target.value)} style={inputStyle} />
           </label>
-          <button onClick={queryTrace} style={{ ...buttonStyle, width: 'fit-content' }}>查询追溯</button>
+          <button onClick={() => void queryTrace()} style={{ ...buttonStyle, width: 'fit-content' }}>查询追溯</button>
         </section>
 
         <section style={{ marginTop: 20, padding: '18px 0 0', borderTop: '1px solid #e5e7eb' }}>

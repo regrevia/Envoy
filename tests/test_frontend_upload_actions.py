@@ -357,6 +357,8 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "searchParams.get('id')",
             "setSourceType(typeFromQuery)",
             "setSourceId(idFromQuery)",
+            "queryTrace(typeFromQuery, idFromQuery)",
+            "已从链接带入追溯对象，正在自动查询",
         ]:
             self.assertTrue(copy in page or copy in trace_page, copy)
 
