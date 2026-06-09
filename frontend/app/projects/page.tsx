@@ -4,13 +4,6 @@ import { useEffect, useState } from 'react';
 
 import { ApiError, apiJson } from '../../lib/api';
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
-
 const inputStyle = {
   width: '100%',
   padding: '11px 12px',
@@ -122,27 +115,34 @@ export default function ProjectsPage() {
   };
 
   const statusColor = status === 'success' ? '#166534' : status === 'error' ? '#b91c1c' : status === 'loading' ? '#1d4ed8' : '#374151';
-  const statusBorder = status === 'success' ? '#bbf7d0' : status === 'error' ? '#fecaca' : status === 'loading' ? '#bfdbfe' : '#e5e7eb';
-  const statusBg = status === 'success' ? '#f0fdf4' : status === 'error' ? '#fef2f2' : status === 'loading' ? '#eff6ff' : '#ffffff';
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section style={{ maxWidth: 1180, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>项目</h1>
+          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>项目工作台</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 700, color: '#4b5563', lineHeight: 1.7 }}>
             先把视频、长文本和多模态素材归入一个项目，再进入预处理、分析、导出和追溯审查。
           </p>
+          <div style={{ marginTop: 16, padding: '12px 0', borderTop: '1px solid #e5e7eb', display: 'flex', gap: 14, flexWrap: 'wrap', color: '#374151', fontWeight: 700 }}>
+            <span>创建转换项目</span>
+            <span>上传素材</span>
+            <span>训练导出</span>
+            <span>追溯审查</span>
+          </div>
         </header>
 
-        <div style={{ marginTop: 18, padding: '12px 14px', border: `1px solid ${statusBorder}`, borderRadius: 8, background: statusBg, color: statusColor, display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ marginTop: 18, padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: statusColor, display: 'flex', gap: 10, alignItems: 'center' }}>
           <strong style={{ fontSize: 14 }}>{refreshing ? '刷新中' : status === 'loading' ? '处理中' : status === 'error' ? '需要处理' : '状态'}</strong>
           <span style={{ fontSize: 14 }}>{message}</span>
         </div>
 
-        <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.95fr) minmax(0, 1.05fr)', gap: 20, marginTop: 20 }}>
-          <div style={panelStyle}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>新建项目</h2>
+        <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.95fr) minmax(0, 1.05fr)', gap: 32, marginTop: 20, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+          <section style={{ paddingBottom: 20, borderBottom: '1px solid #e5e7eb' }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>创建转换项目</h2>
+            <p style={{ margin: '8px 0 0', color: '#6b7280', lineHeight: 1.6 }}>
+              新建项目，为一次视频、长文本和多模态素材转换建立统一上下文，后续上传、语义单元和 AI 产物都会挂到这个项目。
+            </p>
             <div style={{ marginTop: 18, display: 'grid', gap: 14 }}>
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>项目名称</span>
@@ -160,9 +160,9 @@ export default function ProjectsPage() {
                 {creating ? '创建中...' : '创建项目'}
               </button>
             </div>
-          </div>
+          </section>
 
-          <div style={panelStyle}>
+          <section style={{ paddingBottom: 20, borderBottom: '1px solid #e5e7eb' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>项目列表</h2>
@@ -190,7 +190,7 @@ export default function ProjectsPage() {
               ))}
               {projects.length === 0 ? <div style={{ padding: '22px 0', color: '#6b7280' }}>暂无项目，请先创建一个转换任务项目。</div> : null}
             </div>
-          </div>
+          </section>
         </section>
       </section>
     </main>

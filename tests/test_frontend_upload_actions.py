@@ -161,6 +161,26 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("repeat(3, minmax(0, 1fr))", text)
         self.assertNotIn("borderRadius: 12", text)
 
+    def test_projects_page_uses_divider_layout_over_cards(self):
+        page = ROOT_DIR / "frontend" / "app" / "projects" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "项目工作台",
+            "创建转换项目",
+            "项目列表",
+            "视频、长文本和多模态素材",
+            "上传素材",
+            "训练导出",
+            "追溯审查",
+            "borderTop: '1px solid #e5e7eb'",
+            "borderBottom: '1px solid #e5e7eb'",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertNotIn("panelStyle", text)
+        self.assertNotIn("borderRadius: 8", text)
+
     def test_train_exports_page_accepts_project_and_output_context_from_home(self):
         page = ROOT_DIR / "frontend" / "app" / "train-exports" / "page.tsx"
         text = page.read_text(encoding="utf-8")
