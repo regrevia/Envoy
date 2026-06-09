@@ -124,8 +124,21 @@ export default function HomePage() {
     [projects, selectedProjectId],
   );
 
+  const primaryExportType = useMemo(() => {
+    const supported = selectedOutputs.find((item) => ['markdown', 'skill', 'rag'].includes(item));
+    return supported || 'sft';
+  }, [selectedOutputs]);
+
   const uploadHref = selectedProjectId ? `/upload?project_id=${selectedProjectId}` : '/upload';
-  const exportHref = selectedProjectId ? `/train-exports?project_id=${selectedProjectId}` : '/train-exports';
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (selectedProjectId) {
+      params.set('project_id', selectedProjectId);
+    }
+    params.set('export_type', primaryExportType);
+    params.set('outputs', selectedOutputs.join(','));
+    return `/train-exports?${params.toString()}`;
+  }, [primaryExportType, selectedOutputs, selectedProjectId]);
 
   const createProject = async () => {
     const trimmedName = name.trim();

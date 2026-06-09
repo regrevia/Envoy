@@ -74,6 +74,7 @@ export default function TrainExportsPage() {
   const [samplesText, setSamplesText] = useState('[{"instruction":"示例问题","input":"","output":"示例答案"}]');
   const [history, setHistory] = useState<ExportRecord[]>([]);
   const [message, setMessage] = useState('准备就绪');
+  const [outputContext, setOutputContext] = useState('');
 
   const previewPath = useMemo(() => {
     const folder = `${safeSlug(taskName || exportType)}_${safeSlug(sourceTaskId || assetId || projectId || 'manual')}`;
@@ -91,6 +92,21 @@ export default function TrainExportsPage() {
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const projectFromQuery = params.get('project_id');
+    const outputFromQuery = params.get('export_type') as ExportType | null;
+    const outputsFromQuery = params.get('outputs') || '';
+
+    if (projectFromQuery) {
+      setProjectId(projectFromQuery);
+      setMessage('已载入首页选择的任务上下文');
+    }
+    if (outputFromQuery && exportTypes.some((item) => item.id === outputFromQuery)) {
+      setExportType(outputFromQuery);
+    }
+    if (outputsFromQuery) {
+      setOutputContext(outputsFromQuery);
+    }
     void loadHistory();
   }, []);
 
@@ -155,6 +171,12 @@ export default function TrainExportsPage() {
           <strong style={{ fontSize: 14 }}>状态</strong>
           <span style={{ fontSize: 14 }}>{message}</span>
         </div>
+
+        {outputContext ? (
+          <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: '#4b5563', fontSize: 14 }}>
+            来自首页选择：{outputContext}
+          </div>
+        ) : null}
 
         <section style={{ ...panelStyle, marginTop: 20, display: 'grid', gap: 18 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
