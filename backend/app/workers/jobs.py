@@ -635,10 +635,35 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_result(payload)
-        transcription = transcribe_audio(source_path)
-        _safe_update(db, task_id, "running", 75, result_summary="audio transcription done")
-        if _task_is_canceled(db, task_id):
-            return _canceled_result(payload)
+        transcription_parts = []
+        transcription_segments = []
+        transcription_results = []
+        transcription_inputs = segment_paths or [source_path]
+        transcription_count = len(transcription_inputs)
+        for index, segment_path in enumerate(transcription_inputs):
+            if _task_is_canceled(db, task_id):
+                return _canceled_result(payload)
+            segment_transcription = transcribe_audio(segment_path)
+            transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
+            if isinstance(segment_transcription, dict):
+                text = str(segment_transcription.get("text", "")).strip()
+                if text:
+                    transcription_parts.append(text)
+                for item in segment_transcription.get("segments", []) if isinstance(segment_transcription.get("segments", []), list) else []:
+                    if isinstance(item, dict):
+                        enriched = dict(item)
+                        enriched["source_segment"] = segment_path
+                        enriched["segment_index"] = index
+                        transcription_segments.append(enriched)
+            progress = min(75, 55 + int(((index + 1) / max(transcription_count, 1)) * 20))
+            _safe_update(db, task_id, "running", progress, result_summary=f"audio transcription done: {index + 1}/{transcription_count} segment(s)")
+            if _task_is_canceled(db, task_id):
+                return _canceled_result(payload)
+        transcription = {
+            "text": "\n".join(transcription_parts).strip(),
+            "segments": transcription_segments,
+            "segment_results": transcription_results,
+        }
         ocr_results = run_ocr_on_frames(frame_paths)
         _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
         if _task_is_canceled(db, task_id):
@@ -692,7 +717,7 @@ def preprocess_job(self, payload: dict):
         db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=su.id, relation_type="derived_from"))
         db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="preprocess done")
-        return {"status": "preprocessed", "payload": payload}
+        return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         return {"status": "failed", "payload": payload, "error": str(exc)}
