@@ -257,11 +257,26 @@ def _extract_ooxml_text(source_path: str) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
-def _persist_text_semantic_units(db, project_id: str, asset_id: str | None, title_base: str, unit_type: str, content: str, source: str, confidence: float):
+def _persist_text_semantic_units(
+    db,
+    project_id: str,
+    asset_id: str | None,
+    title_base: str,
+    unit_type: str,
+    content: str,
+    source: str,
+    confidence: float,
+    task_id: str | None = None,
+    progress_label: str | None = None,
+    progress_start: int = 15,
+    progress_end: int = 95,
+):
     chunks = _text_chunks(content)
     chunk_count = len(chunks)
     units = []
     for index, chunk in enumerate(chunks):
+        if _task_is_canceled(db, task_id):
+            break
         title = title_base if chunk_count == 1 else f"{title_base} chunk {index + 1}/{chunk_count}"
         labels = {
             "stage": "preprocess",
@@ -272,12 +287,19 @@ def _persist_text_semantic_units(db, project_id: str, asset_id: str | None, titl
             "char_end": chunk["end"],
             "extraction_status": "text_extracted",
         }
-        units.append(SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type=unit_type, title=title, content=chunk["content"], labels=labels, confidence=confidence))
-    db.add_all(units)
-    db.commit()
-    for unit in units:
+        unit = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type=unit_type, title=title, content=chunk["content"], labels=labels, confidence=confidence)
+        db.add(unit)
+        db.commit()
+        db.refresh(unit)
+        units.append(unit)
         db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
-    db.commit()
+        db.commit()
+        if progress_label:
+            progress_span = max(progress_end - progress_start, 1)
+            progress = min(progress_end, progress_start + int(((index + 1) / max(chunk_count, 1)) * progress_span))
+            _safe_update(db, task_id, "running", progress, result_summary=f"{progress_label}: {index + 1}/{chunk_count}")
+            if _task_is_canceled(db, task_id):
+                break
     return units
 
 
@@ -485,15 +507,29 @@ def preprocess_job(self, payload: dict):
                 else:
                     extracted_text = _extract_ooxml_text(source_path)
                 if extracted_text:
-                    units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded document", "document", extracted_text, "document_text", 0.88)
+                    chunk_count = len(_text_chunks(extracted_text))
+                    units = _persist_text_semantic_units(
+                        db,
+                        project_id,
+                        asset_id,
+                        asset.file_name if asset else "uploaded document",
+                        "document",
+                        extracted_text,
+                        "document_text",
+                        0.88,
+                        task_id=task_id,
+                        progress_label="document chunks persisted",
+                    )
                     semantic_payload = {
                         "char_count": len(extracted_text),
                         "preview": extracted_text[:500],
                         "stage": "preprocess",
                         "source": "document_text",
-                        "chunk_count": len(units),
+                        "chunk_count": chunk_count,
                         "extraction_status": "text_extracted",
                     }
+                    if _task_is_canceled(db, task_id):
+                        return _canceled_result(payload, semantic_payload)
                     _safe_update(db, task_id, "success", 100, result_summary=f"document preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                     return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             if unit_type == "image":
@@ -510,16 +546,19 @@ def preprocess_job(self, payload: dict):
                         if isinstance(item, dict) and isinstance(item.get("confidence", 0.0), (int, float))
                     ]
                     confidence = max(confidence_values) if confidence_values else 0.78
-                    units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded image", "image", extracted_text, "image_text", confidence)
+                    chunk_count = len(_text_chunks(extracted_text))
+                    units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded image", "image", extracted_text, "image_text", confidence, task_id=task_id, progress_label="image chunks persisted")
                     semantic_payload = {
                         "char_count": len(extracted_text),
                         "preview": extracted_text[:500],
                         "stage": "preprocess",
                         "source": "image_text",
-                        "chunk_count": len(units),
+                        "chunk_count": chunk_count,
                         "ocr_result_count": len(ocr_results),
                         "extraction_status": "text_extracted",
                     }
+                    if _task_is_canceled(db, task_id):
+                        return _canceled_result(payload, semantic_payload)
                     _safe_update(db, task_id, "success", 100, result_summary=f"image OCR preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                     return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, source)
@@ -552,16 +591,19 @@ def preprocess_job(self, payload: dict):
             transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
             if transcript_text:
                 segments = transcription.get("segments", []) if isinstance(transcription, dict) else []
-                units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86)
+                chunk_count = len(_text_chunks(transcript_text))
+                units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86, task_id=task_id, progress_label="audio chunks persisted")
                 semantic_payload = {
                     "char_count": len(transcript_text),
                     "preview": transcript_text[:500],
                     "stage": "preprocess",
                     "source": "audio_transcript",
-                    "chunk_count": len(units),
+                    "chunk_count": chunk_count,
                     "segment_count": len(segments) if isinstance(segments, list) else 0,
                     "extraction_status": "text_extracted",
                 }
+                if _task_is_canceled(db, task_id):
+                    return _canceled_result(payload, semantic_payload)
                 _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                 return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, "audio_asset")
