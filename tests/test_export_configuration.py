@@ -95,6 +95,35 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertIn("task-001", skill["root"])
             self.assertIn("task-002", report["root"])
 
+    def test_export_manifest_ignores_invalid_media_limit_metadata(self):
+        from app.services.train_export_service import export_markdown_from_video_summary
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = export_markdown_from_video_summary(
+                [
+                    {
+                        "unit_type": "transcript",
+                        "content": "valid transcript should still export",
+                        "labels": {
+                            "source": "media_transcript",
+                            "segment_seconds": "bad",
+                            "max_segment_count": 2,
+                            "max_input_seconds": 600,
+                        },
+                    }
+                ],
+                tmp_dir,
+                "task-invalid-media-limit",
+                "Invalid Media Limit",
+            )
+
+            manifest = json.loads(Path(result["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+            self.assertEqual(manifest["row_count"], 1)
+            self.assertEqual(manifest["source_counts"], {"media_transcript": 1})
+            self.assertEqual(manifest["unit_type_counts"], {"transcript": 1})
+            self.assertNotIn("media_processing_limits", manifest)
+
     def test_worker_export_jobs_use_configured_export_dir(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["ENVOY_EXPORT_DIR"] = tmp_dir

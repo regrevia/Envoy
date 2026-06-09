@@ -35,6 +35,14 @@ def _split_rows(rows: list[dict]):
     return {"train": rows[:train_end], "val": rows[train_end:val_end], "test": rows[val_end:]}
 
 
+def _positive_int_or_none(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _semantic_source_metadata(rows: list[dict]):
     source_counts = {}
     unit_type_counts = {}
@@ -51,8 +59,11 @@ def _semantic_source_metadata(rows: list[dict]):
         segment_seconds = labels.get("segment_seconds") or metadata.get("segment_seconds")
         max_segment_count = labels.get("max_segment_count") or metadata.get("max_segment_count")
         max_input_seconds = labels.get("max_input_seconds") or metadata.get("max_input_seconds")
+        segment_seconds = _positive_int_or_none(segment_seconds)
+        max_segment_count = _positive_int_or_none(max_segment_count)
+        max_input_seconds = _positive_int_or_none(max_input_seconds)
         if segment_seconds and max_segment_count and max_input_seconds:
-            key = (int(segment_seconds), int(max_segment_count), int(max_input_seconds))
+            key = (segment_seconds, max_segment_count, max_input_seconds)
             media_limit_counts[key] = media_limit_counts.get(key, 0) + 1
     metadata = {"source_counts": source_counts, "unit_type_counts": unit_type_counts}
     if media_limit_counts:
