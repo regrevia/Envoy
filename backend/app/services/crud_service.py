@@ -64,6 +64,8 @@ def update_task_status(db: Session, task_id: str, status: str, progress: int | N
     task = get_task(db, task_id)
     if task is None:
         return None
+    if task.status == "canceled" and status != "canceled":
+        return task
     task.status = status
     if progress is not None:
         task.progress = progress

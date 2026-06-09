@@ -96,6 +96,141 @@ class TaskDispatchFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_task_cancel_marks_running_task_canceled_and_preserves_progress(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-cancel-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="cancel task project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                task.status = "running"
+                task.progress = 45
+                db.commit()
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(f"/api/v1/tasks/{task_id}/cancel")
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body["status"], "canceled")
+                self.assertEqual(body["progress"], 45)
+                self.assertEqual(body["result_summary"], "Task canceled by user")
+
+                db = SessionLocal()
+                try:
+                    stored = get_task(db, task_id)
+                    self.assertEqual(stored.status, "canceled")
+                    self.assertEqual(stored.progress, 45)
+                    self.assertEqual(stored.result_summary, "Task canceled by user")
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
+    def test_canceled_task_cannot_be_overwritten_by_late_worker_update(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-cancel-protect-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, update_task_status
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="late update project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                canceled = update_task_status(db, task.id, "canceled", 35, result_summary="Task canceled by user")
+                late = update_task_status(db, task.id, "success", 100, result_summary="preprocess done")
+
+                self.assertEqual(canceled.status, "canceled")
+                self.assertEqual(late.status, "canceled")
+                self.assertEqual(late.progress, 35)
+                self.assertEqual(late.result_summary, "Task canceled by user")
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_task_cancel_rejects_already_completed_task(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-cancel-complete-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="completed task project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                task.status = "success"
+                task.progress = 100
+                task.result_summary = "preprocess done"
+                db.commit()
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(f"/api/v1/tasks/{task_id}/cancel")
+
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["detail"], "Task is already finished")
+
+                db = SessionLocal()
+                try:
+                    stored = get_task(db, task_id)
+                    self.assertEqual(stored.status, "success")
+                    self.assertEqual(stored.progress, 100)
+                    self.assertEqual(stored.result_summary, "preprocess done")
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
     def test_task_list_and_detail_include_traceable_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-context-api-test.db'}"

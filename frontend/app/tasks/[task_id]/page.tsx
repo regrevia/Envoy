@@ -57,6 +57,7 @@ function statusColor(status?: string | null) {
   if (status === 'success') return '#166534';
   if (status === 'failed' || status === 'dispatch_failed') return '#b91c1c';
   if (status === 'running') return '#1d4ed8';
+  if (status === 'canceled') return '#6b7280';
   return '#4b5563';
 }
 
@@ -66,7 +67,12 @@ function statusLabel(status?: string | null) {
   if (status === 'dispatch_failed') return '投递失败';
   if (status === 'running') return '运行中';
   if (status === 'pending') return '等待中';
+  if (status === 'canceled') return '已取消';
   return status || '-';
+}
+
+function canCancel(task?: Task | null) {
+  return task?.status === 'pending' || task?.status === 'running' || task?.status === 'dispatch_failed';
 }
 
 function taskTypeLabel(taskType?: string | null) {
@@ -86,10 +92,13 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('正在加载任务...');
+  const [taskId, setTaskId] = useState('');
+  const [canceling, setCanceling] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
     params.then(({ task_id }) => {
+      setTaskId(task_id);
       const loadTask = async () => {
         try {
           const data = await apiJson<Task>(`/api/v1/tasks/${task_id}`);
@@ -109,6 +118,27 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
     });
     return () => timer && clearInterval(timer);
   }, [params]);
+
+  const loadTaskOnce = async (id: string) => {
+    const data = await apiJson<Task>(`/api/v1/tasks/${id}`);
+    setTask(data);
+    setMessage('任务已加载');
+  };
+
+  const cancelTask = async () => {
+    if (!taskId || !task) return;
+    setCanceling(true);
+    try {
+      await apiJson(`/api/v1/tasks/${taskId}/cancel`, { method: 'POST' });
+      setMessage('任务已取消');
+      await loadTaskOnce(taskId);
+    } catch (error) {
+      const text = error instanceof ApiError || error instanceof Error ? error.message : '取消任务失败';
+      setMessage(text);
+    } finally {
+      setCanceling(false);
+    }
+  };
 
   const progress = Math.max(0, Math.min(Number(task?.progress ?? 0), 100));
 
@@ -149,9 +179,20 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
               <div style={{ marginTop: 16, height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{ width: `${progress}%`, height: '100%', background: '#111827' }} />
               </div>
-              <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', marginTop: 18 }}>
-                返回列表
-              </Link>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 18 }}>
+                {canCancel(task) ? (
+                  <button
+                    onClick={() => void cancelTask()}
+                    disabled={canceling}
+                    style={{ ...buttonStyle, color: '#991b1b', borderColor: '#fecaca', opacity: canceling ? 0.7 : 1 }}
+                  >
+                    {canceling ? '正在取消...' : '取消任务'}
+                  </button>
+                ) : null}
+                <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
+                  返回列表
+                </Link>
+              </div>
             </>
           ) : null}
         </section>

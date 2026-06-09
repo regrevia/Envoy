@@ -19,6 +19,7 @@ from app.core.config import SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
+from app.models.processing_task import ProcessingTask
 from app.models.trace_link import TraceLink
 from app.schemas.artifact import ArtifactCreate
 
@@ -26,6 +27,18 @@ from app.schemas.artifact import ArtifactCreate
 def _safe_update(db, task_id, status, progress=None, result_summary=None, error_message=None):
     if task_id:
         update_task_status(db, task_id, status, progress, result_summary, error_message)
+
+
+def _task_is_canceled(db, task_id):
+    if not task_id:
+        return False
+    db.expire_all()
+    task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+    return task is not None and task.status == "canceled"
+
+
+def _canceled_result(payload: dict):
+    return {"status": "canceled", "payload": payload}
 
 
 def _is_text_asset(asset):
@@ -426,12 +439,20 @@ def preprocess_job(self, payload: dict):
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
+        if _task_is_canceled(db, task_id):
+            return _canceled_result(payload)
         frame_paths = extract_frames(source_path, str(FRAME_DIR))
         _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
+        if _task_is_canceled(db, task_id):
+            return _canceled_result(payload)
         transcription = transcribe_audio(source_path)
         _safe_update(db, task_id, "running", 75, result_summary="audio transcription done")
+        if _task_is_canceled(db, task_id):
+            return _canceled_result(payload)
         ocr_results = run_ocr_on_frames(frame_paths)
         _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
+        if _task_is_canceled(db, task_id):
+            return _canceled_result(payload)
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
         su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset"}, confidence=0.8)
         db.add(su)

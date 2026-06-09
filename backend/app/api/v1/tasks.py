@@ -79,6 +79,17 @@ def set_task_status(task_id: str, payload: dict, db: Session = Depends(get_db)):
     return _task_payload(task)
 
 
+@router.post("/tasks/{task_id}/cancel")
+def cancel_task_api(task_id: str, db: Session = Depends(get_db)):
+    task = get_task(db, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status in {"success", "failed", "canceled"}:
+        raise HTTPException(status_code=409, detail="Task is already finished")
+    task = update_task_status(db, task_id, "canceled", task.progress, result_summary="Task canceled by user")
+    return _task_payload(task)
+
+
 @router.post("/tasks/preprocess")
 def create_preprocess_task(payload: TaskCreate, db: Session = Depends(get_db)):
     payload = _validated_task_payload(db, payload)
