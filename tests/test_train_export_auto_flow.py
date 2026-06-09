@@ -190,6 +190,12 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(skill_manifest["materials"][0]["content"], "第一段核心知识。第二段可训练内容。")
                 self.assertEqual(rag_rows[0]["text"], "第一段核心知识。第二段可训练内容。")
                 self.assertEqual(rag_rows[0]["metadata"]["source"], "text_asset")
+                self.assertEqual(rag_rows[0]["metadata"]["semantic_unit_id"], "semantic-001")
+                self.assertEqual(rag_rows[0]["metadata"]["project_id"], project_id)
+                self.assertEqual(rag_rows[0]["metadata"]["asset_id"], "asset-001")
+                self.assertEqual(rag_rows[0]["metadata"]["title"], "核心知识片段")
+                self.assertEqual(rag_rows[0]["metadata"]["unit_type"], "text")
+                self.assertEqual(rag_rows[0]["metadata"]["confidence"], 0.91)
 
                 artifacts = client.get("/api/v1/artifacts").json()
                 artifact_types = {item["artifact_type"] for item in artifacts}
