@@ -177,6 +177,25 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(first["text"], "transcribed segment-1.wav")
         self.assertEqual(second["text"], "transcribed segment-2.wav")
 
+    def test_transcribe_audio_returns_diagnostic_error_when_whisper_fails(self):
+        class BrokenModel:
+            def transcribe(self, audio_path):
+                raise RuntimeError(f"whisper failed for {audio_path}")
+
+        fake_whisper = types.SimpleNamespace(load_model=lambda model_name: BrokenModel())
+        sys.modules["whisper"] = fake_whisper
+        try:
+            media_service = reload_media_service()
+
+            result = media_service.transcribe_audio("broken-segment.wav")
+        finally:
+            sys.modules.pop("whisper", None)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["text"], "")
+        self.assertEqual(result["segments"], [])
+        self.assertIn("whisper failed for broken-segment.wav", result["error"])
+
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""
         sys.modules.pop("app.core.config", None)
