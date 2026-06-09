@@ -831,6 +831,62 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_manual_export_rejects_payload_without_usable_content(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-empty-content-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.artifact import Artifact
+            from app.models.export_record import ExportRecord
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="empty content project", description="", domain_type="knowledge", status="active"))
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports",
+                    json={
+                        "project_id": project_id,
+                        "export_type": "rag",
+                        "payload": [
+                            {},
+                            {"text": "   ", "metadata": {"source": "blank"}},
+                            {"content": "", "labels": {"source": "blank"}},
+                            {"input": "", "output": ""},
+                        ],
+                    },
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["detail"], "No usable export content provided")
+                db = SessionLocal()
+                try:
+                    self.assertEqual(db.query(Artifact).filter(Artifact.project_id == project_id).count(), 0)
+                    self.assertEqual(db.query(ExportRecord).filter(ExportRecord.project_id == project_id).count(), 0)
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
     def test_auto_export_rejects_empty_project_without_creating_empty_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-empty-project-test.db'}"
