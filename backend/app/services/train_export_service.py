@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from uuid import uuid4
 
 from app.core.config import EXPORT_DIR
 from app.models.generated_sample import GeneratedSample
@@ -69,6 +70,64 @@ def _write_artifacts(db, project_id: str | None, artifact_type: str, paths: list
     ]
 
 
+def _semantic_unit_source_ids(rows: list[dict]):
+    source_ids = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        source_id = metadata.get("semantic_unit_id")
+        if not source_id and row.get("id") and ("content" in row or "unit_type" in row):
+            source_id = row.get("id")
+        if not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        source_ids.append(str(source_id))
+    return source_ids
+
+
+def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, target_id: str, relation_type: str):
+    existing = (
+        db.query(TraceLink)
+        .filter(
+            TraceLink.source_type == source_type,
+            TraceLink.source_id == source_id,
+            TraceLink.target_type == target_type,
+            TraceLink.target_id == target_id,
+            TraceLink.relation_type == relation_type,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    link = TraceLink(id=str(uuid4()), source_type=source_type, source_id=source_id, target_type=target_type, target_id=target_id, relation_type=relation_type)
+    db.add(link)
+    return link
+
+
+def _write_artifact_trace_links(db, project_id: str, artifacts, rows: list[dict]):
+    source_ids = _semantic_unit_source_ids(rows)
+    if not db or not source_ids:
+        return []
+    valid_source_ids = {
+        row.id
+        for row in db.query(SemanticUnit.id)
+        .filter(SemanticUnit.project_id == project_id, SemanticUnit.id.in_(source_ids))
+        .all()
+    }
+    if not valid_source_ids:
+        return []
+    links = []
+    for artifact in artifacts:
+        for source_id in source_ids:
+            if source_id not in valid_source_ids:
+                continue
+            links.append(_ensure_trace_link(db, "semantic_unit", source_id, "artifact", artifact.id, "exported_to"))
+    db.commit()
+    return links
+
+
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     semantic_units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.desc()).all()
     samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.desc()).all()
@@ -133,10 +192,11 @@ def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     }
 
 
-def _finalize_export(db, project_id: str | None, task_id: str, export_type: str, task_name: str | None, root: Path, paths: list[Path]):
+def _finalize_export(db, project_id: str | None, task_id: str, export_type: str, task_name: str | None, root: Path, paths: list[Path], rows: list[dict] | None = None):
     if db and project_id:
         _write_record(db, project_id, task_id, export_type, task_name, root, [str(path) for path in paths])
-        _write_artifacts(db, project_id, export_type, paths)
+        artifacts = _write_artifacts(db, project_id, export_type, paths)
+        _write_artifact_trace_links(db, project_id, artifacts, rows or [])
 
 
 def _ollama_request_metadata(result: dict):
@@ -223,7 +283,7 @@ def export_sft_dataset(rows: list[dict], out_dir: str, task_id: str, task_name: 
     build_dataset_jsonl(parts["train"], str(train_path))
     build_dataset_jsonl(parts["val"], str(val_path))
     build_dataset_jsonl(parts["test"], str(test_path))
-    _finalize_export(db, project_id, task_id, "sft", task_name, root, [train_path, val_path, test_path])
+    _finalize_export(db, project_id, task_id, "sft", task_name, root, [train_path, val_path, test_path], clean_rows)
     return {"export_type": "sft", "root": str(root), "paths": {"train": str(train_path), "val": str(val_path), "test": str(test_path)}, "count": len(clean_rows)}
 
 
@@ -238,7 +298,7 @@ def export_instruction_dataset(rows: list[dict], out_dir: str, task_id: str, tas
     build_dataset_jsonl(parts["train"], str(train_path))
     build_dataset_jsonl(parts["val"], str(val_path))
     build_dataset_jsonl(parts["test"], str(test_path))
-    _finalize_export(db, project_id, task_id, "instruction", task_name, root, [train_path, val_path, test_path])
+    _finalize_export(db, project_id, task_id, "instruction", task_name, root, [train_path, val_path, test_path], clean_rows)
     return {"export_type": "instruction", "root": str(root), "paths": {"train": str(train_path), "val": str(val_path), "test": str(test_path)}, "count": len(clean_rows)}
 
 
@@ -253,7 +313,7 @@ def export_preference_dataset(rows: list[dict], out_dir: str, task_id: str, task
     build_dataset_jsonl(parts["train"], str(train_path))
     build_dataset_jsonl(parts["val"], str(val_path))
     build_dataset_jsonl(parts["test"], str(test_path))
-    _finalize_export(db, project_id, task_id, "preference", task_name, root, [train_path, val_path, test_path])
+    _finalize_export(db, project_id, task_id, "preference", task_name, root, [train_path, val_path, test_path], clean_rows)
     return {"export_type": "preference", "root": str(root), "paths": {"train": str(train_path), "val": str(val_path), "test": str(test_path)}, "count": len(clean_rows)}
 
 
@@ -278,7 +338,7 @@ def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: s
         },
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    _finalize_export(db, project_id, task_id, "rag", task_name, root, [out_path, manifest_path])
+    _finalize_export(db, project_id, task_id, "rag", task_name, root, [out_path, manifest_path], clean_rows)
     return {
         "root": str(root),
         "path": str(out_path),
@@ -323,7 +383,7 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
         **llm_metadata,
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    _finalize_export(db, project_id, task_id, "skill", task_name, root, [out_path, manifest_path])
+    _finalize_export(db, project_id, task_id, "skill", task_name, root, [out_path, manifest_path], clean_rows)
     return {
         "root": str(root),
         "path": str(out_path),
@@ -363,7 +423,7 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
         **llm_metadata,
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path, manifest_path])
+    _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path, manifest_path], summary_rows)
     return {
         "root": str(root),
         "path": str(out_path),
