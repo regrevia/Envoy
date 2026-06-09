@@ -211,6 +211,25 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("panelStyle", text)
         self.assertNotIn("borderRadius: 8", text)
 
+    def test_train_export_detail_uses_divider_layout(self):
+        page = ROOT_DIR / "frontend" / "app" / "train-exports" / "[record_id]" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "导出记录详情",
+            "返回训练导出",
+            "文件列表",
+            "记录 ID",
+            "项目 ID",
+            "任务 ID",
+            "borderTop: '1px solid #e5e7eb'",
+            "borderBottom: '1px solid #e5e7eb'",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertNotIn("panelStyle", text)
+        self.assertNotIn("borderRadius: 8", text)
+
     def test_home_page_exposes_ollama_runtime_status(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
