@@ -1,7 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS
 
 
 class MediaProcessingError(RuntimeError):
@@ -32,13 +32,30 @@ def _run_media_command(stage: str, cmd: list[str]):
 
 def split_video(video_path: str, output_dir: str):
     ensure_dir(output_dir)
-    output_path = os.path.join(output_dir, "segment_000001.mp4")
+    output_pattern = os.path.join(output_dir, "segment_%06d.mp4")
     if video_path:
-        cmd = ["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path]
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-c",
+            "copy",
+            "-f",
+            "segment",
+            "-segment_time",
+            str(MEDIA_SEGMENT_SECONDS),
+            "-reset_timestamps",
+            "1",
+            output_pattern,
+        ]
         _run_media_command("split_video", cmd)
+        segment_paths = sorted(str(path) for path in Path(output_dir).glob("segment_*.mp4"))
+        return segment_paths or [output_pattern]
     else:
+        output_path = os.path.join(output_dir, "segment_000001.mp4")
         Path(output_path).touch(exist_ok=True)
-    return [output_path]
+        return [output_path]
 
 
 def extract_frames(video_path: str, output_dir: str):
