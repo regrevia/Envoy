@@ -85,6 +85,10 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                         "task_name": "客服知识转 Skill",
                         "project_id": "project-manifest-001",
                         "ollama_status": "success",
+                        "ollama_truncated": True,
+                        "ollama_original_prompt_chars": 24000,
+                        "ollama_sent_prompt_chars": 12000,
+                        "ollama_max_prompt_chars": 12000,
                         "llm_summary": "Skill package is usable for refund guidance.",
                         "llm_usage": "Support agent training",
                         "row_count": 3,
@@ -133,6 +137,10 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                 self.assertEqual(detail["manifest"]["source_task_id"], "task-skill-001")
                 self.assertEqual(detail["manifest"]["task_name"], "客服知识转 Skill")
                 self.assertEqual(detail["manifest"]["ollama_status"], "success")
+                self.assertTrue(detail["manifest"]["ollama_truncated"])
+                self.assertEqual(detail["manifest"]["ollama_original_prompt_chars"], 24000)
+                self.assertEqual(detail["manifest"]["ollama_sent_prompt_chars"], 12000)
+                self.assertEqual(detail["manifest"]["ollama_max_prompt_chars"], 12000)
                 self.assertEqual(detail["manifest"]["llm_summary"], "Skill package is usable for refund guidance.")
                 self.assertEqual(detail["manifest"]["llm_usage"], "Support agent training")
                 self.assertEqual(detail["manifest"]["row_count"], 3)

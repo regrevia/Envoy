@@ -139,15 +139,29 @@ def _finalize_export(db, project_id: str | None, task_id: str, export_type: str,
         _write_artifacts(db, project_id, export_type, paths)
 
 
+def _ollama_request_metadata(result: dict):
+    metadata = {"ollama_status": result.get("status")}
+    mappings = {
+        "truncated": "ollama_truncated",
+        "original_prompt_chars": "ollama_original_prompt_chars",
+        "sent_prompt_chars": "ollama_sent_prompt_chars",
+        "max_prompt_chars": "ollama_max_prompt_chars",
+    }
+    for source_key, target_key in mappings.items():
+        if source_key in result:
+            metadata[target_key] = result[source_key]
+    if result.get("status") != "success" and result.get("error"):
+        metadata["ollama_error"] = result["error"]
+    return metadata
+
+
 def _ollama_rag_metadata(text: str):
     result = generate_with_ollama(
         "Extract RAG metadata from the source. Return JSON with summary, keywords, and usage.",
         text or "",
     )
-    metadata = {"ollama_status": result.get("status")}
+    metadata = _ollama_request_metadata(result)
     if result.get("status") != "success":
-        if result.get("error"):
-            metadata["ollama_error"] = result["error"]
         return metadata
 
     parsed = parse_ollama_json_object(result.get("text", ""))
@@ -167,10 +181,8 @@ def _ollama_markdown_summary(rows: list[dict]):
         "Summarize this Markdown report source. Return JSON with summary.",
         source_text,
     )
-    metadata = {"ollama_status": result.get("status")}
+    metadata = _ollama_request_metadata(result)
     if result.get("status") != "success":
-        if result.get("error"):
-            metadata["ollama_error"] = result["error"]
         return metadata
 
     parsed = parse_ollama_json_object(result.get("text", ""))
@@ -185,10 +197,8 @@ def _ollama_skill_review(rows: list[dict]):
         "Review this skill package. Return JSON with summary, usage, and risks.",
         source_text,
     )
-    metadata = {"ollama_status": result.get("status")}
+    metadata = _ollama_request_metadata(result)
     if result.get("status") != "success":
-        if result.get("error"):
-            metadata["ollama_error"] = result["error"]
         return metadata
 
     parsed = parse_ollama_json_object(result.get("text", ""))

@@ -445,6 +445,10 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                     generate.return_value = {
                         "enabled": True,
                         "status": "success",
+                        "truncated": True,
+                        "original_prompt_chars": 24000,
+                        "sent_prompt_chars": 12000,
+                        "max_prompt_chars": 12000,
                         "text": '{"summary":"Release notes require risk, rollback, and owner fields."}',
                         "error": None,
                     }
@@ -458,6 +462,10 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertIn("## AI 摘要", markdown_text)
                 self.assertIn("Release notes require risk, rollback, and owner fields.", markdown_text)
                 self.assertEqual(manifest["ollama_status"], "success")
+                self.assertTrue(manifest["ollama_truncated"])
+                self.assertEqual(manifest["ollama_original_prompt_chars"], 24000)
+                self.assertEqual(manifest["ollama_sent_prompt_chars"], 12000)
+                self.assertEqual(manifest["ollama_max_prompt_chars"], 12000)
                 self.assertEqual(manifest["llm_summary"], "Release notes require risk, rollback, and owner fields.")
                 generate.assert_called_once()
             finally:
