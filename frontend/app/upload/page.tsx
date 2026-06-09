@@ -94,6 +94,11 @@ export default function UploadPage() {
       setMessage('请先选择任务/项目和文件');
       return;
     }
+    if (file.size === 0) {
+      setResult({ error: '上传文件为空，请选择包含内容的素材' });
+      setMessage('上传文件为空，请选择包含内容的素材');
+      return;
+    }
     const form = new FormData();
     form.append('project_id', projectId);
     form.append('asset_type', assetType);
@@ -198,6 +203,7 @@ export default function UploadPage() {
               <select value={assetType} onChange={(event) => setAssetType(event.target.value)} style={inputStyle}>
                 {fileTypeOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </select>
+              <span style={{ color: '#6b7280', fontSize: 12 }}>支持类型：视频、音频、图片、文档、Markdown、长文本</span>
             </label>
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ color: '#4b5563', fontSize: 13 }}>文件</span>
