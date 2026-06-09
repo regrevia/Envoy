@@ -71,6 +71,31 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("-reset_timestamps", cmd)
         self.assertTrue(str(cmd[-1]).endswith("segment_%06d.mp4"))
 
+    def test_split_audio_uses_configured_segment_duration(self):
+        os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
+        sys.modules.pop("app.core.config", None)
+        sys.modules.pop("app.services.media_service", None)
+        from app.services import media_service
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return None
+
+        with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+            media_service.split_audio("long-input.mp3", "tmp/test-long-audio")
+
+        self.assertEqual(len(calls), 1)
+        cmd = calls[0][0]
+        self.assertIn("-f", cmd)
+        self.assertIn("segment", cmd)
+        self.assertIn("-segment_time", cmd)
+        self.assertIn("600", cmd)
+        self.assertIn("-reset_timestamps", cmd)
+        self.assertIn("-vn", cmd)
+        self.assertTrue(str(cmd[-1]).endswith("audio_segment_%06d.wav"))
+
     def test_extract_frames_uses_configured_sampling_interval(self):
         os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "15"
         sys.modules.pop("app.core.config", None)

@@ -58,6 +58,35 @@ def split_video(video_path: str, output_dir: str):
         return [output_path]
 
 
+def split_audio(audio_path: str, output_dir: str):
+    ensure_dir(output_dir)
+    output_pattern = os.path.join(output_dir, "audio_segment_%06d.wav")
+    if audio_path:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            audio_path,
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            "-f",
+            "segment",
+            "-segment_time",
+            str(MEDIA_SEGMENT_SECONDS),
+            "-reset_timestamps",
+            "1",
+            output_pattern,
+        ]
+        _run_media_command("split_audio", cmd)
+        segment_paths = sorted(str(path) for path in Path(output_dir).glob("audio_segment_*.wav"))
+        return segment_paths or [output_pattern]
+    else:
+        output_path = os.path.join(output_dir, "audio_segment_000001.wav")
+        Path(output_path).touch(exist_ok=True)
+        return [output_path]
+
+
 def extract_frames(video_path: str, output_dir: str):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "frame_%06d.jpg")
