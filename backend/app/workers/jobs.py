@@ -65,15 +65,26 @@ def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, t
     return link
 
 
-def _clear_preprocess_semantic_units(db, asset_id: str | None):
+def _preprocess_semantic_units(db, asset_id: str | None, only_task_id: str | None = None, exclude_task_id: str | None = None):
     if not asset_id:
-        return 0
+        return []
     units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
-    preprocess_units = [
-        unit
-        for unit in units
-        if isinstance(unit.labels, dict) and unit.labels.get("stage") == "preprocess"
-    ]
+    preprocess_units = []
+    for unit in units:
+        labels = unit.labels if isinstance(unit.labels, dict) else {}
+        if labels.get("stage") != "preprocess":
+            continue
+        label_task_id = labels.get("task_id")
+        if only_task_id is not None and label_task_id != only_task_id:
+            continue
+        if exclude_task_id is not None and label_task_id == exclude_task_id:
+            continue
+        preprocess_units.append(unit)
+    return preprocess_units
+
+
+def _clear_preprocess_semantic_units(db, asset_id: str | None, only_task_id: str | None = None, exclude_task_id: str | None = None):
+    preprocess_units = _preprocess_semantic_units(db, asset_id, only_task_id=only_task_id, exclude_task_id=exclude_task_id)
     unit_ids = [unit.id for unit in preprocess_units]
     if not unit_ids:
         return 0
@@ -91,6 +102,24 @@ def _clear_preprocess_semantic_units(db, asset_id: str | None):
         db.delete(unit)
     db.commit()
     return len(preprocess_units)
+
+
+def _has_previous_preprocess_units(db, asset_id: str | None, task_id: str | None):
+    return bool(_preprocess_semantic_units(db, asset_id, exclude_task_id=task_id))
+
+
+def _cleanup_canceled_preprocess_rerun(db, asset_id: str | None, task_id: str | None, has_previous_preprocess: bool):
+    if has_previous_preprocess:
+        _clear_preprocess_semantic_units(db, asset_id, only_task_id=task_id)
+
+
+def _successful_preprocess_replaces_previous(db, asset_id: str | None, task_id: str | None):
+    _clear_preprocess_semantic_units(db, asset_id, exclude_task_id=task_id)
+
+
+def _canceled_preprocess_result(db, asset_id: str | None, task_id: str | None, has_previous_preprocess: bool, payload: dict, semantic: dict | None = None):
+    _cleanup_canceled_preprocess_rerun(db, asset_id, task_id, has_previous_preprocess)
+    return _canceled_result(payload, semantic)
 
 
 def _is_text_asset(asset):
@@ -309,6 +338,7 @@ def _persist_text_semantic_units(
         labels = {
             "stage": "preprocess",
             "source": source,
+            "task_id": task_id,
             "chunk_index": index,
             "chunk_count": chunk_count,
             "char_start": chunk["start"],
@@ -484,6 +514,7 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 10)
         asset = db.query(Asset).filter(Asset.id == asset_id).first() if asset_id else None
         source_path = _resolve_source_path(payload, asset)
+        has_previous_preprocess = _has_previous_preprocess_units(db, asset_id, task_id)
         if _is_text_asset(asset):
             content = storage_client.read_text(asset.file_path)
             chunks = _text_chunks(content)
@@ -495,15 +526,15 @@ def preprocess_job(self, payload: dict):
                 "source": "text_asset",
                 "chunk_count": chunk_count,
             }
-            _clear_preprocess_semantic_units(db, asset_id)
             units = []
             for index, chunk in enumerate(chunks):
                 if _task_is_canceled(db, task_id):
-                    return _canceled_result(payload, semantic_payload)
+                    return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
                 title = asset.file_name if chunk_count == 1 else f"{asset.file_name} chunk {index + 1}/{chunk_count}"
                 labels = {
                     "stage": "preprocess",
                     "source": "text_asset",
+                    "task_id": task_id,
                     "chunk_index": index,
                     "chunk_count": chunk_count,
                     "char_start": chunk["start"],
@@ -519,7 +550,8 @@ def preprocess_job(self, payload: dict):
                 progress = min(95, 15 + int(((index + 1) / max(chunk_count, 1)) * 75))
                 _safe_update(db, task_id, "running", progress, result_summary=f"text chunks persisted: {index + 1}/{chunk_count}")
                 if _task_is_canceled(db, task_id):
-                    return _canceled_result(payload, semantic_payload)
+                    return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
+            _successful_preprocess_replaces_previous(db, asset_id, task_id)
             _safe_update(db, task_id, "success", 100, result_summary=f"text preprocess done: {semantic_payload['char_count']} chars, {chunk_count} chunks")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         if _local_source_file_missing(source_path):
@@ -539,7 +571,6 @@ def preprocess_job(self, payload: dict):
                     chunk_count = len(_text_chunks(extracted_text))
                     if _task_is_canceled(db, task_id):
                         return _canceled_result(payload)
-                    _clear_preprocess_semantic_units(db, asset_id)
                     units = _persist_text_semantic_units(
                         db,
                         project_id,
@@ -561,7 +592,8 @@ def preprocess_job(self, payload: dict):
                         "extraction_status": "text_extracted",
                     }
                     if _task_is_canceled(db, task_id):
-                        return _canceled_result(payload, semantic_payload)
+                        return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
+                    _successful_preprocess_replaces_previous(db, asset_id, task_id)
                     _safe_update(db, task_id, "success", 100, result_summary=f"document preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                     return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             if unit_type == "image":
@@ -581,7 +613,6 @@ def preprocess_job(self, payload: dict):
                     chunk_count = len(_text_chunks(extracted_text))
                     if _task_is_canceled(db, task_id):
                         return _canceled_result(payload)
-                    _clear_preprocess_semantic_units(db, asset_id)
                     units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded image", "image", extracted_text, "image_text", confidence, task_id=task_id, progress_label="image chunks persisted")
                     semantic_payload = {
                         "char_count": len(extracted_text),
@@ -593,7 +624,8 @@ def preprocess_job(self, payload: dict):
                         "extraction_status": "text_extracted",
                     }
                     if _task_is_canceled(db, task_id):
-                        return _canceled_result(payload, semantic_payload)
+                        return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
+                    _successful_preprocess_replaces_previous(db, asset_id, task_id)
                     _safe_update(db, task_id, "success", 100, result_summary=f"image OCR preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                     return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, source)
@@ -604,8 +636,8 @@ def preprocess_job(self, payload: dict):
                 "asset_type": semantic_payload["asset_type"],
                 "size_bytes": semantic_payload["size_bytes"],
                 "extraction_status": semantic_payload["extraction_status"],
+                "task_id": task_id,
             }
-            _clear_preprocess_semantic_units(db, asset_id)
             _persist_single_semantic_unit(
                 db,
                 project_id,
@@ -616,6 +648,7 @@ def preprocess_job(self, payload: dict):
                 labels,
                 0.7,
             )
+            _successful_preprocess_replaces_previous(db, asset_id, task_id)
             _safe_update(db, task_id, "success", 100, result_summary=f"{unit_type} preprocess done: metadata captured")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         if _is_audio_asset(asset):
@@ -630,7 +663,6 @@ def preprocess_job(self, payload: dict):
                 chunk_count = len(_text_chunks(transcript_text))
                 if _task_is_canceled(db, task_id):
                     return _canceled_result(payload)
-                _clear_preprocess_semantic_units(db, asset_id)
                 units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86, task_id=task_id, progress_label="audio chunks persisted")
                 semantic_payload = {
                     "char_count": len(transcript_text),
@@ -642,7 +674,8 @@ def preprocess_job(self, payload: dict):
                     "extraction_status": "text_extracted",
                 }
                 if _task_is_canceled(db, task_id):
-                    return _canceled_result(payload, semantic_payload)
+                    return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
+                _successful_preprocess_replaces_previous(db, asset_id, task_id)
                 _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                 return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, "audio_asset")
@@ -653,8 +686,8 @@ def preprocess_job(self, payload: dict):
                 "asset_type": semantic_payload["asset_type"],
                 "size_bytes": semantic_payload["size_bytes"],
                 "extraction_status": semantic_payload["extraction_status"],
+                "task_id": task_id,
             }
-            _clear_preprocess_semantic_units(db, asset_id)
             _persist_single_semantic_unit(
                 db,
                 project_id,
@@ -665,6 +698,7 @@ def preprocess_job(self, payload: dict):
                 labels,
                 0.7,
             )
+            _successful_preprocess_replaces_previous(db, asset_id, task_id)
             _safe_update(db, task_id, "success", 100, result_summary="audio preprocess done: metadata captured")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
@@ -709,7 +743,6 @@ def preprocess_job(self, payload: dict):
         if _task_is_canceled(db, task_id):
             return _canceled_result(payload)
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
-        _clear_preprocess_semantic_units(db, asset_id)
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         if transcript_text:
             _persist_text_semantic_units(
@@ -727,7 +760,7 @@ def preprocess_job(self, payload: dict):
                 progress_end=85,
             )
             if _task_is_canceled(db, task_id):
-                return _canceled_result(payload, semantic_payload)
+                return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
         ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
         if ocr_text:
             confidence_values = [
@@ -750,13 +783,14 @@ def preprocess_job(self, payload: dict):
                 progress_end=95,
             )
             if _task_is_canceled(db, task_id):
-                return _canceled_result(payload, semantic_payload)
-        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset"}, confidence=0.8)
+                return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
+        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset", "task_id": task_id}, confidence=0.8)
         db.add(su)
         db.commit()
         db.refresh(su)
         db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=su.id, relation_type="derived_from"))
         db.commit()
+        _successful_preprocess_replaces_previous(db, asset_id, task_id)
         _safe_update(db, task_id, "success", 100, result_summary="preprocess done")
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:
