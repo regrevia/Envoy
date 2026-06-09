@@ -65,6 +65,34 @@ def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, t
     return link
 
 
+def _clear_preprocess_semantic_units(db, asset_id: str | None):
+    if not asset_id:
+        return 0
+    units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+    preprocess_units = [
+        unit
+        for unit in units
+        if isinstance(unit.labels, dict) and unit.labels.get("stage") == "preprocess"
+    ]
+    unit_ids = [unit.id for unit in preprocess_units]
+    if not unit_ids:
+        return 0
+    trace_links = (
+        db.query(TraceLink)
+        .filter(
+            (TraceLink.source_id.in_(unit_ids))
+            | (TraceLink.target_id.in_(unit_ids))
+        )
+        .all()
+    )
+    for link in trace_links:
+        db.delete(link)
+    for unit in preprocess_units:
+        db.delete(unit)
+    db.commit()
+    return len(preprocess_units)
+
+
 def _is_text_asset(asset):
     if asset is None:
         return False
@@ -467,6 +495,7 @@ def preprocess_job(self, payload: dict):
                 "source": "text_asset",
                 "chunk_count": chunk_count,
             }
+            _clear_preprocess_semantic_units(db, asset_id)
             units = []
             for index, chunk in enumerate(chunks):
                 if _task_is_canceled(db, task_id):
@@ -508,6 +537,9 @@ def preprocess_job(self, payload: dict):
                     extracted_text = _extract_ooxml_text(source_path)
                 if extracted_text:
                     chunk_count = len(_text_chunks(extracted_text))
+                    if _task_is_canceled(db, task_id):
+                        return _canceled_result(payload)
+                    _clear_preprocess_semantic_units(db, asset_id)
                     units = _persist_text_semantic_units(
                         db,
                         project_id,
@@ -547,6 +579,9 @@ def preprocess_job(self, payload: dict):
                     ]
                     confidence = max(confidence_values) if confidence_values else 0.78
                     chunk_count = len(_text_chunks(extracted_text))
+                    if _task_is_canceled(db, task_id):
+                        return _canceled_result(payload)
+                    _clear_preprocess_semantic_units(db, asset_id)
                     units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded image", "image", extracted_text, "image_text", confidence, task_id=task_id, progress_label="image chunks persisted")
                     semantic_payload = {
                         "char_count": len(extracted_text),
@@ -570,6 +605,7 @@ def preprocess_job(self, payload: dict):
                 "size_bytes": semantic_payload["size_bytes"],
                 "extraction_status": semantic_payload["extraction_status"],
             }
+            _clear_preprocess_semantic_units(db, asset_id)
             _persist_single_semantic_unit(
                 db,
                 project_id,
@@ -592,6 +628,9 @@ def preprocess_job(self, payload: dict):
             if transcript_text:
                 segments = transcription.get("segments", []) if isinstance(transcription, dict) else []
                 chunk_count = len(_text_chunks(transcript_text))
+                if _task_is_canceled(db, task_id):
+                    return _canceled_result(payload)
+                _clear_preprocess_semantic_units(db, asset_id)
                 units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86, task_id=task_id, progress_label="audio chunks persisted")
                 semantic_payload = {
                     "char_count": len(transcript_text),
@@ -615,6 +654,7 @@ def preprocess_job(self, payload: dict):
                 "size_bytes": semantic_payload["size_bytes"],
                 "extraction_status": semantic_payload["extraction_status"],
             }
+            _clear_preprocess_semantic_units(db, asset_id)
             _persist_single_semantic_unit(
                 db,
                 project_id,
@@ -669,6 +709,7 @@ def preprocess_job(self, payload: dict):
         if _task_is_canceled(db, task_id):
             return _canceled_result(payload)
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
+        _clear_preprocess_semantic_units(db, asset_id)
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         if transcript_text:
             _persist_text_semantic_units(
