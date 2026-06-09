@@ -146,6 +146,24 @@ def _ollama_rag_metadata(text: str):
     return metadata
 
 
+def _ollama_markdown_summary(rows: list[dict]):
+    source_text = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
+    result = generate_with_ollama(
+        "Summarize this Markdown report source. Return JSON with summary.",
+        source_text,
+    )
+    metadata = {"ollama_status": result.get("status")}
+    if result.get("status") != "success":
+        if result.get("error"):
+            metadata["ollama_error"] = result["error"]
+        return metadata
+
+    parsed = parse_ollama_json_object(result.get("text", ""))
+    if isinstance(parsed.get("summary"), str) and parsed["summary"].strip():
+        metadata["llm_summary"] = parsed["summary"].strip()
+    return metadata
+
+
 def export_sft_dataset(rows: list[dict], out_dir: str, task_id: str, task_name: str | None = None, db=None, project_id: str | None = None):
     clean_rows = _dedupe_rows(rows)
     parts = _split_rows(clean_rows)
@@ -261,7 +279,11 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
     md_dir = build_subdir(root, "markdown")
     out_path = md_dir / "video_summary.md"
     manifest_path = md_dir / "markdown_manifest.json"
-    content = ["## 视频转化摘要", ""]
+    llm_metadata = _ollama_markdown_summary(summary_rows)
+    content = []
+    if llm_metadata.get("llm_summary"):
+        content.extend(["## AI 摘要", "", str(llm_metadata["llm_summary"]), ""])
+    content.extend(["## 视频转化摘要", ""])
     for row in summary_rows:
         content.append(f"- {json.dumps(row, ensure_ascii=False)}")
     build_markdown_report(title, "\n".join(content), str(out_path))
@@ -276,6 +298,7 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
             "markdown": str(out_path),
             "manifest": str(manifest_path),
         },
+        **llm_metadata,
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path, manifest_path])
