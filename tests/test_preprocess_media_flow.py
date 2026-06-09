@@ -757,6 +757,88 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_cleans_task_media_temp_directories_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-cleanup-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="media cleanup project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("cleanup.mp4", b"fake video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="cleanup.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+                source_path = str(Path(storage_info["file_path"]))
+            finally:
+                db.close()
+
+            temp_dirs = []
+
+            def fake_split(video_path, output_dir):
+                self.assertEqual(video_path, source_path)
+                segment_dir = Path(output_dir)
+                segment_dir.mkdir(parents=True, exist_ok=True)
+                segment_path = segment_dir / "segment_000001.mp4"
+                segment_path.write_bytes(b"segment")
+                temp_dirs.append(segment_dir)
+                return [str(segment_path)]
+
+            def fake_frames(video_path, output_dir):
+                self.assertEqual(video_path, source_path)
+                frame_dir = Path(output_dir)
+                frame_dir.mkdir(parents=True, exist_ok=True)
+                frame_path = frame_dir / "frame_000001.jpg"
+                frame_path.write_bytes(b"frame")
+                temp_dirs.append(frame_dir)
+                return [str(frame_path)]
+
+            with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+                patch("app.workers.jobs.extract_frames", side_effect=fake_frames), \
+                patch("app.workers.jobs.transcribe_audio", return_value={"text": "cleanup segment transcript", "segments": []}), \
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=[{"frame": "frame_000001.jpg", "text": "cleanup frame text", "confidence": 0.8}]):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            try:
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(len(temp_dirs), 2)
+                for temp_dir in temp_dirs:
+                    self.assertIn(task_id, temp_dir.name)
+                    self.assertFalse(temp_dir.exists())
+                self.assertTrue(Path(source_path).is_file())
+            finally:
+                engine.dispose()
+
     def test_preprocess_transcribes_audio_without_video_commands(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-audio-test.db'}"
@@ -880,7 +962,13 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             finally:
                 db.close()
 
+            temp_dirs = []
+
             def cancel_after_split(video_path, output_dir):
+                segment_dir = Path(output_dir)
+                segment_dir.mkdir(parents=True, exist_ok=True)
+                (segment_dir / "segment_000001.mp4").write_bytes(b"partial segment")
+                temp_dirs.append(segment_dir)
                 db = SessionLocal()
                 try:
                     update_task_status(db, task_id, "canceled", 35, result_summary="Task canceled by user")
@@ -904,6 +992,8 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(stored_task.progress, 35)
                 self.assertEqual(stored_task.result_summary, "Task canceled by user")
                 self.assertEqual(units, [])
+                self.assertEqual(len(temp_dirs), 1)
+                self.assertFalse(temp_dirs[0].exists())
             finally:
                 db.close()
                 engine.dispose()
@@ -1011,7 +1101,16 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             finally:
                 db.close()
 
-            with patch("app.workers.jobs.split_video", side_effect=MediaProcessingError("split_video failed: invalid media")):
+            temp_dirs = []
+
+            def fail_after_temp_file(video_path, output_dir):
+                segment_dir = Path(output_dir)
+                segment_dir.mkdir(parents=True, exist_ok=True)
+                (segment_dir / "segment_000001.mp4").write_bytes(b"bad segment")
+                temp_dirs.append(segment_dir)
+                raise MediaProcessingError("split_video failed: invalid media")
+
+            with patch("app.workers.jobs.split_video", side_effect=fail_after_temp_file):
                 result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
 
             db = SessionLocal()
@@ -1021,6 +1120,8 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(result["status"], "failed")
                 self.assertEqual(stored_task.status, "failed")
                 self.assertIn("invalid media", stored_task.error_message)
+                self.assertEqual(len(temp_dirs), 1)
+                self.assertFalse(temp_dirs[0].exists())
             finally:
                 db.close()
                 engine.dispose()

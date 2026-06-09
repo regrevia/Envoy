@@ -1,6 +1,7 @@
 import json
 import base64
 import re
+import shutil
 import zipfile
 import zlib
 from xml.etree import ElementTree
@@ -178,6 +179,20 @@ def _is_remote_source(source_path: str) -> bool:
 
 def _local_source_file_missing(source_path: str) -> bool:
     return not source_path or (not _is_remote_source(source_path) and not Path(source_path).is_file())
+
+
+def _media_task_temp_dirs(task_id: str | None):
+    suffix = task_id or str(uuid4())
+    return SEGMENT_DIR / f"task-{suffix}", FRAME_DIR / f"task-{suffix}"
+
+
+def _cleanup_media_task_temp_dirs(temp_dirs: list[Path]):
+    tmp_root = SEGMENT_DIR.parent.resolve()
+    for temp_dir in temp_dirs:
+        resolved = temp_dir.resolve()
+        if resolved == tmp_root or tmp_root not in resolved.parents:
+            continue
+        shutil.rmtree(resolved, ignore_errors=True)
 
 
 def _build_file_semantic_payload(asset: Asset | None, source_path: str, source: str):
@@ -507,6 +522,7 @@ def ping_job(self):
 @celery_app.task(bind=True, max_retries=2)
 def preprocess_job(self, payload: dict):
     db = SessionLocal()
+    media_temp_dirs = []
     try:
         task_id = payload.get("task_id")
         asset_id = payload.get("asset_id")
@@ -701,11 +717,13 @@ def preprocess_job(self, payload: dict):
             _successful_preprocess_replaces_previous(db, asset_id, task_id)
             _safe_update(db, task_id, "success", 100, result_summary="audio preprocess done: metadata captured")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
-        segment_paths = split_video(source_path, str(SEGMENT_DIR))
+        segment_dir, frame_dir = _media_task_temp_dirs(task_id)
+        media_temp_dirs.extend([segment_dir, frame_dir])
+        segment_paths = split_video(source_path, str(segment_dir))
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_result(payload)
-        frame_paths = extract_frames(source_path, str(FRAME_DIR))
+        frame_paths = extract_frames(source_path, str(frame_dir))
         _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_result(payload)
@@ -800,6 +818,7 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)
     finally:
+        _cleanup_media_task_temp_dirs(media_temp_dirs)
         db.close()
 
 
