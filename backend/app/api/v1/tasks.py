@@ -11,6 +11,16 @@ from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, 
 
 router = APIRouter()
 
+RETRYABLE_TASKS = {
+    "preprocess": preprocess_job,
+    "analyze": analyze_job,
+    "generate_samples": sample_job,
+    "sample": sample_job,
+    "export": export_job,
+    "export_skill": export_skill_job,
+    "export_markdown": export_markdown_job,
+}
+
 
 def _task_payload(task):
     stale_seconds = 0
@@ -88,6 +98,31 @@ def cancel_task_api(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Task is already finished")
     task = update_task_status(db, task_id, "canceled", task.progress, result_summary="Task canceled by user")
     return _task_payload(task)
+
+
+@router.post("/tasks/{task_id}/retry")
+def retry_task_api(task_id: str, db: Session = Depends(get_db)):
+    original = get_task(db, task_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if original.status in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="Task is still active")
+    worker = RETRYABLE_TASKS.get(original.task_type)
+    if worker is None:
+        raise HTTPException(status_code=400, detail="Task type is not retryable")
+    input_config = dict(original.input_config or {})
+    input_config["retry_of_task_id"] = original.id
+    payload = TaskCreate(
+        project_id=original.project_id,
+        asset_id=original.asset_id,
+        task_type=original.task_type,
+        input_config=input_config,
+    )
+    payload = _validated_task_payload(db, payload)
+    task = create_task(db, payload)
+    dispatch_task(db, task, worker, payload.model_dump())
+    refreshed = get_task(db, task.id)
+    return _task_payload(refreshed or task)
 
 
 @router.post("/tasks/preprocess")

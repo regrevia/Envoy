@@ -61,6 +61,10 @@ function canCancel(task: Task) {
   return task.status === 'pending' || task.status === 'running' || task.status === 'dispatch_failed';
 }
 
+function canRetry(task: Task) {
+  return task.status === 'failed' || task.status === 'dispatch_failed' || task.status === 'canceled';
+}
+
 function staleLabel(task: Task) {
   if (!task.is_stale) return '';
   const seconds = Math.max(Number(task.stale_seconds ?? 0), 0);
@@ -92,6 +96,7 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
   const loadTasks = async () => {
@@ -123,6 +128,21 @@ export default function TasksPage() {
       setMessage(text);
     } finally {
       setCancelingId(null);
+    }
+  };
+
+  const retryTask = async (taskId: string) => {
+    setRetryingId(taskId);
+    setMessage('');
+    try {
+      await apiJson(`/api/v1/tasks/${taskId}/retry`, { method: 'POST' });
+      setMessage('重试任务已创建');
+      await loadTasks();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '重试任务失败';
+      setMessage(text);
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -180,6 +200,15 @@ export default function TasksPage() {
                         style={{ ...buttonStyle, color: '#991b1b', borderColor: '#fecaca', opacity: cancelingId === task.id ? 0.7 : 1 }}
                       >
                         {cancelingId === task.id ? '正在取消...' : '取消任务'}
+                      </button>
+                    ) : null}
+                    {canRetry(task) ? (
+                      <button
+                        onClick={() => void retryTask(task.id)}
+                        disabled={retryingId === task.id}
+                        style={{ ...buttonStyle, color: '#111827', borderColor: '#9ca3af', opacity: retryingId === task.id ? 0.7 : 1 }}
+                      >
+                        {retryingId === task.id ? '正在重试...' : '重试任务'}
                       </button>
                     ) : null}
                     <Link href={`/tasks/${task.id}`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>详情</Link>

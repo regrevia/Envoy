@@ -75,6 +75,10 @@ function canCancel(task?: Task | null) {
   return task?.status === 'pending' || task?.status === 'running' || task?.status === 'dispatch_failed';
 }
 
+function canRetry(task?: Task | null) {
+  return task?.status === 'failed' || task?.status === 'dispatch_failed' || task?.status === 'canceled';
+}
+
 function taskTypeLabel(taskType?: string | null) {
   const labels: Record<string, string> = {
     preprocess: '素材预处理',
@@ -94,6 +98,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
   const [message, setMessage] = useState('正在加载任务...');
   const [taskId, setTaskId] = useState('');
   const [canceling, setCanceling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -137,6 +142,21 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
       setMessage(text);
     } finally {
       setCanceling(false);
+    }
+  };
+
+  const retryTask = async () => {
+    if (!taskId || !task) return;
+    setRetrying(true);
+    try {
+      await apiJson(`/api/v1/tasks/${taskId}/retry`, { method: 'POST' });
+      setMessage('重试任务已创建');
+      await loadTaskOnce(taskId);
+    } catch (error) {
+      const text = error instanceof ApiError || error instanceof Error ? error.message : '重试任务失败';
+      setMessage(text);
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -187,6 +207,15 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
                     style={{ ...buttonStyle, color: '#991b1b', borderColor: '#fecaca', opacity: canceling ? 0.7 : 1 }}
                   >
                     {canceling ? '正在取消...' : '取消任务'}
+                  </button>
+                ) : null}
+                {canRetry(task) ? (
+                  <button
+                    onClick={() => void retryTask()}
+                    disabled={retrying}
+                    style={{ ...buttonStyle, borderColor: '#9ca3af', opacity: retrying ? 0.7 : 1 }}
+                  >
+                    {retrying ? '正在重试...' : '重试任务'}
                   </button>
                 ) : null}
                 <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>

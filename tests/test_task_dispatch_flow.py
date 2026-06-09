@@ -231,6 +231,133 @@ class TaskDispatchFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_task_retry_creates_new_task_from_failed_task_context(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-retry-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, list_tasks
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="retry project", description="", domain_type="video", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="retry.mp4",
+                        file_path="missing-before-retry.mp4",
+                        mime_type="video/mp4",
+                    ),
+                )
+                task = create_task(
+                    db,
+                    TaskCreate(
+                        project_id=project.id,
+                        asset_id=asset.id,
+                        task_type="preprocess",
+                        input_config={"source_path": "missing-before-retry.mp4"},
+                    ),
+                )
+                task.status = "failed"
+                task.progress = 100
+                task.error_message = "Source file not found"
+                db.commit()
+                project_id = project.id
+                asset_id = asset.id
+                original_task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.api.v1.tasks.preprocess_job.delay") as delay:
+                    response = client.post(f"/api/v1/tasks/{original_task_id}/retry")
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertNotEqual(body["id"], original_task_id)
+                self.assertEqual(body["project_id"], project_id)
+                self.assertEqual(body["asset_id"], asset_id)
+                self.assertEqual(body["task_type"], "preprocess")
+                self.assertEqual(body["status"], "pending")
+                self.assertEqual(body["progress"], 0)
+                self.assertEqual(body["input_config"]["source_path"], "missing-before-retry.mp4")
+                self.assertEqual(body["input_config"]["retry_of_task_id"], original_task_id)
+                delay.assert_called_once()
+
+                db = SessionLocal()
+                try:
+                    original = get_task(db, original_task_id)
+                    tasks = list_tasks(db)
+                    self.assertEqual(original.status, "failed")
+                    self.assertEqual(original.error_message, "Source file not found")
+                    self.assertEqual(len(tasks), 2)
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
+    def test_task_retry_rejects_active_task(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-retry-active-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, list_tasks
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="active retry project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                task.status = "running"
+                task.progress = 40
+                db.commit()
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(f"/api/v1/tasks/{task_id}/retry")
+
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["detail"], "Task is still active")
+                db = SessionLocal()
+                try:
+                    self.assertEqual(len(list_tasks(db)), 1)
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
     def test_task_list_and_detail_include_traceable_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-context-api-test.db'}"
