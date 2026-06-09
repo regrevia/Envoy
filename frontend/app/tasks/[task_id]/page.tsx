@@ -7,11 +7,16 @@ import { ApiError, apiJson } from '../../../lib/api';
 
 type Task = {
   id: string;
+  project_id?: string | null;
+  asset_id?: string | null;
   task_type?: string | null;
   status?: string | null;
   progress?: number | null;
+  input_config?: Record<string, unknown> | null;
   result_summary?: string | null;
   error_message?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 const panelStyle = {
@@ -39,6 +44,13 @@ function DetailRow({ label, value }: { label: string; value?: string | number | 
       <div style={{ wordBreak: 'break-word' }}>{value ?? '-'}</div>
     </div>
   );
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
 }
 
 function statusColor(status?: string | null) {
@@ -119,11 +131,21 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
           {task ? (
             <>
               <DetailRow label="任务 ID" value={task.id} />
+              <DetailRow label="项目 ID" value={task.project_id} />
+              <DetailRow label="素材 ID" value={task.asset_id} />
               <DetailRow label="任务类型" value={taskTypeLabel(task.task_type)} />
               <DetailRow label="状态" value={statusLabel(task.status)} />
               <DetailRow label="进度" value={`${progress}%`} />
               <DetailRow label="结果摘要" value={task.result_summary} />
               <DetailRow label="错误信息" value={task.error_message} />
+              <DetailRow label="创建时间" value={formatTime(task.created_at)} />
+              <DetailRow label="更新时间" value={formatTime(task.updated_at)} />
+              <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+                <div style={{ color: '#6b7280', marginBottom: 8 }}>输入配置</div>
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>
+                  {JSON.stringify(task.input_config || {}, null, 2)}
+                </pre>
+              </div>
               <div style={{ marginTop: 16, height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{ width: `${progress}%`, height: '100%', background: '#111827' }} />
               </div>

@@ -14,6 +14,70 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class TaskDispatchFlowTests(unittest.TestCase):
+    def test_task_list_and_detail_include_traceable_context(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-context-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="task context project", description="", domain_type="knowledge", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(project_id=project.id, asset_type="text", file_name="source.txt", file_path="source.txt", mime_type="text/plain"),
+                )
+                task = create_task(
+                    db,
+                    TaskCreate(
+                        project_id=project.id,
+                        asset_id=asset.id,
+                        task_type="preprocess",
+                        input_config={"source_path": "source.txt", "mode": "text"},
+                    ),
+                )
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                list_response = client.get("/api/v1/tasks")
+                detail_response = client.get(f"/api/v1/tasks/{task_id}")
+
+                self.assertEqual(list_response.status_code, 200)
+                self.assertEqual(detail_response.status_code, 200)
+                listed = list_response.json()[0]
+                detail = detail_response.json()
+
+                for payload in (listed, detail):
+                    self.assertEqual(payload["id"], task_id)
+                    self.assertEqual(payload["project_id"], project_id)
+                    self.assertEqual(payload["asset_id"], asset_id)
+                    self.assertEqual(payload["input_config"]["source_path"], "source.txt")
+                    self.assertEqual(payload["input_config"]["mode"], "text")
+                    self.assertIsNotNone(payload["created_at"])
+                    self.assertIsNotNone(payload["updated_at"])
+            finally:
+                engine.dispose()
+
     def test_task_create_rejects_missing_project_before_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-missing-project-test.db'}"
