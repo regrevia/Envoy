@@ -14,6 +14,88 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class TaskDispatchFlowTests(unittest.TestCase):
+    def test_task_create_rejects_missing_project_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-missing-project-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/tasks/preprocess",
+                    json={"project_id": "missing-project", "asset_id": "asset-1", "task_type": "preprocess", "input_config": {}},
+                )
+
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.json()["detail"], "Project not found")
+                self.assertEqual(client.get("/api/v1/tasks").json(), [])
+            finally:
+                engine.dispose()
+
+    def test_task_create_rejects_asset_from_another_project_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-wrong-asset-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_asset, create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project_a = create_project(db, ProjectCreate(name="A", description="", domain_type="knowledge", status="active"))
+                project_b = create_project(db, ProjectCreate(name="B", description="", domain_type="knowledge", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project_b.id,
+                        asset_type="text",
+                        file_name="source.txt",
+                        file_path="source.txt",
+                        mime_type="text/plain",
+                    ),
+                )
+                project_a_id = project_a.id
+                asset_id = asset.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/tasks/preprocess",
+                    json={"project_id": project_a_id, "asset_id": asset_id, "task_type": "preprocess", "input_config": {}},
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["detail"], "Asset does not belong to project")
+                self.assertEqual(client.get("/api/v1/tasks").json(), [])
+            finally:
+                engine.dispose()
+
     def test_direct_export_skill_uses_created_task_id_when_payload_contains_stale_task_id(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             export_dir = Path(tmp_dir) / "exports"
@@ -34,14 +116,26 @@ class TaskDispatchFlowTests(unittest.TestCase):
             from app.main import app
             from app.models.artifact import Artifact
             from app.models.trace_link import TraceLink
+            from app.schemas.asset import AssetCreate
             from app.schemas.project import ProjectCreate
-            from app.services.crud_service import create_project, get_task
+            from app.services.crud_service import create_asset, create_project, get_task
 
             Base.metadata.create_all(bind=engine)
             db = SessionLocal()
             try:
                 project = create_project(db, ProjectCreate(name="direct skill export", description="", domain_type="knowledge", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="text",
+                        file_name="direct-skill.txt",
+                        file_path="direct-skill.txt",
+                        mime_type="text/plain",
+                    ),
+                )
                 project_id = project.id
+                asset_id = asset.id
             finally:
                 db.close()
 
@@ -51,8 +145,8 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 json={
                     "task_id": "stale-client-task-id",
                     "project_id": project_id,
-                    "asset_id": "asset-direct-skill-001",
-                    "source_asset_id": "asset-direct-skill-001",
+                    "asset_id": asset_id,
+                    "source_asset_id": asset_id,
                     "title": "Direct API Skill",
                     "payload": [{"topic": "handoff", "content": "Keep task context owned by the server."}],
                 },
@@ -76,7 +170,7 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 self.assertEqual(stored.progress, 100)
                 self.assertEqual(stored.result_summary, "skill exported")
                 artifacts = db.query(Artifact).filter(Artifact.project_id == project_id, Artifact.artifact_type == "skill").all()
-                traces = db.query(TraceLink).filter(TraceLink.source_id == "asset-direct-skill-001", TraceLink.target_type == "artifact").all()
+                traces = db.query(TraceLink).filter(TraceLink.source_id == asset_id, TraceLink.target_type == "artifact").all()
                 self.assertEqual({Path(item.file_path).name for item in artifacts}, {"skill.md", "skill.json"})
                 self.assertTrue(all(Path(item.file_path).exists() for item in artifacts))
                 self.assertTrue(all(task_id in item.file_path for item in artifacts))
@@ -101,15 +195,28 @@ class TaskDispatchFlowTests(unittest.TestCase):
             from app.db.session import engine, SessionLocal
             import app.models  # noqa: F401
             from app.main import app
-            from app.services.crud_service import get_task
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_asset, create_project, get_task
 
             Base.metadata.create_all(bind=engine)
             client = TestClient(app)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="dispatch failure", description="", domain_type="knowledge", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(project_id=project.id, asset_type="video", file_name="sample.mp4", file_path="sample.mp4", mime_type="video/mp4"),
+                )
+                project_id = project.id
+                asset_id = asset.id
+            finally:
+                db.close()
 
             with patch("app.api.v1.tasks.preprocess_job.delay", side_effect=RuntimeError("redis offline")):
                 response = client.post(
                     "/api/v1/tasks/preprocess",
-                    json={"project_id": "project-1", "asset_id": "asset-1", "task_type": "preprocess", "input_config": {"source_path": "sample.mp4"}},
+                    json={"project_id": project_id, "asset_id": asset_id, "task_type": "preprocess", "input_config": {"source_path": "sample.mp4"}},
                 )
 
             self.assertEqual(response.status_code, 200)
@@ -145,10 +252,17 @@ class TaskDispatchFlowTests(unittest.TestCase):
             from app.db.session import engine, SessionLocal
             import app.models  # noqa: F401
             from app.main import app
-            from app.services.crud_service import get_task
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project, get_task
 
             Base.metadata.create_all(bind=engine)
             client = TestClient(app)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="local dispatch", description="", domain_type="knowledge", status="active"))
+                project_id = project.id
+            finally:
+                db.close()
 
             started = []
 
@@ -165,7 +279,7 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 patch("app.api.v1.tasks.analyze_job.delay", side_effect=AssertionError("local mode should not call celery delay")):
                 response = client.post(
                     "/api/v1/tasks/analyze",
-                    json={"project_id": "project-1", "asset_id": "asset-1", "task_type": "analyze", "input_config": {"text": "source"}},
+                    json={"project_id": project_id, "task_type": "analyze", "input_config": {"text": "source"}},
                 )
 
             self.assertEqual(response.status_code, 200)
@@ -205,17 +319,23 @@ class TaskDispatchFlowTests(unittest.TestCase):
             import app.models  # noqa: F401
             from app.main import app
             from app.models.semantic_unit import SemanticUnit
-            from app.services.crud_service import get_task
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project, get_task
 
             Base.metadata.create_all(bind=engine)
             client = TestClient(app)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="local analysis", description="", domain_type="knowledge", status="active"))
+                project_id = project.id
+            finally:
+                db.close()
 
             with patch("app.api.v1.tasks.analyze_job.delay", side_effect=AssertionError("local mode should not call celery delay")):
                 response = client.post(
                     "/api/v1/tasks/analyze",
                     json={
-                        "project_id": "project-1",
-                        "asset_id": "asset-1",
+                        "project_id": project_id,
                         "task_type": "analyze",
                         "input_config": {"text": "source material for local analysis"},
                     },
@@ -238,7 +358,7 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 self.assertEqual(stored.status, "success")
                 self.assertEqual(stored.progress, 100)
                 self.assertEqual(stored.result_summary, "analysis done")
-                units = db.query(SemanticUnit).filter(SemanticUnit.project_id == "project-1").all()
+                units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).all()
                 self.assertEqual(len(units), 3)
                 self.assertEqual({unit.unit_type for unit in units}, {"scene", "rule", "concept"})
             finally:

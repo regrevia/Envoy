@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.task import TaskCreate
-from app.services.crud_service import create_task, list_tasks, get_task, update_task_status
+from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
 from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job
 
@@ -18,6 +18,18 @@ def _task_payload(task):
         "result_summary": task.result_summary,
         "error_message": task.error_message,
     }
+
+
+def _validated_task_payload(db: Session, payload: TaskCreate):
+    if get_project(db, payload.project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if payload.asset_id:
+        asset = get_asset(db, payload.asset_id)
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        if asset.project_id != payload.project_id:
+            raise HTTPException(status_code=400, detail="Asset does not belong to project")
+    return payload
 
 
 @router.get("/tasks")
@@ -43,35 +55,41 @@ def set_task_status(task_id: str, payload: dict, db: Session = Depends(get_db)):
 
 @router.post("/tasks/preprocess")
 def create_preprocess_task(payload: TaskCreate, db: Session = Depends(get_db)):
+    payload = _validated_task_payload(db, payload)
     task = create_task(db, payload)
     return dispatch_task(db, task, preprocess_job, payload.model_dump())
 
 
 @router.post("/tasks/analyze")
 def create_analyze_task(payload: TaskCreate, db: Session = Depends(get_db)):
+    payload = _validated_task_payload(db, payload)
     task = create_task(db, payload)
     return dispatch_task(db, task, analyze_job, payload.model_dump())
 
 
 @router.post("/tasks/generate-samples")
 def create_sample_task(payload: TaskCreate, db: Session = Depends(get_db)):
+    payload = _validated_task_payload(db, payload)
     task = create_task(db, payload)
     return dispatch_task(db, task, sample_job, payload.model_dump())
 
 
 @router.post("/tasks/export")
 def create_export_task(payload: TaskCreate, db: Session = Depends(get_db)):
+    payload = _validated_task_payload(db, payload)
     task = create_task(db, payload)
     return dispatch_task(db, task, export_job, payload.model_dump())
 
 
 @router.post("/tasks/export-skill")
 def create_export_skill_task(payload: dict, db: Session = Depends(get_db)):
-    task = create_task(db, TaskCreate(project_id=payload.get("project_id"), asset_id=payload.get("asset_id"), task_type="export_skill", input_config=payload))
+    task_payload = _validated_task_payload(db, TaskCreate(project_id=payload.get("project_id"), asset_id=payload.get("asset_id"), task_type="export_skill", input_config=payload))
+    task = create_task(db, task_payload)
     return dispatch_task(db, task, export_skill_job, payload)
 
 
 @router.post("/tasks/export-markdown")
 def create_export_markdown_task(payload: dict, db: Session = Depends(get_db)):
-    task = create_task(db, TaskCreate(project_id=payload.get("project_id"), asset_id=payload.get("asset_id"), task_type="export_markdown", input_config=payload))
+    task_payload = _validated_task_payload(db, TaskCreate(project_id=payload.get("project_id"), asset_id=payload.get("asset_id"), task_type="export_markdown", input_config=payload))
+    task = create_task(db, task_payload)
     return dispatch_task(db, task, export_markdown_job, payload)
