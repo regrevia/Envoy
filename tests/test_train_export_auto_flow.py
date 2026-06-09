@@ -172,6 +172,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                     results[export_type] = body
 
                 markdown_text = Path(results["markdown"]["path"]).read_text(encoding="utf-8")
+                markdown_manifest = json.loads(Path(results["markdown"]["paths"]["manifest"]).read_text(encoding="utf-8"))
                 skill_text = Path(results["skill"]["path"]).read_text(encoding="utf-8")
                 skill_manifest = json.loads(Path(results["skill"]["paths"]["manifest"]).read_text(encoding="utf-8"))
                 rag_rows = [
@@ -183,6 +184,12 @@ class TrainExportAutoFlowTests(unittest.TestCase):
 
                 self.assertIn("## 视频转化摘要", markdown_text)
                 self.assertIn("第一段核心知识", markdown_text)
+                self.assertEqual(markdown_manifest["schema_version"], "envoy.markdown.v1")
+                self.assertEqual(markdown_manifest["source_task_id"], results["markdown"]["task_id"])
+                self.assertEqual(markdown_manifest["project_id"], project_id)
+                self.assertEqual(markdown_manifest["row_count"], 1)
+                self.assertEqual(Path(markdown_manifest["files"]["markdown"]).name, "video_summary.md")
+                self.assertEqual(Path(markdown_manifest["files"]["manifest"]).name, "markdown_manifest.json")
                 self.assertIn("## 输入摘要", skill_text)
                 self.assertIn("样本 1", skill_text)
                 self.assertIn("第一段核心知识", skill_text)
@@ -213,8 +220,10 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual({Path(item["file_path"]).name for item in skill_artifacts}, {"skill.md", "skill.json"})
                 rag_artifacts = [item for item in artifacts if item["artifact_type"] == "rag"]
                 self.assertEqual({Path(item["file_path"]).name for item in rag_artifacts}, {"rag_corpus.jsonl", "rag_manifest.json"})
+                markdown_artifacts = [item for item in artifacts if item["artifact_type"] == "markdown"]
+                self.assertEqual({Path(item["file_path"]).name for item in markdown_artifacts}, {"video_summary.md", "markdown_manifest.json"})
 
-                markdown_artifact = next(item for item in artifacts if item["artifact_type"] == "markdown")
+                markdown_artifact = next(item for item in markdown_artifacts if Path(item["file_path"]).name == "video_summary.md")
                 download = client.get(f"/api/v1/artifacts/{markdown_artifact['id']}/download")
                 self.assertEqual(download.status_code, 200)
                 self.assertIn("第一段核心知识", download.text)

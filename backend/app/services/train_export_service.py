@@ -237,12 +237,34 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
     root = _resolve_root(out_dir, "markdown", task_id, task_name)
     md_dir = build_subdir(root, "markdown")
     out_path = md_dir / "video_summary.md"
+    manifest_path = md_dir / "markdown_manifest.json"
     content = ["## 视频转化摘要", ""]
     for row in summary_rows:
         content.append(f"- {json.dumps(row, ensure_ascii=False)}")
     build_markdown_report(title, "\n".join(content), str(out_path))
-    _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path])
-    return {"root": str(root), "path": str(out_path)}
+    manifest = {
+        "schema_version": "envoy.markdown.v1",
+        "title": title,
+        "source_task_id": task_id,
+        "task_name": task_name,
+        "project_id": project_id,
+        "row_count": len(summary_rows),
+        "files": {
+            "markdown": str(out_path),
+            "manifest": str(manifest_path),
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path, manifest_path])
+    return {
+        "root": str(root),
+        "path": str(out_path),
+        "task_id": task_id,
+        "paths": {
+            "markdown": str(out_path),
+            "manifest": str(manifest_path),
+        },
+    }
 
 
 def build_auto_payload_from_project(db, project_id: str, export_type: str):
