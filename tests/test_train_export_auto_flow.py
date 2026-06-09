@@ -132,6 +132,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             from app.db.session import SessionLocal, engine
             import app.models  # noqa: F401
             from app.main import app
+            from app.models.trace_link import TraceLink
             from app.models.semantic_unit import SemanticUnit
             from app.schemas.project import ProjectCreate
             from app.services.crud_service import create_project
@@ -259,6 +260,33 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 download = client.get(f"/api/v1/artifacts/{markdown_artifact['id']}/download")
                 self.assertEqual(download.status_code, 200)
                 self.assertIn("第一段核心知识", download.text)
+
+                db = SessionLocal()
+                try:
+                    exported_links = (
+                        db.query(TraceLink)
+                        .filter(
+                            TraceLink.source_type == "semantic_unit",
+                            TraceLink.source_id.in_(["semantic-001", "semantic-002", "semantic-003"]),
+                            TraceLink.target_type == "artifact",
+                            TraceLink.relation_type == "exported_to",
+                        )
+                        .all()
+                    )
+                    traced_artifact_ids = {link.target_id for link in exported_links}
+                finally:
+                    db.close()
+
+                for artifact in markdown_artifacts + skill_artifacts + rag_artifacts:
+                    self.assertIn(artifact["id"], traced_artifact_ids)
+
+                trace_response = client.get(f"/api/v1/trace/artifact/{markdown_artifact['id']}")
+                self.assertEqual(trace_response.status_code, 200)
+                trace_links = trace_response.json()
+                self.assertEqual(
+                    {link["source_id"] for link in trace_links if link["target_id"] == markdown_artifact["id"]},
+                    {"semantic-001", "semantic-002", "semantic-003"},
+                )
             finally:
                 engine.dispose()
 
@@ -742,6 +770,75 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(client.get("/api/v1/artifacts").json(), [])
                 export_files = [path for path in (Path(tmp_dir) / "exports").rglob("*") if path.is_file()]
                 self.assertEqual(export_files, [])
+            finally:
+                engine.dispose()
+
+    def test_manual_export_ignores_untrusted_semantic_unit_trace_sources(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-trace-pollution-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="trusted project", description="", domain_type="knowledge", status="active"))
+                other_project = create_project(db, ProjectCreate(name="other project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-other-project",
+                        project_id=other_project.id,
+                        asset_id="asset-other",
+                        segment_id=None,
+                        unit_type="text",
+                        title="Other project unit",
+                        content="This unit must not be linked.",
+                        labels={"source": "text_asset"},
+                        confidence=0.9,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports",
+                    json={
+                        "project_id": project_id,
+                        "export_type": "rag",
+                        "payload": [
+                            {"text": "manual row", "metadata": {"semantic_unit_id": "semantic-other-project"}},
+                            {"text": "manual row 2", "metadata": {"semantic_unit_id": "semantic-missing"}},
+                        ],
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+
+                db = SessionLocal()
+                try:
+                    links = db.query(TraceLink).filter(TraceLink.target_type == "artifact").all()
+                    self.assertEqual(links, [])
+                finally:
+                    db.close()
             finally:
                 engine.dispose()
 
