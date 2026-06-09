@@ -3,6 +3,8 @@ import subprocess
 from pathlib import Path
 from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_SEGMENT_SECONDS
 
+_WHISPER_MODELS = {}
+
 
 class MediaProcessingError(RuntimeError):
     pass
@@ -101,7 +103,11 @@ def extract_frames(video_path: str, output_dir: str):
 def transcribe_audio(audio_path: str):
     try:
         import whisper
-        model = whisper.load_model("base")
+        model_name = "base"
+        model = _WHISPER_MODELS.get(model_name)
+        if model is None:
+            model = whisper.load_model(model_name)
+            _WHISPER_MODELS[model_name] = model
         result = model.transcribe(audio_path)
         return {"text": result.get("text", ""), "segments": result.get("segments", [])}
     except Exception:
