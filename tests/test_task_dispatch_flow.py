@@ -14,6 +14,78 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class TaskDispatchFlowTests(unittest.TestCase):
+    def test_direct_export_skill_uses_created_task_id_when_payload_contains_stale_task_id(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-direct-export-skill-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.artifact import Artifact
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project, get_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="direct skill export", description="", domain_type="knowledge", status="active"))
+                project_id = project.id
+            finally:
+                db.close()
+
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/tasks/export-skill",
+                json={
+                    "task_id": "stale-client-task-id",
+                    "project_id": project_id,
+                    "asset_id": "asset-direct-skill-001",
+                    "source_asset_id": "asset-direct-skill-001",
+                    "title": "Direct API Skill",
+                    "payload": [{"topic": "handoff", "content": "Keep task context owned by the server."}],
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            task_id = response.json()["id"]
+
+            db = SessionLocal()
+            try:
+                stored = None
+                for _ in range(50):
+                    db.expire_all()
+                    stored = get_task(db, task_id)
+                    if stored is not None and stored.status in {"success", "failed"}:
+                        break
+                    time.sleep(0.05)
+
+                self.assertIsNotNone(stored)
+                self.assertEqual(stored.status, "success")
+                self.assertEqual(stored.progress, 100)
+                self.assertEqual(stored.result_summary, "skill exported")
+                artifacts = db.query(Artifact).filter(Artifact.project_id == project_id, Artifact.artifact_type == "skill").all()
+                traces = db.query(TraceLink).filter(TraceLink.source_id == "asset-direct-skill-001", TraceLink.target_type == "artifact").all()
+                self.assertEqual({Path(item.file_path).name for item in artifacts}, {"skill.md", "skill.json"})
+                self.assertTrue(all(Path(item.file_path).exists() for item in artifacts))
+                self.assertTrue(all(task_id in item.file_path for item in artifacts))
+                self.assertFalse(any("stale-client-task-id" in item.file_path for item in artifacts))
+                self.assertEqual(len(traces), 2)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_task_create_records_dispatch_failure_when_celery_is_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-test.db'}"

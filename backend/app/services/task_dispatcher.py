@@ -34,7 +34,12 @@ def _run_local_task(celery_task: Any, payload: dict):
 
 
 def dispatch_task(db: Session, task, celery_task: Any, payload: dict):
-    job_payload = {"task_id": task.id, **payload}
+    job_payload = {
+        **payload,
+        "task_id": task.id,
+        "project_id": task.project_id,
+        "asset_id": task.asset_id,
+    }
 
     if TASK_EXECUTION_MODE == "celery":
         try:
