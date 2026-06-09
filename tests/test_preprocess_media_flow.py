@@ -601,6 +601,83 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_transcribes_audio_without_video_commands(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-audio-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="audio project", description="", domain_type="knowledge", status="active"))
+                storage_info = storage_client.upload_bytes("briefing.mp3", b"fake audio bytes", "audio/mpeg")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="audio",
+                        file_name="briefing.mp3",
+                        file_path=storage_info["object_name"],
+                        mime_type="audio/mpeg",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+                expected_path = str(storage_client._local_path(storage_info["object_name"]))
+            finally:
+                db.close()
+
+            transcript = {
+                "text": "Quarterly roadmap focuses on stable multimodal conversion.",
+                "segments": [{"start": 0.0, "end": 4.2, "text": "Quarterly roadmap focuses on stable multimodal conversion."}],
+            }
+            with patch("app.workers.jobs.split_video", side_effect=AssertionError("audio preprocessing should not split video")), \
+                patch("app.workers.jobs.extract_frames", side_effect=AssertionError("audio preprocessing should not extract frames")), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("audio preprocessing should not run OCR")), \
+                patch("app.workers.jobs.transcribe_audio", return_value=transcript) as transcribe_mock:
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "text_extracted")
+                self.assertEqual(result["semantic"]["source"], "audio_transcript")
+                self.assertEqual(result["semantic"]["segment_count"], 1)
+                transcribe_mock.assert_called_once_with(expected_path)
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0].unit_type, "audio")
+                self.assertEqual(units[0].labels["source"], "audio_transcript")
+                self.assertEqual(units[0].labels["extraction_status"], "text_extracted")
+                self.assertIn("stable multimodal conversion", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_stops_media_pipeline_when_task_is_canceled_after_split(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-cancel-test.db'}"
