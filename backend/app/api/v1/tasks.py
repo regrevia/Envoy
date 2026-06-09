@@ -12,11 +12,16 @@ router = APIRouter()
 def _task_payload(task):
     return {
         "id": task.id,
+        "project_id": task.project_id,
+        "asset_id": task.asset_id,
         "task_type": task.task_type,
         "status": task.status,
         "progress": task.progress,
+        "input_config": task.input_config,
         "result_summary": task.result_summary,
         "error_message": task.error_message,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
     }
 
 

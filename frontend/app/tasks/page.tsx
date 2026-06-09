@@ -7,9 +7,12 @@ import { apiJson } from '../../lib/api';
 
 type Task = {
   id: string;
+  project_id?: string | null;
+  asset_id?: string | null;
   task_type?: string | null;
   status?: string | null;
   progress?: number | null;
+  created_at?: string | null;
   result_summary?: string | null;
   error_message?: string | null;
 };
@@ -59,6 +62,13 @@ function taskTypeLabel(taskType?: string | null) {
     export_markdown: 'Markdown 导出',
   };
   return taskType ? labels[taskType] || taskType : '-';
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
 }
 
 export default function TasksPage() {
@@ -116,7 +126,12 @@ export default function TasksPage() {
                     <div style={{ marginTop: 10, height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
                       <div style={{ width: `${progress}%`, height: '100%', background: '#111827' }} />
                     </div>
-                    <div style={{ marginTop: 8, color: '#6b7280', fontSize: 13 }}>进度: {progress}%</div>
+                    <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
+                      <span>进度: {progress}%</span>
+                      <span>项目: {task.project_id || '-'}</span>
+                      <span>素材: {task.asset_id || '-'}</span>
+                      <span>创建: {formatTime(task.created_at)}</span>
+                    </div>
                     {task.error_message ? <div style={{ marginTop: 8, color: '#b91c1c', wordBreak: 'break-word' }}>{task.error_message}</div> : null}
                     {task.result_summary ? <div style={{ marginTop: 8, color: '#4b5563', wordBreak: 'break-word' }}>{task.result_summary}</div> : null}
                   </div>
