@@ -8,10 +8,12 @@ import { openDownloadUrl } from '../../lib/download';
 
 type Artifact = {
   id: string;
+  project_id?: string | null;
   artifact_type?: string | null;
   name?: string | null;
   file_path?: string | null;
   version?: string | null;
+  created_at?: string | null;
 };
 
 const panelStyle = {
@@ -31,6 +33,13 @@ const buttonStyle = {
   fontWeight: 600,
   cursor: 'pointer',
 } as const;
+
+function formatTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
 
 export default function ArtifactsPage() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -82,8 +91,10 @@ export default function ArtifactsPage() {
                       {artifact.name || artifact.id}
                     </Link>
                     <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
+                      <span>项目: {artifact.project_id || '-'}</span>
                       <span>类型：{artifact.artifact_type || '-'}</span>
                       <span>版本：{artifact.version || '-'}</span>
+                      <span>创建: {formatTime(artifact.created_at)}</span>
                     </div>
                     <div style={{ marginTop: 6, color: '#6b7280', fontSize: 13, wordBreak: 'break-all' }}>
                       {artifact.file_path || '-'}
