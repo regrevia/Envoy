@@ -1,7 +1,9 @@
 import json
 import base64
 import re
+import zipfile
 import zlib
+from xml.etree import ElementTree
 from uuid import uuid4
 from pathlib import Path
 from urllib.parse import urlparse
@@ -208,6 +210,44 @@ def _extract_pdf_text_fallback(source_path: str) -> str:
 
 def _extract_pdf_text(source_path: str) -> str:
     return _extract_pdf_text_with_optional_library(source_path) or _extract_pdf_text_fallback(source_path)
+
+
+def _xml_text_nodes(xml_bytes: bytes) -> list[str]:
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except ElementTree.ParseError:
+        return []
+    values = []
+    for node in root.iter():
+        tag = node.tag.rsplit("}", 1)[-1] if isinstance(node.tag, str) else ""
+        if tag in {"t", "v"} and node.text and node.text.strip():
+            values.append(node.text.strip())
+    return values
+
+
+def _extract_ooxml_text(source_path: str) -> str:
+    path = Path(source_path)
+    suffix = path.suffix.lower()
+    if suffix not in {".docx", ".pptx", ".xlsx"}:
+        return ""
+    try:
+        with zipfile.ZipFile(source_path) as archive:
+            names = archive.namelist()
+            if suffix == ".docx":
+                xml_names = [name for name in names if name.startswith("word/") and name.endswith(".xml")]
+            elif suffix == ".pptx":
+                xml_names = [name for name in names if name.startswith("ppt/slides/") and name.endswith(".xml")]
+            else:
+                xml_names = [
+                    name for name in names
+                    if (name == "xl/sharedStrings.xml" or name.startswith("xl/worksheets/")) and name.endswith(".xml")
+                ]
+            parts = []
+            for name in sorted(xml_names):
+                parts.extend(_xml_text_nodes(archive.read(name)))
+    except (OSError, RuntimeError, zipfile.BadZipFile, KeyError):
+        return ""
+    return "\n".join(part for part in parts if part).strip()
 
 
 def _persist_text_semantic_units(db, project_id: str, asset_id: str | None, title_base: str, unit_type: str, content: str, source: str, confidence: float):
@@ -431,8 +471,12 @@ def preprocess_job(self, payload: dict):
         if _is_document_asset(asset) or _is_image_asset(asset):
             unit_type = "image" if _is_image_asset(asset) else "document"
             source = f"{unit_type}_asset"
-            if unit_type == "document" and (asset.mime_type == "application/pdf" or asset.file_name.lower().endswith(".pdf")):
-                extracted_text = _extract_pdf_text(source_path)
+            if unit_type == "document":
+                lower_name = asset.file_name.lower() if asset else ""
+                if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
+                    extracted_text = _extract_pdf_text(source_path)
+                else:
+                    extracted_text = _extract_ooxml_text(source_path)
                 if extracted_text:
                     units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded document", "document", extracted_text, "document_text", 0.88)
                     semantic_payload = {

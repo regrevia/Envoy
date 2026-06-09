@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -20,6 +21,49 @@ def build_pdf_bytes(text: str) -> bytes:
     pdf = canvas.Canvas(buffer)
     pdf.drawString(72, 720, text)
     pdf.save()
+    return buffer.getvalue()
+
+
+def build_docx_bytes(text: str) -> bytes:
+    buffer = BytesIO()
+    document_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>{text}</w:t></w:r></w:p>
+  </w:body>
+</w:document>"""
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>")
+        archive.writestr("word/document.xml", document_xml)
+    return buffer.getvalue()
+
+
+def build_pptx_bytes(text: str) -> bytes:
+    buffer = BytesIO()
+    slide_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld>
+</p:sld>"""
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>")
+        archive.writestr("ppt/slides/slide1.xml", slide_xml)
+    return buffer.getvalue()
+
+
+def build_xlsx_bytes(text: str) -> bytes:
+    buffer = BytesIO()
+    shared_strings_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <si><t>{text}</t></si>
+</sst>"""
+    worksheet_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData>
+</worksheet>"""
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>")
+        archive.writestr("xl/sharedStrings.xml", shared_strings_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
     return buffer.getvalue()
 
 
@@ -89,6 +133,210 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(units[0].labels["source"], "document_text")
                 self.assertEqual(units[0].labels["extraction_status"], "text_extracted")
                 self.assertIn("Refund playbook requires manager approval", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_extracts_docx_text_into_semantic_unit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-docx-text-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="docx text project", description="", domain_type="knowledge", status="active"))
+                docx_storage = storage_client.upload_bytes(
+                    "refund-playbook.docx",
+                    build_docx_bytes("Refund approval requires invoice evidence and manager confirmation."),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+                docx_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="refund-playbook.docx",
+                        file_path=docx_storage["object_name"],
+                        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        metadata={"storage": docx_storage["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=docx_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = docx_asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "text_extracted")
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0].unit_type, "document")
+                self.assertEqual(units[0].labels["source"], "document_text")
+                self.assertIn("Refund approval requires invoice evidence", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_extracts_pptx_text_into_semantic_unit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-pptx-text-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pptx text project", description="", domain_type="knowledge", status="active"))
+                storage_info = storage_client.upload_bytes(
+                    "training-deck.pptx",
+                    build_pptx_bytes("Escalation slides require timeline evidence."),
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                )
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="training-deck.pptx",
+                        file_path=storage_info["object_name"],
+                        mime_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "text_extracted")
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0].unit_type, "document")
+                self.assertEqual(units[0].labels["source"], "document_text")
+                self.assertIn("Escalation slides require timeline evidence", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_extracts_xlsx_text_into_semantic_unit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-xlsx-text-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="xlsx text project", description="", domain_type="knowledge", status="active"))
+                storage_info = storage_client.upload_bytes(
+                    "training-table.xlsx",
+                    build_xlsx_bytes("Refund matrix requires regional owner review."),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="training-table.xlsx",
+                        file_path=storage_info["object_name"],
+                        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "text_extracted")
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0].unit_type, "document")
+                self.assertEqual(units[0].labels["source"], "document_text")
+                self.assertIn("Refund matrix requires regional owner review", units[0].content)
             finally:
                 db.close()
                 engine.dispose()
