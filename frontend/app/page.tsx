@@ -129,8 +129,16 @@ export default function HomePage() {
     return supported || 'sft';
   }, [selectedOutputs]);
 
-  const uploadHref = selectedProjectId ? `/upload?project_id=${selectedProjectId}` : '/upload';
+  const canProceed = Boolean(selectedProjectId);
+  const disabledActionStyle = {
+    opacity: 0.58,
+    cursor: 'not-allowed',
+  } as const;
+  const uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#';
   const exportHref = useMemo(() => {
+    if (!canProceed) {
+      return '#';
+    }
     const params = new URLSearchParams();
     if (selectedProjectId) {
       params.set('project_id', selectedProjectId);
@@ -138,7 +146,7 @@ export default function HomePage() {
     params.set('export_type', primaryExportType);
     params.set('outputs', selectedOutputs.join(','));
     return `/train-exports?${params.toString()}`;
-  }, [primaryExportType, selectedOutputs, selectedProjectId]);
+  }, [canProceed, primaryExportType, selectedOutputs, selectedProjectId]);
 
   const createProject = async () => {
     const trimmedName = name.trim();
@@ -255,11 +263,16 @@ export default function HomePage() {
               支持视频、音频、图片、PDF、Markdown、长文本和其他多模态文件。上传页会携带当前 project_id，并可直接启动预处理转换。
             </p>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Link href={uploadHref} style={{ ...buttonStyle, background: selectedProjectId ? '#111827' : '#f3f4f6', color: selectedProjectId ? '#ffffff' : '#6b7280', borderColor: selectedProjectId ? '#111827' : '#d1d5db' }}>
+              <Link href={uploadHref} aria-disabled={!canProceed} style={{ ...buttonStyle, background: canProceed ? '#111827' : '#f3f4f6', color: canProceed ? '#ffffff' : '#6b7280', borderColor: canProceed ? '#111827' : '#d1d5db', ...(!canProceed ? disabledActionStyle : {}) }}>
                 上传素材
               </Link>
               <Link href="/tasks" style={buttonStyle}>查看转换任务</Link>
             </div>
+            {!canProceed ? (
+              <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>
+                请先创建或选择任务后继续，上传素材需要明确归属的任务/项目。
+              </div>
+            ) : null}
             <div style={{ marginTop: 14, color: '#6b7280', fontSize: 13, wordBreak: 'break-all' }}>
               上传入口：{uploadHref}
             </div>
@@ -288,8 +301,13 @@ export default function HomePage() {
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Link href="/semantic-units" style={buttonStyle}>审查语义单元</Link>
               <Link href="/generated-samples" style={buttonStyle}>审查训练样本</Link>
-              <Link href={exportHref} style={{ ...buttonStyle, background: '#111827', color: '#ffffff', borderColor: '#111827' }}>进入导出</Link>
+              <Link href={exportHref} aria-disabled={!canProceed} style={{ ...buttonStyle, background: canProceed ? '#111827' : '#f3f4f6', color: canProceed ? '#ffffff' : '#6b7280', borderColor: canProceed ? '#111827' : '#d1d5db', ...(!canProceed ? disabledActionStyle : {}) }}>进入导出</Link>
             </div>
+            {!canProceed ? (
+              <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>
+                请先创建或选择任务后继续，导出需要 project_id 才能读取语义单元和生成样本。
+              </div>
+            ) : null}
           </article>
 
           <article className="flow-step">
