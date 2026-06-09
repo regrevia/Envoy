@@ -16,13 +16,6 @@ type Artifact = {
   created_at?: string | null;
 };
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
-
 const buttonStyle = {
   minHeight: 36,
   padding: '0 12px',
@@ -67,11 +60,11 @@ export default function ArtifactsPage() {
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
           <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>产物中心</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 680, color: '#4b5563', lineHeight: 1.7 }}>
-            查看由预处理、分析和训练导出生成的 Markdown、Skill、RAG 与数据集文件。
+            查看由预处理、分析和训练导出生成的 Markdown、Skill、RAG 与数据集文件，并进入详情审查产物来源统计。
           </p>
         </header>
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>产物列表</h2>
