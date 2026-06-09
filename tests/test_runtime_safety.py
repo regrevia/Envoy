@@ -71,6 +71,27 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("-reset_timestamps", cmd)
         self.assertTrue(str(cmd[-1]).endswith("segment_%06d.mp4"))
 
+    def test_extract_frames_uses_configured_sampling_interval(self):
+        os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "15"
+        sys.modules.pop("app.core.config", None)
+        sys.modules.pop("app.services.media_service", None)
+        from app.services import media_service
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return None
+
+        with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+            media_service.extract_frames("long-input.mp4", "tmp/test-long-frames")
+
+        self.assertEqual(len(calls), 1)
+        cmd = calls[0][0]
+        self.assertIn("-vf", cmd)
+        self.assertIn("fps=1/15", cmd)
+        self.assertTrue(str(cmd[-1]).endswith("frame_%06d.jpg"))
+
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""
         sys.modules.pop("app.core.config", None)
