@@ -25,6 +25,12 @@ type ArtifactManifest = {
   row_count?: number | null;
   source_counts?: Record<string, number> | null;
   unit_type_counts?: Record<string, number> | null;
+  media_processing_limits?: Array<{
+    segment_seconds?: number | null;
+    max_segment_count?: number | null;
+    max_input_seconds?: number | null;
+    unit_count?: number | null;
+  }> | null;
   ollama_status?: string | null;
   ollama_error?: string | null;
   ollama_truncated?: boolean | null;
@@ -89,6 +95,13 @@ function countsValue(counts?: Record<string, number> | null, labels: Record<stri
     .join('、');
 }
 
+function mediaLimitsValue(limits?: ArtifactManifest['media_processing_limits']) {
+  if (!limits || limits.length === 0) return '-';
+  return limits
+    .map((item) => `分段 ${item.segment_seconds ?? '-'} 秒，最多 ${item.max_segment_count ?? '-'} 段，最大 ${item.max_input_seconds ?? '-'} 秒，来源 ${item.unit_count ?? '-'} 条`)
+    .join('；');
+}
+
 export default function ArtifactDetailPage({ params }: { params: Promise<{ artifact_id: string }> }) {
   const [artifact, setArtifact] = useState<Artifact | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,6 +146,7 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
                   <DetailRow label="行数" value={manifestValue(artifact.manifest.row_count)} />
                   <DetailRow label="素材来源统计" value={countsValue(artifact.manifest.source_counts, sourceLabels)} />
                   <DetailRow label="语义类型统计" value={countsValue(artifact.manifest.unit_type_counts, unitTypeLabels)} />
+                  <DetailRow label="媒体处理上限" value={mediaLimitsValue(artifact.manifest.media_processing_limits)} />
                   <DetailRow label="Ollama 状态" value={artifact.manifest.ollama_status} />
                   <DetailRow label="Ollama 错误" value={artifact.manifest.ollama_error} />
                   <DetailRow label="Ollama 截断" value={booleanValue(artifact.manifest.ollama_truncated)} />
