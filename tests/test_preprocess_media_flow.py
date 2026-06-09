@@ -199,7 +199,7 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             from app.schemas.asset import AssetCreate
             from app.schemas.project import ProjectCreate
             from app.schemas.task import TaskCreate
-            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status as real_update_task_status
             from app.core.storage import storage_client
             from app.workers.jobs import preprocess_job
 
@@ -240,10 +240,17 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 calls["transcribe_audio"] = audio_path
                 return {"text": "transcript", "segments": []}
 
+            progress_updates = []
+
+            def record_update(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                progress_updates.append({"status": status, "progress": progress, "summary": result_summary, "error": error_message})
+                return real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+
             with patch("app.workers.jobs.split_video", side_effect=fake_split), \
                 patch("app.workers.jobs.extract_frames", side_effect=fake_frames), \
                 patch("app.workers.jobs.transcribe_audio", side_effect=fake_transcribe), \
-                patch("app.workers.jobs.run_ocr_on_frames", return_value=[]):
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=[]), \
+                patch("app.workers.jobs.update_task_status", side_effect=record_update):
                 result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
 
             db = SessionLocal()
@@ -259,6 +266,11 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(calls["transcribe_audio"], expected_path)
                 self.assertEqual(len(units), 1)
                 self.assertEqual(units[0].labels["source"], "media_asset")
+                summaries = [item["summary"] for item in progress_updates if item["summary"]]
+                self.assertIn("media split done: 1 segment(s)", summaries)
+                self.assertIn("frame extraction done: 1 frame pattern(s)", summaries)
+                self.assertIn("audio transcription done", summaries)
+                self.assertIn("ocr done: 0 frame result(s)", summaries)
             finally:
                 db.close()
                 engine.dispose()
