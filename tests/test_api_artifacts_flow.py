@@ -88,6 +88,8 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                         "llm_summary": "Skill package is usable for refund guidance.",
                         "llm_usage": "Support agent training",
                         "row_count": 3,
+                        "source_counts": {"text_asset": 1, "media_transcript": 1, "media_ocr": 1},
+                        "unit_type_counts": {"text": 1, "transcript": 1, "ocr": 1},
                         "files": {"markdown": str(artifact_dir / "skill.md"), "manifest": str(manifest_path)},
                     },
                     ensure_ascii=False,
@@ -134,6 +136,8 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                 self.assertEqual(detail["manifest"]["llm_summary"], "Skill package is usable for refund guidance.")
                 self.assertEqual(detail["manifest"]["llm_usage"], "Support agent training")
                 self.assertEqual(detail["manifest"]["row_count"], 3)
+                self.assertEqual(detail["manifest"]["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
+                self.assertEqual(detail["manifest"]["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
                 self.assertEqual(detail["manifest"]["manifest_path"], str(manifest_path))
             finally:
                 engine.dispose()
