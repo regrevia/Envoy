@@ -337,6 +337,22 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("panelStyle", page)
         self.assertNotIn("borderRadius: 8", page)
 
+    def test_artifact_detail_links_to_trace_chain(self):
+        page = (ROOT_DIR / "frontend" / "app" / "artifacts" / "[artifact_id]" / "page.tsx").read_text(encoding="utf-8")
+        trace_page = (ROOT_DIR / "frontend" / "app" / "trace" / "page.tsx").read_text(encoding="utf-8")
+
+        for copy in [
+            "查看来源链路",
+            "追溯审查",
+            "href={`/trace?type=artifact&id=${artifact.id}`}",
+            "useSearchParams",
+            "searchParams.get('type')",
+            "searchParams.get('id')",
+            "setSourceType(typeFromQuery)",
+            "setSourceId(idFromQuery)",
+        ]:
+            self.assertTrue(copy in page or copy in trace_page, copy)
+
     def test_artifacts_page_uses_divider_layout_over_cards(self):
         page = ROOT_DIR / "frontend" / "app" / "artifacts" / "page.tsx"
         text = page.read_text(encoding="utf-8")
