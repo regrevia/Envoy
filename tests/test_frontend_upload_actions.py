@@ -35,6 +35,33 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("Upload asset", text)
         self.assertNotIn("Choose project", text)
 
+    def test_upload_page_blocks_empty_files_before_api_request(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "file.size === 0",
+            "上传文件为空，请选择包含内容的素材",
+            "setResult({ error: '上传文件为空，请选择包含内容的素材' })",
+        ]:
+            self.assertIn(copy, text)
+
+    def test_upload_page_shows_supported_asset_types_from_backend_contract(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "支持类型：视频、音频、图片、文档、Markdown、长文本",
+            "{ id: 'video', label: '视频' }",
+            "{ id: 'audio', label: '音频' }",
+            "{ id: 'image', label: '图片' }",
+            "{ id: 'document', label: '文档' }",
+            "{ id: 'markdown', label: 'Markdown' }",
+            "{ id: 'text', label: '长文本' }",
+        ]:
+            self.assertIn(copy, text)
+        self.assertNotIn("{ id: 'unknown'", text)
+
     def test_upload_page_shows_full_conversion_flow_without_card_shell(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
         text = page.read_text(encoding="utf-8")
