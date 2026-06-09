@@ -152,6 +152,22 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("已有任务</div>", text)
         self.assertNotIn("已选择生成</div>", text)
 
+    def test_home_page_requires_project_before_upload_or_export(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const canProceed = Boolean(selectedProjectId);",
+            "请先创建或选择任务后继续",
+            "aria-disabled={!canProceed}",
+            "uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#'",
+            "exportHref = useMemo(() => {",
+            "if (!canProceed) {",
+            "return '#';",
+        ]:
+            self.assertIn(copy, text)
+        self.assertNotIn("const uploadHref = selectedProjectId ? `/upload?project_id=${selectedProjectId}` : '/upload';", text)
+
     def test_home_page_explains_complete_conversion_chain(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
