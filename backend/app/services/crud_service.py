@@ -80,6 +80,17 @@ def update_task_status(db: Session, task_id: str, status: str, progress: int | N
 
 
 def create_artifact(db: Session, payload: ArtifactCreate):
+    existing = (
+        db.query(Artifact)
+        .filter(
+            Artifact.project_id == payload.project_id,
+            Artifact.artifact_type == payload.artifact_type,
+            Artifact.file_path == payload.file_path,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
     obj = Artifact(id=str(uuid4()), project_id=payload.project_id, artifact_type=payload.artifact_type, name=payload.name, file_path=payload.file_path, version=payload.version)
     db.add(obj)
     db.commit()

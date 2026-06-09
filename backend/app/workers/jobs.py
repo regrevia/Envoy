@@ -41,6 +41,25 @@ def _canceled_result(payload: dict):
     return {"status": "canceled", "payload": payload}
 
 
+def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, target_id: str, relation_type: str):
+    existing = (
+        db.query(TraceLink)
+        .filter(
+            TraceLink.source_type == source_type,
+            TraceLink.source_id == source_id,
+            TraceLink.target_type == target_type,
+            TraceLink.target_id == target_id,
+            TraceLink.relation_type == relation_type,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    link = TraceLink(id=str(uuid4()), source_type=source_type, source_id=source_id, target_type=target_type, target_id=target_id, relation_type=relation_type)
+    db.add(link)
+    return link
+
+
 def _is_text_asset(asset):
     if asset is None:
         return False
@@ -583,8 +602,8 @@ def export_job(self, payload: dict):
         build_rich_export_report("Export Report", {"task_id": task_id, "project_id": project_id, "row_count": len(rows), "trace_link_count": len(trace_links)}, semantic_units, samples, trace_links, str(md_path))
         dataset_artifact = create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="dataset", name=jsonl_path.name, file_path=str(jsonl_path), version="v1"))
         report_artifact = create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="report", name=md_path.name, file_path=str(md_path), version="v1"))
-        db.add(TraceLink(id=str(uuid4()), source_type="processing_task", source_id=task_id, target_type="artifact", target_id=dataset_artifact.id, relation_type="exported_to"))
-        db.add(TraceLink(id=str(uuid4()), source_type="processing_task", source_id=task_id, target_type="artifact", target_id=report_artifact.id, relation_type="exported_to"))
+        _ensure_trace_link(db, "processing_task", task_id, "artifact", dataset_artifact.id, "exported_to")
+        _ensure_trace_link(db, "processing_task", task_id, "artifact", report_artifact.id, "exported_to")
         db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="export done")
         return {"status": "exported", "payload": payload, "row_count": len(rows), "paths": {"dataset": str(jsonl_path), "report": str(md_path)}}
@@ -613,7 +632,7 @@ def export_skill_job(self, payload: dict):
         ]
         if payload.get("source_asset_id"):
             for artifact in artifacts:
-                db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=payload["source_asset_id"], target_type="artifact", target_id=artifact.id, relation_type="exported_to"))
+                _ensure_trace_link(db, "asset", payload["source_asset_id"], "artifact", artifact.id, "exported_to")
             db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="skill exported")
         return {"status": "skill_exported", "path": export_result["path"], "paths": export_result.get("paths", {"markdown": export_result["path"]})}
@@ -638,7 +657,7 @@ def export_markdown_job(self, payload: dict):
         md_path = Path(export_result["path"])
         artifact = create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="report", name=md_path.name, file_path=str(md_path), version="v1"))
         if payload.get("source_asset_id"):
-            db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=payload["source_asset_id"], target_type="artifact", target_id=artifact.id, relation_type="exported_to"))
+            _ensure_trace_link(db, "asset", payload["source_asset_id"], "artifact", artifact.id, "exported_to")
             db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="markdown exported")
         return {"status": "markdown_exported", "path": str(md_path)}

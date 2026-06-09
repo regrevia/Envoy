@@ -78,6 +78,62 @@ class ExportJobFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_export_skill_job_is_idempotent_for_artifacts_and_trace_links(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-skill-idempotent-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.artifact import Artifact
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+            from app.workers.jobs import export_skill_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="skill idempotent project", description="", domain_type="knowledge", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-skill-idem", task_type="export_skill", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            payload = {
+                "task_id": task_id,
+                "project_id": project_id,
+                "source_asset_id": "asset-skill-idem",
+                "title": "Idempotent Skill",
+                "payload": [{"topic": "retry", "content": "Repeated worker runs must not duplicate artifacts."}],
+            }
+            first = export_skill_job.run(payload)
+            second = export_skill_job.run(payload)
+
+            db = SessionLocal()
+            try:
+                artifacts = db.query(Artifact).filter(Artifact.project_id == project_id, Artifact.artifact_type == "skill").all()
+                traces = db.query(TraceLink).filter(TraceLink.source_id == "asset-skill-idem", TraceLink.target_type == "artifact").all()
+
+                self.assertEqual(first["status"], "skill_exported")
+                self.assertEqual(second["status"], "skill_exported")
+                self.assertEqual({Path(item.file_path).name for item in artifacts}, {"skill.md", "skill.json"})
+                self.assertEqual(len(artifacts), 2)
+                self.assertEqual(len(traces), 2)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_export_job_writes_real_project_units_samples_and_trace_links(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             export_dir = Path(tmp_dir) / "exports"
@@ -165,6 +221,79 @@ class ExportJobFlowTests(unittest.TestCase):
                 self.assertIn("## 追踪关系", report)
                 self.assertIn("Incident policy", report)
                 self.assertIn("derived_from", report)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_export_job_is_idempotent_for_registered_artifacts_and_trace_links(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-job-idempotent-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.artifact import Artifact
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+            from app.workers.jobs import export_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="export idempotent project", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="semantic-export-idempotent",
+                    project_id=project.id,
+                    asset_id="asset-export-idempotent",
+                    segment_id=None,
+                    unit_type="text",
+                    title="Retry policy",
+                    content="Export retries should replace files without duplicating registered artifacts.",
+                    labels={"source": "text_asset", "stage": "preprocess"},
+                    confidence=0.91,
+                )
+                sample = GeneratedSample(
+                    id="sample-export-idempotent",
+                    project_id=project.id,
+                    source_unit_id=unit.id,
+                    sample_type="qa",
+                    input_text="What should export retries avoid?",
+                    output_text="Duplicate registered artifacts.",
+                    quality_score=0.94,
+                )
+                db.add_all([unit, sample])
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-export-idempotent", task_type="export", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            first = export_job.run({"task_id": task_id, "project_id": project_id})
+            second = export_job.run({"task_id": task_id, "project_id": project_id})
+
+            db = SessionLocal()
+            try:
+                artifacts = db.query(Artifact).filter(Artifact.project_id == project_id).all()
+                traces = db.query(TraceLink).filter(TraceLink.source_id == task_id, TraceLink.target_type == "artifact").all()
+
+                self.assertEqual(first["status"], "exported")
+                self.assertEqual(second["status"], "exported")
+                self.assertEqual({Path(item.file_path).name for item in artifacts}, {f"{task_id}.jsonl", f"{task_id}.md"})
+                self.assertEqual(len(artifacts), 2)
+                self.assertEqual(len(traces), 2)
             finally:
                 db.close()
                 engine.dispose()
