@@ -336,6 +336,25 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("panelStyle", text)
         self.assertNotIn("borderRadius: 8", text)
 
+    def test_generated_samples_page_uses_divider_layout_over_cards(self):
+        page = ROOT_DIR / "frontend" / "app" / "generated-samples" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "生成样本",
+            "样本列表",
+            "语义单元 -> 生成样本 -> 训练导出",
+            "来源语义单元",
+            "输入",
+            "输出",
+            "borderTop: '1px solid #e5e7eb'",
+            "borderBottom: '1px solid #e5e7eb'",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertNotIn("panelStyle", text)
+        self.assertNotIn("borderRadius: 8", text)
+
 
 if __name__ == "__main__":
     unittest.main()
