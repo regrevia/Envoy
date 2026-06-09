@@ -18,7 +18,7 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
-from app.core.config import MEDIA_ENABLE_OCR, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -869,8 +869,14 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
-        frame_paths = extract_frames(source_path, str(frame_dir))
-        _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
+        if MEDIA_ENABLE_FRAME_EXTRACTION:
+            frame_paths = extract_frames(source_path, str(frame_dir))
+            frame_extraction_skipped = False
+            _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
+        else:
+            frame_paths = []
+            frame_extraction_skipped = True
+            _safe_update(db, task_id, "running", 55, result_summary="frame extraction skipped: disabled")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         transcription_parts = []
@@ -911,7 +917,11 @@ def preprocess_job(self, payload: dict):
             "segments": transcription_segments,
             "segment_results": transcription_results,
         }
-        if MEDIA_ENABLE_OCR:
+        if frame_extraction_skipped:
+            ocr_results = []
+            ocr_skipped = True
+            _safe_update(db, task_id, "running", 90, result_summary="ocr skipped: frame extraction disabled")
+        elif MEDIA_ENABLE_OCR:
             ocr_results = run_ocr_on_frames(frame_paths)
             ocr_skipped = False
             _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
@@ -923,8 +933,10 @@ def preprocess_job(self, payload: dict):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         semantic_payload = {
             "segments": segment_paths,
+            "frames": frame_paths,
             "transcript": transcription,
             "ocr": ocr_results,
+            "frame_extraction_skipped": frame_extraction_skipped,
             "ocr_skipped": ocr_skipped,
             "stage": "preprocess",
             "source_path": source_path,
