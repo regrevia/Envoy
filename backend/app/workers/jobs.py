@@ -386,6 +386,76 @@ def _persist_single_semantic_unit(db, project_id: str, asset_id: str | None, uni
     return unit
 
 
+def _media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None):
+    if not asset_id or not task_id:
+        return []
+    units = _preprocess_semantic_units(db, asset_id, only_task_id=task_id)
+    return [
+        unit
+        for unit in units
+        if isinstance(unit.labels, dict)
+        and unit.labels.get("source") == "media_transcript"
+        and unit.labels.get("checkpoint") == "segment_transcript"
+    ]
+
+
+def _clear_media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None):
+    checkpoints = _media_transcript_checkpoints(db, asset_id, task_id)
+    if not checkpoints:
+        return 0
+    checkpoint_ids = [unit.id for unit in checkpoints]
+    trace_links = (
+        db.query(TraceLink)
+        .filter(
+            (TraceLink.source_id.in_(checkpoint_ids))
+            | (TraceLink.target_id.in_(checkpoint_ids))
+        )
+        .all()
+    )
+    for link in trace_links:
+        db.delete(link)
+    for unit in checkpoints:
+        db.delete(unit)
+    db.commit()
+    return len(checkpoints)
+
+
+def _upsert_media_transcript_checkpoint(
+    db,
+    project_id: str,
+    asset_id: str | None,
+    task_id: str | None,
+    transcript_parts: list[str],
+    segment_index: int,
+    segment_count: int,
+):
+    content = "\n".join(part for part in transcript_parts if part).strip()
+    if not content:
+        return None
+    labels = {
+        "stage": "preprocess",
+        "source": "media_transcript",
+        "task_id": task_id,
+        "checkpoint": "segment_transcript",
+        "segment_index": 0,
+        "segment_count": segment_count,
+        "segment_completed_count": segment_index + 1,
+        "extraction_status": "partial_text_extracted",
+    }
+    title = f"media transcript segments 1-{segment_index + 1}/{segment_count}"
+    existing = _media_transcript_checkpoints(db, asset_id, task_id)
+    if existing:
+        unit = existing[0]
+        unit.title = title
+        unit.content = content
+        unit.labels = labels
+        unit.confidence = 0.86
+        db.commit()
+        db.refresh(unit)
+        return unit
+    return _persist_single_semantic_unit(db, project_id, asset_id, "transcript", title, content, labels, 0.86)
+
+
 def _text_chunks(content: str, chunk_chars: int = TEXT_PREPROCESS_CHUNK_CHARS, overlap_chars: int = TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS):
     text = content or ""
     size = max(int(chunk_chars or 1), 1)
@@ -722,11 +792,11 @@ def preprocess_job(self, payload: dict):
         segment_paths = split_video(source_path, str(segment_dir))
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if _task_is_canceled(db, task_id):
-            return _canceled_result(payload)
+            return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         frame_paths = extract_frames(source_path, str(frame_dir))
         _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
         if _task_is_canceled(db, task_id):
-            return _canceled_result(payload)
+            return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         transcription_parts = []
         transcription_segments = []
         transcription_results = []
@@ -734,13 +804,22 @@ def preprocess_job(self, payload: dict):
         transcription_count = len(transcription_inputs)
         for index, segment_path in enumerate(transcription_inputs):
             if _task_is_canceled(db, task_id):
-                return _canceled_result(payload)
+                return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
             segment_transcription = transcribe_audio(segment_path)
             transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
             if isinstance(segment_transcription, dict):
                 text = str(segment_transcription.get("text", "")).strip()
                 if text:
                     transcription_parts.append(text)
+                    _upsert_media_transcript_checkpoint(
+                        db,
+                        project_id,
+                        asset_id,
+                        task_id,
+                        transcription_parts,
+                        index,
+                        transcription_count,
+                    )
                 for item in segment_transcription.get("segments", []) if isinstance(segment_transcription.get("segments", []), list) else []:
                     if isinstance(item, dict):
                         enriched = dict(item)
@@ -750,7 +829,7 @@ def preprocess_job(self, payload: dict):
             progress = min(75, 55 + int(((index + 1) / max(transcription_count, 1)) * 20))
             _safe_update(db, task_id, "running", progress, result_summary=f"audio transcription done: {index + 1}/{transcription_count} segment(s)")
             if _task_is_canceled(db, task_id):
-                return _canceled_result(payload)
+                return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         transcription = {
             "text": "\n".join(transcription_parts).strip(),
             "segments": transcription_segments,
@@ -759,10 +838,11 @@ def preprocess_job(self, payload: dict):
         ocr_results = run_ocr_on_frames(frame_paths)
         _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
         if _task_is_canceled(db, task_id):
-            return _canceled_result(payload)
+            return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         if transcript_text:
+            _clear_media_transcript_checkpoints(db, asset_id, task_id)
             _persist_text_semantic_units(
                 db,
                 project_id,
