@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+import importlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +12,15 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT_DIR / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+
+def reload_media_service():
+    sys.modules.pop("app.core.config", None)
+    sys.modules.pop("app.services.media_service", None)
+    services_pkg = sys.modules.get("app.services")
+    if services_pkg is not None and hasattr(services_pkg, "media_service"):
+        delattr(services_pkg, "media_service")
+    return importlib.import_module("app.services.media_service")
 
 
 class RuntimeSafetyTests(unittest.TestCase):
@@ -50,9 +60,7 @@ class RuntimeSafetyTests(unittest.TestCase):
 
     def test_split_video_uses_configured_segment_duration(self):
         os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
-        sys.modules.pop("app.core.config", None)
-        sys.modules.pop("app.services.media_service", None)
-        from app.services import media_service
+        media_service = reload_media_service()
 
         calls = []
 
@@ -74,9 +82,7 @@ class RuntimeSafetyTests(unittest.TestCase):
 
     def test_split_audio_uses_configured_segment_duration(self):
         os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
-        sys.modules.pop("app.core.config", None)
-        sys.modules.pop("app.services.media_service", None)
-        from app.services import media_service
+        media_service = reload_media_service()
 
         calls = []
 
@@ -99,9 +105,7 @@ class RuntimeSafetyTests(unittest.TestCase):
 
     def test_extract_frames_uses_configured_sampling_interval(self):
         os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "15"
-        sys.modules.pop("app.core.config", None)
-        sys.modules.pop("app.services.media_service", None)
-        from app.services import media_service
+        media_service = reload_media_service()
 
         calls = []
 
@@ -118,9 +122,41 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("fps=1/15", cmd)
         self.assertTrue(str(cmd[-1]).endswith("frame_%06d.jpg"))
 
-    def test_transcribe_audio_reuses_loaded_whisper_model(self):
-        sys.modules.pop("app.services.media_service", None)
+    def test_extract_frames_limits_frame_count_and_returns_actual_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            previous = {key: os.environ.get(key) for key in ("MEDIA_FRAME_INTERVAL_SECONDS", "MEDIA_MAX_FRAME_COUNT")}
+            try:
+                os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "10"
+                os.environ["MEDIA_MAX_FRAME_COUNT"] = "2"
+                media_service = reload_media_service()
 
+                output_dir = Path(tmp_dir) / "frames"
+                calls = []
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    (output_dir / "frame_000001.jpg").write_bytes(b"frame one")
+                    (output_dir / "frame_000002.jpg").write_bytes(b"frame two")
+                    return None
+
+                with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+                    frames = media_service.extract_frames("long-input.mp4", str(output_dir))
+
+                self.assertEqual(len(calls), 1)
+                cmd = calls[0][0]
+                self.assertIn("-frames:v", cmd)
+                self.assertIn("2", cmd)
+                self.assertEqual([Path(path).name for path in frames], ["frame_000001.jpg", "frame_000002.jpg"])
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+                reload_media_service()
+
+    def test_transcribe_audio_reuses_loaded_whisper_model(self):
         calls = []
 
         class FakeModel:
@@ -130,7 +166,7 @@ class RuntimeSafetyTests(unittest.TestCase):
         fake_whisper = types.SimpleNamespace(load_model=lambda model_name: calls.append(model_name) or FakeModel())
         sys.modules["whisper"] = fake_whisper
         try:
-            from app.services import media_service
+            media_service = reload_media_service()
 
             first = media_service.transcribe_audio("segment-1.wav")
             second = media_service.transcribe_audio("segment-2.wav")

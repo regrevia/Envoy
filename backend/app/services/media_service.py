@@ -1,7 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_SEGMENT_SECONDS
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_SEGMENT_SECONDS
 
 _WHISPER_MODELS = {}
 
@@ -93,11 +93,23 @@ def extract_frames(video_path: str, output_dir: str):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "frame_%06d.jpg")
     if video_path:
-        cmd = ["ffmpeg", "-y", "-i", video_path, "-vf", f"fps=1/{MEDIA_FRAME_INTERVAL_SECONDS}", output_pattern]
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-vf",
+            f"fps=1/{MEDIA_FRAME_INTERVAL_SECONDS}",
+            "-frames:v",
+            str(MEDIA_MAX_FRAME_COUNT),
+            output_pattern,
+        ]
         _run_media_command("extract_frames", cmd)
+        frame_paths = sorted(str(path) for path in Path(output_dir).glob("frame_*.jpg"))
+        return frame_paths
     else:
         Path(output_pattern.replace("%06d", "000001")).touch(exist_ok=True)
-    return [output_pattern]
+    return sorted(str(path) for path in Path(output_dir).glob("frame_*.jpg"))
 
 
 def transcribe_audio(audio_path: str):

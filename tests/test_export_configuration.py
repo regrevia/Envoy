@@ -27,6 +27,7 @@ class ExportConfigurationTests(unittest.TestCase):
             "MEDIA_COMMAND_TIMEOUT_SEC": "",
             "MEDIA_SEGMENT_SECONDS": "-1",
             "MEDIA_FRAME_INTERVAL_SECONDS": "bad",
+            "MEDIA_MAX_FRAME_COUNT": "0",
             "TEXT_PREPROCESS_CHUNK_CHARS": "-20",
             "TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS": "bad",
             "SAMPLE_GENERATION_BATCH_LIMIT": "0",
@@ -41,6 +42,7 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertEqual(config.MEDIA_COMMAND_TIMEOUT_SEC, 300)
             self.assertEqual(config.MEDIA_SEGMENT_SECONDS, 600)
             self.assertEqual(config.MEDIA_FRAME_INTERVAL_SECONDS, 15)
+            self.assertEqual(config.MEDIA_MAX_FRAME_COUNT, 240)
             self.assertEqual(config.TEXT_PREPROCESS_CHUNK_CHARS, 6000)
             self.assertEqual(config.TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, 400)
             self.assertEqual(config.SAMPLE_GENERATION_BATCH_LIMIT, 50)
