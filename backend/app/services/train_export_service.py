@@ -12,6 +12,7 @@ from app.schemas.artifact import ArtifactCreate
 from app.services.crud_service import create_artifact, create_export_record
 from app.services.export_paths import build_export_root, build_subdir
 from app.services.export_service import build_dataset_jsonl, build_markdown_report
+from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 
 
 def _dedupe_rows(rows: list[dict]):
@@ -121,6 +122,28 @@ def _finalize_export(db, project_id: str | None, task_id: str, export_type: str,
     if db and project_id:
         _write_record(db, project_id, task_id, export_type, task_name, root, [str(path) for path in paths])
         _write_artifacts(db, project_id, export_type, paths)
+
+
+def _ollama_rag_metadata(text: str):
+    result = generate_with_ollama(
+        "Extract RAG metadata from the source. Return JSON with summary, keywords, and usage.",
+        text or "",
+    )
+    metadata = {"ollama_status": result.get("status")}
+    if result.get("status") != "success":
+        if result.get("error"):
+            metadata["ollama_error"] = result["error"]
+        return metadata
+
+    parsed = parse_ollama_json_object(result.get("text", ""))
+    if isinstance(parsed.get("summary"), str) and parsed["summary"].strip():
+        metadata["llm_summary"] = parsed["summary"].strip()
+    keywords = parsed.get("keywords")
+    if isinstance(keywords, list):
+        metadata["llm_keywords"] = [str(item).strip() for item in keywords if str(item).strip()]
+    if isinstance(parsed.get("usage"), str) and parsed["usage"].strip():
+        metadata["llm_usage"] = parsed["usage"].strip()
+    return metadata
 
 
 def export_sft_dataset(rows: list[dict], out_dir: str, task_id: str, task_name: str | None = None, db=None, project_id: str | None = None):
@@ -297,6 +320,7 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
                 "unit_type": su.get("unit_type"),
                 "confidence": su.get("confidence"),
             }
+            metadata.update(_ollama_rag_metadata(su.get("content") or ""))
             rows.append({"text": su.get("content") or "", "metadata": metadata})
         return rows
     if export_type == "skill":
