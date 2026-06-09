@@ -22,6 +22,10 @@ py -m uvicorn app.main:app --reload
 - `MINIO_ACCESS_KEY` (default: `minio`)
 - `MINIO_SECRET_KEY` (default: `minio123456`)
 - `MINIO_BUCKET` (default: `envoy`)
+- `MEDIA_SEGMENT_SECONDS` (default: `600`) 媒体分段长度，影响长视频/音频转写粒度
+- `MEDIA_MAX_SEGMENT_COUNT` (default: `12`) 单个媒体任务最多读取的分段数量，避免超长素材拖垮转写任务
+- `MEDIA_MAX_FRAME_COUNT` (default: `240`) 单个视频任务最多抽帧数量
+- `OLLAMA_BASE_URL` / `OLLAMA_MODEL` / `OLLAMA_MAX_PROMPT_CHARS` 本地 Ollama 辅助生成配置
 
 ## Current Business Coverage
 - 项目、素材、任务、产物、语义单元、追溯、训练导出均已具备基础接口

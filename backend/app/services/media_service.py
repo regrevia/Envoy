@@ -1,7 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_SEGMENT_SECONDS
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS
 
 _WHISPER_MODELS = {}
 
@@ -36,11 +36,14 @@ def split_video(video_path: str, output_dir: str):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "segment_%06d.mp4")
     if video_path:
+        max_input_seconds = max(int(MEDIA_SEGMENT_SECONDS or 1), 1) * max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
         cmd = [
             "ffmpeg",
             "-y",
             "-i",
             video_path,
+            "-t",
+            str(max_input_seconds),
             "-c",
             "copy",
             "-f",
@@ -64,11 +67,14 @@ def split_audio(audio_path: str, output_dir: str):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "audio_segment_%06d.wav")
     if audio_path:
+        max_input_seconds = max(int(MEDIA_SEGMENT_SECONDS or 1), 1) * max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
         cmd = [
             "ffmpeg",
             "-y",
             "-i",
             audio_path,
+            "-t",
+            str(max_input_seconds),
             "-vn",
             "-acodec",
             "pcm_s16le",
