@@ -18,7 +18,7 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
-from app.core.config import MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import MEDIA_ENABLE_OCR, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -911,14 +911,21 @@ def preprocess_job(self, payload: dict):
             "segments": transcription_segments,
             "segment_results": transcription_results,
         }
-        ocr_results = run_ocr_on_frames(frame_paths)
-        _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
+        if MEDIA_ENABLE_OCR:
+            ocr_results = run_ocr_on_frames(frame_paths)
+            ocr_skipped = False
+            _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
+        else:
+            ocr_results = []
+            ocr_skipped = True
+            _safe_update(db, task_id, "running", 90, result_summary="ocr skipped: disabled")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         semantic_payload = {
             "segments": segment_paths,
             "transcript": transcription,
             "ocr": ocr_results,
+            "ocr_skipped": ocr_skipped,
             "stage": "preprocess",
             "source_path": source_path,
             **_media_limit_metadata(),

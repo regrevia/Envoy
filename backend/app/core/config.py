@@ -10,6 +10,13 @@ def _env_positive_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@127.0.0.1:3307/envoy_v1")
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 TASK_EXECUTION_MODE = os.getenv("ENVOY_TASK_EXECUTION_MODE", "local").lower()
@@ -33,6 +40,7 @@ MEDIA_SEGMENT_SECONDS = _env_positive_int("MEDIA_SEGMENT_SECONDS", 600)
 MEDIA_MAX_SEGMENT_COUNT = _env_positive_int("MEDIA_MAX_SEGMENT_COUNT", 12)
 MEDIA_FRAME_INTERVAL_SECONDS = _env_positive_int("MEDIA_FRAME_INTERVAL_SECONDS", 15)
 MEDIA_MAX_FRAME_COUNT = _env_positive_int("MEDIA_MAX_FRAME_COUNT", 240)
+MEDIA_ENABLE_OCR = _env_bool("MEDIA_ENABLE_OCR", True)
 TEXT_PREPROCESS_CHUNK_CHARS = _env_positive_int("TEXT_PREPROCESS_CHUNK_CHARS", 6000)
 TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS = _env_positive_int("TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS", 400)
 SAMPLE_GENERATION_BATCH_LIMIT = _env_positive_int("SAMPLE_GENERATION_BATCH_LIMIT", 50)

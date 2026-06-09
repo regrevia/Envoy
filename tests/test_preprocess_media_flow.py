@@ -763,6 +763,92 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_video_can_skip_ocr_when_disabled(self):
+        previous_media_enable_ocr = os.environ.get("MEDIA_ENABLE_OCR")
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-video-no-ocr-test.db'}"
+                os.environ["ENVOY_STORAGE_MODE"] = "local"
+                os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+                os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+                os.environ["MEDIA_ENABLE_OCR"] = "false"
+                os.environ["OLLAMA_MODEL"] = ""
+
+                for name in list(sys.modules):
+                    if name.startswith("app."):
+                        sys.modules.pop(name, None)
+
+                from app.db.base import Base
+                from app.db.session import SessionLocal, engine
+                import app.models  # noqa: F401
+                from app.models.semantic_unit import SemanticUnit
+                from app.schemas.asset import AssetCreate
+                from app.schemas.project import ProjectCreate
+                from app.schemas.task import TaskCreate
+                from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status as real_update_task_status
+                from app.core.storage import storage_client
+                from app.workers.jobs import preprocess_job
+
+                Base.metadata.create_all(bind=engine)
+                db = SessionLocal()
+                try:
+                    project = create_project(db, ProjectCreate(name="video no ocr project", description="", domain_type="video", status="active"))
+                    storage_info = storage_client.upload_bytes("lecture.mp4", b"fake video bytes", "video/mp4")
+                    asset = create_asset(
+                        db,
+                        AssetCreate(
+                            project_id=project.id,
+                            asset_type="video",
+                            file_name="lecture.mp4",
+                            file_path=storage_info["object_name"],
+                            mime_type="video/mp4",
+                            metadata={"storage": storage_info["storage"]},
+                        ),
+                    )
+                    task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                    project_id = project.id
+                    asset_id = asset.id
+                    task_id = task.id
+                finally:
+                    db.close()
+
+                progress_updates = []
+
+                def record_update(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                    progress_updates.append({"status": status, "progress": progress, "summary": result_summary, "error": error_message})
+                    return real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+
+                segment_path = str(Path(tmp_dir) / "segment_000001.mp4")
+                frame_path = str(Path(tmp_dir) / "frame_000001.jpg")
+                with patch("app.workers.jobs.split_video", return_value=[segment_path]), \
+                    patch("app.workers.jobs.extract_frames", return_value=[frame_path]), \
+                    patch("app.workers.jobs.transcribe_audio", return_value={"text": "lecture transcript for stable export", "segments": []}), \
+                    patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("OCR should be skipped when MEDIA_ENABLE_OCR=false")), \
+                    patch("app.workers.jobs.update_task_status", side_effect=record_update):
+                    result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+                db = SessionLocal()
+                try:
+                    stored_task = get_task(db, task_id)
+                    units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                    self.assertEqual(result["status"], "preprocessed")
+                    self.assertEqual(stored_task.status, "success")
+                    self.assertTrue(result["semantic"]["ocr_skipped"])
+                    self.assertEqual(result["semantic"]["ocr"], [])
+                    self.assertTrue(any(unit.labels.get("source") == "media_transcript" for unit in units))
+                    self.assertFalse(any(unit.labels.get("source") == "media_ocr" for unit in units))
+                    summaries = [item["summary"] for item in progress_updates if item["summary"]]
+                    self.assertIn("ocr skipped: disabled", summaries)
+                finally:
+                    db.close()
+                    engine.dispose()
+        finally:
+            if previous_media_enable_ocr is None:
+                os.environ.pop("MEDIA_ENABLE_OCR", None)
+            else:
+                os.environ["MEDIA_ENABLE_OCR"] = previous_media_enable_ocr
+
     def test_preprocess_cleans_task_media_temp_directories_after_success(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-cleanup-test.db'}"
