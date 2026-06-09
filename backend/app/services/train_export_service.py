@@ -81,6 +81,10 @@ def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     return {
         "semantic_units": [
             {
+                "id": row.id,
+                "project_id": row.project_id,
+                "asset_id": row.asset_id,
+                "segment_id": row.segment_id,
                 "unit_type": row.unit_type,
                 "title": row.title,
                 "content": row.content,
@@ -240,7 +244,17 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
     if export_type == "rag":
         rows = []
         for su in data["semantic_units"]:
-            rows.append({"text": su.get("content") or "", "metadata": su.get("labels") or {}})
+            metadata = {
+                **(su.get("labels") or {}),
+                "semantic_unit_id": su.get("id"),
+                "project_id": su.get("project_id"),
+                "asset_id": su.get("asset_id"),
+                "segment_id": su.get("segment_id"),
+                "title": su.get("title"),
+                "unit_type": su.get("unit_type"),
+                "confidence": su.get("confidence"),
+            }
+            rows.append({"text": su.get("content") or "", "metadata": metadata})
         return rows
     if export_type == "skill":
         return data["semantic_units"] + data["samples"] + data["trace_links"]
