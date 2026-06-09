@@ -133,6 +133,19 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_train_exports_page_has_chinese_json_validation_feedback(self):
+        page = ROOT_DIR / "frontend" / "app" / "train-exports" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "样本 JSON 格式错误",
+            "请填写项目 ID 或来源上下文",
+            "exporting",
+            "autoExporting",
+            "解析样本 JSON",
+        ]:
+            self.assertIn(copy, text)
+
     def test_home_page_exposes_ollama_runtime_status(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
