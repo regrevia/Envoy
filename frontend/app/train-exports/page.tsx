@@ -75,6 +75,8 @@ export default function TrainExportsPage() {
   const [history, setHistory] = useState<ExportRecord[]>([]);
   const [message, setMessage] = useState('准备就绪');
   const [outputContext, setOutputContext] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [autoExporting, setAutoExporting] = useState(false);
 
   const previewPath = useMemo(() => {
     const folder = `${safeSlug(taskName || exportType)}_${safeSlug(sourceTaskId || assetId || projectId || 'manual')}`;
@@ -110,7 +112,39 @@ export default function TrainExportsPage() {
     void loadHistory();
   }, []);
 
+  const hasSourceContext = () => Boolean(projectId.trim() || assetId.trim() || sourceTaskId.trim());
+
+  const parseSamplesPayload = () => {
+    try {
+      const parsed = JSON.parse(samplesText);
+      if (!Array.isArray(parsed)) {
+        setMessage('样本 JSON 格式错误：顶层必须是数组');
+        return null;
+      }
+      return parsed;
+    } catch {
+      setMessage('样本 JSON 格式错误：请检查括号、逗号和引号');
+      return null;
+    }
+  };
+
   const onExport = async () => {
+    if (exporting) {
+      return;
+    }
+    if (!hasSourceContext()) {
+      setMessage('请填写项目 ID 或来源上下文');
+      return;
+    }
+
+    setMessage('正在解析样本 JSON...');
+    const parsedSamples = parseSamplesPayload();
+    if (!parsedSamples) {
+      return;
+    }
+
+    setExporting(true);
+    setMessage('正在导出...');
     try {
       const payload = {
         export_type: exportType,
@@ -119,7 +153,7 @@ export default function TrainExportsPage() {
         source_task_id: sourceTaskId || undefined,
         title,
         task_name: taskName || undefined,
-        payload: JSON.parse(samplesText),
+        payload: parsedSamples,
       };
       const data = await apiJson('/api/v1/train-exports', {
         method: 'POST',
@@ -131,10 +165,22 @@ export default function TrainExportsPage() {
       void loadHistory();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
     }
   };
 
   const onAutoExport = async () => {
+    if (autoExporting) {
+      return;
+    }
+    if (!hasSourceContext()) {
+      setMessage('请填写项目 ID 或来源上下文');
+      return;
+    }
+
+    setAutoExporting(true);
+    setMessage('正在自动读取并导出...');
     try {
       const payload = {
         export_type: exportType,
@@ -154,6 +200,8 @@ export default function TrainExportsPage() {
       void loadHistory();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '自动导出失败');
+    } finally {
+      setAutoExporting(false);
     }
   };
 
@@ -220,8 +268,20 @@ export default function TrainExportsPage() {
           />
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button onClick={onExport} style={{ ...buttonStyle, background: '#111827', color: '#fff', borderColor: '#111827' }}>开始导出</button>
-            <button onClick={onAutoExport} style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }}>自动读取导出</button>
+            <button
+              onClick={onExport}
+              disabled={exporting}
+              style={{ ...buttonStyle, background: '#111827', color: '#fff', borderColor: '#111827', opacity: exporting ? 0.72 : 1, cursor: exporting ? 'not-allowed' : 'pointer' }}
+            >
+              {exporting ? '导出中...' : '开始导出'}
+            </button>
+            <button
+              onClick={onAutoExport}
+              disabled={autoExporting}
+              style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb', opacity: autoExporting ? 0.72 : 1, cursor: autoExporting ? 'not-allowed' : 'pointer' }}
+            >
+              {autoExporting ? '自动导出中...' : '自动读取导出'}
+            </button>
             <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物中心</Link>
           </div>
         </section>
