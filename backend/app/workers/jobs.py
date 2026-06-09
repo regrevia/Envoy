@@ -425,9 +425,13 @@ def preprocess_job(self, payload: dict):
             _safe_update(db, task_id, "success", 100, result_summary=f"{unit_type} preprocess done: metadata captured")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_paths = split_video(source_path, str(SEGMENT_DIR))
+        _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         frame_paths = extract_frames(source_path, str(FRAME_DIR))
+        _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
         transcription = transcribe_audio(source_path)
+        _safe_update(db, task_id, "running", 75, result_summary="audio transcription done")
         ocr_results = run_ocr_on_frames(frame_paths)
+        _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
         su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset"}, confidence=0.8)
         db.add(su)
