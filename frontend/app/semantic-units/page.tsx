@@ -123,10 +123,10 @@ export default function SemanticUnitsPage() {
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section className="workspace-shell">
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy 核心链路</div>
+          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy 核心链路 / 这是第 3 步</div>
           <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>素材转换工作台</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            以中文为主审查从多媒体/长文本中抽取出的语义单元，并继续生成样本、Markdown、Skill、RAG 语料和训练导出。
+            这里是语义单元审查页，不是首页。先从首页创建转换任务，再上传素材，最后在这里选择生成内容并进入 Markdown、Skill、RAG 或训练导出。
           </p>
         </header>
 
@@ -143,6 +143,7 @@ export default function SemanticUnitsPage() {
         </section>
 
         <nav aria-label="核心操作" className="quick-actions">
+          <Link href="/" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>返回首页创建转换任务</Link>
           <Link href="/upload" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>上传素材</Link>
           <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>转换任务</Link>
           <Link href="/generated-samples" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>样本审查</Link>
