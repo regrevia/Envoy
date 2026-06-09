@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
+from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
@@ -28,6 +29,18 @@ def _task_payload(task):
 def _validated_task_payload(db: Session, payload: TaskCreate):
     if get_project(db, payload.project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    source_unit_id = (payload.input_config or {}).get("source_unit_id")
+    if payload.task_type == "generate_samples" and source_unit_id:
+        unit = db.query(SemanticUnit).filter(SemanticUnit.id == source_unit_id).first()
+        if unit is None:
+            raise HTTPException(status_code=404, detail="Source semantic unit not found")
+        if unit.project_id != payload.project_id:
+            raise HTTPException(status_code=400, detail="Source semantic unit does not belong to project")
+        if payload.asset_id and unit.asset_id and payload.asset_id != unit.asset_id:
+            raise HTTPException(status_code=400, detail="Asset does not match source semantic unit")
+        return payload.model_copy(update={"asset_id": payload.asset_id or unit.asset_id})
+
     if payload.asset_id:
         asset = get_asset(db, payload.asset_id)
         if asset is None:
