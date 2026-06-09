@@ -358,6 +358,59 @@ class TaskDispatchFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_task_retry_rejects_non_failed_finished_tasks_without_creating_new_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-retry-finished-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, list_tasks
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="finished retry project", description="", domain_type="video", status="active"))
+                success_task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={"source_path": "done.mp4"}))
+                success_task.status = "success"
+                success_task.progress = 100
+                canceled_task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={"source_path": "canceled.mp4"}))
+                canceled_task.status = "canceled"
+                canceled_task.progress = 50
+                db.commit()
+                task_ids = [success_task.id, canceled_task.id]
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.api.v1.tasks.preprocess_job.delay") as delay:
+                    for task_id in task_ids:
+                        with self.subTest(task_id=task_id):
+                            response = client.post(f"/api/v1/tasks/{task_id}/retry")
+
+                            self.assertEqual(response.status_code, 400)
+                            self.assertEqual(response.json()["detail"], "Only failed tasks can be retried")
+
+                delay.assert_not_called()
+                db = SessionLocal()
+                try:
+                    self.assertEqual(len(list_tasks(db)), 2)
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
     def test_task_list_and_detail_include_traceable_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-context-api-test.db'}"

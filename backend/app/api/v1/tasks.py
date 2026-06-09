@@ -107,6 +107,8 @@ def retry_task_api(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     if original.status in {"pending", "running"}:
         raise HTTPException(status_code=409, detail="Task is still active")
+    if original.status not in {"failed", "dispatch_failed"}:
+        raise HTTPException(status_code=400, detail="Only failed tasks can be retried")
     worker = RETRYABLE_TASKS.get(original.task_type)
     if worker is None:
         raise HTTPException(status_code=400, detail="Task type is not retryable")
