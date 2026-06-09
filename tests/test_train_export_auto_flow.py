@@ -230,6 +230,140 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_rag_export_uses_ollama_metadata_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-ollama-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="RAG Ollama project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-rag-ollama",
+                        project_id=project.id,
+                        asset_id="asset-rag-ollama",
+                        segment_id=None,
+                        unit_type="text",
+                        title="Incident escalation",
+                        content="Escalate incidents within 15 minutes and attach evidence.",
+                        labels={"source": "text_asset"},
+                        confidence=0.92,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.services.train_export_service.generate_with_ollama") as generate:
+                    generate.return_value = {
+                        "enabled": True,
+                        "status": "success",
+                        "text": '{"summary":"Incident response timing and evidence requirements.","keywords":["incident","15 minutes","evidence"],"usage":"RAG retrieval for response playbooks"}',
+                        "error": None,
+                    }
+                    response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "rag"})
+
+                self.assertEqual(response.status_code, 200)
+                rows = [
+                    json.loads(line)
+                    for line in Path(response.json()["path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                metadata = rows[0]["metadata"]
+
+                self.assertEqual(metadata["ollama_status"], "success")
+                self.assertEqual(metadata["llm_summary"], "Incident response timing and evidence requirements.")
+                self.assertEqual(metadata["llm_keywords"], ["incident", "15 minutes", "evidence"])
+                self.assertEqual(metadata["llm_usage"], "RAG retrieval for response playbooks")
+                generate.assert_called_once()
+            finally:
+                engine.dispose()
+
+    def test_auto_rag_export_keeps_stable_output_when_ollama_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-ollama-failure-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="RAG Ollama failure project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-rag-fallback",
+                        project_id=project.id,
+                        asset_id="asset-rag-fallback",
+                        segment_id=None,
+                        unit_type="text",
+                        title="Fallback policy",
+                        content="Fallback RAG content must remain exportable.",
+                        labels={"source": "text_asset"},
+                        confidence=0.88,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.services.train_export_service.generate_with_ollama") as generate:
+                    generate.return_value = {"enabled": True, "status": "failed", "text": "", "error": "ollama timeout"}
+                    response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "rag"})
+
+                self.assertEqual(response.status_code, 200)
+                rows = [
+                    json.loads(line)
+                    for line in Path(response.json()["path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                metadata = rows[0]["metadata"]
+
+                self.assertEqual(rows[0]["text"], "Fallback RAG content must remain exportable.")
+                self.assertEqual(metadata["ollama_status"], "failed")
+                self.assertEqual(metadata["ollama_error"], "ollama timeout")
+                self.assertNotIn("llm_summary", metadata)
+            finally:
+                engine.dispose()
+
     def test_train_export_requires_project_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-context-test.db'}"
