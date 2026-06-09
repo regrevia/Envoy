@@ -181,6 +181,45 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_finished_task_cannot_be_overwritten_by_late_worker_update(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-finished-protect-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, update_task_status
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="finished update project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                finished = update_task_status(db, task.id, "success", 100, result_summary="preprocess done")
+                late_running = update_task_status(db, task.id, "running", 55, result_summary="late heartbeat")
+                late_failed = update_task_status(db, task.id, "failed", 100, error_message="late failure")
+
+                self.assertEqual(finished.status, "success")
+                self.assertEqual(late_running.status, "success")
+                self.assertEqual(late_running.progress, 100)
+                self.assertEqual(late_running.result_summary, "preprocess done")
+                self.assertIsNone(late_running.error_message)
+                self.assertEqual(late_failed.status, "success")
+                self.assertEqual(late_failed.progress, 100)
+                self.assertEqual(late_failed.result_summary, "preprocess done")
+                self.assertIsNone(late_failed.error_message)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_task_cancel_rejects_already_completed_task(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-cancel-complete-test.db'}"

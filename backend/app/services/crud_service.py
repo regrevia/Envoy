@@ -12,6 +12,9 @@ from app.schemas.task import TaskCreate
 from app.schemas.artifact import ArtifactCreate
 
 
+TERMINAL_TASK_STATUSES = {"success", "failed", "canceled", "dispatch_failed"}
+
+
 def create_project(db: Session, payload: ProjectCreate):
     obj = Project(id=str(uuid4()), name=payload.name, description=payload.description, domain_type=payload.domain_type, status=payload.status or "active")
     db.add(obj)
@@ -64,7 +67,7 @@ def update_task_status(db: Session, task_id: str, status: str, progress: int | N
     task = get_task(db, task_id)
     if task is None:
         return None
-    if task.status == "canceled" and status != "canceled":
+    if task.status in TERMINAL_TASK_STATUSES and status != task.status:
         return task
     task.status = status
     if progress is not None:
