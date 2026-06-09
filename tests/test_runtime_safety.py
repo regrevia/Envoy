@@ -103,6 +103,36 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("-vn", cmd)
         self.assertTrue(str(cmd[-1]).endswith("audio_segment_%06d.wav"))
 
+    def test_media_segmentation_limits_total_input_duration_from_config(self):
+        previous = {key: os.environ.get(key) for key in ("MEDIA_SEGMENT_SECONDS", "MEDIA_MAX_SEGMENT_COUNT")}
+        try:
+            os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
+            os.environ["MEDIA_MAX_SEGMENT_COUNT"] = "2"
+            media_service = reload_media_service()
+
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append((cmd, kwargs))
+                return None
+
+            with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+                media_service.split_video("long-input.mp4", "tmp/test-max-video-segments")
+                media_service.split_audio("long-input.mp3", "tmp/test-max-audio-segments")
+
+            self.assertEqual(len(calls), 2)
+            for cmd, _kwargs in calls:
+                self.assertIn("-t", cmd)
+                duration_index = cmd.index("-t") + 1
+                self.assertEqual(cmd[duration_index], "1200")
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            reload_media_service()
+
     def test_extract_frames_uses_configured_sampling_interval(self):
         os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "15"
         media_service = reload_media_service()

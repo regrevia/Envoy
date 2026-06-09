@@ -26,6 +26,7 @@ class ExportConfigurationTests(unittest.TestCase):
             "TASK_STALE_AFTER_SECONDS": "0",
             "MEDIA_COMMAND_TIMEOUT_SEC": "",
             "MEDIA_SEGMENT_SECONDS": "-1",
+            "MEDIA_MAX_SEGMENT_COUNT": "0",
             "MEDIA_FRAME_INTERVAL_SECONDS": "bad",
             "MEDIA_MAX_FRAME_COUNT": "0",
             "TEXT_PREPROCESS_CHUNK_CHARS": "-20",
@@ -41,6 +42,7 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertEqual(config.TASK_STALE_AFTER_SECONDS, 1800)
             self.assertEqual(config.MEDIA_COMMAND_TIMEOUT_SEC, 300)
             self.assertEqual(config.MEDIA_SEGMENT_SECONDS, 600)
+            self.assertEqual(config.MEDIA_MAX_SEGMENT_COUNT, 12)
             self.assertEqual(config.MEDIA_FRAME_INTERVAL_SECONDS, 15)
             self.assertEqual(config.MEDIA_MAX_FRAME_COUNT, 240)
             self.assertEqual(config.TEXT_PREPROCESS_CHUNK_CHARS, 6000)
