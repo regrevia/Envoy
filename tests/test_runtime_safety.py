@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -116,6 +117,29 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("-vf", cmd)
         self.assertIn("fps=1/15", cmd)
         self.assertTrue(str(cmd[-1]).endswith("frame_%06d.jpg"))
+
+    def test_transcribe_audio_reuses_loaded_whisper_model(self):
+        sys.modules.pop("app.services.media_service", None)
+
+        calls = []
+
+        class FakeModel:
+            def transcribe(self, audio_path):
+                return {"text": f"transcribed {audio_path}", "segments": [{"text": audio_path}]}
+
+        fake_whisper = types.SimpleNamespace(load_model=lambda model_name: calls.append(model_name) or FakeModel())
+        sys.modules["whisper"] = fake_whisper
+        try:
+            from app.services import media_service
+
+            first = media_service.transcribe_audio("segment-1.wav")
+            second = media_service.transcribe_audio("segment-2.wav")
+        finally:
+            sys.modules.pop("whisper", None)
+
+        self.assertEqual(calls, ["base"])
+        self.assertEqual(first["text"], "transcribed segment-1.wav")
+        self.assertEqual(second["text"], "transcribed segment-2.wav")
 
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""
