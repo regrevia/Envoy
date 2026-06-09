@@ -88,6 +88,9 @@ def generate_with_ollama(instruction: str, content: str, client: Any | None = No
         )
         response.raise_for_status()
         data = response.json()
-        return {"enabled": True, "status": "success", "text": data.get("response", ""), "error": None, **metadata}
+        text = str(data.get("response", "")).strip()
+        if not text:
+            return {"enabled": True, "status": "failed", "text": "", "error": "ollama returned empty response", **metadata}
+        return {"enabled": True, "status": "success", "text": text, "error": None, **metadata}
     except Exception as exc:
         return {"enabled": True, "status": "failed", "text": "", "error": str(exc), **metadata}
