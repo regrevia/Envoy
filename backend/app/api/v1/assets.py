@@ -8,9 +8,24 @@ from app.services.minio_service import upload_to_storage
 router = APIRouter()
 
 
+def _asset_payload(asset):
+    return {
+        "id": asset.id,
+        "project_id": asset.project_id,
+        "asset_type": asset.asset_type,
+        "file_name": asset.file_name,
+        "file_path": asset.file_path,
+        "mime_type": asset.mime_type,
+        "duration_sec": asset.duration_sec,
+        "language": asset.language,
+        "metadata": asset.extra_metadata or {},
+        "created_at": asset.created_at,
+    }
+
+
 @router.get("/assets")
 def list_assets_api(db: Session = Depends(get_db)):
-    return [{"id": a.id, "project_id": a.project_id, "asset_type": a.asset_type, "file_name": a.file_name, "file_path": a.file_path} for a in list_assets(db)]
+    return [_asset_payload(asset) for asset in list_assets(db)]
 
 
 @router.post("/assets/upload")
@@ -39,4 +54,4 @@ async def upload_asset_api(
         metadata={"original_name": file.filename, "storage": storage_info.get("storage"), "storage_reason": storage_info.get("reason")},
     )
     asset = create_asset(db, payload)
-    return {"storage": storage_info, "asset": {"id": asset.id, "project_id": asset.project_id, "asset_type": asset.asset_type, "file_name": asset.file_name, "file_path": asset.file_path}}
+    return {"storage": storage_info, "asset": _asset_payload(asset)}

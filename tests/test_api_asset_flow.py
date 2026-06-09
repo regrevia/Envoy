@@ -88,6 +88,11 @@ class ApiAssetFlowTests(unittest.TestCase):
                 uploaded = upload_response.json()
                 self.assertEqual(uploaded["asset"]["project_id"], project_id)
                 self.assertEqual(uploaded["asset"]["asset_type"], "text")
+                self.assertEqual(uploaded["asset"]["mime_type"], "text/plain")
+                self.assertEqual(uploaded["asset"]["language"], "zh")
+                self.assertEqual(uploaded["asset"]["metadata"]["original_name"], "source.txt")
+                self.assertEqual(uploaded["asset"]["metadata"]["storage"], "local")
+                self.assertIsNotNone(uploaded["asset"]["created_at"])
                 self.assertEqual(uploaded["storage"]["storage"], "local")
                 self.assertTrue(Path(uploaded["storage"]["file_path"]).exists())
 
@@ -96,6 +101,11 @@ class ApiAssetFlowTests(unittest.TestCase):
                 assets = assets_response.json()
                 self.assertEqual(len(assets), 1)
                 self.assertEqual(assets[0]["file_name"], "source.txt")
+                self.assertEqual(assets[0]["mime_type"], "text/plain")
+                self.assertEqual(assets[0]["language"], "zh")
+                self.assertEqual(assets[0]["metadata"]["original_name"], "source.txt")
+                self.assertEqual(assets[0]["metadata"]["storage"], "local")
+                self.assertIsNotNone(assets[0]["created_at"])
             finally:
                 engine.dispose()
 
