@@ -5,6 +5,7 @@ import types
 import unittest
 import importlib
 from pathlib import Path
+from queue import Empty
 from unittest.mock import patch
 
 
@@ -216,7 +217,7 @@ class RuntimeSafetyTests(unittest.TestCase):
                 os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = previous
             sys.modules.pop("app.core.config", None)
 
-    def test_transcribe_audio_reuses_loaded_whisper_model(self):
+    def test_whisper_transcription_helper_reuses_loaded_model(self):
         calls = []
 
         class FakeModel:
@@ -228,8 +229,8 @@ class RuntimeSafetyTests(unittest.TestCase):
         try:
             media_service = reload_media_service()
 
-            first = media_service.transcribe_audio("segment-1.wav")
-            second = media_service.transcribe_audio("segment-2.wav")
+            first = media_service._run_whisper_transcription("segment-1.wav")
+            second = media_service._run_whisper_transcription("segment-2.wav")
         finally:
             sys.modules.pop("whisper", None)
 
@@ -237,24 +238,120 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(first["text"], "transcribed segment-1.wav")
         self.assertEqual(second["text"], "transcribed segment-2.wav")
 
-    def test_transcribe_audio_returns_diagnostic_error_when_whisper_fails(self):
-        class BrokenModel:
-            def transcribe(self, audio_path):
-                raise RuntimeError(f"whisper failed for {audio_path}")
+    def test_transcribe_audio_returns_isolated_worker_result(self):
+        media_service = reload_media_service()
 
-        fake_whisper = types.SimpleNamespace(load_model=lambda model_name: BrokenModel())
-        sys.modules["whisper"] = fake_whisper
-        try:
-            media_service = reload_media_service()
+        class FakeQueue:
+            def get_nowait(self):
+                return {"status": "success", "text": "worker transcript", "segments": [{"text": "worker transcript"}], "error": None}
 
+        class FakeProcess:
+            def __init__(self, target, args, daemon):
+                self.target = target
+                self.args = args
+                self.daemon = daemon
+                self.join_calls = []
+                self.started = False
+
+            def start(self):
+                self.started = True
+
+            def join(self, timeout=None):
+                self.join_calls.append(timeout)
+
+            def is_alive(self):
+                return False
+
+        with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+            patch("app.services.media_service.multiprocessing.Process", FakeProcess):
+            result = media_service.transcribe_audio("segment-1.wav")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["text"], "worker transcript")
+        self.assertEqual(result["segments"], [{"text": "worker transcript"}])
+
+    def test_transcribe_audio_returns_diagnostic_error_when_worker_fails(self):
+        media_service = reload_media_service()
+
+        class FakeQueue:
+            def get_nowait(self):
+                return {"status": "failed", "text": "", "segments": [], "error": "whisper failed for broken-segment.wav"}
+
+        class FakeProcess:
+            def __init__(self, target, args, daemon):
+                pass
+
+            def start(self):
+                return None
+
+            def join(self, timeout=None):
+                return None
+
+            def is_alive(self):
+                return False
+
+        with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+            patch("app.services.media_service.multiprocessing.Process", FakeProcess):
             result = media_service.transcribe_audio("broken-segment.wav")
-        finally:
-            sys.modules.pop("whisper", None)
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["text"], "")
         self.assertEqual(result["segments"], [])
         self.assertIn("whisper failed for broken-segment.wav", result["error"])
+
+    def test_transcribe_audio_returns_failed_result_when_timeout_expires(self):
+        previous = os.environ.get("MEDIA_TRANSCRIPTION_TIMEOUT_SEC")
+        try:
+            os.environ["MEDIA_TRANSCRIPTION_TIMEOUT_SEC"] = "1"
+            media_service = reload_media_service()
+
+            class FakeQueue:
+                def get_nowait(self):
+                    raise Empty()
+
+            class FakeExecutor:
+                def __init__(self, target, args, daemon):
+                    self.target = target
+                    self.args = args
+                    self.daemon = daemon
+                    self.join_calls = []
+                    self.terminated = False
+
+                def start(self):
+                    return None
+
+                def join(self, timeout=None):
+                    self.join_calls.append(timeout)
+
+                def is_alive(self):
+                    return not self.terminated
+
+                def terminate(self):
+                    self.terminated = True
+
+            processes = []
+
+            def make_process(target, args, daemon):
+                process = FakeExecutor(target, args, daemon)
+                processes.append(process)
+                return process
+
+            with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+                patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
+                result = media_service.transcribe_audio("slow-segment.wav")
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["text"], "")
+            self.assertEqual(result["segments"], [])
+            self.assertIn("transcription timeout after 1 sec", result["error"])
+            self.assertEqual(processes[0].join_calls, [1, 5])
+            self.assertTrue(processes[0].terminated)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_TRANSCRIPTION_TIMEOUT_SEC", None)
+            else:
+                os.environ["MEDIA_TRANSCRIPTION_TIMEOUT_SEC"] = previous
+            reload_media_service()
 
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""

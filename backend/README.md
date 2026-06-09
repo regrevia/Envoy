@@ -24,6 +24,7 @@ py -m uvicorn app.main:app --reload
 - `MINIO_BUCKET` (default: `envoy`)
 - `MEDIA_SEGMENT_SECONDS` (default: `600`) 媒体分段长度，影响长视频/音频转写粒度
 - `MEDIA_MAX_SEGMENT_COUNT` (default: `12`) 单个媒体任务最多读取的分段数量，避免超长素材拖垮转写任务
+- `MEDIA_TRANSCRIPTION_TIMEOUT_SEC` (default: `900`) 单个音频/视频分段转写最长等待秒数，超时会终止隔离转写进程
 - `MEDIA_MAX_FRAME_COUNT` (default: `240`) 单个视频任务最多抽帧数量
 - `MEDIA_ENABLE_FRAME_EXTRACTION` (default: `true`) 是否对视频执行抽帧；长视频只需要转写时可设为 `false`
 - `MEDIA_ENABLE_OCR` (default: `true`) 是否对视频抽帧结果执行 OCR；长视频吞吐优先时可设为 `false`

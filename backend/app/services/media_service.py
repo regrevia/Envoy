@@ -1,7 +1,9 @@
 import os
+import multiprocessing
 import subprocess
+from queue import Empty
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
 
 _WHISPER_MODELS = {}
 
@@ -118,18 +120,46 @@ def extract_frames(video_path: str, output_dir: str):
     return sorted(str(path) for path in Path(output_dir).glob("frame_*.jpg"))
 
 
-def transcribe_audio(audio_path: str):
+def _run_whisper_transcription(audio_path: str):
+    import whisper
+    model_name = "base"
+    model = _WHISPER_MODELS.get(model_name)
+    if model is None:
+        model = whisper.load_model(model_name)
+        _WHISPER_MODELS[model_name] = model
+    result = model.transcribe(audio_path)
+    return {"status": "success", "text": result.get("text", ""), "segments": result.get("segments", []), "error": None}
+
+
+def _transcribe_audio_worker(audio_path: str, result_queue):
     try:
-        import whisper
-        model_name = "base"
-        model = _WHISPER_MODELS.get(model_name)
-        if model is None:
-            model = whisper.load_model(model_name)
-            _WHISPER_MODELS[model_name] = model
-        result = model.transcribe(audio_path)
-        return {"status": "success", "text": result.get("text", ""), "segments": result.get("segments", []), "error": None}
+        result_queue.put(_run_whisper_transcription(audio_path))
     except Exception as exc:
-        return {"status": "failed", "text": "", "segments": [], "error": str(exc)}
+        result_queue.put({"status": "failed", "text": "", "segments": [], "error": str(exc)})
+
+
+def transcribe_audio(audio_path: str):
+    result_queue = multiprocessing.Queue()
+    process = multiprocessing.Process(target=_transcribe_audio_worker, args=(audio_path, result_queue), daemon=True)
+    timeout_sec = max(int(MEDIA_TRANSCRIPTION_TIMEOUT_SEC or 1), 1)
+    process.start()
+    process.join(timeout_sec)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        return {"status": "failed", "text": "", "segments": [], "error": f"transcription timeout after {timeout_sec} sec"}
+    try:
+        result = result_queue.get_nowait()
+    except Empty:
+        return {"status": "failed", "text": "", "segments": [], "error": "transcription worker exited without result"}
+    if isinstance(result, dict):
+        return {
+            "status": result.get("status") or "failed",
+            "text": result.get("text") or "",
+            "segments": result.get("segments") if isinstance(result.get("segments"), list) else [],
+            "error": result.get("error"),
+        }
+    return {"status": "failed", "text": "", "segments": [], "error": "transcription worker returned invalid result"}
 
 
 def run_ocr_on_frames(frame_paths: list[str]):

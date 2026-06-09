@@ -32,6 +32,7 @@ type MediaStatus = {
   max_frame_count: number;
   frame_extraction_enabled: boolean;
   ocr_enabled: boolean;
+  transcription_timeout_sec: number;
 };
 
 const outputTypes = [
@@ -251,7 +252,7 @@ export default function HomePage() {
               <span style={{ color: '#374151', fontSize: 14 }}>最大处理 {mediaStatus?.max_input_seconds ?? '-'} 秒</span>
             </div>
             <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-              分段：{mediaStatus?.segment_seconds ?? '-'} 秒 x {mediaStatus?.max_segment_count ?? '-'} 段；抽帧：{enabledLabel(mediaStatus?.frame_extraction_enabled)}，每 {mediaStatus?.frame_interval_seconds ?? '-'} 秒 1 帧，最多 {mediaStatus?.max_frame_count ?? '-'} 帧；OCR：{enabledLabel(mediaStatus?.ocr_enabled)}
+              分段：{mediaStatus?.segment_seconds ?? '-'} 秒 x {mediaStatus?.max_segment_count ?? '-'} 段；单段转写超时：{mediaStatus?.transcription_timeout_sec ?? '-'} 秒；抽帧：{enabledLabel(mediaStatus?.frame_extraction_enabled)}，每 {mediaStatus?.frame_interval_seconds ?? '-'} 秒 1 帧，最多 {mediaStatus?.max_frame_count ?? '-'} 帧；OCR：{enabledLabel(mediaStatus?.ocr_enabled)}
             </div>
           </section>
 
