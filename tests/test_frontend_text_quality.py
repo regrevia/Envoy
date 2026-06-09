@@ -43,6 +43,9 @@ class FrontendTextQualityTests(unittest.TestCase):
         expectations = {
             "frontend/app/projects/page.tsx": ["项目", "新建项目", "项目列表"],
             "frontend/app/tasks/page.tsx": ["任务", "任务列表", "进度"],
+            "frontend/app/tasks/[task_id]/page.tsx": ["任务详情", "状态", "进度"],
+            "frontend/app/generated-samples/page.tsx": ["生成样本", "样本列表", "刷新"],
+            "frontend/app/trace/page.tsx": ["追溯", "查询追溯", "追溯结果"],
             "frontend/app/train-exports/page.tsx": ["训练导出", "导出历史", "开始导出"],
         }
         offenders = []
