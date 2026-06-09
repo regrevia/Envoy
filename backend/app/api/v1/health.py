@@ -7,6 +7,7 @@ from app.core.config import (
     MEDIA_MAX_FRAME_COUNT,
     MEDIA_MAX_SEGMENT_COUNT,
     MEDIA_SEGMENT_SECONDS,
+    MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
 )
 from app.services.ollama_service import get_ollama_status
 
@@ -33,4 +34,5 @@ def media_health():
         "max_frame_count": MEDIA_MAX_FRAME_COUNT,
         "frame_extraction_enabled": MEDIA_ENABLE_FRAME_EXTRACTION,
         "ocr_enabled": MEDIA_ENABLE_OCR,
+        "transcription_timeout_sec": MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
     }

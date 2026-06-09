@@ -25,6 +25,7 @@ class ExportConfigurationTests(unittest.TestCase):
             "OLLAMA_TIMEOUT_SEC": "abc",
             "TASK_STALE_AFTER_SECONDS": "0",
             "MEDIA_COMMAND_TIMEOUT_SEC": "",
+            "MEDIA_TRANSCRIPTION_TIMEOUT_SEC": "bad",
             "MEDIA_SEGMENT_SECONDS": "-1",
             "MEDIA_MAX_SEGMENT_COUNT": "0",
             "MEDIA_FRAME_INTERVAL_SECONDS": "bad",
@@ -41,6 +42,7 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertEqual(config.OLLAMA_TIMEOUT_SEC, 120)
             self.assertEqual(config.TASK_STALE_AFTER_SECONDS, 1800)
             self.assertEqual(config.MEDIA_COMMAND_TIMEOUT_SEC, 300)
+            self.assertEqual(config.MEDIA_TRANSCRIPTION_TIMEOUT_SEC, 900)
             self.assertEqual(config.MEDIA_SEGMENT_SECONDS, 600)
             self.assertEqual(config.MEDIA_MAX_SEGMENT_COUNT, 12)
             self.assertEqual(config.MEDIA_FRAME_INTERVAL_SECONDS, 15)
