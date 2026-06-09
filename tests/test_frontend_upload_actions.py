@@ -336,6 +336,21 @@ class FrontendUploadActionsTests(unittest.TestCase):
             ]:
                 self.assertIn(copy, text)
 
+    def test_task_pages_make_media_processing_limits_visible(self):
+        task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
+        task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for text in [task_list, task_detail]:
+            for copy in [
+                "任务摘要",
+                "媒体处理上限",
+                "result_summary",
+                "segment(s)",
+                "frame(s)",
+                "max",
+            ]:
+                self.assertIn(copy, text)
+
     def test_artifact_detail_exposes_manifest_quality_metadata(self):
         page = (ROOT_DIR / "frontend" / "app" / "artifacts" / "[artifact_id]" / "page.tsx").read_text(encoding="utf-8")
 
