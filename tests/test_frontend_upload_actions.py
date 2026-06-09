@@ -93,6 +93,8 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "训练样本",
             "/api/v1/projects",
             "project_id=",
+            "params.set('outputs'",
+            "params.set('export_type'",
         ]:
             self.assertIn(copy, text)
         self.assertIn("task-wizard", text)
@@ -110,6 +112,21 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertIn("borderBottom: '1px solid #e5e7eb'", text)
         self.assertNotIn("repeat(3, minmax(0, 1fr))", text)
         self.assertNotIn("borderRadius: 12", text)
+
+    def test_train_exports_page_accepts_project_and_output_context_from_home(self):
+        page = ROOT_DIR / "frontend" / "app" / "train-exports" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "URLSearchParams",
+            "project_id",
+            "export_type",
+            "outputs",
+            "setProjectId(projectFromQuery)",
+            "setExportType(outputFromQuery)",
+            "来自首页选择",
+        ]:
+            self.assertIn(copy, text)
 
     def test_home_page_exposes_ollama_runtime_status(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
