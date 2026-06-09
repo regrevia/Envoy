@@ -703,17 +703,18 @@ class PreprocessMediaFlowTests(unittest.TestCase):
 
             def fake_split(video_path, output_dir):
                 calls["split_video"] = video_path
-                return [str(Path(output_dir) / "segment_000001.mp4")]
+                return [str(Path(output_dir) / "segment_000001.mp4"), str(Path(output_dir) / "segment_000002.mp4")]
 
             def fake_frames(video_path, output_dir):
                 calls["extract_frames"] = video_path
                 return [str(Path(output_dir) / "frame_000001.jpg")]
 
             def fake_transcribe(audio_path):
-                calls["transcribe_audio"] = audio_path
+                calls.setdefault("transcribe_audio", []).append(audio_path)
+                segment_name = Path(audio_path).stem
                 return {
-                    "text": "Instructor explains refund approval before escalation.",
-                    "segments": [{"start": 0.0, "end": 6.2, "text": "Instructor explains refund approval before escalation."}],
+                    "text": f"{segment_name} explains refund approval before escalation.",
+                    "segments": [{"start": 0.0, "end": 6.2, "text": f"{segment_name} explains refund approval before escalation."}],
                 }
 
             progress_updates = []
@@ -739,17 +740,18 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(stored_task.status, "success")
                 self.assertEqual(calls["split_video"], expected_path)
                 self.assertEqual(calls["extract_frames"], expected_path)
-                self.assertEqual(calls["transcribe_audio"], expected_path)
+                self.assertEqual(calls["transcribe_audio"], result["semantic"]["segments"])
+                self.assertEqual(len(calls["transcribe_audio"]), 2)
                 sources = {unit.labels["source"] for unit in units}
                 self.assertIn("media_asset", sources)
                 self.assertIn("media_transcript", sources)
                 self.assertIn("media_ocr", sources)
-                self.assertTrue(any(unit.unit_type == "transcript" and "refund approval" in unit.content for unit in units))
+                self.assertTrue(any(unit.unit_type == "transcript" and "segment_000001" in unit.content and "segment_000002" in unit.content for unit in units))
                 self.assertTrue(any(unit.unit_type == "ocr" and "approval checklist" in unit.content for unit in units))
                 summaries = [item["summary"] for item in progress_updates if item["summary"]]
-                self.assertIn("media split done: 1 segment(s)", summaries)
+                self.assertIn("media split done: 2 segment(s)", summaries)
                 self.assertIn("frame extraction done: 1 frame pattern(s)", summaries)
-                self.assertIn("audio transcription done", summaries)
+                self.assertIn("audio transcription done: 2/2 segment(s)", summaries)
                 self.assertIn("ocr done: 1 frame result(s)", summaries)
             finally:
                 db.close()
