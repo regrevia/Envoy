@@ -19,13 +19,6 @@ type Task = {
   updated_at?: string | null;
 };
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
-
 const buttonStyle = {
   minHeight: 40,
   padding: '0 14px',
@@ -170,12 +163,12 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
           <h1 style={{ margin: '10px 0 0', fontSize: 32, lineHeight: 1.2 }}>任务详情</h1>
         </header>
 
-        <div style={{ marginTop: 18, padding: '12px 14px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#ffffff', color: task ? statusColor(task.status) : '#374151', display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ marginTop: 18, padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: task ? statusColor(task.status) : '#374151', display: 'flex', gap: 10, alignItems: 'center' }}>
           <strong style={{ fontSize: 14 }}>状态</strong>
           <span style={{ fontSize: 14 }}>{loading ? '正在加载...' : message}</span>
         </div>
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           {loading ? <div style={{ color: '#6b7280' }}>正在加载...</div> : null}
           {!loading && !task ? <div style={{ color: '#b91c1c' }}>任务不存在或暂不可用</div> : null}
           {task ? (

@@ -21,13 +21,6 @@ type Task = {
   error_message?: string | null;
 };
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
-
 const buttonStyle = {
   minHeight: 36,
   padding: '0 12px',
@@ -156,7 +149,7 @@ export default function TasksPage() {
           </p>
         </header>
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>任务列表</h2>
