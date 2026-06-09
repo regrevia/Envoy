@@ -41,6 +41,7 @@ class FrontendTextQualityTests(unittest.TestCase):
             "frontend/app/semantic-units/page.tsx": ["素材转换工作台", "语义单元", "生成样本"],
             "frontend/app/tasks/page.tsx": ["任务", "任务列表", "进度", "项目:", "素材:"],
             "frontend/app/tasks/[task_id]/page.tsx": ["任务详情", "状态", "进度", "项目 ID", "素材 ID", "输入配置", "创建时间", "更新时间"],
+            "frontend/app/artifacts/page.tsx": ["产物中心", "产物列表", "项目:", "创建:"],
             "frontend/app/generated-samples/page.tsx": ["生成样本", "样本列表", "刷新"],
             "frontend/app/trace/page.tsx": ["追溯", "查询追溯", "追溯结果"],
             "frontend/app/train-exports/page.tsx": ["训练导出", "导出历史", "开始导出"],
