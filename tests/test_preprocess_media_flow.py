@@ -849,6 +849,102 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             else:
                 os.environ["MEDIA_ENABLE_OCR"] = previous_media_enable_ocr
 
+    def test_preprocess_video_can_skip_frame_extraction_when_disabled(self):
+        previous_env = {
+            "MEDIA_ENABLE_FRAME_EXTRACTION": os.environ.get("MEDIA_ENABLE_FRAME_EXTRACTION"),
+            "MEDIA_SEGMENT_SECONDS": os.environ.get("MEDIA_SEGMENT_SECONDS"),
+            "MEDIA_MAX_SEGMENT_COUNT": os.environ.get("MEDIA_MAX_SEGMENT_COUNT"),
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-video-no-frames-test.db'}"
+                os.environ["ENVOY_STORAGE_MODE"] = "local"
+                os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+                os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+                os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = "false"
+                os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
+                os.environ["MEDIA_MAX_SEGMENT_COUNT"] = "12"
+                os.environ["OLLAMA_MODEL"] = ""
+
+                for name in list(sys.modules):
+                    if name.startswith("app."):
+                        sys.modules.pop(name, None)
+
+                from app.db.base import Base
+                from app.db.session import SessionLocal, engine
+                import app.models  # noqa: F401
+                from app.models.semantic_unit import SemanticUnit
+                from app.schemas.asset import AssetCreate
+                from app.schemas.project import ProjectCreate
+                from app.schemas.task import TaskCreate
+                from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status as real_update_task_status
+                from app.core.storage import storage_client
+                from app.workers.jobs import preprocess_job
+
+                Base.metadata.create_all(bind=engine)
+                db = SessionLocal()
+                try:
+                    project = create_project(db, ProjectCreate(name="video no frames project", description="", domain_type="video", status="active"))
+                    storage_info = storage_client.upload_bytes("long-lecture.mp4", b"fake video bytes", "video/mp4")
+                    asset = create_asset(
+                        db,
+                        AssetCreate(
+                            project_id=project.id,
+                            asset_type="video",
+                            file_name="long-lecture.mp4",
+                            file_path=storage_info["object_name"],
+                            mime_type="video/mp4",
+                            metadata={"storage": storage_info["storage"]},
+                        ),
+                    )
+                    task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                    project_id = project.id
+                    asset_id = asset.id
+                    task_id = task.id
+                finally:
+                    db.close()
+
+                progress_updates = []
+
+                def record_update(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                    progress_updates.append({"status": status, "progress": progress, "summary": result_summary, "error": error_message})
+                    return real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+
+                segment_path = str(Path(tmp_dir) / "segment_000001.mp4")
+                with patch("app.workers.jobs.split_video", return_value=[segment_path]), \
+                    patch("app.workers.jobs.extract_frames", side_effect=AssertionError("frame extraction should be skipped when MEDIA_ENABLE_FRAME_EXTRACTION=false")), \
+                    patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("OCR should be skipped when frame extraction is disabled")), \
+                    patch("app.workers.jobs.transcribe_audio", return_value={"text": "transcript without frame extraction", "segments": []}), \
+                    patch("app.workers.jobs.update_task_status", side_effect=record_update):
+                    result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+                db = SessionLocal()
+                try:
+                    stored_task = get_task(db, task_id)
+                    units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                    self.assertEqual(result["status"], "preprocessed")
+                    self.assertEqual(stored_task.status, "success")
+                    self.assertTrue(result["semantic"]["frame_extraction_skipped"])
+                    self.assertTrue(result["semantic"]["ocr_skipped"])
+                    self.assertEqual(result["semantic"]["ocr"], [])
+                    self.assertEqual(result["semantic"]["frames"], [])
+                    self.assertEqual(stored_task.result_summary, "media preprocess done: 1 segment(s), 0 frame(s), max 7200 sec")
+                    self.assertTrue(any(unit.labels.get("source") == "media_transcript" for unit in units))
+                    self.assertFalse(any(unit.labels.get("source") == "media_ocr" for unit in units))
+                    summaries = [item["summary"] for item in progress_updates if item["summary"]]
+                    self.assertIn("frame extraction skipped: disabled", summaries)
+                    self.assertIn("ocr skipped: frame extraction disabled", summaries)
+                finally:
+                    db.close()
+                    engine.dispose()
+        finally:
+            for key, value in previous_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_preprocess_cleans_task_media_temp_directories_after_success(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-cleanup-test.db'}"

@@ -201,6 +201,21 @@ class RuntimeSafetyTests(unittest.TestCase):
                 os.environ["MEDIA_ENABLE_OCR"] = previous
             sys.modules.pop("app.core.config", None)
 
+    def test_media_frame_extraction_can_be_disabled_from_environment(self):
+        previous = os.environ.get("MEDIA_ENABLE_FRAME_EXTRACTION")
+        try:
+            os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = "false"
+            sys.modules.pop("app.core.config", None)
+            config = importlib.import_module("app.core.config")
+
+            self.assertFalse(config.MEDIA_ENABLE_FRAME_EXTRACTION)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_ENABLE_FRAME_EXTRACTION", None)
+            else:
+                os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = previous
+            sys.modules.pop("app.core.config", None)
+
     def test_transcribe_audio_reuses_loaded_whisper_model(self):
         calls = []
 
