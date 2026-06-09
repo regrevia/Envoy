@@ -163,7 +163,13 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                         unit_type="transcript",
                         title="视频转写片段",
                         content="视频中讲解了长任务处理和稳定导出。",
-                        labels={"source": "media_transcript", "stage": "preprocess"},
+                        labels={
+                            "source": "media_transcript",
+                            "stage": "preprocess",
+                            "segment_seconds": 300,
+                            "max_segment_count": 2,
+                            "max_input_seconds": 600,
+                        },
                         confidence=0.88,
                     )
                 )
@@ -176,7 +182,13 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                         unit_type="ocr",
                         title="视频画面 OCR",
                         content="画面文字：核心链路、RAG、Skill。",
-                        labels={"source": "media_ocr", "stage": "preprocess"},
+                        labels={
+                            "source": "media_ocr",
+                            "stage": "preprocess",
+                            "segment_seconds": 300,
+                            "max_segment_count": 2,
+                            "max_input_seconds": 600,
+                        },
                         confidence=0.82,
                     )
                 )
@@ -217,6 +229,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(markdown_manifest["row_count"], 3)
                 self.assertEqual(markdown_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
                 self.assertEqual(markdown_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
+                self.assertEqual(markdown_manifest["media_processing_limits"], [{"segment_seconds": 300, "max_segment_count": 2, "max_input_seconds": 600, "unit_count": 2}])
                 self.assertEqual(Path(markdown_manifest["files"]["markdown"]).name, "video_summary.md")
                 self.assertEqual(Path(markdown_manifest["files"]["manifest"]).name, "markdown_manifest.json")
                 self.assertIn("## 输入摘要", skill_text)
@@ -226,6 +239,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(skill_manifest["title"], "skill export")
                 self.assertEqual(skill_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
                 self.assertEqual(skill_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
+                self.assertEqual(skill_manifest["media_processing_limits"], [{"segment_seconds": 300, "max_segment_count": 2, "max_input_seconds": 600, "unit_count": 2}])
                 self.assertTrue(any(item["content"] == "第一段核心知识。第二段可训练内容。" for item in skill_manifest["materials"]))
                 rag_by_id = {row["metadata"]["semantic_unit_id"]: row for row in rag_rows}
                 self.assertEqual(rag_by_id["semantic-001"]["text"], "第一段核心知识。第二段可训练内容。")
@@ -241,6 +255,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(rag_manifest["row_count"], 3)
                 self.assertEqual(rag_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
                 self.assertEqual(rag_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
+                self.assertEqual(rag_manifest["media_processing_limits"], [{"segment_seconds": 300, "max_segment_count": 2, "max_input_seconds": 600, "unit_count": 2}])
                 self.assertEqual(Path(rag_manifest["files"]["corpus"]).name, "rag_corpus.jsonl")
                 self.assertEqual(Path(rag_manifest["files"]["manifest"]).name, "rag_manifest.json")
 
