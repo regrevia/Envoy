@@ -13,12 +13,12 @@ const fileTypeOptions = [
   { id: 'image', label: '图片' },
 ];
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
+const outputOptions = [
+  { id: 'markdown', label: 'Markdown' },
+  { id: 'skill', label: 'Skill' },
+  { id: 'rag', label: 'RAG' },
+  { id: 'samples', label: '训练样本' },
+];
 
 const inputStyle = {
   width: '100%',
@@ -62,6 +62,7 @@ export default function UploadPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
   const [assetType, setAssetType] = useState('video');
+  const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'skill', 'rag']);
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<any>(null);
   const [preprocessResult, setPreprocessResult] = useState<any>(null);
@@ -72,8 +73,15 @@ export default function UploadPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectFromQuery = params.get('project_id');
+    const outputsFromQuery = params.get('outputs');
     if (projectFromQuery) {
       setProjectId(projectFromQuery);
+    }
+    if (outputsFromQuery) {
+      const nextOutputs = outputsFromQuery.split(',').map((item) => item.trim()).filter(Boolean);
+      if (nextOutputs.length) {
+        setSelectedOutputs(nextOutputs);
+      }
     }
 
     apiJson<Project[]>('/api/v1/projects')
@@ -124,7 +132,7 @@ export default function UploadPage() {
           project_id: asset.project_id,
           asset_id: asset.id,
           task_type: 'preprocess',
-          input_config: {},
+          input_config: { requested_outputs: selectedOutputs },
         }),
       });
       setPreprocessResult(data);
@@ -139,17 +147,37 @@ export default function UploadPage() {
   };
 
   const asset = uploadedAsset(result);
+  const selectedOutputParam = selectedOutputs.join(',');
+  const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+  const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&outputs=${encodeURIComponent(selectedOutputParam)}&export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}` : '';
+
+  const toggleOutput = (outputId: string) => {
+    setSelectedOutputs((current) => {
+      if (current.includes(outputId)) {
+        return current.filter((item) => item !== outputId);
+      }
+      return [...current, outputId];
+    });
+  };
 
   return (
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section style={{ maxWidth: 960, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>第 2 步</div>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>上传素材</h1>
+          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>多媒体转换任务</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            将视频、音频、图片、文档、Markdown 或长文本放入当前任务，上传后可直接启动预处理转换。
+            视频/音频/图片/文档/长文本进入预处理转换后，可继续生成 Markdown、Skill、RAG 和训练样本等 AI 素材。
           </p>
         </header>
+
+        <section style={{ display: 'grid', gap: 0, borderBottom: '1px solid #e5e7eb' }}>
+          {['1. 确认任务/项目', '2. 上传素材', '3. 选择生成内容'].map((step) => (
+            <div key={step} style={{ padding: '14px 0', borderTop: '1px solid #e5e7eb', fontWeight: 700, color: '#111827' }}>
+              {step}
+            </div>
+          ))}
+        </section>
 
         <div style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', color: '#374151', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 14 }}>状态</strong>
@@ -173,11 +201,32 @@ export default function UploadPage() {
             </label>
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ color: '#4b5563', fontSize: 13 }}>文件</span>
-              <input type="file" accept=".mp4,.md,.txt,.wav,.mp3,.pdf,image/*" onChange={(event) => setFile(event.target.files?.[0] ?? null)} style={inputStyle} />
+              <input type="file" accept=".mp4,.mov,.mkv,.md,.txt,.wav,.mp3,.m4a,.pdf,.docx,.pptx,.xlsx,image/*" onChange={(event) => setFile(event.target.files?.[0] ?? null)} style={inputStyle} />
             </label>
             <button onClick={onSubmit} disabled={uploading} style={{ ...buttonStyle, width: 'fit-content', opacity: uploading ? 0.72 : 1, cursor: uploading ? 'not-allowed' : 'pointer' }}>
               {uploading ? '正在上传...' : '上传素材'}
             </button>
+          </div>
+        </section>
+
+        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>3. 选择生成内容</h2>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+            {outputOptions.map((option) => (
+              <label key={option.id} style={{ display: 'inline-flex', gap: 8, alignItems: 'center', padding: '8px 0', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedOutputs.includes(option.id)}
+                  onChange={() => toggleOutput(option.id)}
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
+            <a href="/tasks" style={{ color: '#111827', fontWeight: 700 }}>查看转换任务</a>
+            <a href={`/semantic-units${projectQuery}`} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</a>
+            <a href={`/train-exports${exportQuery}`} style={{ color: '#111827', fontWeight: 700 }}>训练导出</a>
           </div>
         </section>
 
@@ -186,7 +235,7 @@ export default function UploadPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>上传结果</h2>
-                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{asset?.id ? `素材 ${asset.id}` : '上传响应'}</p>
+                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{asset?.id ? `素材 ${asset.id}` : '素材上传结果'}</p>
               </div>
               {asset?.id ? (
                 <button
