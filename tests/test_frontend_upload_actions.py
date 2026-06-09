@@ -80,6 +80,21 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("Generate sample", text)
         self.assertNotIn("Review samples", text)
 
+    def test_semantic_units_page_points_back_to_home_task_creation(self):
+        page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "这是第 3 步",
+            "先从首页创建转换任务",
+            "返回首页创建转换任务",
+            "创建转换任务",
+            "上传素材",
+            "选择生成内容",
+            "href=\"/\"",
+        ]:
+            self.assertIn(copy, text)
+
     def test_home_page_starts_with_single_task_creation_flow(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
