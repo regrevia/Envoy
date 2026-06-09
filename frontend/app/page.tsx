@@ -14,10 +14,10 @@ type Project = {
 };
 
 const outputTypes = [
-  { id: 'markdown', label: 'Markdown', detail: '面向阅读、复盘和知识沉淀的结构化文档。' },
-  { id: 'skill', label: 'Skill', detail: '沉淀为可复用的技能包和操作流程。' },
-  { id: 'rag', label: 'RAG', detail: '生成可检索、可追溯的知识语料。' },
-  { id: 'samples', label: '训练样本', detail: '生成问答、指令和偏好数据，用于后续训练。' },
+  { id: 'markdown', label: 'Markdown', detail: '把长内容整理成可阅读、可复盘、可交付的结构化文档。' },
+  { id: 'skill', label: 'Skill', detail: '沉淀为可复用的技能包、操作流程和执行说明。' },
+  { id: 'rag', label: 'RAG', detail: '生成可检索、可追溯、适合接入知识库的语料。' },
+  { id: 'samples', label: '训练样本', detail: '生成问答、指令和偏好数据，用于后续训练或评测。' },
   { id: 'dataset', label: '数据集', detail: '汇总为 SFT、instruction、preference 等导出格式。' },
 ];
 
@@ -122,23 +122,26 @@ export default function HomePage() {
   return (
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section className="home-shell">
-        <header style={{ paddingBottom: 24, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy 多模态素材转换</div>
-          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>新建转换任务</h1>
-          <p style={{ margin: '10px 0 0', maxWidth: 760, color: '#4b5563', lineHeight: 1.7 }}>
-            按任务推进：先创建项目，再上传视频、音频、图片、PDF、Markdown 或长文本，最后选择要生成的 Markdown、Skill、RAG、训练样本或数据集。
+        <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy 多媒体素材转换</div>
+          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>创建转换任务</h1>
+          <p style={{ margin: '10px 0 0', maxWidth: 820, color: '#4b5563', lineHeight: 1.7 }}>
+            首页只处理一个主流程：创建任务/项目，上传视频、长文本和多模态文件，再选择要生成的 Markdown、Skill、RAG、训练样本或数据集。
           </p>
         </header>
 
-        <div style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', color: '#374151' }}>
-          <strong style={{ fontSize: 14 }}>状态</strong>
-          <span style={{ fontSize: 14 }}>{message}</span>
-        </div>
+        <section className="task-wizard primary-workflow" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 0 }}>
+          <div style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', color: '#374151' }}>
+            <strong style={{ fontSize: 14 }}>当前状态</strong>
+            <span style={{ fontSize: 14 }}>{message}</span>
+          </div>
 
-        <section className="task-flow" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 0 }}>
           <article className="flow-step">
             <div style={{ color: '#6b7280', fontSize: 13 }}>1. 创建任务/项目</div>
-            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>定义本次转换目标</h2>
+            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>先定义本次转换目标</h2>
+            <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
+              每个任务承载一批素材和最终交付物，后续上传、预处理、语义单元、生成样本和导出都会围绕这个任务推进。
+            </p>
             <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>任务名称</span>
@@ -177,9 +180,9 @@ export default function HomePage() {
 
           <article className="flow-step">
             <div style={{ color: '#6b7280', fontSize: 13 }}>2. 上传素材</div>
-            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>把原始文件放入任务</h2>
-            <p style={{ margin: '12px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
-              支持视频、音频、PDF、图片、Markdown、长文本等多模态素材。进入上传页后会自动携带当前 project_id，并可直接启动预处理转换。
+            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>把原始素材放入任务</h2>
+            <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
+              支持视频、音频、图片、PDF、Markdown、长文本和其他多模态文件。上传页会携带当前 project_id，并可直接启动预处理转换。
             </p>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Link href={uploadHref} style={{ ...buttonStyle, background: selectedProjectId ? '#111827' : '#f3f4f6', color: selectedProjectId ? '#ffffff' : '#6b7280', borderColor: selectedProjectId ? '#111827' : '#d1d5db' }}>
@@ -195,11 +198,14 @@ export default function HomePage() {
           <article className="flow-step">
             <div style={{ color: '#6b7280', fontSize: 13 }}>3. 选择生成内容</div>
             <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>决定最终要交付什么</h2>
-            <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
+            <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
+              先勾选目标产物，再进入语义单元审查、样本生成或训练导出页面处理细节。
+            </p>
+            <div style={{ marginTop: 14, display: 'grid', gap: 0 }}>
               {outputTypes.map((item) => {
                 const checked = selectedOutputs.includes(item.id);
                 return (
-                  <label key={item.id} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 10, alignItems: 'start', padding: '10px 0', borderTop: '1px solid #e5e7eb' }}>
+                  <label key={item.id} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 10, alignItems: 'start', padding: '12px 0', borderTop: '1px solid #e5e7eb' }}>
                     <input type="checkbox" checked={checked} onChange={() => toggleOutput(item.id)} style={{ marginTop: 3 }} />
                     <span>
                       <strong>{item.label}</strong>
@@ -216,39 +222,22 @@ export default function HomePage() {
             </div>
           </article>
         </section>
-
-        <section style={{ marginTop: 24, borderTop: '1px solid #e5e7eb' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 0 }}>
-            <div style={{ padding: '16px 0', borderBottom: '1px solid #e5e7eb' }}>
-              <div style={{ color: '#6b7280', fontSize: 13 }}>已有任务</div>
-              <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{projects.length}</div>
-            </div>
-            <div style={{ padding: '16px 0', borderBottom: '1px solid #e5e7eb' }}>
-              <div style={{ color: '#6b7280', fontSize: 13 }}>已选择生成</div>
-              <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{selectedOutputs.length}</div>
-            </div>
-            <div style={{ padding: '16px 0', borderBottom: '1px solid #e5e7eb' }}>
-              <div style={{ color: '#6b7280', fontSize: 13 }}>当前任务状态</div>
-              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 10 }}>{selectedProject ? '可上传素材' : '等待创建任务'}</div>
-            </div>
-          </div>
-        </section>
       </section>
 
       <style jsx>{`
         .home-shell {
-          max-width: 1180px;
+          max-width: 960px;
           margin: 0 auto;
           padding: 44px 24px;
         }
 
-        .task-flow {
-          margin-top: 24px;
+        .task-wizard {
+          margin-top: 0;
         }
 
         .flow-step {
           min-width: 0;
-          padding: 0 0 18px;
+          padding: 24px 0;
           border-bottom: 1px solid #e5e7eb;
         }
 
