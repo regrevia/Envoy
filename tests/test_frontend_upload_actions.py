@@ -68,6 +68,11 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "训练导出",
             "项目:",
             "素材:",
+            "分片:",
+            "创建:",
+            "标签摘要",
+            "segment_id",
+            "created_at",
             "置信度",
         ]:
             self.assertIn(copy, text)
