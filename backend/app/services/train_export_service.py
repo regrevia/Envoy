@@ -34,6 +34,21 @@ def _split_rows(rows: list[dict]):
     return {"train": rows[:train_end], "val": rows[train_end:val_end], "test": rows[val_end:]}
 
 
+def _semantic_source_metadata(rows: list[dict]):
+    source_counts = {}
+    unit_type_counts = {}
+    for row in rows:
+        labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        source = labels.get("source") or metadata.get("source")
+        unit_type = row.get("unit_type") or metadata.get("unit_type")
+        if source:
+            source_counts[str(source)] = source_counts.get(str(source), 0) + 1
+        if unit_type:
+            unit_type_counts[str(unit_type)] = unit_type_counts.get(str(unit_type), 0) + 1
+    return {"source_counts": source_counts, "unit_type_counts": unit_type_counts}
+
+
 def _resolve_root(out_dir: str | None, task_type: str, task_id: str, task_name: str | None = None):
     base = out_dir or str(EXPORT_DIR)
     return build_export_root(base, task_type, task_id, task_name)
@@ -234,6 +249,7 @@ def export_preference_dataset(rows: list[dict], out_dir: str, task_id: str, task
 
 def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: str | None = None, db=None, project_id: str | None = None):
     clean_rows = _dedupe_rows(rows)
+    semantic_metadata = _semantic_source_metadata(clean_rows)
     root = _resolve_root(out_dir, "rag", task_id, task_name)
     data_dir = build_subdir(root, "rag")
     out_path = data_dir / "rag_corpus.jsonl"
@@ -245,6 +261,7 @@ def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: s
         "task_name": task_name,
         "project_id": project_id,
         "row_count": len(clean_rows),
+        **semantic_metadata,
         "files": {
             "corpus": str(out_path),
             "manifest": str(manifest_path),
@@ -265,6 +282,7 @@ def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: s
 
 def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: str = "Skill Package", task_name: str | None = None, db=None, project_id: str | None = None):
     clean_rows = _dedupe_rows(rows)
+    semantic_metadata = _semantic_source_metadata(clean_rows)
     root = _resolve_root(out_dir, "skill", task_id, task_name)
     skill_dir = build_subdir(root, "skill")
     out_path = skill_dir / "skill.md"
@@ -287,6 +305,7 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
         "task_name": task_name,
         "project_id": project_id,
         "materials": clean_rows,
+        **semantic_metadata,
         "files": {
             "markdown": str(out_path),
             "manifest": str(manifest_path),
@@ -306,6 +325,7 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
 
 
 def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, task_id: str, title: str = "Video Markdown Report", task_name: str | None = None, db=None, project_id: str | None = None):
+    semantic_metadata = _semantic_source_metadata(summary_rows)
     root = _resolve_root(out_dir, "markdown", task_id, task_name)
     md_dir = build_subdir(root, "markdown")
     out_path = md_dir / "video_summary.md"
@@ -325,6 +345,7 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
         "task_name": task_name,
         "project_id": project_id,
         "row_count": len(summary_rows),
+        **semantic_metadata,
         "files": {
             "markdown": str(out_path),
             "manifest": str(manifest_path),

@@ -153,6 +153,32 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                         confidence=0.91,
                     )
                 )
+                db.add(
+                    SemanticUnit(
+                        id="semantic-002",
+                        project_id=project.id,
+                        asset_id="asset-002",
+                        segment_id=None,
+                        unit_type="transcript",
+                        title="视频转写片段",
+                        content="视频中讲解了长任务处理和稳定导出。",
+                        labels={"source": "media_transcript", "stage": "preprocess"},
+                        confidence=0.88,
+                    )
+                )
+                db.add(
+                    SemanticUnit(
+                        id="semantic-003",
+                        project_id=project.id,
+                        asset_id="asset-002",
+                        segment_id=None,
+                        unit_type="ocr",
+                        title="视频画面 OCR",
+                        content="画面文字：核心链路、RAG、Skill。",
+                        labels={"source": "media_ocr", "stage": "preprocess"},
+                        confidence=0.82,
+                    )
+                )
                 db.commit()
                 project_id = project.id
             finally:
@@ -187,7 +213,9 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertEqual(markdown_manifest["schema_version"], "envoy.markdown.v1")
                 self.assertEqual(markdown_manifest["source_task_id"], results["markdown"]["task_id"])
                 self.assertEqual(markdown_manifest["project_id"], project_id)
-                self.assertEqual(markdown_manifest["row_count"], 1)
+                self.assertEqual(markdown_manifest["row_count"], 3)
+                self.assertEqual(markdown_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
+                self.assertEqual(markdown_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
                 self.assertEqual(Path(markdown_manifest["files"]["markdown"]).name, "video_summary.md")
                 self.assertEqual(Path(markdown_manifest["files"]["manifest"]).name, "markdown_manifest.json")
                 self.assertIn("## 输入摘要", skill_text)
@@ -195,19 +223,23 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertIn("第一段核心知识", skill_text)
                 self.assertEqual(skill_manifest["schema_version"], "envoy.skill.v1")
                 self.assertEqual(skill_manifest["title"], "skill export")
-                self.assertEqual(skill_manifest["materials"][0]["content"], "第一段核心知识。第二段可训练内容。")
-                self.assertEqual(rag_rows[0]["text"], "第一段核心知识。第二段可训练内容。")
-                self.assertEqual(rag_rows[0]["metadata"]["source"], "text_asset")
-                self.assertEqual(rag_rows[0]["metadata"]["semantic_unit_id"], "semantic-001")
-                self.assertEqual(rag_rows[0]["metadata"]["project_id"], project_id)
-                self.assertEqual(rag_rows[0]["metadata"]["asset_id"], "asset-001")
-                self.assertEqual(rag_rows[0]["metadata"]["title"], "核心知识片段")
-                self.assertEqual(rag_rows[0]["metadata"]["unit_type"], "text")
-                self.assertEqual(rag_rows[0]["metadata"]["confidence"], 0.91)
+                self.assertEqual(skill_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
+                self.assertEqual(skill_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
+                self.assertTrue(any(item["content"] == "第一段核心知识。第二段可训练内容。" for item in skill_manifest["materials"]))
+                rag_by_id = {row["metadata"]["semantic_unit_id"]: row for row in rag_rows}
+                self.assertEqual(rag_by_id["semantic-001"]["text"], "第一段核心知识。第二段可训练内容。")
+                self.assertEqual(rag_by_id["semantic-001"]["metadata"]["source"], "text_asset")
+                self.assertEqual(rag_by_id["semantic-001"]["metadata"]["project_id"], project_id)
+                self.assertEqual(rag_by_id["semantic-001"]["metadata"]["asset_id"], "asset-001")
+                self.assertEqual(rag_by_id["semantic-001"]["metadata"]["title"], "核心知识片段")
+                self.assertEqual(rag_by_id["semantic-001"]["metadata"]["unit_type"], "text")
+                self.assertEqual(rag_by_id["semantic-001"]["metadata"]["confidence"], 0.91)
                 self.assertEqual(rag_manifest["schema_version"], "envoy.rag.v1")
                 self.assertEqual(rag_manifest["source_task_id"], results["rag"]["task_id"])
                 self.assertEqual(rag_manifest["project_id"], project_id)
-                self.assertEqual(rag_manifest["row_count"], 1)
+                self.assertEqual(rag_manifest["row_count"], 3)
+                self.assertEqual(rag_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
+                self.assertEqual(rag_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
                 self.assertEqual(Path(rag_manifest["files"]["corpus"]).name, "rag_corpus.jsonl")
                 self.assertEqual(Path(rag_manifest["files"]["manifest"]).name, "rag_manifest.json")
 
