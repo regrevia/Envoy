@@ -516,6 +516,9 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
     if export_type == "rag":
         rows = []
         for su in data["semantic_units"]:
+            content = (su.get("content") or "").strip()
+            if not content:
+                continue
             metadata = {
                 **(su.get("labels") or {}),
                 "semantic_unit_id": su.get("id"),
@@ -526,8 +529,8 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
                 "unit_type": su.get("unit_type"),
                 "confidence": su.get("confidence"),
             }
-            metadata.update(_ollama_rag_metadata(su.get("content") or ""))
-            rows.append({"text": su.get("content") or "", "metadata": metadata})
+            metadata.update(_ollama_rag_metadata(content))
+            rows.append({"text": content, "metadata": metadata})
         return rows
     if export_type == "skill":
         return data["semantic_units"] + data["samples"] + data["trace_links"]

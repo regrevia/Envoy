@@ -375,6 +375,82 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_rag_export_skips_empty_semantic_unit_content(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-skip-empty-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="skip empty rag project", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="empty-rag-unit",
+                            project_id=project.id,
+                            asset_id="asset-empty",
+                            segment_id=None,
+                            unit_type="text",
+                            title="空内容",
+                            content="   ",
+                            labels={"source": "text_asset"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
+                            id="valid-rag-unit",
+                            project_id=project.id,
+                            asset_id="asset-valid",
+                            segment_id=None,
+                            unit_type="text",
+                            title="有效知识",
+                            content="有效知识内容，可进入 RAG 语料。",
+                            labels={"source": "text_asset"},
+                            confidence=0.9,
+                        ),
+                    ]
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "rag"})
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                rag_rows = [
+                    json.loads(line)
+                    for line in Path(body["path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                manifest = json.loads(Path(body["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+                self.assertEqual(len(rag_rows), 1)
+                self.assertEqual(rag_rows[0]["text"], "有效知识内容，可进入 RAG 语料。")
+                self.assertEqual(rag_rows[0]["metadata"]["semantic_unit_id"], "valid-rag-unit")
+                self.assertEqual(manifest["row_count"], 1)
+                self.assertEqual(manifest["source_counts"], {"text_asset": 1})
+            finally:
+                engine.dispose()
+
     def test_auto_rag_export_keeps_stable_output_when_ollama_fails(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-ollama-failure-test.db'}"
