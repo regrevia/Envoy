@@ -13,6 +13,17 @@ type Project = {
   status?: string | null;
 };
 
+type OllamaStatus = {
+  enabled: boolean;
+  status: string;
+  base_url: string;
+  model: string;
+  timeout_sec: number;
+  model_available: boolean;
+  available_models: string[];
+  error?: string | null;
+};
+
 const outputTypes = [
   { id: 'markdown', label: 'Markdown', detail: '把长内容整理成可阅读、可复盘、可交付的结构化文档。' },
   { id: 'skill', label: 'Skill', detail: '沉淀为可复用的技能包、操作流程和执行说明。' },
@@ -45,6 +56,22 @@ const buttonStyle = {
   justifyContent: 'center',
 } as const;
 
+function ollamaStatusLabel(status?: OllamaStatus | null) {
+  if (!status) {
+    return '检测中';
+  }
+  if (!status.enabled) {
+    return '未配置';
+  }
+  if (status.status === 'available') {
+    return '可用';
+  }
+  if (status.status === 'model_missing') {
+    return '模型缺失';
+  }
+  return '不可达';
+}
+
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -54,6 +81,7 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState('先创建或选择一个转换任务');
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'rag']);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
 
   const loadProjects = async () => {
     try {
@@ -68,8 +96,27 @@ export default function HomePage() {
     }
   };
 
+  const loadOllamaStatus = async () => {
+    try {
+      const status = await apiJson<OllamaStatus>('/api/v1/health/ollama');
+      setOllamaStatus(status);
+    } catch {
+      setOllamaStatus({
+        enabled: false,
+        status: 'unreachable',
+        base_url: '',
+        model: '',
+        timeout_sec: 0,
+        model_available: false,
+        available_models: [],
+        error: '后端状态接口不可用',
+      });
+    }
+  };
+
   useEffect(() => {
     void loadProjects();
+    void loadOllamaStatus();
   }, []);
 
   const selectedProject = useMemo(
@@ -135,6 +182,16 @@ export default function HomePage() {
             <strong style={{ fontSize: 14 }}>当前状态</strong>
             <span style={{ fontSize: 14 }}>{message}</span>
           </div>
+
+          <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 14 }}>Ollama 本地模型</strong>
+              <span style={{ color: '#374151', fontSize: 14 }}>{ollamaStatusLabel(ollamaStatus)}</span>
+            </div>
+            <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+              模型：{ollamaStatus?.model || '未配置'}；地址：{ollamaStatus?.base_url || '未配置'}；可用模型：{ollamaStatus?.available_models?.length ? ollamaStatus.available_models.join(', ') : '-'}
+            </div>
+          </section>
 
           <article className="flow-step">
             <div style={{ color: '#6b7280', fontSize: 13 }}>1. 创建任务/项目</div>

@@ -111,6 +111,19 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("repeat(3, minmax(0, 1fr))", text)
         self.assertNotIn("borderRadius: 12", text)
 
+    def test_home_page_exposes_ollama_runtime_status(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "/api/v1/health/ollama",
+            "Ollama 本地模型",
+            "模型",
+            "可用",
+            "未配置",
+        ]:
+            self.assertIn(copy, text)
+
 
 if __name__ == "__main__":
     unittest.main()

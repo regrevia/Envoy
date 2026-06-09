@@ -30,6 +30,42 @@ def parse_ollama_json_object(text: str) -> dict[str, Any]:
     return {}
 
 
+def get_ollama_status(client: Any | None = None) -> dict[str, Any]:
+    base_url = OLLAMA_BASE_URL.rstrip("/")
+    model = OLLAMA_MODEL.strip()
+    status = {
+        "enabled": bool(model),
+        "status": "disabled",
+        "base_url": OLLAMA_BASE_URL,
+        "model": model,
+        "timeout_sec": OLLAMA_TIMEOUT_SEC,
+        "model_available": False,
+        "available_models": [],
+        "error": None,
+    }
+    if not model:
+        return status
+
+    http_client = client or httpx
+    try:
+        response = http_client.get(f"{base_url}/api/tags", timeout=OLLAMA_TIMEOUT_SEC)
+        response.raise_for_status()
+        data = response.json()
+        models = data.get("models", []) if isinstance(data, dict) else []
+        names = [
+            item.get("name")
+            for item in models
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
+        status["available_models"] = names
+        status["model_available"] = model in names
+        status["status"] = "available" if status["model_available"] else "model_missing"
+    except Exception as exc:
+        status["status"] = "unreachable"
+        status["error"] = str(exc)
+    return status
+
+
 def generate_with_ollama(instruction: str, content: str, client: Any | None = None) -> dict[str, Any]:
     if not OLLAMA_MODEL:
         return {"enabled": False, "status": "disabled", "text": "", "error": None}
