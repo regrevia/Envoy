@@ -183,6 +183,22 @@ class FrontendUploadActionsTests(unittest.TestCase):
             self.assertIn("取消任务", text)
             self.assertIn("已取消", text)
 
+    def test_artifact_detail_exposes_manifest_quality_metadata(self):
+        page = (ROOT_DIR / "frontend" / "app" / "artifacts" / "[artifact_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for copy in [
+            "质量元数据",
+            "Ollama 状态",
+            "AI 摘要",
+            "用途",
+            "风险",
+            "Manifest 路径",
+            "manifest",
+            "llm_summary",
+            "ollama_status",
+        ]:
+            self.assertIn(copy, page)
+
 
 if __name__ == "__main__":
     unittest.main()

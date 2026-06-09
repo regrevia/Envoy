@@ -14,6 +14,23 @@ type Artifact = {
   file_path?: string | null;
   version?: string | null;
   created_at?: string | null;
+  manifest?: ArtifactManifest | null;
+};
+
+type ArtifactManifest = {
+  schema_version?: string | null;
+  source_task_id?: string | null;
+  task_name?: string | null;
+  project_id?: string | null;
+  row_count?: number | null;
+  ollama_status?: string | null;
+  ollama_error?: string | null;
+  llm_summary?: string | null;
+  llm_usage?: string | null;
+  llm_keywords?: string[] | null;
+  llm_risks?: string[] | null;
+  manifest_path?: string | null;
+  read_status?: string | null;
 };
 
 const panelStyle = {
@@ -30,6 +47,12 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
       <div style={{ wordBreak: 'break-all' }}>{value || '-'}</div>
     </div>
   );
+}
+
+function manifestValue(value?: string | number | string[] | null) {
+  if (Array.isArray(value)) return value.length ? value.join('、') : '-';
+  if (value === undefined || value === null || value === '') return '-';
+  return String(value);
 }
 
 export default function ArtifactDetailPage({ params }: { params: Promise<{ artifact_id: string }> }) {
@@ -65,6 +88,27 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
               <DetailRow label="版本" value={artifact.version} />
               <DetailRow label="文件路径" value={artifact.file_path} />
               <DetailRow label="创建时间" value={artifact.created_at} />
+              {artifact.manifest ? (
+                <section style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+                  <h2 style={{ margin: 0, fontSize: 18 }}>质量元数据</h2>
+                  <p style={{ margin: '6px 0 10px', color: '#6b7280', fontSize: 13 }}>来自导出 Manifest，用于审查 AI 素材来源、Ollama 状态和生成质量。</p>
+                  <DetailRow label="Manifest 路径" value={artifact.manifest.manifest_path} />
+                  <DetailRow label="Schema" value={artifact.manifest.schema_version} />
+                  <DetailRow label="来源任务" value={artifact.manifest.source_task_id} />
+                  <DetailRow label="任务名称" value={artifact.manifest.task_name} />
+                  <DetailRow label="行数" value={manifestValue(artifact.manifest.row_count)} />
+                  <DetailRow label="Ollama 状态" value={artifact.manifest.ollama_status} />
+                  <DetailRow label="Ollama 错误" value={artifact.manifest.ollama_error} />
+                  <DetailRow label="AI 摘要" value={artifact.manifest.llm_summary} />
+                  <DetailRow label="用途" value={artifact.manifest.llm_usage} />
+                  <DetailRow label="关键词" value={manifestValue(artifact.manifest.llm_keywords)} />
+                  <DetailRow label="风险" value={manifestValue(artifact.manifest.llm_risks)} />
+                </section>
+              ) : (
+                <section style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid #e5e7eb', color: '#6b7280' }}>
+                  暂无 Manifest 质量元数据
+                </section>
+              )}
               <button onClick={() => openDownloadUrl(`/api/v1/artifacts/${artifact.id}/download`)} style={{ marginTop: 18, minHeight: 40, padding: '0 14px', borderRadius: 6, background: '#111827', color: '#fff', border: 0, fontWeight: 600, cursor: 'pointer' }}>
                 下载文件
               </button>
