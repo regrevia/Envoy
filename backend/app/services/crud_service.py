@@ -39,6 +39,10 @@ def list_assets(db: Session):
     return db.query(Asset).order_by(Asset.created_at.desc()).all()
 
 
+def get_asset(db: Session, asset_id: str):
+    return db.query(Asset).filter(Asset.id == asset_id).first()
+
+
 def create_task(db: Session, payload: TaskCreate):
     obj = ProcessingTask(id=str(uuid4()), project_id=payload.project_id, asset_id=payload.asset_id, task_type=payload.task_type, input_config=payload.input_config, status="pending", progress=0)
     db.add(obj)
