@@ -20,6 +20,7 @@ MANIFEST_KEYS = {
     "row_count",
     "source_counts",
     "unit_type_counts",
+    "media_processing_limits",
     "ollama_status",
     "ollama_error",
     "ollama_truncated",

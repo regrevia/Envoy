@@ -94,6 +94,14 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                         "row_count": 3,
                         "source_counts": {"text_asset": 1, "media_transcript": 1, "media_ocr": 1},
                         "unit_type_counts": {"text": 1, "transcript": 1, "ocr": 1},
+                        "media_processing_limits": [
+                            {
+                                "segment_seconds": 300,
+                                "max_segment_count": 2,
+                                "max_input_seconds": 600,
+                                "unit_count": 2,
+                            }
+                        ],
                         "files": {"markdown": str(artifact_dir / "skill.md"), "manifest": str(manifest_path)},
                     },
                     ensure_ascii=False,
@@ -146,6 +154,10 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                 self.assertEqual(detail["manifest"]["row_count"], 3)
                 self.assertEqual(detail["manifest"]["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
                 self.assertEqual(detail["manifest"]["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
+                self.assertEqual(
+                    detail["manifest"]["media_processing_limits"],
+                    [{"segment_seconds": 300, "max_segment_count": 2, "max_input_seconds": 600, "unit_count": 2}],
+                )
                 self.assertEqual(detail["manifest"]["manifest_path"], str(manifest_path))
             finally:
                 engine.dispose()
