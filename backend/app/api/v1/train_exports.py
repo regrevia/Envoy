@@ -15,6 +15,11 @@ def _validate_export_type(export_type: str):
         raise HTTPException(status_code=400, detail="Unsupported export type")
 
 
+def _validate_export_payload(rows: list[dict]):
+    if not rows:
+        raise HTTPException(status_code=400, detail="No exportable materials provided")
+
+
 @router.get("/train-exports/history")
 def list_train_exports_history(db: Session = Depends(get_db)):
     rows = list_export_records(db)
@@ -77,6 +82,7 @@ def auto_build_train_export(payload: TrainExportRequest, db: Session = Depends(g
 def create_train_export(payload: TrainExportRequest, db: Session = Depends(get_db)):
     _validate_export_type(payload.export_type)
     samples = payload.payload or []
+    _validate_export_payload(samples)
     out_dir = payload.out_dir or str(EXPORT_DIR)
     project_id, task_id = _resolve_export_context(db, payload)
     if payload.export_type == "sft":
