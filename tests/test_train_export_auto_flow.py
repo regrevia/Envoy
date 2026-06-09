@@ -13,6 +13,109 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class TrainExportAutoFlowTests(unittest.TestCase):
+    def test_manual_export_resolves_project_from_source_asset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-source-asset-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_asset, create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="source asset export", description="", domain_type="knowledge", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(project_id=project.id, asset_type="text", file_name="source.txt", file_path="source.txt", mime_type="text/plain"),
+                )
+                project_id = project.id
+                asset_id = asset.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports",
+                    json={
+                        "source_asset_id": asset_id,
+                        "export_type": "rag",
+                        "payload": [{"text": "source asset row", "metadata": {"source": "test"}}],
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+
+                history = client.get("/api/v1/train-exports/history").json()
+                self.assertEqual(len(history), 1)
+                self.assertEqual(history[0]["project_id"], project_id)
+                self.assertEqual(history[0]["task_id"], asset_id)
+                self.assertNotEqual(history[0]["project_id"], asset_id)
+            finally:
+                engine.dispose()
+
+    def test_manual_export_resolves_project_from_source_task(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-source-task-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="source task export", description="", domain_type="knowledge", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="analyze", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports",
+                    json={
+                        "source_task_id": task_id,
+                        "export_type": "markdown",
+                        "payload": [{"summary": "source task row"}],
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+
+                history = client.get("/api/v1/train-exports/history").json()
+                self.assertEqual(len(history), 1)
+                self.assertEqual(history[0]["project_id"], project_id)
+                self.assertEqual(history[0]["task_id"], task_id)
+                self.assertNotEqual(history[0]["project_id"], task_id)
+            finally:
+                engine.dispose()
+
     def test_auto_exports_markdown_skill_and_rag_from_project_semantic_units(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-test.db'}"
