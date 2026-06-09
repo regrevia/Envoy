@@ -998,6 +998,196 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_preserves_completed_segment_transcripts_when_canceled_mid_transcription(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-segment-cancel-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="segment cancel media project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("segment-cancel.mp4", b"fake video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="segment-cancel.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            def fake_split(video_path, output_dir):
+                return [str(Path(output_dir) / "segment_000001.mp4"), str(Path(output_dir) / "segment_000002.mp4")]
+
+            def cancel_after_first_segment(audio_path):
+                db = SessionLocal()
+                try:
+                    update_task_status(db, task_id, "canceled", 65, result_summary="Task canceled by user")
+                finally:
+                    db.close()
+                return {
+                    "text": "segment one already produced useful transcript.",
+                    "segments": [{"start": 0.0, "end": 8.0, "text": "segment one already produced useful transcript."}],
+                }
+
+            with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+                patch("app.workers.jobs.extract_frames", return_value=["frame_000001.jpg"]), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=cancel_after_first_segment), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("canceled media task should not run OCR")):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+                transcript_units = [unit for unit in units if unit.labels.get("source") == "media_transcript"]
+
+                self.assertEqual(result["status"], "canceled")
+                self.assertEqual(stored_task.status, "canceled")
+                self.assertEqual(len(transcript_units), 1)
+                self.assertEqual(transcript_units[0].unit_type, "transcript")
+                self.assertIn("segment one already produced useful transcript", transcript_units[0].content)
+                self.assertEqual(transcript_units[0].labels["segment_index"], 0)
+                self.assertEqual(transcript_units[0].labels["segment_count"], 2)
+                self.assertEqual(transcript_units[0].labels["extraction_status"], "partial_text_extracted")
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_canceled_media_rerun_removes_partial_segment_checkpoint_and_preserves_previous_success(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-canceled-rerun-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="media canceled rerun project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("rerun-cancel.mp4", b"fake video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="rerun-cancel.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                first_task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                second_task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                first_task_id = first_task.id
+                second_task_id = second_task.id
+            finally:
+                db.close()
+
+            def fake_split(video_path, output_dir):
+                return [str(Path(output_dir) / "segment_000001.mp4"), str(Path(output_dir) / "segment_000002.mp4")]
+
+            def successful_transcribe(audio_path):
+                segment_name = Path(audio_path).stem
+                return {
+                    "text": f"{segment_name} stable transcript from first run.",
+                    "segments": [{"start": 0.0, "end": 8.0, "text": f"{segment_name} stable transcript from first run."}],
+                }
+
+            with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+                patch("app.workers.jobs.extract_frames", return_value=["frame_000001.jpg"]), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=successful_transcribe), \
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=[{"frame": "frame_000001.jpg", "text": "first run frame text", "confidence": 0.8}]):
+                first_result = preprocess_job.run({"task_id": first_task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                previous_units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).order_by(SemanticUnit.created_at.asc()).all()
+                previous_contents = [unit.content for unit in previous_units]
+                previous_sources = [unit.labels.get("source") for unit in previous_units]
+            finally:
+                db.close()
+
+            def cancel_after_first_segment(audio_path):
+                db = SessionLocal()
+                try:
+                    update_task_status(db, second_task_id, "canceled", 65, result_summary="Task canceled by user")
+                finally:
+                    db.close()
+                return {
+                    "text": "second run partial transcript should be discarded.",
+                    "segments": [{"start": 0.0, "end": 8.0, "text": "second run partial transcript should be discarded."}],
+                }
+
+            with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+                patch("app.workers.jobs.extract_frames", return_value=["frame_000001.jpg"]), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=cancel_after_first_segment), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("canceled media rerun should not run OCR")):
+                second_result = preprocess_job.run({"task_id": second_task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_second_task = get_task(db, second_task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).order_by(SemanticUnit.created_at.asc()).all()
+
+                self.assertEqual(first_result["status"], "preprocessed")
+                self.assertEqual(second_result["status"], "canceled")
+                self.assertEqual(stored_second_task.status, "canceled")
+                self.assertEqual(stored_second_task.result_summary, "Task canceled by user")
+                self.assertEqual([unit.content for unit in units], previous_contents)
+                self.assertEqual([unit.labels.get("source") for unit in units], previous_sources)
+                self.assertFalse(any("second run partial transcript" in unit.content for unit in units))
+                self.assertFalse(any(unit.labels.get("checkpoint") == "segment_transcript" for unit in units))
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_fails_fast_when_media_source_file_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-missing-test.db'}"
