@@ -10,7 +10,7 @@ from app.services.media_service import MediaProcessingError, split_video, extrac
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
-from app.services.ollama_service import generate_with_ollama
+from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
 from app.core.config import SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
@@ -139,11 +139,7 @@ def _sample_fallback(unit: SemanticUnit | None, payload: dict):
 def _parse_sample_text(text: str):
     if not text.strip():
         return {}
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return parse_ollama_json_object(text)
 
 
 def _build_generated_sample(unit: SemanticUnit | None, payload: dict):

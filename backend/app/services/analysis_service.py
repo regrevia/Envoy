@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from app.services.ollama_service import generate_with_ollama
+from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 
 
 def _content_text(source: dict[str, Any] | None) -> str:
@@ -17,11 +17,8 @@ def _content_text(source: dict[str, Any] | None) -> str:
 def _parse_llm_text(text: str) -> dict[str, Any]:
     if not text.strip():
         return {}
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {"summary": text}
-    except json.JSONDecodeError:
-        return {"summary": text}
+    parsed = parse_ollama_json_object(text)
+    return parsed if parsed else {"summary": text}
 
 
 def build_analysis_payload(source: dict[str, Any] | None, asset_type: str | None = None) -> dict[str, Any]:
