@@ -364,6 +364,135 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_markdown_export_uses_ollama_summary_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-markdown-ollama-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="Markdown Ollama project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-md-ollama",
+                        project_id=project.id,
+                        asset_id="asset-md-ollama",
+                        segment_id=None,
+                        unit_type="text",
+                        title="Release process",
+                        content="Release notes must include risk, rollback, and owner.",
+                        labels={"source": "text_asset"},
+                        confidence=0.9,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.services.train_export_service.generate_with_ollama") as generate:
+                    generate.return_value = {
+                        "enabled": True,
+                        "status": "success",
+                        "text": '{"summary":"Release notes require risk, rollback, and owner fields."}',
+                        "error": None,
+                    }
+                    response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "markdown", "title": "Release report"})
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                markdown_text = Path(body["path"]).read_text(encoding="utf-8")
+                manifest = json.loads(Path(body["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+                self.assertIn("## AI 摘要", markdown_text)
+                self.assertIn("Release notes require risk, rollback, and owner fields.", markdown_text)
+                self.assertEqual(manifest["ollama_status"], "success")
+                self.assertEqual(manifest["llm_summary"], "Release notes require risk, rollback, and owner fields.")
+                generate.assert_called_once()
+            finally:
+                engine.dispose()
+
+    def test_auto_markdown_export_keeps_report_when_ollama_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-markdown-ollama-failure-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="Markdown Ollama fallback project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    SemanticUnit(
+                        id="semantic-md-fallback",
+                        project_id=project.id,
+                        asset_id="asset-md-fallback",
+                        segment_id=None,
+                        unit_type="text",
+                        title="Fallback report",
+                        content="Markdown content must remain exportable.",
+                        labels={"source": "text_asset"},
+                        confidence=0.89,
+                    )
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                with patch("app.services.train_export_service.generate_with_ollama") as generate:
+                    generate.return_value = {"enabled": True, "status": "failed", "text": "", "error": "ollama offline"}
+                    response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "markdown", "title": "Fallback report"})
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                markdown_text = Path(body["path"]).read_text(encoding="utf-8")
+                manifest = json.loads(Path(body["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+                self.assertIn("Markdown content must remain exportable.", markdown_text)
+                self.assertNotIn("## AI 摘要", markdown_text)
+                self.assertEqual(manifest["ollama_status"], "failed")
+                self.assertEqual(manifest["ollama_error"], "ollama offline")
+                self.assertNotIn("llm_summary", manifest)
+            finally:
+                engine.dispose()
+
     def test_train_export_requires_project_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-context-test.db'}"
