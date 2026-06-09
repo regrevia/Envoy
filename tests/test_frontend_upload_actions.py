@@ -297,6 +297,24 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_home_page_exposes_media_runtime_status(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "type MediaStatus =",
+            "/api/v1/health/media",
+            "媒体处理模式",
+            "最大处理",
+            "分段",
+            "抽帧",
+            "OCR",
+            "frame_extraction_enabled",
+            "ocr_enabled",
+            "max_input_seconds",
+        ]:
+            self.assertIn(copy, text)
+
     def test_task_pages_expose_cancel_action_for_long_running_work(self):
         task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
         task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
