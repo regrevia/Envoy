@@ -34,6 +34,38 @@ MANIFEST_KEYS = {
 }
 
 
+def _positive_int_or_none(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _normalized_media_processing_limits(value):
+    if not isinstance(value, list):
+        return None
+    normalized = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        segment_seconds = _positive_int_or_none(item.get("segment_seconds"))
+        max_segment_count = _positive_int_or_none(item.get("max_segment_count"))
+        max_input_seconds = _positive_int_or_none(item.get("max_input_seconds"))
+        unit_count = _positive_int_or_none(item.get("unit_count"))
+        if not (segment_seconds and max_segment_count and max_input_seconds and unit_count):
+            continue
+        normalized.append(
+            {
+                "segment_seconds": segment_seconds,
+                "max_segment_count": max_segment_count,
+                "max_input_seconds": max_input_seconds,
+                "unit_count": unit_count,
+            }
+        )
+    return normalized or None
+
+
 def _manifest_path_for_artifact(artifact: Artifact):
     path = Path(artifact.file_path)
     if path.suffix.lower() == ".json" and path.is_file():
@@ -65,6 +97,12 @@ def _artifact_manifest_payload(artifact: Artifact):
             "read_status": "invalid",
         }
     payload = {key: data[key] for key in MANIFEST_KEYS if key in data}
+    if "media_processing_limits" in payload:
+        media_limits = _normalized_media_processing_limits(payload["media_processing_limits"])
+        if media_limits is None:
+            payload.pop("media_processing_limits", None)
+        else:
+            payload["media_processing_limits"] = media_limits
     payload["manifest_path"] = str(manifest_path)
     payload["read_status"] = "success"
     return payload

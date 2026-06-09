@@ -162,6 +162,88 @@ class ApiArtifactsFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_artifact_detail_filters_invalid_manifest_media_limits(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifact_dir = Path(tmp_dir) / "markdown"
+            artifact_dir.mkdir()
+            manifest_path = artifact_dir / "markdown_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "envoy.markdown.v1",
+                        "project_id": "project-invalid-media-limits",
+                        "row_count": 1,
+                        "media_processing_limits": [
+                            "not-a-limit",
+                            {
+                                "segment_seconds": "bad",
+                                "max_segment_count": 2,
+                                "max_input_seconds": 600,
+                                "unit_count": 2,
+                            },
+                            {
+                                "segment_seconds": 300,
+                                "max_segment_count": -1,
+                                "max_input_seconds": 600,
+                                "unit_count": 2,
+                            },
+                            {
+                                "segment_seconds": 300,
+                                "max_segment_count": 2,
+                                "max_input_seconds": 600,
+                            },
+                            {
+                                "segment_seconds": "300",
+                                "max_segment_count": 2,
+                                "max_input_seconds": 600,
+                                "unit_count": 2,
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-artifacts-invalid-media-limits.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+                create_response = client.post(
+                    "/api/v1/artifacts",
+                    json={
+                        "project_id": "project-invalid-media-limits",
+                        "artifact_type": "report",
+                        "name": "markdown_manifest.json",
+                        "file_path": str(manifest_path),
+                        "version": "v1",
+                    },
+                )
+                artifact_id = create_response.json()["id"]
+                detail_response = client.get(f"/api/v1/artifacts/{artifact_id}")
+
+                self.assertEqual(detail_response.status_code, 200)
+                detail = detail_response.json()
+                self.assertEqual(
+                    detail["manifest"]["media_processing_limits"],
+                    [{"segment_seconds": 300, "max_segment_count": 2, "max_input_seconds": 600, "unit_count": 2}],
+                )
+            finally:
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
