@@ -940,6 +940,22 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertNotIn("其他项目内容", skill_text)
                 self.assertIn("target-trace", skill_manifest_text)
                 self.assertNotIn("other-trace", skill_manifest_text)
+
+                artifacts = client.get("/api/v1/artifacts").json()
+                skill_artifact = next(item for item in artifacts if item["artifact_type"] == "skill" and Path(item["file_path"]).name == "skill.md")
+                trace_response = client.get(f"/api/v1/trace/artifact/{skill_artifact['id']}")
+                self.assertEqual(trace_response.status_code, 200)
+                trace_links = trace_response.json()
+                self.assertTrue(
+                    any(
+                        link["source_type"] == "generated_sample"
+                        and link["source_id"] == "target-sample"
+                        and link["target_type"] == "artifact"
+                        and link["target_id"] == skill_artifact["id"]
+                        for link in trace_links
+                    )
+                )
+                self.assertFalse(any(link["source_id"] == "other-unit" for link in trace_links))
             finally:
                 engine.dispose()
 
