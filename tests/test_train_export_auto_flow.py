@@ -135,6 +135,103 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_export_does_not_include_trace_links_from_other_projects(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-isolation-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="目标项目", description="", domain_type="knowledge", status="active"))
+                other_project = create_project(db, ProjectCreate(name="其他项目", description="", domain_type="knowledge", status="active"))
+                target_unit = SemanticUnit(
+                    id="target-unit",
+                    project_id=project.id,
+                    asset_id="target-asset",
+                    segment_id=None,
+                    unit_type="text",
+                    title="目标知识",
+                    content="目标项目内容",
+                    labels={"source": "target"},
+                    confidence=0.9,
+                )
+                other_unit = SemanticUnit(
+                    id="other-unit",
+                    project_id=other_project.id,
+                    asset_id="other-asset",
+                    segment_id=None,
+                    unit_type="text",
+                    title="其他知识",
+                    content="其他项目内容",
+                    labels={"source": "other"},
+                    confidence=0.9,
+                )
+                sample = GeneratedSample(
+                    id="target-sample",
+                    project_id=project.id,
+                    source_unit_id=target_unit.id,
+                    sample_type="qa",
+                    input_text="目标问题",
+                    output_text="目标答案",
+                    quality_score=0.9,
+                )
+                target_trace = TraceLink(
+                    id="target-trace",
+                    source_type="semantic_unit",
+                    source_id=target_unit.id,
+                    target_type="generated_sample",
+                    target_id=sample.id,
+                    relation_type="derived_from",
+                )
+                unrelated_trace = TraceLink(
+                    id="other-trace",
+                    source_type="semantic_unit",
+                    source_id=other_unit.id,
+                    target_type="artifact",
+                    target_id="other-artifact",
+                    relation_type="exported_to",
+                )
+                db.add_all([target_unit, other_unit, sample, target_trace, unrelated_trace])
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports/auto",
+                    json={"project_id": project_id, "export_type": "skill", "title": "隔离导出"},
+                )
+
+                self.assertEqual(response.status_code, 200)
+                skill_text = Path(response.json()["path"]).read_text(encoding="utf-8")
+                self.assertIn("target-trace", skill_text)
+                self.assertIn("target-unit", skill_text)
+                self.assertNotIn("other-trace", skill_text)
+                self.assertNotIn("other-unit", skill_text)
+                self.assertNotIn("其他项目内容", skill_text)
+            finally:
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
