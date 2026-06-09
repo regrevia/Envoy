@@ -135,9 +135,14 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
                   暂无 Manifest 质量元数据
                 </section>
               )}
-              <button onClick={() => openDownloadUrl(`/api/v1/artifacts/${artifact.id}/download`)} style={{ marginTop: 18, minHeight: 40, padding: '0 14px', borderRadius: 6, background: '#111827', color: '#fff', border: 0, fontWeight: 600, cursor: 'pointer' }}>
-                下载文件
-              </button>
+              <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid #e5e7eb', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <Link href={`/trace?type=artifact&id=${artifact.id}`} style={{ minHeight: 40, padding: '0 14px', borderRadius: 6, background: '#ffffff', color: '#111827', border: '1px solid #d1d5db', fontWeight: 600, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
+                  查看来源链路
+                </Link>
+                <button onClick={() => openDownloadUrl(`/api/v1/artifacts/${artifact.id}/download`)} style={{ minHeight: 40, padding: '0 14px', borderRadius: 6, background: '#111827', color: '#fff', border: 0, fontWeight: 600, cursor: 'pointer' }}>
+                  下载文件
+                </button>
+              </div>
             </>
           ) : null}
         </section>

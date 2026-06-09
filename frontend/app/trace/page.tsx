@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 import { ApiError, apiJson } from '../../lib/api';
 
@@ -62,11 +63,22 @@ function entityTypeLabel(type?: string) {
   return type ? labels[type] || type : '-';
 }
 
-export default function TracePage() {
+function TraceWorkspace() {
+  const searchParams = useSearchParams();
   const [sourceType, setSourceType] = useState('asset');
   const [sourceId, setSourceId] = useState('');
   const [result, setResult] = useState<TraceLink[]>([]);
   const [message, setMessage] = useState('输入来源 ID 后查询相关记录');
+
+  useEffect(() => {
+    const typeFromQuery = searchParams.get('type');
+    const idFromQuery = searchParams.get('id');
+    if (typeFromQuery) setSourceType(typeFromQuery);
+    if (idFromQuery) {
+      setSourceId(idFromQuery);
+      setMessage('已从链接带入追溯对象，请点击查询追溯');
+    }
+  }, [searchParams]);
 
   const queryTrace = async () => {
     const trimmedId = sourceId.trim();
@@ -172,5 +184,13 @@ export default function TracePage() {
         </section>
       </section>
     </main>
+  );
+}
+
+export default function TracePage() {
+  return (
+    <Suspense fallback={<main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}><section style={{ maxWidth: 960, margin: '0 auto', padding: '44px 24px' }}>加载追溯工作台...</section></main>}>
+      <TraceWorkspace />
+    </Suspense>
   );
 }
