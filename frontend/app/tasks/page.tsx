@@ -71,6 +71,11 @@ function formatDurationSeconds(value?: number | null) {
   return `${seconds} 秒`;
 }
 
+function isMediaLimitSummary(summary?: string | null) {
+  const text = summary || '';
+  return text.includes('segment(s)') && text.includes('frame(s)') && text.includes('max');
+}
+
 function taskTypeLabel(taskType?: string | null) {
   const labels: Record<string, string> = {
     preprocess: '素材预处理',
@@ -203,7 +208,13 @@ export default function TasksPage() {
                     </div>
                     {task.is_stale ? <div style={{ marginTop: 8, color: '#b91c1c', fontWeight: 600 }}>{staleLabel(task)}</div> : null}
                     {task.error_message ? <div style={{ marginTop: 8, color: '#b91c1c', wordBreak: 'break-word' }}>{task.error_message}</div> : null}
-                    {task.result_summary ? <div style={{ marginTop: 8, color: '#4b5563', wordBreak: 'break-word' }}>{task.result_summary}</div> : null}
+                    {task.result_summary ? (
+                      <div style={{ marginTop: 8, color: '#4b5563', wordBreak: 'break-word' }}>
+                        <span style={{ color: '#6b7280' }}>任务摘要: </span>
+                        {task.result_summary}
+                        {isMediaLimitSummary(task.result_summary) ? <span style={{ marginLeft: 10, color: '#1f2937', fontWeight: 600 }}>媒体处理上限</span> : null}
+                      </div>
+                    ) : null}
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', flex: '0 0 auto' }}>
                     {canCancel(task) ? (

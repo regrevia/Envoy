@@ -80,6 +80,11 @@ function formatDurationSeconds(value?: number | null) {
   return `${seconds} 秒`;
 }
 
+function isMediaLimitSummary(summary?: string | null) {
+  const text = summary || '';
+  return text.includes('segment(s)') && text.includes('frame(s)') && text.includes('max');
+}
+
 function canCancel(task?: Task | null) {
   return task?.status === 'pending' || task?.status === 'running' || task?.status === 'dispatch_failed';
 }
@@ -205,7 +210,8 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
               <DetailRow label="任务类型" value={taskTypeLabel(task.task_type)} />
               <DetailRow label="状态" value={statusLabel(task.status)} />
               <DetailRow label="进度" value={`${progress}%`} />
-              <DetailRow label="结果摘要" value={task.result_summary} />
+              <DetailRow label="任务摘要" value={task.result_summary} />
+              <DetailRow label="媒体处理上限" value={isMediaLimitSummary(task.result_summary) ? "已按配置限制媒体处理范围" : "未触发媒体处理上限摘要"} />
               <DetailRow label="错误信息" value={task.error_message} />
               <DetailRow label="创建时间" value={formatTime(task.created_at)} />
               <DetailRow label="更新时间" value={formatTime(task.updated_at)} />
