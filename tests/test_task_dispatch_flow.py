@@ -3,6 +3,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +15,42 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class TaskDispatchFlowTests(unittest.TestCase):
+    def test_task_status_update_refreshes_updated_at_for_long_task_heartbeat(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-updated-at-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, update_task_status
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="heartbeat project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                old_updated_at = datetime(2020, 1, 1, 0, 0, 0)
+                task.updated_at = old_updated_at
+                db.commit()
+
+                updated = update_task_status(db, task.id, "running", 35, result_summary="media split done")
+
+                self.assertIsNotNone(updated)
+                self.assertEqual(updated.status, "running")
+                self.assertEqual(updated.progress, 35)
+                self.assertGreater(updated.updated_at, old_updated_at)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_task_list_and_detail_include_traceable_context(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-context-api-test.db'}"

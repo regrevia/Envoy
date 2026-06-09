@@ -1,4 +1,5 @@
 from uuid import uuid4
+from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.project import Project
 from app.models.asset import Asset
@@ -70,6 +71,7 @@ def update_task_status(db: Session, task_id: str, status: str, progress: int | N
         task.result_summary = result_summary
     if error_message is not None:
         task.error_message = error_message
+    task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
     return task
