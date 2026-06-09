@@ -429,6 +429,85 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_generate_samples_task_accepts_legacy_unit_asset_id_when_source_unit_belongs_to_project(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-source-unit-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project, get_task
+
+            Base.metadata.create_all(bind=engine)
+            client = TestClient(app)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="legacy unit sample", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="legacy-unit-001",
+                    project_id=project.id,
+                    asset_id="legacy-asset-not-in-assets-table",
+                    segment_id=None,
+                    unit_type="text",
+                    title="Legacy imported unit",
+                    content="Imported unit content should still generate reviewable samples.",
+                    labels={"source": "legacy_import"},
+                    confidence=0.9,
+                )
+                db.add(unit)
+                db.commit()
+                project_id = project.id
+                legacy_asset_id = unit.asset_id
+            finally:
+                db.close()
+
+            try:
+                response = client.post(
+                    "/api/v1/tasks/generate-samples",
+                    json={
+                        "project_id": project_id,
+                        "asset_id": legacy_asset_id,
+                        "task_type": "generate_samples",
+                        "input_config": {"source_unit_id": "legacy-unit-001"},
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                task_id = response.json()["id"]
+
+                db = SessionLocal()
+                try:
+                    stored = None
+                    for _ in range(50):
+                        db.expire_all()
+                        stored = get_task(db, task_id)
+                        if stored is not None and stored.status in {"success", "failed"}:
+                            break
+                        time.sleep(0.05)
+
+                    samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+                    self.assertIsNotNone(stored)
+                    self.assertEqual(stored.status, "success")
+                    self.assertEqual(stored.asset_id, legacy_asset_id)
+                    self.assertEqual(len(samples), 1)
+                    self.assertEqual(samples[0].source_unit_id, "legacy-unit-001")
+                finally:
+                    db.close()
+            finally:
+                engine.dispose()
+
     def test_task_detail_and_status_update_return_404_when_task_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-404-test.db'}"
