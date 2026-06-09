@@ -48,6 +48,23 @@ class AnalysisServiceTests(unittest.TestCase):
         self.assertIn("流程", payload["labels"])
         self.assertGreater(payload["confidence"], 0.8)
 
+    def test_analysis_payload_parses_fenced_ollama_json(self):
+        from app.services.analysis_service import build_analysis_payload
+
+        with patch("app.services.analysis_service.generate_with_ollama") as generate:
+            generate.return_value = {
+                "enabled": True,
+                "status": "success",
+                "text": '可以，结果如下：\n```json\n{"summary": "可用的本地摘要", "labels": ["RAG", "长文本"]}\n```',
+                "error": None,
+            }
+
+            payload = build_analysis_payload({"text": "长文本素材"}, asset_type="text")
+
+        self.assertEqual(payload["llm"]["summary"], "可用的本地摘要")
+        self.assertIn("RAG", payload["labels"])
+        self.assertIn("长文本", payload["labels"])
+
     def test_analysis_payload_records_ollama_failure_without_breaking_fallback(self):
         from app.services.analysis_service import build_analysis_payload
 

@@ -146,6 +146,73 @@ class SampleGenerationFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_sample_job_parses_fenced_ollama_json(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-ollama-fenced-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="fenced ollama sample project", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="unit-ollama-fenced",
+                    project_id=project.id,
+                    asset_id="asset-ollama-fenced",
+                    segment_id=None,
+                    unit_type="text",
+                    title="RAG policy",
+                    content="Keep source metadata when generating RAG chunks.",
+                    labels={"source": "text_asset", "stage": "preprocess"},
+                    confidence=0.93,
+                )
+                db.add(unit)
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-ollama-fenced", task_type="generate_samples", input_config={"source_unit_id": unit.id}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            with patch("app.workers.jobs.generate_with_ollama") as generate:
+                generate.return_value = {
+                    "enabled": True,
+                    "status": "success",
+                    "text": 'Here is the sample:\n```json\n{"sample_type":"qa","input":"What metadata should RAG chunks keep?","output":"They should keep source metadata.","quality_score":0.91}\n```',
+                    "error": None,
+                }
+                result = sample_job.run({"task_id": task_id, "project_id": project_id, "source_unit_id": "unit-ollama-fenced"})
+
+            db = SessionLocal()
+            try:
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "samples_generated")
+                self.assertEqual(len(samples), 1)
+                self.assertEqual(samples[0].input_text, "What metadata should RAG chunks keep?")
+                self.assertEqual(samples[0].output_text, "They should keep source metadata.")
+                self.assertEqual(samples[0].quality_score, 0.91)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_sample_job_generates_samples_for_project_units_when_source_is_omitted(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-batch-test.db'}"
