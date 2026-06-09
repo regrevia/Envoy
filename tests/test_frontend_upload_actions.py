@@ -396,6 +396,25 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("panelStyle", text)
         self.assertNotIn("borderRadius: 8", text)
 
+    def test_trace_page_renders_readable_multihop_trace_rows(self):
+        page = ROOT_DIR / "frontend" / "app" / "trace" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "链路层级",
+            "上游来源",
+            "下游去向",
+            "直接关系",
+            "第 {link.depth || 1} 层",
+            "directionLabel",
+            "relationTypeLabel",
+            "source_type",
+            "target_type",
+            "depth",
+            "direction",
+        ]:
+            self.assertIn(copy, text)
+
 
 if __name__ == "__main__":
     unittest.main()
