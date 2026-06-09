@@ -15,13 +15,6 @@ type GeneratedSample = {
   created_at?: string | null;
 };
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
-
 const buttonStyle = {
   minHeight: 36,
   padding: '0 12px',
@@ -64,11 +57,11 @@ export default function GeneratedSamplesPage() {
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
           <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>生成样本</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            查看从语义单元生成的训练样本，确认质量后再导出数据集、RAG 语料、Skill 包或 Markdown 报告。
+            {'语义单元 -> 生成样本 -> 训练导出。确认质量后再导出数据集、RAG 语料、Skill 包或 Markdown 报告。'}
           </p>
         </header>
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>样本列表</h2>
@@ -92,13 +85,13 @@ export default function GeneratedSamplesPage() {
               <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
                 <section style={{ minWidth: 0 }}>
                   <h3 style={{ margin: 0, fontSize: 14 }}>输入</h3>
-                  <pre style={{ margin: '8px 0 0', padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  <pre style={{ margin: '8px 0 0', padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {sample.input_text || '-'}
                   </pre>
                 </section>
                 <section style={{ minWidth: 0 }}>
                   <h3 style={{ margin: 0, fontSize: 14 }}>输出</h3>
-                  <pre style={{ margin: '8px 0 0', padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  <pre style={{ margin: '8px 0 0', padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {sample.output_text || '-'}
                   </pre>
                 </section>
