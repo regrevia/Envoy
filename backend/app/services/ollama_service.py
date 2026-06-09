@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_SEC
+from app.core.config import OLLAMA_BASE_URL, OLLAMA_MAX_PROMPT_CHARS, OLLAMA_MODEL, OLLAMA_TIMEOUT_SEC
 
 
 def parse_ollama_json_object(text: str) -> dict[str, Any]:
@@ -67,10 +67,18 @@ def get_ollama_status(client: Any | None = None) -> dict[str, Any]:
 
 
 def generate_with_ollama(instruction: str, content: str, client: Any | None = None) -> dict[str, Any]:
+    raw_prompt = f"{instruction.strip()}\n\n{content.strip()}".strip()
+    max_chars = max(int(OLLAMA_MAX_PROMPT_CHARS or 1), 1)
+    prompt = raw_prompt[:max_chars]
+    metadata = {
+        "truncated": len(raw_prompt) > len(prompt),
+        "original_prompt_chars": len(raw_prompt),
+        "sent_prompt_chars": len(prompt),
+        "max_prompt_chars": max_chars,
+    }
     if not OLLAMA_MODEL:
-        return {"enabled": False, "status": "disabled", "text": "", "error": None}
+        return {"enabled": False, "status": "disabled", "text": "", "error": None, **metadata}
 
-    prompt = f"{instruction.strip()}\n\n{content.strip()}".strip()
     http_client = client or httpx
     try:
         response = http_client.post(
@@ -80,6 +88,6 @@ def generate_with_ollama(instruction: str, content: str, client: Any | None = No
         )
         response.raise_for_status()
         data = response.json()
-        return {"enabled": True, "status": "success", "text": data.get("response", ""), "error": None}
+        return {"enabled": True, "status": "success", "text": data.get("response", ""), "error": None, **metadata}
     except Exception as exc:
-        return {"enabled": True, "status": "failed", "text": "", "error": str(exc)}
+        return {"enabled": True, "status": "failed", "text": "", "error": str(exc), **metadata}

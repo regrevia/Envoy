@@ -185,6 +185,38 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["json"]["model"], "qwen2.5:7b")
         self.assertIn("raw content", client.calls[0]["json"]["prompt"])
 
+    def test_ollama_truncates_long_content_before_generation(self):
+        os.environ["OLLAMA_BASE_URL"] = "http://ollama.local:11434"
+        os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+        os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "40"
+        sys.modules.pop("app.core.config", None)
+        sys.modules.pop("app.services.ollama_service", None)
+        from app.services.ollama_service import generate_with_ollama
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"response": "short review"}
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def post(self, url, json, timeout):
+                self.calls.append({"url": url, "json": json, "timeout": timeout})
+                return FakeResponse()
+
+        client = FakeClient()
+        result = generate_with_ollama("Review", "x" * 200, client=client)
+
+        prompt = client.calls[0]["json"]["prompt"]
+        self.assertLessEqual(len(prompt), 40)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["original_prompt_chars"], len("Review\n\n" + ("x" * 200)))
+        self.assertEqual(result["sent_prompt_chars"], len(prompt))
+
     def test_storage_local_mode_persists_uploaded_bytes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["ENVOY_STORAGE_MODE"] = "local"

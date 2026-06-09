@@ -320,6 +320,9 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "画面 OCR",
             "长文本",
             "Ollama 状态",
+            "Ollama 截断",
+            "提示词长度",
+            "发送长度",
             "AI 摘要",
             "用途",
             "风险",
@@ -329,6 +332,10 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "unit_type_counts",
             "llm_summary",
             "ollama_status",
+            "ollama_truncated",
+            "ollama_original_prompt_chars",
+            "ollama_sent_prompt_chars",
+            "ollama_max_prompt_chars",
         ]:
             self.assertIn(copy, page)
 

@@ -27,6 +27,10 @@ type ArtifactManifest = {
   unit_type_counts?: Record<string, number> | null;
   ollama_status?: string | null;
   ollama_error?: string | null;
+  ollama_truncated?: boolean | null;
+  ollama_original_prompt_chars?: number | null;
+  ollama_sent_prompt_chars?: number | null;
+  ollama_max_prompt_chars?: number | null;
   llm_summary?: string | null;
   llm_usage?: string | null;
   llm_keywords?: string[] | null;
@@ -48,6 +52,12 @@ function manifestValue(value?: string | number | string[] | null) {
   if (Array.isArray(value)) return value.length ? value.join('、') : '-';
   if (value === undefined || value === null || value === '') return '-';
   return String(value);
+}
+
+function booleanValue(value?: boolean | null) {
+  if (value === true) return '是';
+  if (value === false) return '否';
+  return '-';
 }
 
 const sourceLabels: Record<string, string> = {
@@ -125,6 +135,10 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
                   <DetailRow label="语义类型统计" value={countsValue(artifact.manifest.unit_type_counts, unitTypeLabels)} />
                   <DetailRow label="Ollama 状态" value={artifact.manifest.ollama_status} />
                   <DetailRow label="Ollama 错误" value={artifact.manifest.ollama_error} />
+                  <DetailRow label="Ollama 截断" value={booleanValue(artifact.manifest.ollama_truncated)} />
+                  <DetailRow label="提示词长度" value={manifestValue(artifact.manifest.ollama_original_prompt_chars)} />
+                  <DetailRow label="发送长度" value={manifestValue(artifact.manifest.ollama_sent_prompt_chars)} />
+                  <DetailRow label="最大长度" value={manifestValue(artifact.manifest.ollama_max_prompt_chars)} />
                   <DetailRow label="AI 摘要" value={artifact.manifest.llm_summary} />
                   <DetailRow label="用途" value={artifact.manifest.llm_usage} />
                   <DetailRow label="关键词" value={manifestValue(artifact.manifest.llm_keywords)} />
