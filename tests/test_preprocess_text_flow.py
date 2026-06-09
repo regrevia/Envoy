@@ -150,6 +150,147 @@ class PreprocessTextFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_reports_progress_while_splitting_long_text(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-long-text-progress-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["TEXT_PREPROCESS_CHUNK_CHARS"] = "80"
+            os.environ["TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS"] = "0"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, update_task_status as real_update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="long text progress", description="", domain_type="knowledge", status="active"))
+                text = "\n".join([f"paragraph-{index} " + ("content " * 20) for index in range(10)])
+                storage_info = storage_client.upload_bytes("progress-note.txt", text.encode("utf-8"), "text/plain")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="text",
+                        file_name="progress-note.txt",
+                        file_path=storage_info["object_name"],
+                        mime_type="text/plain",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            progress_updates = []
+
+            def record_update(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                progress_updates.append({"status": status, "progress": progress, "summary": result_summary})
+                return real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+
+            from unittest.mock import patch
+            with patch("app.workers.jobs.update_task_status", side_effect=record_update):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            self.assertEqual(result["status"], "preprocessed")
+            summaries = [item["summary"] for item in progress_updates if item["summary"]]
+            self.assertTrue(any("text chunks persisted" in summary for summary in summaries))
+            self.assertTrue(any(item["status"] == "running" and item["progress"] and 10 < item["progress"] < 100 for item in progress_updates))
+
+            engine.dispose()
+
+    def test_preprocess_stops_long_text_chunking_when_task_is_canceled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-long-text-cancel-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["TEXT_PREPROCESS_CHUNK_CHARS"] = "80"
+            os.environ["TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS"] = "0"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status as real_update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="long text cancel", description="", domain_type="knowledge", status="active"))
+                text = "\n".join([f"paragraph-{index} " + ("content " * 20) for index in range(10)])
+                storage_info = storage_client.upload_bytes("cancel-note.txt", text.encode("utf-8"), "text/plain")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="text",
+                        file_name="cancel-note.txt",
+                        file_path=storage_info["object_name"],
+                        mime_type="text/plain",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            progress_updates = []
+
+            def cancel_during_chunking(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                progress_updates.append({"status": status, "progress": progress, "summary": result_summary})
+                updated = real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+                if result_summary and "text chunks persisted" in result_summary:
+                    real_update_task_status(db, task_id_arg, "canceled", progress, result_summary="Task canceled by user")
+                return updated
+
+            from unittest.mock import patch
+            with patch("app.workers.jobs.update_task_status", side_effect=cancel_during_chunking):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "canceled")
+                self.assertEqual(stored_task.status, "canceled")
+                self.assertEqual(stored_task.result_summary, "Task canceled by user")
+                self.assertGreater(len(units), 0)
+                self.assertLess(len(units), result["semantic"]["chunk_count"])
+            finally:
+                db.close()
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

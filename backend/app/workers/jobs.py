@@ -37,8 +37,11 @@ def _task_is_canceled(db, task_id):
     return task is not None and task.status == "canceled"
 
 
-def _canceled_result(payload: dict):
-    return {"status": "canceled", "payload": payload}
+def _canceled_result(payload: dict, semantic: dict | None = None):
+    result = {"status": "canceled", "payload": payload}
+    if semantic is not None:
+        result["semantic"] = semantic
+    return result
 
 
 def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, target_id: str, relation_type: str):
@@ -397,6 +400,8 @@ def preprocess_job(self, payload: dict):
             }
             units = []
             for index, chunk in enumerate(chunks):
+                if _task_is_canceled(db, task_id):
+                    return _canceled_result(payload, semantic_payload)
                 title = asset.file_name if chunk_count == 1 else f"{asset.file_name} chunk {index + 1}/{chunk_count}"
                 labels = {
                     "stage": "preprocess",
@@ -406,12 +411,17 @@ def preprocess_job(self, payload: dict):
                     "char_start": chunk["start"],
                     "char_end": chunk["end"],
                 }
-                units.append(SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="text", title=title, content=chunk["content"], labels=labels, confidence=0.92))
-            db.add_all(units)
-            db.commit()
-            for unit in units:
+                unit = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="text", title=title, content=chunk["content"], labels=labels, confidence=0.92)
+                db.add(unit)
+                db.commit()
+                db.refresh(unit)
+                units.append(unit)
                 db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
-            db.commit()
+                db.commit()
+                progress = min(95, 15 + int(((index + 1) / max(chunk_count, 1)) * 75))
+                _safe_update(db, task_id, "running", progress, result_summary=f"text chunks persisted: {index + 1}/{chunk_count}")
+                if _task_is_canceled(db, task_id):
+                    return _canceled_result(payload, semantic_payload)
             _safe_update(db, task_id, "success", 100, result_summary=f"text preprocess done: {semantic_payload['char_count']} chars, {chunk_count} chunks")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         if _local_source_file_missing(source_path):
