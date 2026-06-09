@@ -36,7 +36,7 @@ class FrontendTextQualityTests(unittest.TestCase):
     def test_core_workflow_pages_are_chinese_first(self):
         expectations = {
             "frontend/app/page.tsx": ["创建转换任务", "上传素材", "选择生成内容"],
-            "frontend/app/projects/page.tsx": ["项目", "新建项目", "项目列表"],
+            "frontend/app/projects/page.tsx": ["项目", "新建项目", "项目列表", "创建:"],
             "frontend/app/upload/page.tsx": ["上传素材", "选择任务/项目", "启动预处理"],
             "frontend/app/semantic-units/page.tsx": ["素材转换工作台", "语义单元", "生成样本"],
             "frontend/app/tasks/page.tsx": ["任务", "任务列表", "进度", "项目:", "素材:"],

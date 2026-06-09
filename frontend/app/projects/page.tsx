@@ -37,7 +37,15 @@ type Project = {
   description?: string | null;
   domain_type?: string | null;
   status?: string | null;
+  created_at?: string | null;
 };
+
+function formatTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
 
 export default function ProjectsPage() {
   const [name, setName] = useState('');
@@ -176,6 +184,7 @@ export default function ProjectsPage() {
                   <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
                     <span>ID: {project.id}</span>
                     <span>领域: {project.domain_type || '-'}</span>
+                    <span>创建: {formatTime(project.created_at)}</span>
                   </div>
                 </div>
               ))}
