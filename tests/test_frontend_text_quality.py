@@ -9,24 +9,18 @@ class FrontendTextQualityTests(unittest.TestCase):
     def test_frontend_source_has_no_mojibake_copy(self):
         checked_roots = [ROOT_DIR / "frontend" / "app"]
         suspicious_fragments = [
-            "鎽",
-            "璇",
-            "鐢",
-            "浜",
-            "绗",
-            "椤",
-            "杩",
-            "鏍",
-            "鍒",
-            "鍔",
-            "鏌",
-            "鏆",
-            "瀵",
+            "鍏",
+            "垱",
+            "姘",
+            "姝",
+            "涓",
             "绱",
-            "浠",
-            "瑙",
-            "丼kill",
-            "丷AG",
+            "璇",
+            "鐞",
+            "鐭",
+            "閫",
+            "濂",
+            "€",
         ]
         offenders = []
 
@@ -41,7 +35,10 @@ class FrontendTextQualityTests(unittest.TestCase):
 
     def test_core_workflow_pages_are_chinese_first(self):
         expectations = {
+            "frontend/app/page.tsx": ["创建转换任务", "上传素材", "选择生成内容"],
             "frontend/app/projects/page.tsx": ["项目", "新建项目", "项目列表"],
+            "frontend/app/upload/page.tsx": ["上传素材", "选择任务/项目", "启动预处理"],
+            "frontend/app/semantic-units/page.tsx": ["素材转换工作台", "语义单元", "生成样本"],
             "frontend/app/tasks/page.tsx": ["任务", "任务列表", "进度"],
             "frontend/app/tasks/[task_id]/page.tsx": ["任务详情", "状态", "进度"],
             "frontend/app/generated-samples/page.tsx": ["生成样本", "样本列表", "刷新"],
