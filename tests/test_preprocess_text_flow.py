@@ -75,6 +75,83 @@ class PreprocessTextFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_rerun_replaces_existing_semantic_units_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-idempotent-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="idempotent preprocess", description="", domain_type="knowledge", status="active"))
+                text = "first block\nsecond block"
+                storage_info = storage_client.upload_bytes("repeat-note.txt", text.encode("utf-8"), "text/plain")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="text",
+                        file_name="repeat-note.txt",
+                        file_path=storage_info["object_name"],
+                        mime_type="text/plain",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                first_task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                second_task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                first_task_id = first_task.id
+                second_task_id = second_task.id
+            finally:
+                db.close()
+
+            first_result = preprocess_job.run({"task_id": first_task_id, "project_id": project_id, "asset_id": asset_id})
+            db = SessionLocal()
+            try:
+                first_unit_count = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).count()
+                first_trace_count = db.query(TraceLink).filter(TraceLink.source_type == "asset", TraceLink.source_id == asset_id, TraceLink.target_type == "semantic_unit").count()
+            finally:
+                db.close()
+
+            second_result = preprocess_job.run({"task_id": second_task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+                traces = db.query(TraceLink).filter(TraceLink.source_type == "asset", TraceLink.source_id == asset_id, TraceLink.target_type == "semantic_unit").all()
+
+                self.assertEqual(first_result["status"], "preprocessed")
+                self.assertEqual(second_result["status"], "preprocessed")
+                self.assertEqual(first_unit_count, 1)
+                self.assertEqual(first_trace_count, 1)
+                self.assertEqual(len(units), first_unit_count)
+                self.assertEqual(len(traces), first_trace_count)
+                self.assertEqual(units[0].labels["source"], "text_asset")
+                self.assertIn("first block", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_splits_long_text_asset_into_ordered_chunks(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-long-text-test.db'}"
