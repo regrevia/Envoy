@@ -87,6 +87,23 @@ def _semantic_unit_source_ids(rows: list[dict]):
     return source_ids
 
 
+def _generated_sample_source_ids(rows: list[dict]):
+    source_ids = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source_id = row.get("id")
+        is_sample_row = row.get("record_type") == "generated_sample" or (
+            "sample_type" in row and "input_text" in row and "output_text" in row
+        )
+        if not is_sample_row or not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        source_ids.append(str(source_id))
+    return source_ids
+
+
 def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, target_id: str, relation_type: str):
     existing = (
         db.query(TraceLink)
@@ -107,23 +124,34 @@ def _ensure_trace_link(db, source_type: str, source_id: str, target_type: str, t
 
 
 def _write_artifact_trace_links(db, project_id: str, artifacts, rows: list[dict]):
-    source_ids = _semantic_unit_source_ids(rows)
-    if not db or not source_ids:
+    semantic_source_ids = _semantic_unit_source_ids(rows)
+    sample_source_ids = _generated_sample_source_ids(rows)
+    if not db or (not semantic_source_ids and not sample_source_ids):
         return []
-    valid_source_ids = {
+    valid_semantic_ids = {
         row.id
         for row in db.query(SemanticUnit.id)
-        .filter(SemanticUnit.project_id == project_id, SemanticUnit.id.in_(source_ids))
+        .filter(SemanticUnit.project_id == project_id, SemanticUnit.id.in_(semantic_source_ids))
         .all()
-    }
-    if not valid_source_ids:
+    } if semantic_source_ids else set()
+    valid_sample_ids = {
+        row.id
+        for row in db.query(GeneratedSample.id)
+        .filter(GeneratedSample.project_id == project_id, GeneratedSample.id.in_(sample_source_ids))
+        .all()
+    } if sample_source_ids else set()
+    if not valid_semantic_ids and not valid_sample_ids:
         return []
     links = []
     for artifact in artifacts:
-        for source_id in source_ids:
-            if source_id not in valid_source_ids:
+        for source_id in semantic_source_ids:
+            if source_id not in valid_semantic_ids:
                 continue
             links.append(_ensure_trace_link(db, "semantic_unit", source_id, "artifact", artifact.id, "exported_to"))
+        for source_id in sample_source_ids:
+            if source_id not in valid_sample_ids:
+                continue
+            links.append(_ensure_trace_link(db, "generated_sample", source_id, "artifact", artifact.id, "exported_to"))
     db.commit()
     return links
 
@@ -170,6 +198,10 @@ def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
         ],
         "samples": [
             {
+                "record_type": "generated_sample",
+                "id": row.id,
+                "project_id": row.project_id,
+                "source_unit_id": row.source_unit_id,
                 "sample_type": row.sample_type,
                 "input_text": row.input_text,
                 "output_text": row.output_text,
