@@ -17,6 +17,9 @@ type Task = {
   error_message?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  is_stale?: boolean;
+  stale_seconds?: number;
+  stale_after_seconds?: number;
 };
 
 const buttonStyle = {
@@ -62,6 +65,19 @@ function statusLabel(status?: string | null) {
   if (status === 'pending') return '等待中';
   if (status === 'canceled') return '已取消';
   return status || '-';
+}
+
+function staleLabel(task?: Task | null) {
+  if (!task?.is_stale) return '未检测到卡住';
+  const seconds = Math.max(Number(task.stale_seconds ?? 0), 0);
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `疑似卡住：${minutes} 分钟未更新` : '疑似卡住：长时间未更新';
+}
+
+function formatDurationSeconds(value?: number | null) {
+  const seconds = Math.max(Number(value ?? 0), 0);
+  if (seconds >= 60) return `${Math.floor(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
 }
 
 function canCancel(task?: Task | null) {
@@ -163,6 +179,16 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
           <h1 style={{ margin: '10px 0 0', fontSize: 32, lineHeight: 1.2 }}>任务详情</h1>
         </header>
 
+        <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb' }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>长任务诊断</h2>
+          <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', color: '#4b5563', fontSize: 13 }}>
+            <span>自动刷新: 3 秒</span>
+            <span>卡住阈值: {formatDurationSeconds(task?.stale_after_seconds)}</span>
+            <span>未更新时间: {formatDurationSeconds(task?.stale_seconds)}</span>
+            <span>{staleLabel(task)}</span>
+          </div>
+        </section>
+
         <div style={{ marginTop: 18, padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: task ? statusColor(task.status) : '#374151', display: 'flex', gap: 10, alignItems: 'center' }}>
           <strong style={{ fontSize: 14 }}>状态</strong>
           <span style={{ fontSize: 14 }}>{loading ? '正在加载...' : message}</span>
@@ -183,6 +209,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
               <DetailRow label="错误信息" value={task.error_message} />
               <DetailRow label="创建时间" value={formatTime(task.created_at)} />
               <DetailRow label="更新时间" value={formatTime(task.updated_at)} />
+              <DetailRow label="卡住阈值" value={formatDurationSeconds(task.stale_after_seconds)} />
+              <DetailRow label="未更新时间" value={formatDurationSeconds(task.stale_seconds)} />
+              <DetailRow label="疑似卡住" value={staleLabel(task)} />
               <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ color: '#6b7280', marginBottom: 8 }}>输入配置</div>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>

@@ -230,6 +230,24 @@ class FrontendUploadActionsTests(unittest.TestCase):
             self.assertNotIn("panelStyle", text)
             self.assertNotIn("borderRadius: 8", text)
 
+    def test_task_pages_expose_long_task_diagnostics(self):
+        task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
+        task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for text in [task_list, task_detail]:
+            for copy in [
+                "长任务诊断",
+                "自动刷新",
+                "卡住阈值",
+                "未更新时间",
+                "疑似卡住",
+                "取消任务",
+                "重试任务",
+                "stale_after_seconds",
+                "stale_seconds",
+            ]:
+                self.assertIn(copy, text)
+
     def test_artifact_detail_exposes_manifest_quality_metadata(self):
         page = (ROOT_DIR / "frontend" / "app" / "artifacts" / "[artifact_id]" / "page.tsx").read_text(encoding="utf-8")
 

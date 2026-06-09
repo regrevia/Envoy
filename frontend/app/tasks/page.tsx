@@ -65,6 +65,12 @@ function staleLabel(task: Task) {
   return minutes > 0 ? `疑似卡住：${minutes} 分钟未更新` : '疑似卡住：长时间未更新';
 }
 
+function formatDurationSeconds(value?: number | null) {
+  const seconds = Math.max(Number(value ?? 0), 0);
+  if (seconds >= 60) return `${Math.floor(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
+}
+
 function taskTypeLabel(taskType?: string | null) {
   const labels: Record<string, string> = {
     preprocess: '素材预处理',
@@ -149,6 +155,16 @@ export default function TasksPage() {
           </p>
         </header>
 
+        <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb' }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>长任务诊断</h2>
+          <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', color: '#4b5563', fontSize: 13 }}>
+            <span>自动刷新: 4 秒</span>
+            <span>卡住阈值: 使用任务 stale_after_seconds</span>
+            <span>未更新时间: 使用任务 stale_seconds</span>
+            <span>疑似卡住后可先取消任务，再重试任务</span>
+          </div>
+        </section>
+
         <section style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
@@ -180,6 +196,10 @@ export default function TasksPage() {
                       <span>素材: {task.asset_id || '-'}</span>
                       <span>创建: {formatTime(task.created_at)}</span>
                       <span>最后更新: {formatTime(task.updated_at)}</span>
+                    </div>
+                    <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
+                      <span>卡住阈值: {formatDurationSeconds(task.stale_after_seconds)}</span>
+                      <span>未更新时间: {formatDurationSeconds(task.stale_seconds)}</span>
                     </div>
                     {task.is_stale ? <div style={{ marginTop: 8, color: '#b91c1c', fontWeight: 600 }}>{staleLabel(task)}</div> : null}
                     {task.error_message ? <div style={{ marginTop: 8, color: '#b91c1c', wordBreak: 'break-word' }}>{task.error_message}</div> : null}
