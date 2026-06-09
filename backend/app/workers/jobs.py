@@ -503,7 +503,9 @@ def sample_job(self, payload: dict):
         )
         samples = [_persist_generated_sample(db, project_id, unit, payload) for unit in units]
         if not samples:
-            samples = [_persist_generated_sample(db, project_id, None, payload)]
+            message = "No semantic units available for sample generation"
+            _safe_update(db, task_id, "failed", 100, error_message=message)
+            return {"status": "failed", "payload": payload, "error": message}
         sample_count = len(samples)
         _safe_update(db, task_id, "success", 100, result_summary=f"{sample_count} sample{'s' if sample_count != 1 else ''} generated")
         return {"status": "samples_generated", "payload": payload, "sample_ids": [sample.id for sample in samples], "sample_count": sample_count}
