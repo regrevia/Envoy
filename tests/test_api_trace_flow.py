@@ -71,10 +71,16 @@ class ApiTraceFlowTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 200)
                 links = response.json()
-                self.assertEqual(len(links), 1)
-                self.assertEqual(links[0]["direction"], "incoming")
+                self.assertEqual(len(links), 3)
+                self.assertEqual([link["id"] for link in links], ["trace-sample-artifact", "trace-unit-sample", "trace-asset-unit"])
+                self.assertEqual([link["direction"] for link in links], ["incoming", "incoming", "incoming"])
+                self.assertEqual([link["depth"] for link in links], [1, 2, 3])
                 self.assertEqual(links[0]["source_type"], "generated_sample")
                 self.assertEqual(links[0]["source_id"], "sample-trace-001")
+                self.assertEqual(links[1]["source_type"], "semantic_unit")
+                self.assertEqual(links[1]["source_id"], "semantic-trace-001")
+                self.assertEqual(links[2]["source_type"], "asset")
+                self.assertEqual(links[2]["source_id"], "asset-trace-001")
                 self.assertEqual(links[0]["target_type"], "artifact")
                 self.assertEqual(links[0]["target_id"], "artifact-trace-001")
             finally:
