@@ -18,6 +18,38 @@ def _validate_export_type(export_type: str):
 def _validate_export_payload(rows: list[dict]):
     if not rows:
         raise HTTPException(status_code=400, detail="No exportable materials provided")
+    if not any(_row_has_usable_content(row) for row in rows):
+        raise HTTPException(status_code=400, detail="No usable export content provided")
+
+
+def _text_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _row_has_usable_content(row: dict):
+    if not isinstance(row, dict):
+        return False
+    for key in (
+        "text",
+        "content",
+        "summary",
+        "topic",
+        "question",
+        "answer",
+        "input",
+        "output",
+        "input_text",
+        "output_text",
+        "instruction",
+        "title",
+    ):
+        if _text_value(row.get(key)):
+            return True
+    return False
 
 
 @router.get("/train-exports/history")
