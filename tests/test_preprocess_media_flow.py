@@ -1020,6 +1020,73 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_fails_when_all_audio_transcription_segments_fail(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-audio-transcription-failure-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="audio failure project", description="", domain_type="knowledge", status="active"))
+                storage_info = storage_client.upload_bytes("broken-audio.mp3", b"fake broken audio bytes", "audio/mpeg")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="audio",
+                        file_name="broken-audio.mp3",
+                        file_path=storage_info["object_name"],
+                        mime_type="audio/mpeg",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            with patch("app.workers.jobs.split_audio", return_value=[str(Path(tmp_dir) / "audio_segment_000001.wav")]), \
+                patch("app.workers.jobs.split_video", side_effect=AssertionError("audio preprocessing should not split video")), \
+                patch("app.workers.jobs.extract_frames", side_effect=AssertionError("audio preprocessing should not extract frames")), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("audio preprocessing should not run OCR")), \
+                patch("app.workers.jobs.transcribe_audio", return_value={"status": "failed", "text": "", "segments": [], "error": "whisper model crashed"}):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "audio transcription failed: whisper model crashed")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "audio transcription failed: whisper model crashed")
+                self.assertEqual(units, [])
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_preserves_audio_segment_checkpoint_when_canceled_mid_transcription(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-audio-segment-cancel-test.db'}"
@@ -1271,6 +1338,72 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(transcript_units[0].labels["segment_index"], 0)
                 self.assertEqual(transcript_units[0].labels["segment_count"], 2)
                 self.assertEqual(transcript_units[0].labels["extraction_status"], "partial_text_extracted")
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_fails_when_all_video_transcription_segments_fail(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-video-transcription-failure-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="video failure project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("broken-video.mp4", b"fake broken video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="broken-video.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            with patch("app.workers.jobs.split_video", return_value=[str(Path(tmp_dir) / "segment_000001.mp4")]), \
+                patch("app.workers.jobs.extract_frames", return_value=[]), \
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=[]), \
+                patch("app.workers.jobs.transcribe_audio", return_value={"status": "failed", "text": "", "segments": [], "error": "whisper gpu unavailable"}):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "media transcription failed: whisper gpu unavailable")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "media transcription failed: whisper gpu unavailable")
+                self.assertEqual(units, [])
             finally:
                 db.close()
                 engine.dispose()

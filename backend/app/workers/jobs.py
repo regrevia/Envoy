@@ -794,6 +794,16 @@ def preprocess_job(self, payload: dict):
                 "segment_results": transcription_results,
             }
             transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
+            failed_transcriptions = [
+                item["transcript"]
+                for item in transcription_results
+                if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
+            ]
+            if not transcript_text and failed_transcriptions and len(failed_transcriptions) == len(transcription_results):
+                error = next((str(item.get("error")) for item in failed_transcriptions if item.get("error")), "unknown transcription error")
+                message = f"audio transcription failed: {error}"
+                _safe_update(db, task_id, "failed", 100, error_message=message)
+                return {"status": "failed", "payload": payload, "error": message, "semantic": {"transcript": transcription, "extraction_status": "failed"}}
             if transcript_text:
                 segments = transcription.get("segments", []) if isinstance(transcription, dict) else []
                 chunk_count = len(_text_chunks(transcript_text))
@@ -895,6 +905,11 @@ def preprocess_job(self, payload: dict):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         semantic_payload = {"segments": segment_paths, "transcript": transcription, "ocr": ocr_results, "stage": "preprocess", "source_path": source_path}
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
+        failed_transcriptions = [
+            item["transcript"]
+            for item in transcription_results
+            if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
+        ]
         if transcript_text:
             _clear_media_transcript_checkpoints(db, asset_id, task_id)
             _persist_text_semantic_units(
@@ -914,6 +929,11 @@ def preprocess_job(self, payload: dict):
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
         ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
+        if not transcript_text and not ocr_text and failed_transcriptions and len(failed_transcriptions) == len(transcription_results):
+            error = next((str(item.get("error")) for item in failed_transcriptions if item.get("error")), "unknown transcription error")
+            message = f"media transcription failed: {error}"
+            _safe_update(db, task_id, "failed", 100, error_message=message)
+            return {"status": "failed", "payload": payload, "error": message, "semantic": {**semantic_payload, "extraction_status": "failed"}}
         if ocr_text:
             confidence_values = [
                 float(item.get("confidence", 0.0))

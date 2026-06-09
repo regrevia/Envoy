@@ -121,9 +121,9 @@ def transcribe_audio(audio_path: str):
             model = whisper.load_model(model_name)
             _WHISPER_MODELS[model_name] = model
         result = model.transcribe(audio_path)
-        return {"text": result.get("text", ""), "segments": result.get("segments", [])}
-    except Exception:
-        return {"text": "", "segments": []}
+        return {"status": "success", "text": result.get("text", ""), "segments": result.get("segments", []), "error": None}
+    except Exception as exc:
+        return {"status": "failed", "text": "", "segments": [], "error": str(exc)}
 
 
 def run_ocr_on_frames(frame_paths: list[str]):
