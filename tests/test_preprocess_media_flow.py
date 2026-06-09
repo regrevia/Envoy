@@ -740,6 +740,7 @@ class PreprocessMediaFlowTests(unittest.TestCase):
 
                 self.assertEqual(result["status"], "preprocessed")
                 self.assertEqual(stored_task.status, "success")
+                self.assertEqual(stored_task.result_summary, "media preprocess done: 2 segment(s), 1 frame(s), max 600 sec")
                 self.assertEqual(calls["split_video"], expected_path)
                 self.assertEqual(calls["extract_frames"], expected_path)
                 self.assertEqual(calls["transcribe_audio"], result["semantic"]["segments"])
