@@ -23,13 +23,6 @@ const inputStyle = {
   color: '#111827',
 } as const;
 
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
-
 const buttonStyle = {
   minHeight: 40,
   padding: '0 14px',
@@ -211,14 +204,22 @@ export default function TrainExportsPage() {
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
           <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>训练导出</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            将项目语义单元和样本导出为 SFT、Instruction、Preference、RAG、Skill 或 Markdown 产物。
+            从语义单元到 AI 素材，将项目内容导出为 SFT、Instruction、Preference、RAG、Skill 或 Markdown 产物。
           </p>
         </header>
 
-        <div style={{ marginTop: 18, padding: '12px 14px', border: '1px solid #e5e7eb', borderRadius: 8, background: '#ffffff', color: '#374151', display: 'flex', gap: 10, alignItems: 'center' }}>
+        <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', color: '#374151', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 14 }}>状态</strong>
           <span style={{ fontSize: 14 }}>{message}</span>
-        </div>
+        </section>
+
+        <section aria-label="导出链路" style={{ borderBottom: '1px solid #e5e7eb' }}>
+          {['1. 确认来源', '2. 选择产物', '3. 导出并审查'].map((step) => (
+            <div key={step} style={{ padding: '14px 0', borderTop: '1px solid #e5e7eb', fontWeight: 700, color: '#111827' }}>
+              {step}
+            </div>
+          ))}
+        </section>
 
         {outputContext ? (
           <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: '#4b5563', fontSize: 14 }}>
@@ -226,8 +227,8 @@ export default function TrainExportsPage() {
           </div>
         ) : null}
 
-        <section style={{ ...panelStyle, marginTop: 20, display: 'grid', gap: 18 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb', display: 'grid', gap: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, paddingBottom: 18, borderBottom: '1px solid #e5e7eb' }}>
             <input placeholder="项目 ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} style={inputStyle} />
             <input placeholder="素材 ID（可选）" value={assetId} onChange={(event) => setAssetId(event.target.value)} style={inputStyle} />
             <input placeholder="源任务 ID（可选）" value={sourceTaskId} onChange={(event) => setSourceTaskId(event.target.value)} style={inputStyle} />
@@ -236,7 +237,7 @@ export default function TrainExportsPage() {
 
           <input placeholder="导出标题" value={title} onChange={(event) => setTitle(event.target.value)} style={inputStyle} />
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px 0', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb' }}>
             {exportTypes.map((item) => (
               <button
                 key={item.id}
@@ -253,7 +254,7 @@ export default function TrainExportsPage() {
             ))}
           </div>
 
-          <div style={{ padding: 14, background: '#f9fafb', borderRadius: 8, border: '1px dashed #d1d5db' }}>
+          <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
             <strong>任务目录预览</strong>
             <div style={{ marginTop: 8, fontFamily: 'monospace', wordBreak: 'break-all', color: '#4b5563' }}>
               后端导出根目录 / {previewPath}
@@ -283,19 +284,20 @@ export default function TrainExportsPage() {
               {autoExporting ? '自动导出中...' : '自动读取导出'}
             </button>
             <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物中心</Link>
+            <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物来源统计</Link>
           </div>
         </section>
 
         {result ? (
-          <section style={{ ...panelStyle, marginTop: 20 }}>
+          <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>导出结果</h2>
-            <pre style={{ marginTop: 14, padding: 14, borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+            <pre style={{ marginTop: 14, padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
               {JSON.stringify(result, null, 2)}
             </pre>
           </section>
         ) : null}
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>导出历史</h2>
