@@ -527,6 +527,10 @@ def export_job(self, payload: dict):
         md_path = out_dir / f"{task_id}.md"
         semantic_unit_models = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.asc()).all() if project_id else []
         sample_models = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.asc()).all() if project_id else []
+        if not semantic_unit_models and not sample_models:
+            message = "No exportable rows found for project"
+            _safe_update(db, task_id, "failed", 100, error_message=message)
+            return {"status": "failed", "payload": payload, "error": message}
         semantic_unit_ids = {unit.id for unit in semantic_unit_models}
         sample_ids = {sample.id for sample in sample_models}
         trace_link_models = (
