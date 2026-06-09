@@ -7,6 +7,12 @@ from app.services.crud_service import get_asset, get_project, get_task, list_exp
 from app.core.config import EXPORT_DIR
 
 router = APIRouter()
+SUPPORTED_EXPORT_TYPES = {"sft", "instruction", "preference", "rag", "skill", "markdown"}
+
+
+def _validate_export_type(export_type: str):
+    if export_type not in SUPPORTED_EXPORT_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported export type")
 
 
 @router.get("/train-exports/history")
@@ -58,6 +64,7 @@ def _resolve_export_context(db: Session, payload: TrainExportRequest):
 
 @router.post("/train-exports/auto")
 def auto_build_train_export(payload: TrainExportRequest, db: Session = Depends(get_db)):
+    _validate_export_type(payload.export_type)
     project_id, _task_id = _resolve_export_context(db, payload)
     auto_rows = build_auto_payload_from_project(db, project_id, payload.export_type)
     if not auto_rows:
@@ -68,6 +75,7 @@ def auto_build_train_export(payload: TrainExportRequest, db: Session = Depends(g
 
 @router.post("/train-exports")
 def create_train_export(payload: TrainExportRequest, db: Session = Depends(get_db)):
+    _validate_export_type(payload.export_type)
     samples = payload.payload or []
     out_dir = payload.out_dir or str(EXPORT_DIR)
     project_id, task_id = _resolve_export_context(db, payload)

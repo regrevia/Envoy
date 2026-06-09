@@ -1,10 +1,10 @@
 from pydantic import BaseModel
-from typing import Optional, Literal, Any
+from typing import Optional, Any
 
 
 class TrainExportRequest(BaseModel):
     project_id: Optional[str] = None
-    export_type: Literal['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']
+    export_type: str
     payload: Optional[list[dict[str, Any]]] = None
     out_dir: Optional[str] = None
     title: Optional[str] = None
