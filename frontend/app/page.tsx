@@ -24,6 +24,16 @@ type OllamaStatus = {
   error?: string | null;
 };
 
+type MediaStatus = {
+  segment_seconds: number;
+  max_segment_count: number;
+  max_input_seconds: number;
+  frame_interval_seconds: number;
+  max_frame_count: number;
+  frame_extraction_enabled: boolean;
+  ocr_enabled: boolean;
+};
+
 const outputTypes = [
   { id: 'markdown', label: 'Markdown', detail: '把长内容整理成可阅读、可复盘、可交付的结构化文档。' },
   { id: 'skill', label: 'Skill', detail: '沉淀为可复用的技能包、操作流程和执行说明。' },
@@ -72,6 +82,16 @@ function ollamaStatusLabel(status?: OllamaStatus | null) {
   return '不可达';
 }
 
+function enabledLabel(value?: boolean) {
+  if (value === true) {
+    return '开启';
+  }
+  if (value === false) {
+    return '关闭';
+  }
+  return '检测中';
+}
+
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -82,6 +102,7 @@ export default function HomePage() {
   const [message, setMessage] = useState('先创建或选择一个转换任务');
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'rag']);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [mediaStatus, setMediaStatus] = useState<MediaStatus | null>(null);
 
   const loadProjects = async () => {
     try {
@@ -114,9 +135,19 @@ export default function HomePage() {
     }
   };
 
+  const loadMediaStatus = async () => {
+    try {
+      const status = await apiJson<MediaStatus>('/api/v1/health/media');
+      setMediaStatus(status);
+    } catch {
+      setMediaStatus(null);
+    }
+  };
+
   useEffect(() => {
     void loadProjects();
     void loadOllamaStatus();
+    void loadMediaStatus();
   }, []);
 
   const selectedProject = useMemo(
@@ -211,6 +242,16 @@ export default function HomePage() {
             </div>
             <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
               模型：{ollamaStatus?.model || '未配置'}；地址：{ollamaStatus?.base_url || '未配置'}；可用模型：{ollamaStatus?.available_models?.length ? ollamaStatus.available_models.join(', ') : '-'}
+            </div>
+          </section>
+
+          <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 14 }}>媒体处理模式</strong>
+              <span style={{ color: '#374151', fontSize: 14 }}>最大处理 {mediaStatus?.max_input_seconds ?? '-'} 秒</span>
+            </div>
+            <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+              分段：{mediaStatus?.segment_seconds ?? '-'} 秒 x {mediaStatus?.max_segment_count ?? '-'} 段；抽帧：{enabledLabel(mediaStatus?.frame_extraction_enabled)}，每 {mediaStatus?.frame_interval_seconds ?? '-'} 秒 1 帧，最多 {mediaStatus?.max_frame_count ?? '-'} 帧；OCR：{enabledLabel(mediaStatus?.ocr_enabled)}
             </div>
           </section>
 

@@ -87,6 +87,54 @@ class OllamaHealthApiTests(unittest.TestCase):
             self.assertIsNone(body["error"])
             get.assert_called_once_with("http://127.0.0.1:11434/api/tags", timeout=5)
 
+    def test_media_health_reports_runtime_processing_limits(self):
+        keys = (
+            "MEDIA_SEGMENT_SECONDS",
+            "MEDIA_MAX_SEGMENT_COUNT",
+            "MEDIA_FRAME_INTERVAL_SECONDS",
+            "MEDIA_MAX_FRAME_COUNT",
+            "MEDIA_ENABLE_FRAME_EXTRACTION",
+            "MEDIA_ENABLE_OCR",
+        )
+        previous = {key: os.environ.get(key) for key in keys}
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-media-health.db'}"
+                os.environ["MEDIA_SEGMENT_SECONDS"] = "300"
+                os.environ["MEDIA_MAX_SEGMENT_COUNT"] = "3"
+                os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "20"
+                os.environ["MEDIA_MAX_FRAME_COUNT"] = "40"
+                os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = "false"
+                os.environ["MEDIA_ENABLE_OCR"] = "false"
+                clear_app_modules()
+
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                client = TestClient(app)
+                response = client.get("/api/v1/health/media")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json(),
+                    {
+                        "segment_seconds": 300,
+                        "max_segment_count": 3,
+                        "max_input_seconds": 900,
+                        "frame_interval_seconds": 20,
+                        "max_frame_count": 40,
+                        "frame_extraction_enabled": False,
+                        "ocr_enabled": False,
+                    },
+                )
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            clear_app_modules()
+
 
 if __name__ == "__main__":
     unittest.main()
