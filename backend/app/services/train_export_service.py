@@ -173,9 +173,30 @@ def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: s
     root = _resolve_root(out_dir, "rag", task_id, task_name)
     data_dir = build_subdir(root, "rag")
     out_path = data_dir / "rag_corpus.jsonl"
+    manifest_path = data_dir / "rag_manifest.json"
     build_dataset_jsonl(clean_rows, str(out_path))
-    _finalize_export(db, project_id, task_id, "rag", task_name, root, [out_path])
-    return {"root": str(root), "path": str(out_path)}
+    manifest = {
+        "schema_version": "envoy.rag.v1",
+        "source_task_id": task_id,
+        "task_name": task_name,
+        "project_id": project_id,
+        "row_count": len(clean_rows),
+        "files": {
+            "corpus": str(out_path),
+            "manifest": str(manifest_path),
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _finalize_export(db, project_id, task_id, "rag", task_name, root, [out_path, manifest_path])
+    return {
+        "root": str(root),
+        "path": str(out_path),
+        "task_id": task_id,
+        "paths": {
+            "corpus": str(out_path),
+            "manifest": str(manifest_path),
+        },
+    }
 
 
 def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: str = "Skill Package", task_name: str | None = None, db=None, project_id: str | None = None):
