@@ -253,16 +253,28 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         for copy in [
             "质量元数据",
+            "素材来源统计",
+            "语义类型统计",
+            "视频转写",
+            "画面 OCR",
+            "长文本",
             "Ollama 状态",
             "AI 摘要",
             "用途",
             "风险",
             "Manifest 路径",
             "manifest",
+            "source_counts",
+            "unit_type_counts",
             "llm_summary",
             "ollama_status",
         ]:
             self.assertIn(copy, page)
+
+        self.assertIn("borderTop: '1px solid #e5e7eb'", page)
+        self.assertIn("borderBottom: '1px solid #e5e7eb'", page)
+        self.assertNotIn("panelStyle", page)
+        self.assertNotIn("borderRadius: 8", page)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,8 @@ MANIFEST_KEYS = {
     "task_name",
     "project_id",
     "row_count",
+    "source_counts",
+    "unit_type_counts",
     "ollama_status",
     "ollama_error",
     "llm_summary",

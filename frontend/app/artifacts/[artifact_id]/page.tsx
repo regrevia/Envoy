@@ -23,6 +23,8 @@ type ArtifactManifest = {
   task_name?: string | null;
   project_id?: string | null;
   row_count?: number | null;
+  source_counts?: Record<string, number> | null;
+  unit_type_counts?: Record<string, number> | null;
   ollama_status?: string | null;
   ollama_error?: string | null;
   llm_summary?: string | null;
@@ -32,13 +34,6 @@ type ArtifactManifest = {
   manifest_path?: string | null;
   read_status?: string | null;
 };
-
-const panelStyle = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 8,
-  padding: 24,
-} as const;
 
 function DetailRow({ label, value }: { label: string; value?: string | null }) {
   return (
@@ -53,6 +48,35 @@ function manifestValue(value?: string | number | string[] | null) {
   if (Array.isArray(value)) return value.length ? value.join('、') : '-';
   if (value === undefined || value === null || value === '') return '-';
   return String(value);
+}
+
+const sourceLabels: Record<string, string> = {
+  text_asset: '长文本',
+  document_text: '文档文本',
+  image_text: '图片 OCR',
+  audio_transcript: '音频转写',
+  media_transcript: '视频转写',
+  media_ocr: '画面 OCR',
+  media_asset: '视频元数据',
+};
+
+const unitTypeLabels: Record<string, string> = {
+  text: '文本',
+  document: '文档',
+  image: '图片',
+  audio: '音频',
+  transcript: '转写',
+  ocr: 'OCR',
+  scene: '场景',
+  rule: '规则',
+};
+
+function countsValue(counts?: Record<string, number> | null, labels: Record<string, string> = {}) {
+  if (!counts || Object.keys(counts).length === 0) return '-';
+  return Object.entries(counts)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, count]) => `${labels[key] || key}: ${count}`)
+    .join('、');
 }
 
 export default function ArtifactDetailPage({ params }: { params: Promise<{ artifact_id: string }> }) {
@@ -76,7 +100,7 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
           <h1 style={{ margin: '10px 0 0', fontSize: 32, lineHeight: 1.2 }}>产物详情</h1>
         </header>
 
-        <section style={{ ...panelStyle, marginTop: 20 }}>
+        <section style={{ marginTop: 20, paddingTop: 2, borderTop: '1px solid #e5e7eb' }}>
           {loading ? <div style={{ color: '#6b7280' }}>加载中...</div> : null}
           {!loading && !artifact ? <div style={{ color: '#b91c1c' }}>未找到产物</div> : null}
           {artifact ? (
@@ -97,6 +121,8 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
                   <DetailRow label="来源任务" value={artifact.manifest.source_task_id} />
                   <DetailRow label="任务名称" value={artifact.manifest.task_name} />
                   <DetailRow label="行数" value={manifestValue(artifact.manifest.row_count)} />
+                  <DetailRow label="素材来源统计" value={countsValue(artifact.manifest.source_counts, sourceLabels)} />
+                  <DetailRow label="语义类型统计" value={countsValue(artifact.manifest.unit_type_counts, unitTypeLabels)} />
                   <DetailRow label="Ollama 状态" value={artifact.manifest.ollama_status} />
                   <DetailRow label="Ollama 错误" value={artifact.manifest.ollama_error} />
                   <DetailRow label="AI 摘要" value={artifact.manifest.llm_summary} />
