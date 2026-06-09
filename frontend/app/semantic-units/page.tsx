@@ -9,11 +9,13 @@ type SemanticUnit = {
   id: string;
   project_id?: string | null;
   asset_id?: string | null;
+  segment_id?: string | null;
   unit_type?: string | null;
   title?: string | null;
   content?: string | null;
   labels?: Record<string, unknown> | null;
   confidence?: number | null;
+  created_at?: string | null;
 };
 
 type TaskResponse = {
@@ -43,6 +45,25 @@ const buttonStyle = {
   fontWeight: 600,
   cursor: 'pointer',
 } as const;
+
+function formatCreatedAt(value?: string | null) {
+  if (!value) {
+    return '-';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function labelSummary(labels?: Record<string, unknown> | null) {
+  const entries = Object.entries(labels || {}).slice(0, 4);
+  if (entries.length === 0) {
+    return '-';
+  }
+  return entries.map(([key, value]) => `${key}: ${String(value)}`).join('；');
+}
 
 export default function SemanticUnitsPage() {
   const [units, setUnits] = useState<SemanticUnit[]>([]);
@@ -158,7 +179,12 @@ export default function SemanticUnitsPage() {
                   <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
                     <span>项目: {unit.project_id || '-'}</span>
                     <span>素材: {unit.asset_id || '-'}</span>
+                    <span>分片: {unit.segment_id || '-'}</span>
+                    <span>创建: {formatCreatedAt(unit.created_at)}</span>
                     <span>置信度: {unit.confidence ?? '-'}</span>
+                  </div>
+                  <div style={{ marginTop: 8, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+                    标签摘要：{labelSummary(unit.labels)}
                   </div>
                 </div>
                 <div className="unit-actions">
