@@ -489,6 +489,32 @@ def preprocess_job(self, payload: dict):
                     }
                     _safe_update(db, task_id, "success", 100, result_summary=f"document preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
                     return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
+            if unit_type == "image":
+                if _task_is_canceled(db, task_id):
+                    return _canceled_result(payload)
+                ocr_results = run_ocr_on_frames([source_path])
+                if _task_is_canceled(db, task_id):
+                    return _canceled_result(payload)
+                extracted_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
+                if extracted_text:
+                    confidence_values = [
+                        float(item.get("confidence", 0.0))
+                        for item in ocr_results
+                        if isinstance(item, dict) and isinstance(item.get("confidence", 0.0), (int, float))
+                    ]
+                    confidence = max(confidence_values) if confidence_values else 0.78
+                    units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded image", "image", extracted_text, "image_text", confidence)
+                    semantic_payload = {
+                        "char_count": len(extracted_text),
+                        "preview": extracted_text[:500],
+                        "stage": "preprocess",
+                        "source": "image_text",
+                        "chunk_count": len(units),
+                        "ocr_result_count": len(ocr_results),
+                        "extraction_status": "text_extracted",
+                    }
+                    _safe_update(db, task_id, "success", 100, result_summary=f"image OCR preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
+                    return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, source)
             labels = {
                 "stage": "preprocess",
