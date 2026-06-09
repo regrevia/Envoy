@@ -1,4 +1,7 @@
 import json
+import base64
+import re
+import zlib
 from uuid import uuid4
 from pathlib import Path
 from urllib.parse import urlparse
@@ -92,6 +95,108 @@ def _build_file_semantic_payload(asset: Asset | None, source_path: str, source: 
         "source": source,
         "extraction_status": "metadata_only",
     }
+
+
+def _decode_pdf_literal(value: bytes) -> str:
+    output = bytearray()
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == 92 and index + 1 < len(value):
+            index += 1
+            escaped = value[index]
+            output.extend({
+                110: b"\n",
+                114: b"\r",
+                116: b"\t",
+                98: b"\b",
+                102: b"\f",
+                40: b"(",
+                41: b")",
+                92: b"\\",
+            }.get(escaped, bytes([escaped])))
+        else:
+            output.append(char)
+        index += 1
+    return output.decode("latin-1", errors="replace")
+
+
+def _extract_pdf_text_with_optional_library(source_path: str) -> str:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception:
+        PdfReader = None
+    if PdfReader is None:
+        try:
+            from PyPDF2 import PdfReader  # type: ignore
+        except Exception:
+            PdfReader = None
+    if PdfReader is None:
+        return ""
+
+    try:
+        reader = PdfReader(source_path)
+        return "\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+    except Exception:
+        return ""
+
+
+def _extract_pdf_text_fallback(source_path: str) -> str:
+    try:
+        data = Path(source_path).read_bytes()
+    except Exception:
+        return ""
+
+    chunks = []
+    for match in re.finditer(rb"stream\s*(.*?)\s*endstream", data, re.DOTALL):
+        stream = match.group(1).strip(b"\r\n")
+        candidates = [stream]
+        try:
+            candidates.append(base64.a85decode(stream, adobe=True))
+        except Exception:
+            pass
+        for candidate in candidates:
+            try:
+                chunks.append(zlib.decompress(candidate))
+            except Exception:
+                chunks.append(candidate)
+
+    text_parts = []
+    for chunk in chunks:
+        for literal in re.findall(rb"\((?:\\.|[^\\()])*\)\s*Tj", chunk):
+            text_parts.append(_decode_pdf_literal(literal[1:literal.rfind(b")")]))
+        for array in re.findall(rb"\[(.*?)\]\s*TJ", chunk, re.DOTALL):
+            for literal in re.findall(rb"\((?:\\.|[^\\()])*\)", array):
+                text_parts.append(_decode_pdf_literal(literal[1:-1]))
+    return " ".join(part.strip() for part in text_parts if part.strip()).strip()
+
+
+def _extract_pdf_text(source_path: str) -> str:
+    return _extract_pdf_text_with_optional_library(source_path) or _extract_pdf_text_fallback(source_path)
+
+
+def _persist_text_semantic_units(db, project_id: str, asset_id: str | None, title_base: str, unit_type: str, content: str, source: str, confidence: float):
+    chunks = _text_chunks(content)
+    chunk_count = len(chunks)
+    units = []
+    for index, chunk in enumerate(chunks):
+        title = title_base if chunk_count == 1 else f"{title_base} chunk {index + 1}/{chunk_count}"
+        labels = {
+            "stage": "preprocess",
+            "source": source,
+            "chunk_index": index,
+            "chunk_count": chunk_count,
+            "char_start": chunk["start"],
+            "char_end": chunk["end"],
+            "extraction_status": "text_extracted",
+        }
+        units.append(SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type=unit_type, title=title, content=chunk["content"], labels=labels, confidence=confidence))
+    db.add_all(units)
+    db.commit()
+    for unit in units:
+        db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
+    db.commit()
+    return units
 
 
 def _persist_single_semantic_unit(db, project_id: str, asset_id: str | None, unit_type: str, title: str, content: str, labels: dict, confidence: float):
@@ -284,6 +389,20 @@ def preprocess_job(self, payload: dict):
         if _is_document_asset(asset) or _is_image_asset(asset):
             unit_type = "image" if _is_image_asset(asset) else "document"
             source = f"{unit_type}_asset"
+            if unit_type == "document" and (asset.mime_type == "application/pdf" or asset.file_name.lower().endswith(".pdf")):
+                extracted_text = _extract_pdf_text(source_path)
+                if extracted_text:
+                    units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded document", "document", extracted_text, "document_text", 0.88)
+                    semantic_payload = {
+                        "char_count": len(extracted_text),
+                        "preview": extracted_text[:500],
+                        "stage": "preprocess",
+                        "source": "document_text",
+                        "chunk_count": len(units),
+                        "extraction_status": "text_extracted",
+                    }
+                    _safe_update(db, task_id, "success", 100, result_summary=f"document preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
+                    return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, source)
             labels = {
                 "stage": "preprocess",

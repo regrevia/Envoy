@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,86 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+def build_pdf_bytes(text: str) -> bytes:
+    from reportlab.pdfgen import canvas
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer)
+    pdf.drawString(72, 720, text)
+    pdf.save()
+    return buffer.getvalue()
+
+
 class PreprocessMediaFlowTests(unittest.TestCase):
+    def test_preprocess_extracts_pdf_text_into_semantic_unit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-pdf-text-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pdf text project", description="", domain_type="knowledge", status="active"))
+                pdf_storage = storage_client.upload_bytes(
+                    "playbook.pdf",
+                    build_pdf_bytes("Refund playbook requires manager approval before escalation."),
+                    "application/pdf",
+                )
+                pdf_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="playbook.pdf",
+                        file_path=pdf_storage["object_name"],
+                        mime_type="application/pdf",
+                        metadata={"storage": pdf_storage["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = pdf_asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "text_extracted")
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0].unit_type, "document")
+                self.assertEqual(units[0].labels["source"], "document_text")
+                self.assertEqual(units[0].labels["extraction_status"], "text_extracted")
+                self.assertIn("Refund playbook requires manager approval", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_builds_semantic_units_for_pdf_and_image_without_media_commands(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-document-image-test.db'}"
