@@ -3,7 +3,7 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -49,6 +49,51 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 self.assertGreater(updated.updated_at, old_updated_at)
             finally:
                 db.close()
+                engine.dispose()
+
+    def test_task_api_marks_running_task_stale_when_updated_at_exceeds_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-stale-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+            os.environ["TASK_STALE_AFTER_SECONDS"] = "60"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="stale task project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                task.status = "running"
+                task.progress = 55
+                task.updated_at = datetime.utcnow() - timedelta(seconds=120)
+                db.commit()
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.get(f"/api/v1/tasks/{task_id}")
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertTrue(body["is_stale"])
+                self.assertGreaterEqual(body["stale_seconds"], 60)
+                self.assertEqual(body["stale_after_seconds"], 60)
+            finally:
                 engine.dispose()
 
     def test_task_list_and_detail_include_traceable_context(self):
