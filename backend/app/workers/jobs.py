@@ -12,12 +12,12 @@ from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.services.crud_service import update_task_status, create_artifact
 from app.core.storage import storage_client
-from app.services.media_service import MediaProcessingError, split_video, extract_frames, transcribe_audio, run_ocr_on_frames
+from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
-from app.core.paths import SEGMENT_DIR, FRAME_DIR, EXPORT_DIR
+from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
 from app.core.config import SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
@@ -184,6 +184,11 @@ def _local_source_file_missing(source_path: str) -> bool:
 def _media_task_temp_dirs(task_id: str | None):
     suffix = task_id or str(uuid4())
     return SEGMENT_DIR / f"task-{suffix}", FRAME_DIR / f"task-{suffix}"
+
+
+def _audio_task_temp_dir(task_id: str | None):
+    suffix = task_id or str(uuid4())
+    return AUDIO_DIR / f"task-{suffix}"
 
 
 def _cleanup_media_task_temp_dirs(temp_dirs: list[Path]):
@@ -386,7 +391,7 @@ def _persist_single_semantic_unit(db, project_id: str, asset_id: str | None, uni
     return unit
 
 
-def _media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None):
+def _media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None, source: str = "media_transcript"):
     if not asset_id or not task_id:
         return []
     units = _preprocess_semantic_units(db, asset_id, only_task_id=task_id)
@@ -394,13 +399,13 @@ def _media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None)
         unit
         for unit in units
         if isinstance(unit.labels, dict)
-        and unit.labels.get("source") == "media_transcript"
+        and unit.labels.get("source") == source
         and unit.labels.get("checkpoint") == "segment_transcript"
     ]
 
 
-def _clear_media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None):
-    checkpoints = _media_transcript_checkpoints(db, asset_id, task_id)
+def _clear_media_transcript_checkpoints(db, asset_id: str | None, task_id: str | None, source: str = "media_transcript"):
+    checkpoints = _media_transcript_checkpoints(db, asset_id, task_id, source=source)
     if not checkpoints:
         return 0
     checkpoint_ids = [unit.id for unit in checkpoints]
@@ -428,13 +433,15 @@ def _upsert_media_transcript_checkpoint(
     transcript_parts: list[str],
     segment_index: int,
     segment_count: int,
+    source: str = "media_transcript",
+    title_prefix: str = "media transcript",
 ):
     content = "\n".join(part for part in transcript_parts if part).strip()
     if not content:
         return None
     labels = {
         "stage": "preprocess",
-        "source": "media_transcript",
+        "source": source,
         "task_id": task_id,
         "checkpoint": "segment_transcript",
         "segment_index": 0,
@@ -442,8 +449,8 @@ def _upsert_media_transcript_checkpoint(
         "segment_completed_count": segment_index + 1,
         "extraction_status": "partial_text_extracted",
     }
-    title = f"media transcript segments 1-{segment_index + 1}/{segment_count}"
-    existing = _media_transcript_checkpoints(db, asset_id, task_id)
+    title = f"{title_prefix} segments 1-{segment_index + 1}/{segment_count}"
+    existing = _media_transcript_checkpoints(db, asset_id, task_id, source=source)
     if existing:
         unit = existing[0]
         unit.title = title
@@ -740,23 +747,70 @@ def preprocess_job(self, payload: dict):
         if _is_audio_asset(asset):
             if _task_is_canceled(db, task_id):
                 return _canceled_result(payload)
-            transcription = transcribe_audio(source_path)
+            audio_dir = _audio_task_temp_dir(task_id)
+            media_temp_dirs.append(audio_dir)
+            audio_segment_paths = split_audio(source_path, str(audio_dir))
+            _safe_update(db, task_id, "running", 35, result_summary=f"audio split done: {len(audio_segment_paths)} segment(s)")
             if _task_is_canceled(db, task_id):
-                return _canceled_result(payload)
+                return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+            transcription_parts = []
+            transcription_segments = []
+            transcription_results = []
+            transcription_inputs = audio_segment_paths or [source_path]
+            transcription_count = len(transcription_inputs)
+            for index, segment_path in enumerate(transcription_inputs):
+                if _task_is_canceled(db, task_id):
+                    return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+                segment_transcription = transcribe_audio(segment_path)
+                transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
+                if isinstance(segment_transcription, dict):
+                    text = str(segment_transcription.get("text", "")).strip()
+                    if text:
+                        transcription_parts.append(text)
+                        _upsert_media_transcript_checkpoint(
+                            db,
+                            project_id,
+                            asset_id,
+                            task_id,
+                            transcription_parts,
+                            index,
+                            transcription_count,
+                            source="audio_transcript",
+                            title_prefix="audio transcript",
+                        )
+                    for item in segment_transcription.get("segments", []) if isinstance(segment_transcription.get("segments", []), list) else []:
+                        if isinstance(item, dict):
+                            enriched = dict(item)
+                            enriched["source_segment"] = segment_path
+                            enriched["segment_index"] = index
+                            transcription_segments.append(enriched)
+                progress = min(75, 35 + int(((index + 1) / max(transcription_count, 1)) * 40))
+                _safe_update(db, task_id, "running", progress, result_summary=f"audio transcription done: {index + 1}/{transcription_count} segment(s)")
+                if _task_is_canceled(db, task_id):
+                    return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+            transcription = {
+                "text": "\n".join(transcription_parts).strip(),
+                "segments": transcription_segments,
+                "segment_results": transcription_results,
+            }
             transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
             if transcript_text:
                 segments = transcription.get("segments", []) if isinstance(transcription, dict) else []
                 chunk_count = len(_text_chunks(transcript_text))
                 if _task_is_canceled(db, task_id):
-                    return _canceled_result(payload)
+                    return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+                _clear_media_transcript_checkpoints(db, asset_id, task_id, source="audio_transcript")
                 units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86, task_id=task_id, progress_label="audio chunks persisted")
                 semantic_payload = {
+                    "segments": audio_segment_paths,
                     "char_count": len(transcript_text),
                     "preview": transcript_text[:500],
                     "stage": "preprocess",
                     "source": "audio_transcript",
                     "chunk_count": chunk_count,
-                    "segment_count": len(segments) if isinstance(segments, list) else 0,
+                    "segment_count": transcription_count,
+                    "transcript": transcription,
+                    "transcript_segment_count": len(segments) if isinstance(segments, list) else 0,
                     "extraction_status": "text_extracted",
                 }
                 if _task_is_canceled(db, task_id):
