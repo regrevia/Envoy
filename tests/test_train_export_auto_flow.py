@@ -244,6 +244,49 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_export_rejects_empty_project_without_creating_empty_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-empty-project-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="空项目", description="", domain_type="knowledge", status="active"))
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports/auto",
+                    json={"project_id": project_id, "export_type": "rag"},
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["detail"], "No exportable materials found for project")
+                self.assertEqual(client.get("/api/v1/train-exports/history").json(), [])
+                self.assertEqual(client.get("/api/v1/artifacts").json(), [])
+                export_files = [path for path in (Path(tmp_dir) / "exports").rglob("*") if path.is_file()]
+                self.assertEqual(export_files, [])
+            finally:
+                engine.dispose()
+
     def test_auto_export_does_not_include_trace_links_from_other_projects(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-isolation-test.db'}"

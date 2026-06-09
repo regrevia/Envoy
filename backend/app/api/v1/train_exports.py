@@ -60,6 +60,8 @@ def _resolve_export_context(db: Session, payload: TrainExportRequest):
 def auto_build_train_export(payload: TrainExportRequest, db: Session = Depends(get_db)):
     project_id, _task_id = _resolve_export_context(db, payload)
     auto_rows = build_auto_payload_from_project(db, project_id, payload.export_type)
+    if not auto_rows:
+        raise HTTPException(status_code=400, detail="No exportable materials found for project")
     payload = payload.model_copy(update={'project_id': project_id, 'payload': auto_rows})
     return create_train_export(payload, db)
 
