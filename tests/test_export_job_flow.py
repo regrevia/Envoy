@@ -13,6 +13,71 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 class ExportJobFlowTests(unittest.TestCase):
+    def test_export_skill_job_writes_manifest_and_registers_both_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-skill-job-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.artifact import Artifact
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import export_skill_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="skill job project", description="", domain_type="knowledge", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-skill-001", task_type="export_skill", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = export_skill_job.run(
+                {
+                    "task_id": task_id,
+                    "project_id": project_id,
+                    "source_asset_id": "asset-skill-001",
+                    "title": "Support Skill",
+                    "payload": [{"topic": "refund", "content": "Refund approval must be documented."}],
+                }
+            )
+
+            manifest_path = Path(result["paths"]["manifest"])
+            markdown_path = Path(result["paths"]["markdown"])
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                artifacts = db.query(Artifact).filter(Artifact.project_id == project_id, Artifact.artifact_type == "skill").all()
+                traces = db.query(TraceLink).filter(TraceLink.source_id == "asset-skill-001", TraceLink.target_type == "artifact").all()
+
+                self.assertEqual(result["status"], "skill_exported")
+                self.assertEqual(stored_task.status, "success")
+                self.assertTrue(markdown_path.exists())
+                self.assertTrue(manifest_path.exists())
+                self.assertEqual(manifest["schema_version"], "envoy.skill.v1")
+                self.assertEqual(manifest["title"], "Support Skill")
+                self.assertEqual(manifest["materials"][0]["topic"], "refund")
+                self.assertEqual({Path(item.file_path).name for item in artifacts}, {"skill.md", "skill.json"})
+                self.assertEqual(len(traces), 2)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_export_job_writes_real_project_units_samples_and_trace_links(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             export_dir = Path(tmp_dir) / "exports"

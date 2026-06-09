@@ -571,13 +571,17 @@ def export_skill_job(self, payload: dict):
         out_dir = EXPORT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
         export_result = export_skill_markdown(payload.get("payload") or [], str(out_dir), task_id, title)
-        skill_path = Path(export_result["path"])
-        artifact = create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="skill", name=skill_path.name, file_path=str(skill_path), version="v1"))
+        skill_paths = [Path(path) for path in (export_result.get("paths") or {"markdown": export_result["path"]}).values()]
+        artifacts = [
+            create_artifact(db, ArtifactCreate(project_id=project_id, artifact_type="skill", name=path.name, file_path=str(path), version="v1"))
+            for path in skill_paths
+        ]
         if payload.get("source_asset_id"):
-            db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=payload["source_asset_id"], target_type="artifact", target_id=artifact.id, relation_type="exported_to"))
+            for artifact in artifacts:
+                db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=payload["source_asset_id"], target_type="artifact", target_id=artifact.id, relation_type="exported_to"))
             db.commit()
         _safe_update(db, task_id, "success", 100, result_summary="skill exported")
-        return {"status": "skill_exported", "path": str(skill_path)}
+        return {"status": "skill_exported", "path": export_result["path"], "paths": export_result.get("paths", {"markdown": export_result["path"]})}
     except Exception as exc:
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)
