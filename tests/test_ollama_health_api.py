@@ -87,6 +87,65 @@ class OllamaHealthApiTests(unittest.TestCase):
             self.assertIsNone(body["error"])
             get.assert_called_once_with("http://127.0.0.1:11434/api/tags", timeout=5)
 
+    def test_ollama_config_api_updates_runtime_generation_settings(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-ollama-runtime-config.db'}"
+            os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
+            os.environ["OLLAMA_MODEL"] = ""
+            os.environ["OLLAMA_TIMEOUT_SEC"] = "120"
+            os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "12000"
+            clear_app_modules()
+
+            from fastapi.testclient import TestClient
+            from app.main import app
+            from app.services.ollama_service import generate_with_ollama
+
+            class FakeResponse:
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    return {"response": "runtime configured response"}
+
+            class FakeClient:
+                def __init__(self):
+                    self.calls = []
+
+                def post(self, url, json, timeout):
+                    self.calls.append({"url": url, "json": json, "timeout": timeout})
+                    return FakeResponse()
+
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/health/ollama/config",
+                json={
+                    "base_url": "http://ollama.local:11434/",
+                    "model": "qwen2.5:7b",
+                    "timeout_sec": 7,
+                    "max_prompt_chars": 64,
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertTrue(body["enabled"])
+            self.assertEqual(body["base_url"], "http://ollama.local:11434")
+            self.assertEqual(body["model"], "qwen2.5:7b")
+            self.assertEqual(body["timeout_sec"], 7)
+            self.assertEqual(body["max_prompt_chars"], 64)
+            self.assertEqual(body["configured_from"], "runtime")
+
+            fake_client = FakeClient()
+            result = generate_with_ollama("Summarize", "x" * 200, client=fake_client)
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(result["text"], "runtime configured response")
+            self.assertEqual(fake_client.calls[0]["url"], "http://ollama.local:11434/api/generate")
+            self.assertEqual(fake_client.calls[0]["json"]["model"], "qwen2.5:7b")
+            self.assertEqual(fake_client.calls[0]["timeout"], 7)
+            self.assertLessEqual(len(fake_client.calls[0]["json"]["prompt"]), 64)
+            self.assertTrue(result["truncated"])
+
     def test_media_health_reports_runtime_processing_limits(self):
         keys = (
             "MEDIA_SEGMENT_SECONDS",

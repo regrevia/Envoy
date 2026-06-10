@@ -402,6 +402,26 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_home_page_can_configure_ollama_runtime(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "ollamaConfig",
+            "setOllamaConfig",
+            "saveOllamaConfig",
+            "/api/v1/health/ollama/config",
+            "method: 'PUT'",
+            "Ollama 配置",
+            "模型名称",
+            "服务地址",
+            "超时秒数",
+            "最大提示词长度",
+            "保存配置",
+            "setOllamaStatus(status)",
+        ]:
+            self.assertIn(copy, text)
+
     def test_home_page_exposes_media_runtime_status(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
