@@ -25,6 +25,7 @@ class OllamaHealthApiTests(unittest.TestCase):
             os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
             os.environ["OLLAMA_MODEL"] = ""
             os.environ["OLLAMA_TIMEOUT_SEC"] = "120"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(Path(tmp_dir) / "ollama_runtime.json")
             clear_app_modules()
 
             from fastapi.testclient import TestClient
@@ -57,6 +58,7 @@ class OllamaHealthApiTests(unittest.TestCase):
             os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
             os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
             os.environ["OLLAMA_TIMEOUT_SEC"] = "5"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(Path(tmp_dir) / "ollama_runtime.json")
             clear_app_modules()
 
             from fastapi.testclient import TestClient
@@ -94,6 +96,7 @@ class OllamaHealthApiTests(unittest.TestCase):
             os.environ["OLLAMA_MODEL"] = ""
             os.environ["OLLAMA_TIMEOUT_SEC"] = "120"
             os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "12000"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(Path(tmp_dir) / "ollama_runtime.json")
             clear_app_modules()
 
             from fastapi.testclient import TestClient
@@ -144,6 +147,69 @@ class OllamaHealthApiTests(unittest.TestCase):
             self.assertEqual(fake_client.calls[0]["json"]["model"], "qwen2.5:7b")
             self.assertEqual(fake_client.calls[0]["timeout"], 7)
             self.assertLessEqual(len(fake_client.calls[0]["json"]["prompt"]), 64)
+            self.assertTrue(result["truncated"])
+
+    def test_ollama_runtime_config_persists_across_module_reload(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "ollama_runtime.json"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-ollama-persist-config.db'}"
+            os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
+            os.environ["OLLAMA_MODEL"] = ""
+            os.environ["OLLAMA_TIMEOUT_SEC"] = "120"
+            os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "12000"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(config_path)
+            clear_app_modules()
+
+            from fastapi.testclient import TestClient
+            from app.main import app
+
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/health/ollama/config",
+                json={
+                    "base_url": "http://persisted-ollama.local:11434",
+                    "model": "qwen3:8b",
+                    "timeout_sec": 9,
+                    "max_prompt_chars": 32,
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(config_path.exists())
+            clear_app_modules()
+
+            from app.services.ollama_service import generate_with_ollama, get_ollama_config
+
+            class FakeResponse:
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    return {"response": "persisted response"}
+
+            class FakeClient:
+                def __init__(self):
+                    self.calls = []
+
+                def post(self, url, json, timeout):
+                    self.calls.append({"url": url, "json": json, "timeout": timeout})
+                    return FakeResponse()
+
+            config = get_ollama_config()
+            self.assertEqual(config["configured_from"], "persisted")
+            self.assertEqual(config["base_url"], "http://persisted-ollama.local:11434")
+            self.assertEqual(config["model"], "qwen3:8b")
+            self.assertEqual(config["timeout_sec"], 9)
+            self.assertEqual(config["max_prompt_chars"], 32)
+
+            fake_client = FakeClient()
+            result = generate_with_ollama("Review", "x" * 200, client=fake_client)
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(fake_client.calls[0]["url"], "http://persisted-ollama.local:11434/api/generate")
+            self.assertEqual(fake_client.calls[0]["json"]["model"], "qwen3:8b")
+            self.assertEqual(fake_client.calls[0]["timeout"], 9)
+            self.assertLessEqual(len(fake_client.calls[0]["json"]["prompt"]), 32)
             self.assertTrue(result["truncated"])
 
     def test_media_health_reports_runtime_processing_limits(self):

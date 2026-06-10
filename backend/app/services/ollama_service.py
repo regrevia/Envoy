@@ -3,15 +3,62 @@ from typing import Any
 
 import httpx
 
-from app.core.config import OLLAMA_BASE_URL, OLLAMA_MAX_PROMPT_CHARS, OLLAMA_MODEL, OLLAMA_TIMEOUT_SEC
+from app.core.config import OLLAMA_BASE_URL, OLLAMA_MAX_PROMPT_CHARS, OLLAMA_MODEL, OLLAMA_RUNTIME_CONFIG_PATH, OLLAMA_TIMEOUT_SEC
 
-_RUNTIME_CONFIG = {
-    "base_url": OLLAMA_BASE_URL.rstrip("/") or "http://127.0.0.1:11434",
-    "model": OLLAMA_MODEL.strip(),
-    "timeout_sec": max(int(OLLAMA_TIMEOUT_SEC or 1), 1),
-    "max_prompt_chars": max(int(OLLAMA_MAX_PROMPT_CHARS or 1), 1),
-    "configured_from": "environment",
-}
+
+def _positive_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _environment_config() -> dict[str, Any]:
+    return {
+        "base_url": OLLAMA_BASE_URL.rstrip("/") or "http://127.0.0.1:11434",
+        "model": OLLAMA_MODEL.strip(),
+        "timeout_sec": max(int(OLLAMA_TIMEOUT_SEC or 1), 1),
+        "max_prompt_chars": max(int(OLLAMA_MAX_PROMPT_CHARS or 1), 1),
+        "configured_from": "environment",
+    }
+
+
+def _normalize_config(payload: dict[str, Any], fallback: dict[str, Any], configured_from: str) -> dict[str, Any]:
+    base_url = str(payload.get("base_url") or fallback["base_url"]).strip().rstrip("/")
+    model = str(payload.get("model") if "model" in payload else fallback["model"]).strip()
+    return {
+        "base_url": base_url or "http://127.0.0.1:11434",
+        "model": model,
+        "timeout_sec": _positive_int(payload.get("timeout_sec", fallback["timeout_sec"]), fallback["timeout_sec"]),
+        "max_prompt_chars": _positive_int(payload.get("max_prompt_chars", fallback["max_prompt_chars"]), fallback["max_prompt_chars"]),
+        "configured_from": configured_from,
+    }
+
+
+def _load_persisted_config() -> dict[str, Any]:
+    fallback = _environment_config()
+    try:
+        raw = json.loads(OLLAMA_RUNTIME_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return fallback
+    if not isinstance(raw, dict):
+        return fallback
+    return _normalize_config(raw, fallback, "persisted")
+
+
+def _persist_runtime_config(config: dict[str, Any]) -> None:
+    OLLAMA_RUNTIME_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "base_url": config["base_url"],
+        "model": config["model"],
+        "timeout_sec": config["timeout_sec"],
+        "max_prompt_chars": config["max_prompt_chars"],
+    }
+    OLLAMA_RUNTIME_CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+_RUNTIME_CONFIG = _load_persisted_config()
 
 
 def get_ollama_config() -> dict[str, Any]:
@@ -19,24 +66,8 @@ def get_ollama_config() -> dict[str, Any]:
 
 
 def update_ollama_config(payload: dict[str, Any]) -> dict[str, Any]:
-    base_url = str(payload.get("base_url") or _RUNTIME_CONFIG["base_url"]).strip().rstrip("/")
-    model = str(payload.get("model") if "model" in payload else _RUNTIME_CONFIG["model"]).strip()
-    try:
-        timeout_sec = int(payload.get("timeout_sec", _RUNTIME_CONFIG["timeout_sec"]))
-    except (TypeError, ValueError):
-        timeout_sec = _RUNTIME_CONFIG["timeout_sec"]
-    try:
-        max_prompt_chars = int(payload.get("max_prompt_chars", _RUNTIME_CONFIG["max_prompt_chars"]))
-    except (TypeError, ValueError):
-        max_prompt_chars = _RUNTIME_CONFIG["max_prompt_chars"]
-
-    _RUNTIME_CONFIG.update({
-        "base_url": base_url or "http://127.0.0.1:11434",
-        "model": model,
-        "timeout_sec": timeout_sec if timeout_sec > 0 else _RUNTIME_CONFIG["timeout_sec"],
-        "max_prompt_chars": max_prompt_chars if max_prompt_chars > 0 else _RUNTIME_CONFIG["max_prompt_chars"],
-        "configured_from": "runtime",
-    })
+    _RUNTIME_CONFIG.update(_normalize_config(payload, _RUNTIME_CONFIG, "runtime"))
+    _persist_runtime_config(_RUNTIME_CONFIG)
     return get_ollama_config()
 
 
