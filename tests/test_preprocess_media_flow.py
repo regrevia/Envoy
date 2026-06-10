@@ -1285,6 +1285,102 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_preprocess_audio_records_partial_transcription_failures_without_failing_task(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-audio-partial-transcription-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="audio partial transcription project", description="", domain_type="knowledge", status="active"))
+                storage_info = storage_client.upload_bytes("partial-audio.mp3", b"fake audio bytes", "audio/mpeg")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="audio",
+                        file_name="partial-audio.mp3",
+                        file_path=storage_info["object_name"],
+                        mime_type="audio/mpeg",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            expected_segments = []
+
+            def fake_split_audio(audio_path, output_dir):
+                expected_segments[:] = [
+                    str(Path(output_dir) / "audio_segment_000001.wav"),
+                    str(Path(output_dir) / "audio_segment_000002.wav"),
+                    str(Path(output_dir) / "audio_segment_000003.wav"),
+                ]
+                return expected_segments
+
+            def fake_transcribe(segment_path):
+                segment_name = Path(segment_path).stem
+                if segment_name == "audio_segment_000002":
+                    return {"status": "failed", "text": "", "segments": [], "error": "transcription timeout after 900 sec"}
+                return {
+                    "status": "success",
+                    "text": f"{segment_name} 可用音频转写",
+                    "segments": [{"start": 0.0, "end": 8.0, "text": f"{segment_name} 可用音频转写"}],
+                    "error": None,
+                }
+
+            with patch("app.workers.jobs.split_audio", side_effect=fake_split_audio), \
+                patch("app.workers.jobs.split_video", side_effect=AssertionError("audio preprocessing should not split video")), \
+                patch("app.workers.jobs.extract_frames", side_effect=AssertionError("audio preprocessing should not extract frames")), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("audio preprocessing should not run OCR")), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=fake_transcribe):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+                transcript_units = [unit for unit in units if unit.labels.get("source") == "audio_transcript"]
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(result["semantic"]["extraction_status"], "partial_text_extracted")
+                self.assertEqual(result["semantic"]["transcription_success_count"], 2)
+                self.assertEqual(result["semantic"]["transcription_failed_count"], 1)
+                self.assertEqual(result["semantic"]["transcription_failed_segments"][0]["segment"], expected_segments[1])
+                self.assertEqual(result["semantic"]["transcription_failed_segments"][0]["error"], "transcription timeout after 900 sec")
+                self.assertIn("partial transcription", stored_task.result_summary)
+                self.assertEqual(len(transcript_units), 1)
+                self.assertIn("audio_segment_000001 可用音频转写", transcript_units[0].content)
+                self.assertIn("audio_segment_000003 可用音频转写", transcript_units[0].content)
+                self.assertNotIn("transcription timeout", transcript_units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_preserves_audio_segment_checkpoint_when_canceled_mid_transcription(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-audio-segment-cancel-test.db'}"
@@ -1677,6 +1773,103 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(stored_task.status, "failed")
                 self.assertEqual(stored_task.error_message, "media transcription failed: whisper gpu unavailable")
                 self.assertEqual(units, [])
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_video_records_partial_transcription_failures_without_failing_task(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-video-partial-transcription-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="video partial transcription project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("partial-video.mp4", b"fake video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="partial-video.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            expected_segments = []
+
+            def fake_split(video_path, output_dir):
+                expected_segments[:] = [
+                    str(Path(output_dir) / "segment_000001.mp4"),
+                    str(Path(output_dir) / "segment_000002.mp4"),
+                    str(Path(output_dir) / "segment_000003.mp4"),
+                ]
+                return expected_segments
+
+            def fake_transcribe(segment_path):
+                segment_name = Path(segment_path).stem
+                if segment_name == "segment_000002":
+                    return {"status": "failed", "text": "", "segments": [], "error": "transcription timeout after 900 sec"}
+                return {
+                    "status": "success",
+                    "text": f"{segment_name} 可用转写内容",
+                    "segments": [{"start": 0.0, "end": 8.0, "text": f"{segment_name} 可用转写内容"}],
+                    "error": None,
+                }
+
+            with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+                patch("app.workers.jobs.extract_frames", return_value=[]), \
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=[]), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=fake_transcribe):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+                transcript_units = [unit for unit in units if unit.labels.get("source") == "media_transcript"]
+                summary_unit = next(unit for unit in units if unit.labels.get("source") == "media_asset")
+                summary_payload = json.loads(summary_unit.content)
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(summary_payload["extraction_status"], "partial_text_extracted")
+                self.assertEqual(summary_payload["transcription_success_count"], 2)
+                self.assertEqual(summary_payload["transcription_failed_count"], 1)
+                self.assertEqual(summary_payload["transcription_failed_segments"][0]["segment"], expected_segments[1])
+                self.assertEqual(summary_payload["transcription_failed_segments"][0]["error"], "transcription timeout after 900 sec")
+                self.assertIn("partial transcription", stored_task.result_summary)
+                self.assertEqual(len(transcript_units), 1)
+                self.assertIn("segment_000001 可用转写内容", transcript_units[0].content)
+                self.assertIn("segment_000003 可用转写内容", transcript_units[0].content)
+                self.assertNotIn("transcription timeout", transcript_units[0].content)
             finally:
                 db.close()
                 engine.dispose()

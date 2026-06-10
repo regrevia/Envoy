@@ -273,6 +273,38 @@ def _media_limit_metadata():
     }
 
 
+def _transcription_segment_summary(transcription_results: list[dict]):
+    failed_segments = []
+    success_count = 0
+    for item in transcription_results:
+        transcript = item.get("transcript") if isinstance(item, dict) else None
+        if not isinstance(transcript, dict):
+            continue
+        if transcript.get("status") == "failed":
+            failed_segments.append({
+                "segment": item.get("segment"),
+                "error": str(transcript.get("error") or "unknown transcription error"),
+            })
+            continue
+        if str(transcript.get("text") or "").strip():
+            success_count += 1
+    failed_count = len(failed_segments)
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "failed_segments": failed_segments,
+        "extraction_status": "partial_text_extracted" if failed_count else "text_extracted",
+    }
+
+
+def _partial_transcription_suffix(transcription_summary: dict):
+    failed_count = int(transcription_summary.get("failed_count") or 0)
+    if not failed_count:
+        return ""
+    total = int(transcription_summary.get("success_count") or 0) + failed_count
+    return f"; partial transcription: {failed_count}/{max(total, failed_count)} segment(s) failed"
+
+
 def _decode_pdf_literal(value: bytes) -> str:
     output = bytearray()
     index = 0
@@ -854,6 +886,7 @@ def preprocess_job(self, payload: dict):
                 for item in transcription_results
                 if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
             ]
+            transcription_summary = _transcription_segment_summary(transcription_results)
             if not transcript_text and failed_transcriptions and len(failed_transcriptions) == len(transcription_results):
                 error = next((str(item.get("error")) for item in failed_transcriptions if item.get("error")), "unknown transcription error")
                 message = f"audio transcription failed: {error}"
@@ -876,13 +909,16 @@ def preprocess_job(self, payload: dict):
                     "segment_count": transcription_count,
                     "transcript": transcription,
                     "transcript_segment_count": len(segments) if isinstance(segments, list) else 0,
-                    "extraction_status": "text_extracted",
+                    "extraction_status": transcription_summary["extraction_status"],
+                    "transcription_success_count": transcription_summary["success_count"],
+                    "transcription_failed_count": transcription_summary["failed_count"],
+                    "transcription_failed_segments": transcription_summary["failed_segments"],
                     **_media_limit_metadata(),
                 }
                 if _task_is_canceled(db, task_id):
                     return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
                 _successful_preprocess_replaces_previous(db, asset_id, task_id)
-                _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks")
+                _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks{_partial_transcription_suffix(transcription_summary)}")
                 return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, "audio_asset")
             semantic_payload.update(_media_limit_metadata())
@@ -993,6 +1029,13 @@ def preprocess_job(self, payload: dict):
             for item in transcription_results
             if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
         ]
+        transcription_summary = _transcription_segment_summary(transcription_results)
+        semantic_payload.update({
+            "extraction_status": transcription_summary["extraction_status"],
+            "transcription_success_count": transcription_summary["success_count"],
+            "transcription_failed_count": transcription_summary["failed_count"],
+            "transcription_failed_segments": transcription_summary["failed_segments"],
+        })
         if transcript_text:
             _clear_media_transcript_checkpoints(db, asset_id, task_id)
             _persist_text_semantic_units(
@@ -1051,7 +1094,7 @@ def preprocess_job(self, payload: dict):
             task_id,
             "success",
             100,
-            result_summary=f"media preprocess done: {len(segment_paths)} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec",
+            result_summary=f"media preprocess done: {len(segment_paths)} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}",
         )
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:
