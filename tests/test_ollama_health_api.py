@@ -213,6 +213,74 @@ class OllamaHealthApiTests(unittest.TestCase):
             self.assertLessEqual(len(fake_client.calls[0]["json"]["prompt"]), 32)
             self.assertTrue(result["truncated"])
 
+    def test_invalid_persisted_ollama_config_falls_back_without_breaking_startup(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "ollama_runtime.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "base_url": "ollama.local:11434",
+                        "model": "polluted-model",
+                        "timeout_sec": 9,
+                        "max_prompt_chars": 32,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-ollama-invalid-persisted-config.db'}"
+            os.environ["OLLAMA_BASE_URL"] = "http://env-ollama.local:11434"
+            os.environ["OLLAMA_MODEL"] = "env-model:7b"
+            os.environ["OLLAMA_TIMEOUT_SEC"] = "11"
+            os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "48"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(config_path)
+            clear_app_modules()
+
+            from fastapi.testclient import TestClient
+            from app.main import app
+            from app.services.ollama_service import generate_with_ollama, get_ollama_config
+
+            class FakeResponse:
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    return {"response": "environment fallback response"}
+
+            class FakeClient:
+                def __init__(self):
+                    self.calls = []
+
+                def post(self, url, json, timeout):
+                    self.calls.append({"url": url, "json": json, "timeout": timeout})
+                    return FakeResponse()
+
+            config = get_ollama_config()
+            self.assertEqual(config["configured_from"], "environment")
+            self.assertEqual(config["base_url"], "http://env-ollama.local:11434")
+            self.assertEqual(config["model"], "env-model:7b")
+            self.assertEqual(config["timeout_sec"], 11)
+            self.assertEqual(config["max_prompt_chars"], 48)
+
+            client = TestClient(app)
+            with patch("app.services.ollama_service.httpx.get", side_effect=RuntimeError("probe skipped in test")):
+                response = client.get("/api/v1/health/ollama")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["base_url"], "http://env-ollama.local:11434")
+            self.assertEqual(response.json()["model"], "env-model:7b")
+
+            fake_client = FakeClient()
+            result = generate_with_ollama("Review", "x" * 200, client=fake_client)
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(result["text"], "environment fallback response")
+            self.assertEqual(fake_client.calls[0]["url"], "http://env-ollama.local:11434/api/generate")
+            self.assertEqual(fake_client.calls[0]["json"]["model"], "env-model:7b")
+            self.assertEqual(fake_client.calls[0]["timeout"], 11)
+            self.assertLessEqual(len(fake_client.calls[0]["json"]["prompt"]), 48)
+            self.assertTrue(result["truncated"])
+
     def test_ollama_config_api_sanitizes_null_values_without_polluting_runtime_state(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "ollama_runtime.json"
