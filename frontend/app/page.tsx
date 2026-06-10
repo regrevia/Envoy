@@ -46,6 +46,15 @@ const outputTypes = [
   { id: 'dataset', label: '数据集', detail: '汇总为 SFT、instruction、preference 等导出格式。' },
 ];
 
+const assetTypeOptions = [
+  { id: 'video', label: '视频' },
+  { id: 'text', label: '长文本' },
+  { id: 'document', label: '文档' },
+  { id: 'audio', label: '音频' },
+  { id: 'image', label: '图片' },
+  { id: 'markdown', label: 'Markdown' },
+];
+
 const inputStyle = {
   width: '100%',
   padding: '11px 12px',
@@ -102,6 +111,7 @@ export default function HomePage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [domainType, setDomainType] = useState('knowledge');
+  const [selectedAssetType, setSelectedAssetType] = useState('video');
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState('先创建或选择一个转换任务');
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'rag']);
@@ -185,7 +195,7 @@ export default function HomePage() {
   } as const;
   const uploadOutputsParam = selectedOutputs.join(',');
   const uploadHref = canProceed
-    ? `/upload?project_id=${selectedProjectId}${uploadOutputsParam ? `&outputs=${encodeURIComponent(uploadOutputsParam)}` : ''}`
+    ? `/upload?project_id=${selectedProjectId}&asset_type=${encodeURIComponent(selectedAssetType)}${uploadOutputsParam ? `&outputs=${encodeURIComponent(uploadOutputsParam)}` : ''}`
     : '#';
   const semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#';
   const samplesHref = canProceed && selectedOutputs.includes('samples') ?
@@ -228,7 +238,7 @@ export default function HomePage() {
       setSelectedProjectId(project.id);
       setName('');
       setDescription('');
-      setMessage(`已创建：${project.name}，下一步上传素材`);
+      setMessage(`已创建：${project.name}，下一步上传${assetTypeOptions.find((item) => item.id === selectedAssetType)?.label || '素材'}`);
     } catch (error) {
       const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : '创建失败';
       setMessage(`创建失败：${errorMessage}`);
@@ -275,9 +285,9 @@ export default function HomePage() {
       <section className="home-shell">
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy AI 素材转换工作台</div>
-          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>创建一个转换项目</h1>
+          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>创建转换任务</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 820, color: '#4b5563', lineHeight: 1.7 }}>
-            从这里创建转换任务：先创建或选择项目，再上传视频、长文本和多模态文件，最后选择要生成的 Markdown、Skill、RAG、训练样本或数据集。
+            先确定素材类型和生成目标，再上传视频、长文本或多模态文件，最后生成 Markdown、Skill、RAG、训练样本或数据集。
           </p>
         </header>
 
@@ -289,9 +299,9 @@ export default function HomePage() {
 
           <section className="workflow-strip" aria-label="转换流程">
             {[
-              ['1', '创建项目', '给这次转换建立上下文'],
-              ['2', '上传素材', '视频、长文本、多模态文件进入素材池'],
-              ['3', '选择生成目标', '输出 Markdown、Skill、RAG 或训练数据'],
+              ['1', '创建任务', '确定素材类型和生成目标'],
+              ['2', '上传素材', '文件进入当前任务素材池'],
+              ['3', '生成 AI 素材', '输出 Markdown、Skill、RAG 或训练数据'],
             ].map(([index, title, detail]) => (
               <div key={index} className="workflow-strip-item">
                 <span className="workflow-index">{index}</span>
@@ -314,6 +324,30 @@ export default function HomePage() {
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
               每个任务承载一批素材和最终交付物，后续上传、预处理、语义单元、生成样本和导出都会围绕这个任务推进。
             </p>
+            <section style={{ marginTop: 16, padding: '14px 0', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ color: '#4b5563', fontSize: 13, marginBottom: 10 }}>素材类型</div>
+              <div className="segmented-line">
+                {assetTypeOptions.map((item) => {
+                  const active = selectedAssetType === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedAssetType(item.id)}
+                      style={{
+                        ...buttonStyle,
+                        minHeight: 34,
+                        background: active ? '#111827' : '#ffffff',
+                        color: active ? '#ffffff' : '#111827',
+                        borderColor: active ? '#111827' : '#d1d5db',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
             <div className="create-grid">
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>任务名称</span>
@@ -435,15 +469,19 @@ export default function HomePage() {
             </div>
           </article>
 
-          <article className="flow-step runtime-section">
-            <div className="step-heading">
-              <div>
-                <div style={{ color: '#6b7280', fontSize: 13 }}>运行环境</div>
-                <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>本地模型与媒体处理状态</h2>
+          <details className="flow-step runtime-section">
+            <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+              <div className="step-heading">
+                <div>
+                  <div style={{ color: '#6b7280', fontSize: 13 }}>运行环境</div>
+                  <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>本地模型与媒体处理状态</h2>
+                </div>
+                <span style={{ color: '#374151', fontSize: 14 }}>Ollama：{ollamaStatusLabel(ollamaStatus)}</span>
               </div>
-              <span style={{ color: '#374151', fontSize: 14 }}>Ollama：{ollamaStatusLabel(ollamaStatus)}</span>
+            </summary>
+            <div style={{ marginTop: 10, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+              展开后可配置 Ollama，并查看长视频分段、转写超时、抽帧和 OCR 上限。
             </div>
-
             <div className="runtime-grid">
               <section className="runtime-pane">
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -495,7 +533,7 @@ export default function HomePage() {
                 </div>
               </section>
             </div>
-          </article>
+          </details>
         </section>
       </section>
 
@@ -551,6 +589,12 @@ export default function HomePage() {
           color: #111827;
           font-size: 13px;
           font-weight: 700;
+        }
+
+        .segmented-line {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
         }
 
         .step-heading {
