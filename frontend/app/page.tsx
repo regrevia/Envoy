@@ -19,6 +19,8 @@ type OllamaStatus = {
   base_url: string;
   model: string;
   timeout_sec: number;
+  max_prompt_chars?: number;
+  configured_from?: string;
   model_available: boolean;
   available_models: string[];
   error?: string | null;
@@ -104,6 +106,13 @@ export default function HomePage() {
   const [message, setMessage] = useState('先创建或选择一个转换任务');
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'rag']);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [ollamaConfig, setOllamaConfig] = useState({
+    base_url: 'http://127.0.0.1:11434',
+    model: '',
+    timeout_sec: '120',
+    max_prompt_chars: '12000',
+  });
+  const [savingOllama, setSavingOllama] = useState(false);
   const [mediaStatus, setMediaStatus] = useState<MediaStatus | null>(null);
 
   const loadProjects = async () => {
@@ -123,6 +132,12 @@ export default function HomePage() {
     try {
       const status = await apiJson<OllamaStatus>('/api/v1/health/ollama');
       setOllamaStatus(status);
+      setOllamaConfig({
+        base_url: status.base_url || 'http://127.0.0.1:11434',
+        model: status.model || '',
+        timeout_sec: String(status.timeout_sec || 120),
+        max_prompt_chars: String(status.max_prompt_chars || 12000),
+      });
     } catch {
       setOllamaStatus({
         enabled: false,
@@ -220,6 +235,33 @@ export default function HomePage() {
     ));
   };
 
+  const saveOllamaConfig = async () => {
+    if (savingOllama) {
+      return;
+    }
+    setSavingOllama(true);
+    setMessage('正在保存 Ollama 配置...');
+    try {
+      const status = await apiJson<OllamaStatus>('/api/v1/health/ollama/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base_url: ollamaConfig.base_url,
+          model: ollamaConfig.model,
+          timeout_sec: Number(ollamaConfig.timeout_sec || 120),
+          max_prompt_chars: Number(ollamaConfig.max_prompt_chars || 12000),
+        }),
+      });
+      setOllamaStatus(status);
+      setMessage('Ollama 配置已保存，后续样本生成和导出会使用该本地模型');
+    } catch (error) {
+      const errorMessage = error instanceof ApiError || error instanceof Error ? error.message : '保存失败';
+      setMessage(`Ollama 配置保存失败：${errorMessage}`);
+    } finally {
+      setSavingOllama(false);
+    }
+  };
+
   return (
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section className="home-shell">
@@ -244,6 +286,30 @@ export default function HomePage() {
             </div>
             <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
               模型：{ollamaStatus?.model || '未配置'}；地址：{ollamaStatus?.base_url || '未配置'}；可用模型：{ollamaStatus?.available_models?.length ? ollamaStatus.available_models.join(', ') : '-'}
+            </div>
+            <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid #e5e7eb', display: 'grid', gap: 10 }}>
+              <strong style={{ fontSize: 14 }}>Ollama 配置</strong>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ color: '#4b5563', fontSize: 13 }}>服务地址</span>
+                  <input value={ollamaConfig.base_url} onChange={(event) => setOllamaConfig((current) => ({ ...current, base_url: event.target.value }))} placeholder="http://127.0.0.1:11434" style={inputStyle} />
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ color: '#4b5563', fontSize: 13 }}>模型名称</span>
+                  <input value={ollamaConfig.model} onChange={(event) => setOllamaConfig((current) => ({ ...current, model: event.target.value }))} placeholder="qwen2.5:7b" style={inputStyle} />
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ color: '#4b5563', fontSize: 13 }}>超时秒数</span>
+                  <input value={ollamaConfig.timeout_sec} onChange={(event) => setOllamaConfig((current) => ({ ...current, timeout_sec: event.target.value }))} placeholder="120" style={inputStyle} />
+                </label>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <span style={{ color: '#4b5563', fontSize: 13 }}>最大提示词长度</span>
+                  <input value={ollamaConfig.max_prompt_chars} onChange={(event) => setOllamaConfig((current) => ({ ...current, max_prompt_chars: event.target.value }))} placeholder="12000" style={inputStyle} />
+                </label>
+              </div>
+              <button onClick={saveOllamaConfig} disabled={savingOllama} style={{ ...buttonStyle, width: 'fit-content', background: '#111827', color: '#ffffff', borderColor: '#111827', opacity: savingOllama ? 0.72 : 1 }}>
+                {savingOllama ? '正在保存...' : '保存配置'}
+              </button>
             </div>
           </section>
 

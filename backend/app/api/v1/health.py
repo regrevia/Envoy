@@ -10,7 +10,7 @@ from app.core.config import (
     MEDIA_SEGMENT_SECONDS,
     MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
 )
-from app.services.ollama_service import get_ollama_status
+from app.services.ollama_service import get_ollama_config, get_ollama_status, update_ollama_config
 
 router = APIRouter()
 
@@ -23,6 +23,18 @@ def health():
 @router.get('/health/ollama')
 def ollama_health():
     return get_ollama_status()
+
+
+@router.put('/health/ollama/config')
+def configure_ollama(payload: dict):
+    update_ollama_config(payload)
+    status = get_ollama_status(probe=False)
+    config = get_ollama_config()
+    return {
+        **status,
+        "max_prompt_chars": config["max_prompt_chars"],
+        "configured_from": config["configured_from"],
+    }
 
 
 @router.get('/health/media')
