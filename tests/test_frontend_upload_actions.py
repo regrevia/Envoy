@@ -418,6 +418,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "超时秒数",
             "最大提示词长度",
             "保存配置",
+            "配置会写入本地运行时配置文件，服务重启后继续生效",
             "setOllamaStatus(status)",
         ]:
             self.assertIn(copy, text)

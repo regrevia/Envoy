@@ -310,6 +310,9 @@ export default function HomePage() {
               <button onClick={saveOllamaConfig} disabled={savingOllama} style={{ ...buttonStyle, width: 'fit-content', background: '#111827', color: '#ffffff', borderColor: '#111827', opacity: savingOllama ? 0.72 : 1 }}>
                 {savingOllama ? '正在保存...' : '保存配置'}
               </button>
+              <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+                配置会写入本地运行时配置文件，服务重启后继续生效。
+              </div>
             </div>
           </section>
 
