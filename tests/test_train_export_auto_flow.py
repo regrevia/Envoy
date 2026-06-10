@@ -317,6 +317,116 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_exports_render_structured_semantic_json_as_readable_text(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-structured-json-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="结构化语义导出", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="structured-media-summary",
+                            project_id=project.id,
+                            asset_id="asset-video-structured",
+                            segment_id=None,
+                            unit_type="scene",
+                            title="媒体预处理摘要",
+                            content=json.dumps(
+                                {
+                                    "stage": "preprocess",
+                                    "transcript": {"text": "讲解了稳定处理长视频。"},
+                                    "ocr": [{"text": "画面文字：RAG Skill"}],
+                                    "max_input_seconds": 600,
+                                },
+                                ensure_ascii=False,
+                            ),
+                            labels={"source": "media_asset", "stage": "preprocess"},
+                            confidence=0.8,
+                        ),
+                        SemanticUnit(
+                            id="structured-analysis",
+                            project_id=project.id,
+                            asset_id="asset-video-structured",
+                            segment_id=None,
+                            unit_type="rule",
+                            title="分析结果",
+                            content=json.dumps(
+                                {
+                                    "scenes": [{"summary": "用户上传长视频"}],
+                                    "rules": ["长任务必须可取消"],
+                                    "concepts": ["RAG", "Skill"],
+                                },
+                                ensure_ascii=False,
+                            ),
+                            labels={"stage": "analyze", "kind": "rule"},
+                            confidence=0.76,
+                        ),
+                    ]
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                results = {}
+                for export_type in ("markdown", "skill", "rag"):
+                    response = client.post(
+                        "/api/v1/train-exports/auto",
+                        json={"project_id": project_id, "export_type": export_type, "title": f"{export_type} structured export"},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    results[export_type] = response.json()
+
+                markdown_text = Path(results["markdown"]["path"]).read_text(encoding="utf-8")
+                skill_text = Path(results["skill"]["path"]).read_text(encoding="utf-8")
+                rag_rows = [
+                    json.loads(line)
+                    for line in Path(results["rag"]["path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                rag_text = "\n".join(row["text"] for row in rag_rows)
+                skill_manifest = json.loads(Path(results["skill"]["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+                for rendered_text in (markdown_text, skill_text, rag_text):
+                    self.assertIn("讲解了稳定处理长视频。", rendered_text)
+                    self.assertIn("画面文字：RAG Skill", rendered_text)
+                    self.assertIn("用户上传长视频", rendered_text)
+                    self.assertIn("长任务必须可取消", rendered_text)
+                    self.assertIn("RAG", rendered_text)
+                    self.assertIn("Skill", rendered_text)
+                    self.assertNotIn('"transcript"', rendered_text)
+                    self.assertNotIn('"scenes"', rendered_text)
+                    self.assertNotIn('{"stage"', rendered_text)
+
+                media_rag = next(row for row in rag_rows if row["metadata"]["semantic_unit_id"] == "structured-media-summary")
+                self.assertEqual(media_rag["metadata"]["content_format"], "json")
+                self.assertIn("讲解了稳定处理长视频。", media_rag["text"])
+                self.assertIn("画面文字：RAG Skill", media_rag["text"])
+                self.assertTrue(any(item["id"] == "structured-media-summary" for item in skill_manifest["materials"]))
+            finally:
+                engine.dispose()
+
     def test_auto_rag_export_uses_ollama_metadata_when_available(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-ollama-test.db'}"
