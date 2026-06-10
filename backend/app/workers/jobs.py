@@ -41,6 +41,19 @@ def _task_is_canceled(db, task_id):
     return task is not None and task.status == "canceled"
 
 
+def _semantic_unit_is_sample_source(unit: SemanticUnit, tasks_by_id: dict[str, ProcessingTask]):
+    labels = unit.labels if isinstance(unit.labels, dict) else {}
+    if labels.get("checkpoint") == "segment_transcript":
+        return False
+    task_id = labels.get("task_id")
+    if not task_id:
+        return True
+    task = tasks_by_id.get(task_id)
+    if task is None:
+        return True
+    return task.status == "success"
+
+
 def _transcribe_audio_for_task(db, task_id: str | None, segment_path: str):
     candidate = getattr(transcribe_audio, "side_effect", None) or transcribe_audio
     try:
@@ -1214,20 +1227,32 @@ def sample_job(self, payload: dict):
                 message = "Source semantic unit not found for project"
                 _safe_update(db, task_id, "failed", 100, error_message=message)
                 return {"status": "failed", "payload": payload, "error": message}
+            source_task_id = unit.labels.get("task_id") if isinstance(unit.labels, dict) else None
+            tasks_by_id = {}
+            if source_task_id:
+                source_task = db.query(ProcessingTask).filter(ProcessingTask.id == source_task_id, ProcessingTask.project_id == project_id).first()
+                if source_task is not None:
+                    tasks_by_id[source_task.id] = source_task
+            if not _semantic_unit_is_sample_source(unit, tasks_by_id):
+                message = "Source semantic unit is not exportable for sample generation"
+                _safe_update(db, task_id, "failed", 100, error_message=message)
+                return {"status": "failed", "payload": payload, "error": message}
             sample = _persist_generated_sample(db, project_id, unit, payload)
             _safe_update(db, task_id, "success", 100, result_summary="1 sample generated")
             return {"status": "samples_generated", "payload": payload, "sample_id": sample.id, "sample_count": 1}
 
         batch_limit = max(int(input_config.get("limit") or SAMPLE_GENERATION_BATCH_LIMIT), 1)
+        project_tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all() if project_id else []
+        tasks_by_id = {task.id: task for task in project_tasks}
         units = (
             db.query(SemanticUnit)
             .filter(SemanticUnit.project_id == project_id)
             .order_by(SemanticUnit.created_at.asc())
-            .limit(batch_limit)
             .all()
             if project_id
             else []
         )
+        units = [unit for unit in units if _semantic_unit_is_sample_source(unit, tasks_by_id)][:batch_limit]
         samples = [_persist_generated_sample(db, project_id, unit, payload) for unit in units]
         if not samples:
             message = "No semantic units available for sample generation"
