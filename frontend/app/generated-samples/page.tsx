@@ -15,6 +15,14 @@ type GeneratedSample = {
   created_at?: string | null;
 };
 
+type TaskResponse = {
+  id?: string;
+  status?: string;
+  progress?: number;
+  result_summary?: string | null;
+  error_message?: string | null;
+};
+
 const buttonStyle = {
   minHeight: 36,
   padding: '0 12px',
@@ -35,6 +43,9 @@ export default function GeneratedSamplesPage() {
   const [samples, setSamples] = useState<GeneratedSample[]>([]);
   const [projectId, setProjectId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [generatingBatch, setGeneratingBatch] = useState(false);
+  const [batchTask, setBatchTask] = useState<TaskResponse | null>(null);
+  const [message, setMessage] = useState('就绪');
 
   const loadSamples = async (nextProjectId = projectId) => {
     setLoading(true);
@@ -45,6 +56,7 @@ export default function GeneratedSamplesPage() {
       setSamples(data);
     } catch {
       setSamples([]);
+      setMessage('样本加载失败，请检查后端服务');
     } finally {
       setLoading(false);
     }
@@ -61,6 +73,35 @@ export default function GeneratedSamplesPage() {
 
   const semanticHref = projectId ? `/semantic-units?project_id=${projectId}` : '/semantic-units';
   const exportHref = projectId ? `/train-exports?project_id=${projectId}&export_type=markdown&outputs=markdown,skill,rag` : '/train-exports';
+
+  const onGenerateProjectSamples = async () => {
+    if (!projectId || generatingBatch) {
+      setMessage('请先从上传页或语义单元页带入项目 ID');
+      return;
+    }
+
+    setGeneratingBatch(true);
+    setMessage('正在创建样本生成任务...');
+    try {
+      const task = await apiJson<TaskResponse>('/api/v1/tasks/generate-samples', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId,
+          task_type: 'generate_samples',
+          input_config: { limit: 50 },
+        }),
+      });
+      setBatchTask(task);
+      setMessage(`批量生成任务已创建：${task.status || 'created'}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '批量生成样本失败';
+      setBatchTask({ error_message: errorMessage });
+      setMessage(`批量生成样本失败：${errorMessage}`);
+    } finally {
+      setGeneratingBatch(false);
+    }
+  };
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -80,7 +121,18 @@ export default function GeneratedSamplesPage() {
                 共 {samples.length} 条样本{projectId ? `；当前项目：${projectId}` : ''}
               </p>
             </div>
-            <button onClick={() => void loadSamples()} style={buttonStyle}>刷新</button>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button onClick={() => void onGenerateProjectSamples()} disabled={generatingBatch} style={{ ...buttonStyle, background: projectId ? '#111827' : '#f3f4f6', color: projectId ? '#ffffff' : '#6b7280', borderColor: projectId ? '#111827' : '#d1d5db', opacity: generatingBatch ? 0.72 : 1, cursor: generatingBatch ? 'not-allowed' : 'pointer' }}>
+                {generatingBatch ? '正在创建...' : '批量生成样本'}
+              </button>
+              <button onClick={() => void loadSamples()} style={buttonStyle}>刷新</button>
+            </div>
+          </div>
+          <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: '#374151', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <strong style={{ fontSize: 14 }}>状态</strong>
+            <span style={{ fontSize: 14 }}>{message}</span>
+            {batchTask?.id ? <a href={`/tasks/${batchTask.id}`} style={{ color: '#111827', fontWeight: 700 }}>查看批量任务</a> : null}
+            {batchTask?.error_message ? <span style={{ color: '#b91c1c', fontSize: 13 }}>{batchTask.error_message}</span> : null}
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
             <a href={semanticHref} style={{ color: '#111827', fontWeight: 700 }}>返回语义单元</a>
