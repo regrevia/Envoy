@@ -274,10 +274,10 @@ export default function HomePage() {
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section className="home-shell">
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy 多媒体素材转换</div>
-          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>创建转换任务</h1>
+          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy AI 素材转换工作台</div>
+          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>创建一个转换项目</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 820, color: '#4b5563', lineHeight: 1.7 }}>
-            首页只处理一个主流程：创建任务/项目，上传视频、长文本和多模态文件，再选择要生成的 Markdown、Skill、RAG、训练样本或数据集。
+            从这里创建转换任务：先创建或选择项目，再上传视频、长文本和多模态文件，最后选择要生成的 Markdown、Skill、RAG、训练样本或数据集。
           </p>
         </header>
 
@@ -287,60 +287,34 @@ export default function HomePage() {
             <span style={{ fontSize: 14 }}>{message}</span>
           </div>
 
-          <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', display: 'grid', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 14 }}>Ollama 本地模型</strong>
-              <span style={{ color: '#374151', fontSize: 14 }}>{ollamaStatusLabel(ollamaStatus)}</span>
-            </div>
-            <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-              模型：{ollamaStatus?.model || '未配置'}；地址：{ollamaStatus?.base_url || '未配置'}；可用模型：{ollamaStatus?.available_models?.length ? ollamaStatus.available_models.join(', ') : '-'}
-            </div>
-            <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid #e5e7eb', display: 'grid', gap: 10 }}>
-              <strong style={{ fontSize: 14 }}>Ollama 配置</strong>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ color: '#4b5563', fontSize: 13 }}>服务地址</span>
-                  <input value={ollamaConfig.base_url} onChange={(event) => setOllamaConfig((current) => ({ ...current, base_url: event.target.value }))} placeholder="http://127.0.0.1:11434" style={inputStyle} />
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ color: '#4b5563', fontSize: 13 }}>模型名称</span>
-                  <input value={ollamaConfig.model} onChange={(event) => setOllamaConfig((current) => ({ ...current, model: event.target.value }))} placeholder="qwen2.5:7b" style={inputStyle} />
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ color: '#4b5563', fontSize: 13 }}>超时秒数</span>
-                  <input value={ollamaConfig.timeout_sec} onChange={(event) => setOllamaConfig((current) => ({ ...current, timeout_sec: event.target.value }))} placeholder="120" style={inputStyle} />
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ color: '#4b5563', fontSize: 13 }}>最大提示词长度</span>
-                  <input value={ollamaConfig.max_prompt_chars} onChange={(event) => setOllamaConfig((current) => ({ ...current, max_prompt_chars: event.target.value }))} placeholder="12000" style={inputStyle} />
-                </label>
+          <section className="workflow-strip" aria-label="转换流程">
+            {[
+              ['1', '创建项目', '给这次转换建立上下文'],
+              ['2', '上传素材', '视频、长文本、多模态文件进入素材池'],
+              ['3', '选择生成目标', '输出 Markdown、Skill、RAG 或训练数据'],
+            ].map(([index, title, detail]) => (
+              <div key={index} className="workflow-strip-item">
+                <span className="workflow-index">{index}</span>
+                <span>
+                  <strong>{title}</strong>
+                  <span>{detail}</span>
+                </span>
               </div>
-              <button onClick={saveOllamaConfig} disabled={savingOllama} style={{ ...buttonStyle, width: 'fit-content', background: '#111827', color: '#ffffff', borderColor: '#111827', opacity: savingOllama ? 0.72 : 1 }}>
-                {savingOllama ? '正在保存...' : '保存配置'}
-              </button>
-              <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-                配置会写入本地运行时配置文件，服务重启后继续生效。
-              </div>
-            </div>
+            ))}
           </section>
 
-          <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb', display: 'grid', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 14 }}>媒体处理模式</strong>
-              <span style={{ color: '#374151', fontSize: 14 }}>最大处理 {mediaStatus?.max_input_seconds ?? '-'} 秒</span>
+          <article className="flow-step first-step">
+            <div className="step-heading">
+              <div>
+                <div style={{ color: '#6b7280', fontSize: 13 }}>1. 创建任务/项目</div>
+                <h2 style={{ margin: '8px 0 0', fontSize: 22 }}>先定义本次转换目标</h2>
+              </div>
+              <Link href="/projects" style={{ ...buttonStyle, textDecoration: 'none' }}>项目管理</Link>
             </div>
-            <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-              分段：{mediaStatus?.segment_seconds ?? '-'} 秒 x {mediaStatus?.max_segment_count ?? '-'} 段；单段转写超时：{mediaStatus?.transcription_timeout_sec ?? '-'} 秒；OCR 超时：{mediaStatus?.ocr_timeout_sec ?? '-'} 秒；抽帧：{enabledLabel(mediaStatus?.frame_extraction_enabled)}，每 {mediaStatus?.frame_interval_seconds ?? '-'} 秒 1 帧，最多 {mediaStatus?.max_frame_count ?? '-'} 帧；OCR：{enabledLabel(mediaStatus?.ocr_enabled)}
-            </div>
-          </section>
-
-          <article className="flow-step">
-            <div style={{ color: '#6b7280', fontSize: 13 }}>1. 创建任务/项目</div>
-            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>先定义本次转换目标</h2>
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
               每个任务承载一批素材和最终交付物，后续上传、预处理、语义单元、生成样本和导出都会围绕这个任务推进。
             </p>
-            <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
+            <div className="create-grid">
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>任务名称</span>
                 <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：课程视频转 RAG 知识库" style={inputStyle} />
@@ -358,7 +332,7 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>或选择已有任务</span>
                 <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} style={inputStyle}>
@@ -460,6 +434,68 @@ export default function HomePage() {
               <Link href="/trace" style={buttonStyle}>查看追溯链路</Link>
             </div>
           </article>
+
+          <article className="flow-step runtime-section">
+            <div className="step-heading">
+              <div>
+                <div style={{ color: '#6b7280', fontSize: 13 }}>运行环境</div>
+                <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>本地模型与媒体处理状态</h2>
+              </div>
+              <span style={{ color: '#374151', fontSize: 14 }}>Ollama：{ollamaStatusLabel(ollamaStatus)}</span>
+            </div>
+
+            <div className="runtime-grid">
+              <section className="runtime-pane">
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: 14 }}>Ollama 本地模型</strong>
+                  <span style={{ color: '#374151', fontSize: 14 }}>{ollamaStatusLabel(ollamaStatus)}</span>
+                </div>
+                <div style={{ marginTop: 8, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+                  模型：{ollamaStatus?.model || '未配置'}；地址：{ollamaStatus?.base_url || '未配置'}；可用模型：{ollamaStatus?.available_models?.length ? ollamaStatus.available_models.join(', ') : '-'}
+                </div>
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #e5e7eb', display: 'grid', gap: 10 }}>
+                  <strong style={{ fontSize: 14 }}>Ollama 配置</strong>
+                  <div className="ollama-config-grid">
+                    <label style={{ display: 'grid', gap: 6 }}>
+                      <span style={{ color: '#4b5563', fontSize: 13 }}>服务地址</span>
+                      <input value={ollamaConfig.base_url} onChange={(event) => setOllamaConfig((current) => ({ ...current, base_url: event.target.value }))} placeholder="http://127.0.0.1:11434" style={inputStyle} />
+                    </label>
+                    <label style={{ display: 'grid', gap: 6 }}>
+                      <span style={{ color: '#4b5563', fontSize: 13 }}>模型名称</span>
+                      <input value={ollamaConfig.model} onChange={(event) => setOllamaConfig((current) => ({ ...current, model: event.target.value }))} placeholder="qwen2.5:7b" style={inputStyle} />
+                    </label>
+                    <label style={{ display: 'grid', gap: 6 }}>
+                      <span style={{ color: '#4b5563', fontSize: 13 }}>超时秒数</span>
+                      <input value={ollamaConfig.timeout_sec} onChange={(event) => setOllamaConfig((current) => ({ ...current, timeout_sec: event.target.value }))} placeholder="120" style={inputStyle} />
+                    </label>
+                    <label style={{ display: 'grid', gap: 6 }}>
+                      <span style={{ color: '#4b5563', fontSize: 13 }}>最大提示词长度</span>
+                      <input value={ollamaConfig.max_prompt_chars} onChange={(event) => setOllamaConfig((current) => ({ ...current, max_prompt_chars: event.target.value }))} placeholder="12000" style={inputStyle} />
+                    </label>
+                  </div>
+                  <button onClick={saveOllamaConfig} disabled={savingOllama} style={{ ...buttonStyle, width: 'fit-content', background: '#111827', color: '#ffffff', borderColor: '#111827', opacity: savingOllama ? 0.72 : 1 }}>
+                    {savingOllama ? '正在保存...' : '保存配置'}
+                  </button>
+                  <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+                    配置会写入本地运行时配置文件，服务重启后继续生效。
+                  </div>
+                </div>
+              </section>
+
+              <section className="runtime-pane">
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: 14 }}>媒体处理模式</strong>
+                  <span style={{ color: '#374151', fontSize: 14 }}>最大处理 {mediaStatus?.max_input_seconds ?? '-'} 秒</span>
+                </div>
+                <div style={{ marginTop: 8, color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
+                  分段：{mediaStatus?.segment_seconds ?? '-'} 秒 x {mediaStatus?.max_segment_count ?? '-'} 段；单段转写超时：{mediaStatus?.transcription_timeout_sec ?? '-'} 秒；OCR 超时：{mediaStatus?.ocr_timeout_sec ?? '-'} 秒；抽帧：{enabledLabel(mediaStatus?.frame_extraction_enabled)}，每 {mediaStatus?.frame_interval_seconds ?? '-'} 秒 1 帧，最多 {mediaStatus?.max_frame_count ?? '-'} 帧；OCR：{enabledLabel(mediaStatus?.ocr_enabled)}
+                </div>
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #e5e7eb', color: '#4b5563', fontSize: 13, lineHeight: 1.7 }}>
+                  长视频会按配置分段处理，任务页会展示进度、最后更新时间、疑似卡住状态，并支持取消和重试。
+                </div>
+              </section>
+            </div>
+          </article>
         </section>
       </section>
 
@@ -474,15 +510,126 @@ export default function HomePage() {
           margin-top: 0;
         }
 
+        .workflow-strip {
+          display: grid;
+          border-bottom: 1px solid #e5e7eb;
+        }
+
+        .workflow-strip-item {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 10px;
+          padding: 14px 0;
+          border-bottom: 1px solid #e5e7eb;
+        }
+
+        .workflow-strip-item:last-child {
+          border-bottom: 0;
+        }
+
+        .workflow-strip-item strong,
+        .workflow-strip-item span span {
+          display: block;
+        }
+
+        .workflow-strip-item span span {
+          margin-top: 4px;
+          color: #6b7280;
+          font-size: 13px;
+          line-height: 1.5;
+        }
+
+        .workflow-index {
+          width: 26px;
+          height: 26px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #d1d5db;
+          border-radius: 50%;
+          color: #111827;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .step-heading {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: flex-start;
+        }
+
+        .create-grid {
+          margin-top: 16px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .create-grid label:first-child,
+        .create-grid label:nth-child(2) {
+          grid-column: span 2;
+        }
+
+        .runtime-grid {
+          margin-top: 18px;
+          display: grid;
+          grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+          gap: 22px;
+        }
+
+        .runtime-pane {
+          min-width: 0;
+          padding-top: 16px;
+          border-top: 1px solid #e5e7eb;
+        }
+
+        .ollama-config-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
         .flow-step {
           min-width: 0;
           padding: 24px 0;
           border-bottom: 1px solid #e5e7eb;
         }
 
+        .first-step {
+          padding-top: 26px;
+        }
+
         @media (max-width: 640px) {
           .home-shell {
             padding: 32px 18px;
+          }
+
+          .workflow-strip,
+          .create-grid,
+          .runtime-grid,
+          .ollama-config-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .workflow-strip-item {
+            padding-right: 0;
+            border-right: 0;
+            border-bottom: 1px solid #e5e7eb;
+          }
+
+          .workflow-strip-item:last-child {
+            border-bottom: 0;
+          }
+
+          .create-grid label:first-child,
+          .create-grid label:nth-child(2) {
+            grid-column: auto;
+          }
+
+          .step-heading {
+            display: grid;
           }
         }
       `}</style>
