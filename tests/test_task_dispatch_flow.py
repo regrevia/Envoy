@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import tempfile
 import time
@@ -916,6 +917,13 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).all()
                 self.assertEqual(len(units), 3)
                 self.assertEqual({unit.unit_type for unit in units}, {"scene", "rule", "concept"})
+                parsed_by_kind = {
+                    unit.labels["kind"]: json.loads(unit.content)
+                    for unit in units
+                }
+                self.assertIn("scenes", parsed_by_kind["scene"])
+                self.assertIn("rules", parsed_by_kind["rule"])
+                self.assertIn("concepts", parsed_by_kind["concept"])
             finally:
                 db.close()
                 engine.dispose()
