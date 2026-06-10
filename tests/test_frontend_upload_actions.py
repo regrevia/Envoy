@@ -641,6 +641,21 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, task_detail)
 
+    def test_task_detail_collapses_raw_input_config_behind_summary(self):
+        task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for copy in [
+            "function taskInputSummary",
+            "输入摘要",
+            "生成目标",
+            "重试来源",
+            "<details",
+            "<summary",
+            "查看原始输入配置",
+            "JSON.stringify(task.input_config || {}, null, 2)",
+        ]:
+            self.assertIn(copy, task_detail)
+
     def test_task_pages_make_media_processing_limits_visible(self):
         task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
         task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")

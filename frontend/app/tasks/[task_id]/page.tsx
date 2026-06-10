@@ -131,6 +131,20 @@ function taskTypeLabel(taskType?: string | null) {
   return taskType ? labels[taskType] || taskType : '-';
 }
 
+function taskInputSummary(inputConfig?: Record<string, unknown> | null) {
+  const config = inputConfig || {};
+  const requestedOutputs = Array.isArray(config.requested_outputs)
+    ? config.requested_outputs.map((item) => String(item)).filter(Boolean).join('、')
+    : '';
+  const rows = [
+    { label: '生成目标', value: requestedOutputs || '-' },
+    { label: '来源语义单元', value: typeof config.source_unit_id === 'string' ? config.source_unit_id : '-' },
+    { label: '来源文件', value: typeof config.source_path === 'string' ? config.source_path : '-' },
+    { label: '重试来源', value: typeof config.retry_of_task_id === 'string' ? config.retry_of_task_id : '-' },
+  ];
+  return rows.filter((row) => row.value !== '-');
+}
+
 export default function TaskDetailPage({ params }: { params: Promise<{ task_id: string }> }) {
   const [task, setTask] = useState<Task | null>(null);
   const [diagnostics, setDiagnostics] = useState<TaskDiagnostics | null>(null);
@@ -210,6 +224,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
   };
 
   const progress = Math.max(0, Math.min(Number(task?.progress ?? 0), 100));
+  const inputSummary = taskInputSummary(task?.input_config);
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -264,9 +279,23 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
               <DetailRow label="诊断结论" value={(diagnostics?.next_actions || []).join(' / ')} />
               <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ color: '#6b7280', marginBottom: 8 }}>输入配置</div>
-                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>
-                  {JSON.stringify(task.input_config || {}, null, 2)}
-                </pre>
+                <div style={{ display: 'grid', gap: 0, borderTop: '1px solid #e5e7eb' }}>
+                  <div style={{ padding: '10px 0', borderBottom: '1px solid #e5e7eb', fontWeight: 700 }}>输入摘要</div>
+                  {inputSummary.length ? inputSummary.map((row) => (
+                    <div key={row.label} style={{ display: 'grid', gridTemplateColumns: '140px minmax(0, 1fr)', gap: 16, padding: '10px 0', borderBottom: '1px solid #e5e7eb' }}>
+                      <span style={{ color: '#6b7280' }}>{row.label}</span>
+                      <span style={{ wordBreak: 'break-word' }}>{row.value}</span>
+                    </div>
+                  )) : (
+                    <div style={{ padding: '10px 0', borderBottom: '1px solid #e5e7eb', color: '#6b7280' }}>没有额外输入配置</div>
+                  )}
+                </div>
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ cursor: 'pointer', color: '#111827', fontWeight: 700 }}>查看原始输入配置</summary>
+                  <pre style={{ margin: '12px 0 0', padding: '12px 0 0', borderTop: '1px solid #e5e7eb', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>
+                    {JSON.stringify(task.input_config || {}, null, 2)}
+                  </pre>
+                </details>
               </div>
               <div style={{ marginTop: 16, height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{ width: `${progress}%`, height: '100%', background: '#111827' }} />
