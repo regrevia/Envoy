@@ -1,5 +1,6 @@
 import json
 import base64
+import inspect
 import re
 import shutil
 import zipfile
@@ -38,6 +39,17 @@ def _task_is_canceled(db, task_id):
     db.expire_all()
     task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
     return task is not None and task.status == "canceled"
+
+
+def _transcribe_audio_for_task(db, task_id: str | None, segment_path: str):
+    candidate = getattr(transcribe_audio, "side_effect", None) or transcribe_audio
+    try:
+        signature = inspect.signature(candidate)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None and "should_cancel" in signature.parameters:
+        return transcribe_audio(segment_path, should_cancel=lambda: _task_is_canceled(db, task_id))
+    return transcribe_audio(segment_path)
 
 
 def _canceled_result(payload: dict, semantic: dict | None = None):
@@ -771,7 +783,7 @@ def preprocess_job(self, payload: dict):
             for index, segment_path in enumerate(transcription_inputs):
                 if _task_is_canceled(db, task_id):
                     return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
-                segment_transcription = transcribe_audio(segment_path)
+                segment_transcription = _transcribe_audio_for_task(db, task_id, segment_path)
                 transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
                 if isinstance(segment_transcription, dict):
                     text = str(segment_transcription.get("text", "")).strip()
@@ -887,7 +899,7 @@ def preprocess_job(self, payload: dict):
         for index, segment_path in enumerate(transcription_inputs):
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
-            segment_transcription = transcribe_audio(segment_path)
+            segment_transcription = _transcribe_audio_for_task(db, task_id, segment_path)
             transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
             if isinstance(segment_transcription, dict):
                 text = str(segment_transcription.get("text", "")).strip()

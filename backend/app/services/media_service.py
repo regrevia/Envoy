@@ -1,6 +1,7 @@
 import os
 import multiprocessing
 import subprocess
+from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
 from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
@@ -138,12 +139,20 @@ def _transcribe_audio_worker(audio_path: str, result_queue):
         result_queue.put({"status": "failed", "text": "", "segments": [], "error": str(exc)})
 
 
-def transcribe_audio(audio_path: str):
+def transcribe_audio(audio_path: str, should_cancel: Callable[[], bool] | None = None):
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(target=_transcribe_audio_worker, args=(audio_path, result_queue), daemon=True)
     timeout_sec = max(int(MEDIA_TRANSCRIPTION_TIMEOUT_SEC or 1), 1)
     process.start()
-    process.join(timeout_sec)
+    waited = 0
+    while process.is_alive() and waited < timeout_sec:
+        wait_seconds = min(1, timeout_sec - waited)
+        process.join(wait_seconds)
+        waited += wait_seconds
+        if process.is_alive() and should_cancel is not None and should_cancel():
+            process.terminate()
+            process.join(5)
+            return {"status": "canceled", "text": "", "segments": [], "error": "transcription canceled"}
     if process.is_alive():
         process.terminate()
         process.join(5)
