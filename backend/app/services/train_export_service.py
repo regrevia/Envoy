@@ -79,6 +79,104 @@ def _semantic_source_metadata(rows: list[dict]):
     return metadata
 
 
+def _source_label(value):
+    labels = {
+        "text_asset": "文本素材",
+        "document_text": "文档文本",
+        "image_text": "图片 OCR",
+        "media_transcript": "视频转写",
+        "media_ocr": "视频 OCR",
+        "audio_transcript": "音频转写",
+        "media_asset": "媒体素材",
+    }
+    return labels.get(str(value or ""), str(value or "未知来源"))
+
+
+def _unit_type_label(value):
+    labels = {
+        "text": "文本",
+        "document": "文档",
+        "image": "图片",
+        "audio": "音频",
+        "transcript": "转写",
+        "ocr": "OCR",
+        "scene": "场景",
+        "rule": "规则",
+        "concept": "概念",
+    }
+    return labels.get(str(value or ""), str(value or "未分类"))
+
+
+def _compact_text(value, max_chars: int = 1400):
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "\n\n（内容已截断，完整结构保存在 manifest 或 RAG 语料中。）"
+
+
+def _row_title(row: dict, index: int):
+    return str(row.get("title") or row.get("sample_type") or row.get("relation_type") or f"片段 {index}").strip()
+
+
+def _row_source(row: dict):
+    labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    return labels.get("source") or metadata.get("source") or row.get("source_type") or row.get("record_type")
+
+
+def _row_body(row: dict):
+    for key in ("content", "text", "summary", "output_text", "input_text"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    useful = []
+    for key, value in row.items():
+        if key in {"id", "project_id", "asset_id", "segment_id", "labels", "metadata"}:
+            continue
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            useful.append(f"{key}: {value}")
+    return "；".join(useful)
+
+
+def _source_overview_lines(source_counts: dict):
+    if not source_counts:
+        return ["- 尚未记录明确来源。"]
+    return [f"- {_source_label(source)}：{count} 条" for source, count in source_counts.items()]
+
+
+def _semantic_markdown_lines(rows: list[dict]):
+    lines = []
+    trace_rows = []
+    for index, row in enumerate(rows, 1):
+        if row.get("source_type") and row.get("target_type"):
+            trace_rows.append(row)
+            continue
+        title = _row_title(row, index)
+        body = _compact_text(_row_body(row))
+        source = _source_label(_row_source(row))
+        unit_type = _unit_type_label(row.get("unit_type"))
+        lines.extend([f"### {index}. {title}", ""])
+        lines.append(f"- 来源：{source}")
+        if row.get("unit_type"):
+            lines.append(f"- 类型：{unit_type}")
+        if row.get("confidence") is not None:
+            lines.append(f"- 置信度：{row.get('confidence')}")
+        if row.get("asset_id"):
+            lines.append(f"- 素材 ID：{row.get('asset_id')}")
+        if row.get("id"):
+            lines.append(f"- 语义单元 ID：{row.get('id')}")
+        if body:
+            lines.extend(["", body])
+        lines.append("")
+    if trace_rows:
+        lines.extend(["## 追溯信息", ""])
+        for row in trace_rows:
+            trace_id = row.get("id") or "trace"
+            lines.append(f"- {trace_id}：{row.get('source_type')}:{row.get('source_id')} -> {row.get('target_type')}:{row.get('target_id')}（{row.get('relation_type')}）")
+        lines.append("")
+    return lines
+
+
 def _resolve_root(out_dir: str | None, task_type: str, task_id: str, task_name: str | None = None):
     base = out_dir or str(EXPORT_DIR)
     return build_export_root(base, task_type, task_id, task_name)
@@ -420,8 +518,32 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
     manifest_path = skill_dir / "skill.json"
     llm_metadata = _ollama_skill_review(clean_rows)
     content_lines = ["## 输入摘要", ""]
+    content_lines.append(f"- 素材条目：{len(clean_rows)} 条")
+    for line in _source_overview_lines(semantic_metadata.get("source_counts", {})):
+        content_lines.append(line)
+    content_lines.extend(["", "## 能力用途", ""])
+    content_lines.append(llm_metadata.get("llm_summary") or "将输入素材沉淀为可复用的领域知识、执行步骤和训练素材，供 RAG、Skill 或后续数据集构建使用。")
+    content_lines.extend(["", "## 输入素材", ""])
     for idx, row in enumerate(clean_rows, 1):
-        content_lines.append(f"- 样本 {idx}: {json.dumps(row, ensure_ascii=False)}")
+        title_text = _row_title(row, idx)
+        source_text = _source_label(_row_source(row))
+        body = _compact_text(_row_body(row), 360)
+        content_lines.append(f"- 样本 {idx}：{title_text}；来源：{source_text}")
+        if body:
+            content_lines.append(f"  摘要：{body}")
+    content_lines.extend([
+        "",
+        "## 执行步骤",
+        "",
+        "1. 读取输入素材，优先使用已抽取的文本、转写和 OCR 内容。",
+        "2. 按来源和语义类型合并知识片段，保留素材 ID 与语义单元 ID 便于追溯。",
+        "3. 将核心内容整理为可检索语料、问答样本或可执行 Skill 说明。",
+        "4. 对生成结果做人工复核，必要时回到原始素材和追溯链修订。",
+        "",
+        "## 知识片段",
+        "",
+        *_semantic_markdown_lines(clean_rows),
+    ])
     if llm_metadata.get("llm_summary"):
         content_lines.extend(["", "## AI 质检", "", str(llm_metadata["llm_summary"])])
         if llm_metadata.get("llm_usage"):
@@ -465,9 +587,19 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
     content = []
     if llm_metadata.get("llm_summary"):
         content.extend(["## AI 摘要", "", str(llm_metadata["llm_summary"]), ""])
-    content.extend(["## 视频转化摘要", ""])
-    for row in summary_rows:
-        content.append(f"- {json.dumps(row, ensure_ascii=False)}")
+    content.extend([
+        "## 视频转化摘要",
+        "",
+        "本报告由 Envoy 根据项目内的文本、转写、OCR、样本和追溯信息自动生成，用于快速审查素材是否已经形成可复用 AI 素材。",
+        "",
+        "## 素材概览",
+        "",
+        *_source_overview_lines(semantic_metadata.get("source_counts", {})),
+        "",
+        "## 核心内容",
+        "",
+        *_semantic_markdown_lines(summary_rows),
+    ])
     build_markdown_report(title, "\n".join(content), str(out_path))
     manifest = {
         "schema_version": "envoy.markdown.v1",
