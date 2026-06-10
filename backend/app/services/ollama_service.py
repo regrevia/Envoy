@@ -50,7 +50,10 @@ def _load_persisted_config() -> dict[str, Any]:
         return fallback
     if not isinstance(raw, dict):
         return fallback
-    return _normalize_config(raw, fallback, "persisted")
+    try:
+        return _normalize_config(raw, fallback, "persisted")
+    except ValueError:
+        return fallback
 
 
 def _persist_runtime_config(config: dict[str, Any]) -> None:
