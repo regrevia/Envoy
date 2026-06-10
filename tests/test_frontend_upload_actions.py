@@ -35,6 +35,28 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("Upload asset", text)
         self.assertNotIn("Choose project", text)
 
+    def test_upload_page_filters_query_outputs_to_supported_material_types(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const outputOptionIds = new Set(outputOptions.map((option) => option.id));",
+            "filter((item) => outputOptionIds.has(item))",
+            "Array.from(new Set(",
+        ]:
+            self.assertIn(copy, text)
+
+    def test_home_page_passes_output_preferences_into_upload_flow(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const uploadOutputsParam = selectedOutputs.join(',');",
+            "const uploadHref = canProceed",
+            "&outputs=${encodeURIComponent(uploadOutputsParam)}",
+        ]:
+            self.assertIn(copy, text)
+
     def test_upload_page_blocks_empty_files_before_api_request(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
         text = page.read_text(encoding="utf-8")
@@ -273,7 +295,8 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "const canProceed = Boolean(selectedProjectId);",
             "请先创建或选择任务后继续",
             "aria-disabled={!canProceed}",
-            "uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#'",
+            "const uploadOutputsParam = selectedOutputs.join(',');",
+            "uploadHref = canProceed",
             "semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#'",
             "samplesHref = canProceed && selectedOutputs.includes('samples') ?",
             "exportHref = useMemo(() => {",

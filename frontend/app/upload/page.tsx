@@ -19,6 +19,7 @@ const outputOptions = [
   { id: 'rag', label: 'RAG' },
   { id: 'samples', label: '训练样本' },
 ];
+const outputOptionIds = new Set(outputOptions.map((option) => option.id));
 
 const inputStyle = {
   width: '100%',
@@ -78,7 +79,12 @@ export default function UploadPage() {
       setProjectId(projectFromQuery);
     }
     if (outputsFromQuery) {
-      const nextOutputs = outputsFromQuery.split(',').map((item) => item.trim()).filter(Boolean);
+      const nextOutputs = Array.from(new Set(
+        outputsFromQuery
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => outputOptionIds.has(item)),
+      ));
       if (nextOutputs.length) {
         setSelectedOutputs(nextOutputs);
       }
