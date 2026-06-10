@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.asset import AssetCreate
 from app.services.crud_service import create_asset, get_project, list_assets
-from app.services.minio_service import upload_to_storage
+from app.services.minio_service import upload_fileobj_to_storage
 
 router = APIRouter()
 
@@ -49,10 +49,12 @@ async def upload_asset_api(
     if not file.filename or not file.filename.strip():
         raise HTTPException(status_code=400, detail="Uploaded file name is empty")
 
-    file_bytes = await file.read()
-    if not file_bytes:
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size <= 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    storage_info = upload_to_storage(file.filename, file_bytes, file.content_type or "application/octet-stream")
+    storage_info = upload_fileobj_to_storage(file.filename, file.file, file_size, file.content_type or "application/octet-stream")
     payload = AssetCreate(
         project_id=project_id,
         asset_type=normalized_asset_type,
