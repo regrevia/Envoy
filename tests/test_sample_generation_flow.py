@@ -357,6 +357,198 @@ class SampleGenerationFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_sample_job_ignores_canceled_preprocess_units_when_source_is_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-canceled-preprocess-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.processing_task import ProcessingTask
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="sample clean source project", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        ProcessingTask(
+                            id="task-sample-success",
+                            project_id=project.id,
+                            asset_id="asset-stable",
+                            task_type="preprocess",
+                            status="success",
+                            progress=100,
+                            input_config={},
+                        ),
+                        ProcessingTask(
+                            id="task-sample-canceled",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            task_type="preprocess",
+                            status="canceled",
+                            progress=50,
+                            input_config={},
+                            result_summary="Task canceled by user",
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="sample-stable-unit",
+                            project_id=project.id,
+                            asset_id="asset-stable",
+                            segment_id=None,
+                            unit_type="text",
+                            title="稳定单元",
+                            content="稳定完成的知识内容可以生成训练样本。",
+                            labels={"source": "document_text", "stage": "preprocess", "task_id": "task-sample-success"},
+                            confidence=0.91,
+                        ),
+                        SemanticUnit(
+                            id="sample-canceled-partial",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            segment_id=None,
+                            unit_type="document",
+                            title="取消半成品",
+                            content="取消任务的半成品不能生成训练样本。",
+                            labels={"source": "document_text", "stage": "preprocess", "task_id": "task-sample-canceled"},
+                            confidence=0.4,
+                        ),
+                        SemanticUnit(
+                            id="sample-canceled-checkpoint",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            segment_id=None,
+                            unit_type="transcript",
+                            title="取消 checkpoint",
+                            content="取消任务的 checkpoint 也不能生成训练样本。",
+                            labels={
+                                "source": "media_transcript",
+                                "stage": "preprocess",
+                                "task_id": "task-sample-canceled",
+                                "checkpoint": "segment_transcript",
+                            },
+                            confidence=0.4,
+                        ),
+                    ]
+                )
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="generate_samples", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = sample_job.run({"task_id": task_id, "project_id": project_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "samples_generated")
+                self.assertEqual(result["sample_count"], 1)
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(len(samples), 1)
+                self.assertEqual(samples[0].source_unit_id, "sample-stable-unit")
+                sample_text = f"{samples[0].input_text}\n{samples[0].output_text}"
+                self.assertIn("稳定完成的知识内容", sample_text)
+                self.assertNotIn("取消任务的半成品", sample_text)
+                self.assertNotIn("取消任务的 checkpoint", sample_text)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_sample_job_rejects_explicit_canceled_preprocess_unit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-explicit-canceled-source-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.processing_task import ProcessingTask
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="explicit canceled source project", description="", domain_type="knowledge", status="active"))
+                db.add(
+                    ProcessingTask(
+                        id="task-explicit-canceled",
+                        project_id=project.id,
+                        asset_id="asset-explicit-canceled",
+                        task_type="preprocess",
+                        status="canceled",
+                        progress=60,
+                        input_config={},
+                        result_summary="Task canceled by user",
+                    )
+                )
+                db.add(
+                    SemanticUnit(
+                        id="explicit-canceled-unit",
+                        project_id=project.id,
+                        asset_id="asset-explicit-canceled",
+                        segment_id=None,
+                        unit_type="document",
+                        title="显式取消单元",
+                        content="这个取消任务的单元不能被手动指定生成样本。",
+                        labels={"source": "document_text", "stage": "preprocess", "task_id": "task-explicit-canceled"},
+                        confidence=0.45,
+                    )
+                )
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="generate_samples", input_config={"source_unit_id": "explicit-canceled-unit"}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = sample_job.run({"task_id": task_id, "project_id": project_id, "source_unit_id": "explicit-canceled-unit"})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "Source semantic unit is not exportable for sample generation")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "Source semantic unit is not exportable for sample generation")
+                self.assertEqual(samples, [])
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_sample_job_rejects_empty_project_without_creating_placeholder_sample(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-empty-project-test.db'}"
