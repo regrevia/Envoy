@@ -90,6 +90,31 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("borderRadius: 8", text)
         self.assertNotIn("上传响应", text)
 
+    def test_upload_page_shows_readable_next_actions_after_preprocess(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "下一步操作",
+            "素材已上传",
+            "预处理任务",
+            "查看预处理任务",
+            "查看语义单元",
+            "生成训练样本",
+            "导出 Markdown / Skill / RAG",
+            "查看追溯链路",
+            "preprocessResult?.id",
+            "`/tasks/${preprocessResult.id}`",
+            "`/semantic-units?project_id=${asset.project_id}`",
+            "`/generated-samples?project_id=${asset.project_id}`",
+            "`/train-exports?project_id=${asset.project_id}",
+            "`/trace?type=asset&id=${asset.id}`",
+        ]:
+            self.assertIn(copy, text)
+
+        self.assertNotIn("JSON.stringify(result, null, 2)", text)
+        self.assertNotIn("JSON.stringify(preprocessResult, null, 2)", text)
+
     def test_semantic_units_page_exposes_generate_sample_action(self):
         page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
         text = page.read_text(encoding="utf-8")

@@ -155,6 +155,11 @@ export default function UploadPage() {
   const selectedOutputParam = selectedOutputs.join(',');
   const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
   const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&outputs=${encodeURIComponent(selectedOutputParam)}&export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}` : '';
+  const taskHref = preprocessResult?.id ? `/tasks/${preprocessResult.id}` : '/tasks';
+  const semanticHref = asset?.project_id ? `/semantic-units?project_id=${asset.project_id}` : `/semantic-units${projectQuery}`;
+  const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : '/generated-samples';
+  const materialExportHref = asset?.project_id ? `/train-exports?project_id=${asset.project_id}&outputs=${encodeURIComponent(selectedOutputParam)}&export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}` : `/train-exports${exportQuery}`;
+  const traceHref = asset?.id ? `/trace?type=asset&id=${asset.id}` : '/trace';
 
   const toggleOutput = (outputId: string) => {
     setSelectedOutputs((current) => {
@@ -241,7 +246,9 @@ export default function UploadPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 18 }}>上传结果</h2>
-                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{asset?.id ? `素材 ${asset.id}` : '素材上传结果'}</p>
+                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
+                  {asset?.id ? '素材已上传，可以启动预处理转换' : (result?.error || '素材上传结果')}
+                </p>
               </div>
               {asset?.id ? (
                 <button
@@ -253,14 +260,39 @@ export default function UploadPage() {
                 </button>
               ) : null}
             </div>
-            <pre style={{ marginTop: 14, padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-              {JSON.stringify(result, null, 2)}
-            </pre>
-            {preprocessResult ? (
-              <pre style={{ marginTop: 12, padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-                {JSON.stringify(preprocessResult, null, 2)}
-              </pre>
-            ) : null}
+            {asset?.id ? (
+              <div style={{ display: 'grid', gap: 0 }}>
+                <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+                  <strong>素材已上传</strong>
+                  <div style={{ marginTop: 6, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+                    素材 ID：{asset.id}；项目 ID：{asset.project_id || projectId}；类型：{asset.asset_type || assetType}；文件：{asset.file_name || file?.name || '-'}
+                  </div>
+                </div>
+                <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+                  <strong>预处理任务</strong>
+                  <div style={{ marginTop: 6, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+                    {preprocessResult?.error ? `启动失败：${preprocessResult.error}` : preprocessResult?.id ? `任务 ID：${preprocessResult.id}；状态：${preprocessResult.status || 'created'}；进度：${preprocessResult.progress ?? 0}%` : '上传完成后点击“启动预处理”，系统会把素材转为语义单元。'}
+                  </div>
+                  {preprocessResult?.result_summary ? (
+                    <div style={{ marginTop: 6, color: '#374151', fontSize: 13 }}>{preprocessResult.result_summary}</div>
+                  ) : null}
+                </div>
+                <div style={{ padding: '12px 0' }}>
+                  <strong>下一步操作</strong>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                    <a href={taskHref} style={{ color: '#111827', fontWeight: 700 }}>查看预处理任务</a>
+                    <a href={semanticHref} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</a>
+                    <a href={samplesHref} style={{ color: '#111827', fontWeight: 700 }}>生成训练样本</a>
+                    <a href={materialExportHref} style={{ color: '#111827', fontWeight: 700 }}>导出 Markdown / Skill / RAG</a>
+                    <a href={traceHref} style={{ color: '#111827', fontWeight: 700 }}>查看追溯链路</a>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '12px 0', color: '#b91c1c', borderBottom: '1px solid #e5e7eb' }}>
+                {result?.error || '上传未返回有效素材，请重新选择文件。'}
+              </div>
+            )}
           </section>
         ) : null}
       </section>
