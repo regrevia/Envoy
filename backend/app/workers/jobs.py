@@ -1039,7 +1039,7 @@ def preprocess_job(self, payload: dict):
             )
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
-        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=str(semantic_payload), labels={"stage": "preprocess", "source": "media_asset", "task_id": task_id}, confidence=0.8)
+        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=json.dumps(semantic_payload, ensure_ascii=False), labels={"stage": "preprocess", "source": "media_asset", "task_id": task_id}, confidence=0.8)
         db.add(su)
         db.commit()
         db.refresh(su)

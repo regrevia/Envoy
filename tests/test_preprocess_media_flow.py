@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -752,6 +753,10 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertIn("media_asset", sources)
                 self.assertIn("media_transcript", sources)
                 self.assertIn("media_ocr", sources)
+                media_summary = next(unit for unit in units if unit.labels["source"] == "media_asset")
+                media_summary_payload = json.loads(media_summary.content)
+                self.assertEqual(media_summary_payload["stage"], "preprocess")
+                self.assertEqual(media_summary_payload["max_input_seconds"], 600)
                 self.assertTrue(any(unit.unit_type == "transcript" and "segment_000001" in unit.content and "segment_000002" in unit.content for unit in units))
                 self.assertTrue(any(unit.unit_type == "ocr" and "approval checklist" in unit.content for unit in units))
                 summaries = [item["summary"] for item in progress_updates if item["summary"]]
