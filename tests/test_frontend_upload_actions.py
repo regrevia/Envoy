@@ -53,7 +53,22 @@ class FrontendUploadActionsTests(unittest.TestCase):
         for copy in [
             "const uploadOutputsParam = selectedOutputs.join(',');",
             "const uploadHref = canProceed",
+            "asset_type=${encodeURIComponent(selectedAssetType)}",
             "&outputs=${encodeURIComponent(uploadOutputsParam)}",
+            "素材类型",
+            "setSelectedAssetType",
+        ]:
+            self.assertIn(copy, text)
+
+    def test_upload_page_accepts_asset_type_context_from_home(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const fileTypeOptionIds = new Set(fileTypeOptions.map((option) => option.id));",
+            "const assetTypeFromQuery = params.get('asset_type');",
+            "if (assetTypeFromQuery && fileTypeOptionIds.has(assetTypeFromQuery))",
+            "setAssetType(assetTypeFromQuery);",
         ]:
             self.assertIn(copy, text)
 

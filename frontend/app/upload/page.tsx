@@ -21,6 +21,7 @@ const outputOptions = [
 ];
 const outputOptionIds = new Set(outputOptions.map((option) => option.id));
 const outputLabelById = Object.fromEntries(outputOptions.map((option) => [option.id, option.label]));
+const fileTypeOptionIds = new Set(fileTypeOptions.map((option) => option.id));
 const uploadRequestTimeoutMs = 120000;
 
 const inputStyle = {
@@ -76,9 +77,13 @@ export default function UploadPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectFromQuery = params.get('project_id');
+    const assetTypeFromQuery = params.get('asset_type');
     const outputsFromQuery = params.get('outputs');
     if (projectFromQuery) {
       setProjectId(projectFromQuery);
+    }
+    if (assetTypeFromQuery && fileTypeOptionIds.has(assetTypeFromQuery)) {
+      setAssetType(assetTypeFromQuery);
     }
     if (outputsFromQuery) {
       const nextOutputs = Array.from(new Set(
