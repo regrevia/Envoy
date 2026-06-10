@@ -566,6 +566,24 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("panelStyle", text)
         self.assertNotIn("borderRadius: 8", text)
 
+    def test_generated_samples_page_can_start_project_batch_generation(self):
+        page = ROOT_DIR / "frontend" / "app" / "generated-samples" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "批量生成样本",
+            "正在创建样本生成任务",
+            "onGenerateProjectSamples",
+            "/api/v1/tasks/generate-samples",
+            "task_type: 'generate_samples'",
+            "input_config: { limit: 50 }",
+            "batchTask",
+            "查看批量任务",
+            "`/tasks/${batchTask.id}`",
+            "请先从上传页或语义单元页带入项目 ID",
+        ]:
+            self.assertIn(copy, text)
+
     def test_trace_page_uses_core_chain_divider_layout(self):
         page = ROOT_DIR / "frontend" / "app" / "trace" / "page.tsx"
         text = page.read_text(encoding="utf-8")
