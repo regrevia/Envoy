@@ -152,13 +152,14 @@ export default function UploadPage() {
   };
 
   const asset = uploadedAsset(result);
-  const selectedOutputParam = selectedOutputs.join(',');
+  const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));
+  const primaryMaterialOutput = materialOutputs[0] || 'markdown';
   const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
-  const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&outputs=${encodeURIComponent(selectedOutputParam)}&export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}` : '';
+  const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&outputs=${encodeURIComponent(materialOutputs.join(','))}&export_type=${encodeURIComponent(primaryMaterialOutput)}` : '';
   const taskHref = preprocessResult?.id ? `/tasks/${preprocessResult.id}` : '/tasks';
   const semanticHref = asset?.project_id ? `/semantic-units?project_id=${asset.project_id}` : `/semantic-units${projectQuery}`;
-  const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : '/generated-samples';
-  const materialExportHref = asset?.project_id ? `/train-exports?project_id=${asset.project_id}&outputs=${encodeURIComponent(selectedOutputParam)}&export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}` : `/train-exports${exportQuery}`;
+  const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : `/generated-samples${projectQuery}`;
+  const materialExportHref = asset?.project_id ? `/train-exports?project_id=${asset.project_id}&outputs=${encodeURIComponent(materialOutputs.join(','))}&export_type=${encodeURIComponent(primaryMaterialOutput)}` : `/train-exports${exportQuery}`;
   const traceHref = asset?.id ? `/trace?type=asset&id=${asset.id}` : '/trace';
 
   const toggleOutput = (outputId: string) => {

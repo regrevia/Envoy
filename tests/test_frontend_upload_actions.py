@@ -115,6 +115,21 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("JSON.stringify(result, null, 2)", text)
         self.assertNotIn("JSON.stringify(preprocessResult, null, 2)", text)
 
+    def test_upload_page_keeps_samples_separate_from_material_export_type(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));",
+            "const primaryMaterialOutput = materialOutputs[0] || 'markdown';",
+            "outputs=${encodeURIComponent(materialOutputs.join(','))}",
+            "export_type=${encodeURIComponent(primaryMaterialOutput)}",
+            "const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : `/generated-samples${projectQuery}`;",
+        ]:
+            self.assertIn(copy, text)
+        self.assertNotIn("export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}", text)
+        self.assertNotIn("const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : '/generated-samples';", text)
+
     def test_semantic_units_page_exposes_generate_sample_action(self):
         page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
         text = page.read_text(encoding="utf-8")
