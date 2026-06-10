@@ -115,7 +115,7 @@ function canCancel(task?: Task | null) {
 }
 
 function canRetry(task?: Task | null) {
-  return task?.status === 'failed' || task?.status === 'dispatch_failed';
+  return task?.status === 'failed' || task?.status === 'dispatch_failed' || task?.status === 'canceled';
 }
 
 function taskTypeLabel(taskType?: string | null) {
@@ -226,6 +226,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
             <span>卡住阈值: {formatDurationSeconds(diagnostics?.stale_after_seconds ?? task?.stale_after_seconds)}</span>
             <span>未更新时间: {formatDurationSeconds(diagnostics?.stale_seconds ?? task?.stale_seconds)}</span>
             <span>{staleLabel(task)}</span>
+            <span>疑似卡住后可先取消任务，再重试任务</span>
           </div>
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb', color: '#374151', display: 'grid', gap: 8 }}>
             <div><strong>后端诊断</strong>: {diagnostics?.summary || '等待诊断结果'}</div>

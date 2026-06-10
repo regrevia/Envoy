@@ -303,6 +303,16 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_task_pages_allow_retry_after_canceling_stuck_tasks(self):
+        list_page = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
+        detail_page = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("task.status === 'failed' || task.status === 'dispatch_failed' || task.status === 'canceled'", list_page)
+        self.assertIn("task?.status === 'failed' || task?.status === 'dispatch_failed' || task?.status === 'canceled'", detail_page)
+        for text in [list_page, detail_page]:
+            self.assertIn("疑似卡住后可先取消任务，再重试任务", text)
+            self.assertIn("重试任务", text)
+
     def test_home_page_uses_vertical_divider_flow_not_card_grid(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
@@ -496,14 +506,12 @@ class FrontendUploadActionsTests(unittest.TestCase):
             self.assertIn("重试任务", text)
             self.assertIn("正在重试", text)
 
-    def test_task_pages_retry_only_for_failed_or_dispatch_failed_tasks(self):
+    def test_task_pages_retry_for_failed_dispatch_failed_or_canceled_tasks(self):
         task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
         task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
 
-        self.assertIn("return task.status === 'failed' || task.status === 'dispatch_failed';", task_list)
-        self.assertIn("return task?.status === 'failed' || task?.status === 'dispatch_failed';", task_detail)
-        self.assertNotIn("|| task.status === 'canceled'", task_list)
-        self.assertNotIn("|| task?.status === 'canceled'", task_detail)
+        self.assertIn("return task.status === 'failed' || task.status === 'dispatch_failed' || task.status === 'canceled';", task_list)
+        self.assertIn("return task?.status === 'failed' || task?.status === 'dispatch_failed' || task?.status === 'canceled';", task_detail)
 
     def test_task_pages_use_divider_layout_over_cards(self):
         task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
