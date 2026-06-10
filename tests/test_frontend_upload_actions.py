@@ -68,6 +68,16 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_upload_page_uses_extended_timeout_for_large_asset_uploads(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const uploadRequestTimeoutMs = 120000;",
+            "timeoutMs: uploadRequestTimeoutMs",
+        ]:
+            self.assertIn(copy, text)
+
     def test_upload_page_shows_supported_asset_types_from_backend_contract(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
         text = page.read_text(encoding="utf-8")

@@ -20,6 +20,7 @@ const outputOptions = [
   { id: 'samples', label: '训练样本' },
 ];
 const outputOptionIds = new Set(outputOptions.map((option) => option.id));
+const uploadRequestTimeoutMs = 120000;
 
 const inputStyle = {
   width: '100%',
@@ -113,7 +114,7 @@ export default function UploadPage() {
     setUploading(true);
     setMessage('正在上传素材...');
     try {
-      const data = await apiJson('/api/v1/assets/upload', { method: 'POST', body: form });
+      const data = await apiJson('/api/v1/assets/upload', { method: 'POST', body: form, timeoutMs: uploadRequestTimeoutMs });
       setResult(data);
       setPreprocessResult(null);
       setMessage('上传完成，可以启动预处理');
