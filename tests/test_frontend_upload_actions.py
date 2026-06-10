@@ -122,13 +122,27 @@ class FrontendUploadActionsTests(unittest.TestCase):
         for copy in [
             "const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));",
             "const primaryMaterialOutput = materialOutputs[0] || 'markdown';",
-            "outputs=${encodeURIComponent(materialOutputs.join(','))}",
+            "outputs=${encodeURIComponent(materialOutputParam)}",
             "export_type=${encodeURIComponent(primaryMaterialOutput)}",
             "const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : `/generated-samples${projectQuery}`;",
         ]:
             self.assertIn(copy, text)
         self.assertNotIn("export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}", text)
         self.assertNotIn("const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : '/generated-samples';", text)
+
+    def test_upload_page_disables_material_export_when_only_samples_selected(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const hasMaterialOutput = materialOutputs.length > 0;",
+            "const materialOutputParam = hasMaterialOutput ? materialOutputs.join(',') : '';",
+            "const exportQuery = projectId && hasMaterialOutput ?",
+            "const materialExportHref = hasMaterialOutput",
+            "aria-disabled={!hasMaterialOutput}",
+            "请先勾选 Markdown、Skill 或 RAG 后再导出 AI 素材",
+        ]:
+            self.assertIn(copy, text)
 
     def test_semantic_units_page_exposes_generate_sample_action(self):
         page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
