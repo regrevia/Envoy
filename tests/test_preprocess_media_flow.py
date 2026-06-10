@@ -1711,6 +1711,96 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_failed_media_preprocess_removes_partial_segment_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-media-failed-checkpoint-cleanup-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.services.media_service import MediaProcessingError
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="failed checkpoint cleanup project", description="", domain_type="video", status="active"))
+                storage_info = storage_client.upload_bytes("failed-checkpoint.mp4", b"fake video bytes", "video/mp4")
+                asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="video",
+                        file_name="failed-checkpoint.mp4",
+                        file_path=storage_info["object_name"],
+                        mime_type="video/mp4",
+                        metadata={"storage": storage_info["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            def fake_split(video_path, output_dir):
+                return [
+                    str(Path(output_dir) / "segment_000001.mp4"),
+                    str(Path(output_dir) / "segment_000002.mp4"),
+                ]
+
+            def fail_after_first_checkpoint(segment_path):
+                if Path(segment_path).stem == "segment_000001":
+                    return {
+                        "status": "success",
+                        "text": "first segment should be cleaned after failure.",
+                        "segments": [{"start": 0.0, "end": 8.0, "text": "first segment should be cleaned after failure."}],
+                        "error": None,
+                    }
+                raise MediaProcessingError("transcription worker crashed")
+
+            with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+                patch("app.workers.jobs.extract_frames", return_value=[]), \
+                patch("app.workers.jobs.run_ocr_on_frames", side_effect=AssertionError("failed transcription should not reach OCR")), \
+                patch("app.workers.jobs.transcribe_audio", side_effect=fail_after_first_checkpoint):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+                traces = db.query(TraceLink).filter(
+                    TraceLink.source_type == "asset",
+                    TraceLink.source_id == asset_id,
+                    TraceLink.target_type == "semantic_unit",
+                ).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "transcription worker crashed")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "transcription worker crashed")
+                self.assertEqual(units, [])
+                self.assertEqual(traces, [])
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_preprocess_fails_when_all_video_transcription_segments_fail(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-video-transcription-failure-test.db'}"
