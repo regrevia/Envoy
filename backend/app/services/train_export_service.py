@@ -342,12 +342,27 @@ def _write_artifact_trace_links(db, project_id: str, artifacts, rows: list[dict]
     return links
 
 
+def _semantic_unit_is_exportable(row: SemanticUnit, tasks_by_id: dict[str, ProcessingTask]):
+    labels = row.labels if isinstance(row.labels, dict) else {}
+    if labels.get("checkpoint") == "segment_transcript":
+        return False
+    task_id = labels.get("task_id")
+    if not task_id:
+        return True
+    task = tasks_by_id.get(task_id)
+    if task is None:
+        return True
+    return task.status == "success"
+
+
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
-    semantic_units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.desc()).all()
+    all_semantic_units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.desc()).all()
     samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.desc()).all()
     assets = db.query(Asset).filter(Asset.project_id == project_id).all()
     tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all()
     artifacts = db.query(Artifact).filter(Artifact.project_id == project_id).all()
+    tasks_by_id = {task.id: task for task in tasks}
+    semantic_units = [row for row in all_semantic_units if _semantic_unit_is_exportable(row, tasks_by_id)]
     project_entity_ids = {
         *(row.id for row in semantic_units),
         *(row.id for row in samples),

@@ -427,6 +427,129 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_exports_ignore_semantic_units_from_canceled_preprocess_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-canceled-preprocess-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.processing_task import ProcessingTask
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="取消任务导出过滤", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        ProcessingTask(
+                            id="task-success-preprocess",
+                            project_id=project.id,
+                            asset_id="asset-stable",
+                            task_type="preprocess",
+                            status="success",
+                            progress=100,
+                            input_config={},
+                        ),
+                        ProcessingTask(
+                            id="task-canceled-preprocess",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            task_type="preprocess",
+                            status="canceled",
+                            progress=45,
+                            input_config={},
+                            result_summary="Task canceled by user",
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="stable-unit",
+                            project_id=project.id,
+                            asset_id="asset-stable",
+                            segment_id=None,
+                            unit_type="text",
+                            title="稳定素材",
+                            content="这是成功预处理后的正式内容。",
+                            labels={"source": "document_text", "stage": "preprocess", "task_id": "task-success-preprocess"},
+                            confidence=0.9,
+                        ),
+                        SemanticUnit(
+                            id="canceled-partial-unit",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            segment_id=None,
+                            unit_type="document",
+                            title="取消任务半成品",
+                            content="这段取消任务产生的半成品不应进入任何自动导出。",
+                            labels={"source": "document_text", "stage": "preprocess", "task_id": "task-canceled-preprocess"},
+                            confidence=0.5,
+                        ),
+                        SemanticUnit(
+                            id="canceled-checkpoint-unit",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            segment_id=None,
+                            unit_type="transcript",
+                            title="取消任务 checkpoint",
+                            content="取消中的分段 checkpoint 也不能进入导出。",
+                            labels={
+                                "source": "media_transcript",
+                                "stage": "preprocess",
+                                "task_id": "task-canceled-preprocess",
+                                "checkpoint": "segment_transcript",
+                            },
+                            confidence=0.5,
+                        ),
+                    ]
+                )
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                results = {}
+                for export_type in ("markdown", "skill", "rag"):
+                    response = client.post(
+                        "/api/v1/train-exports/auto",
+                        json={"project_id": project_id, "export_type": export_type, "title": f"{export_type} clean export"},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    results[export_type] = response.json()
+
+                markdown_text = Path(results["markdown"]["path"]).read_text(encoding="utf-8")
+                skill_text = Path(results["skill"]["path"]).read_text(encoding="utf-8")
+                rag_rows = [
+                    json.loads(line)
+                    for line in Path(results["rag"]["path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                rag_text = "\n".join(row["text"] for row in rag_rows)
+
+                for exported_text in (markdown_text, skill_text, rag_text):
+                    self.assertIn("这是成功预处理后的正式内容。", exported_text)
+                    self.assertNotIn("这段取消任务产生的半成品", exported_text)
+                    self.assertNotIn("取消中的分段 checkpoint", exported_text)
+                self.assertEqual({row["metadata"]["semantic_unit_id"] for row in rag_rows}, {"stable-unit"})
+            finally:
+                engine.dispose()
+
     def test_auto_rag_export_uses_ollama_metadata_when_available(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-ollama-test.db'}"
