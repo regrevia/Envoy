@@ -97,6 +97,52 @@ class TaskDispatchFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_task_api_marks_pending_task_stale_when_dispatch_never_starts(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-pending-stale-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+            os.environ["TASK_STALE_AFTER_SECONDS"] = "60"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pending stale task project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                task.status = "pending"
+                task.progress = 0
+                task.updated_at = datetime.utcnow() - timedelta(seconds=180)
+                db.commit()
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.get(f"/api/v1/tasks/{task_id}")
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body["status"], "pending")
+                self.assertTrue(body["is_stale"])
+                self.assertGreaterEqual(body["stale_seconds"], 60)
+                self.assertEqual(body["stale_after_seconds"], 60)
+            finally:
+                engine.dispose()
+
     def test_task_diagnostics_api_returns_backend_action_for_stale_running_task(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-diagnostics-api-test.db'}"
@@ -149,6 +195,61 @@ class TaskDispatchFlowTests(unittest.TestCase):
                 self.assertIn("任务长时间未更新", body["summary"])
                 self.assertIn("取消任务", body["next_actions"])
                 self.assertIn("重试任务", body["next_actions"])
+            finally:
+                engine.dispose()
+
+    def test_task_diagnostics_api_returns_backend_action_for_stale_pending_task(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-task-pending-diagnostics-api-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+            os.environ["TASK_STALE_AFTER_SECONDS"] = "60"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pending diagnostics project", description="", domain_type="video", status="active"))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="preprocess", input_config={}))
+                task.status = "pending"
+                task.progress = 0
+                task.result_summary = "waiting for worker"
+                task.updated_at = datetime.utcnow() - timedelta(seconds=180)
+                db.commit()
+                task_id = task.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.get(f"/api/v1/tasks/{task_id}/diagnostics")
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body["task_id"], task_id)
+                self.assertEqual(body["status"], "pending")
+                self.assertEqual(body["severity"], "stale")
+                self.assertTrue(body["is_stale"])
+                self.assertTrue(body["can_cancel"])
+                self.assertFalse(body["can_retry"])
+                self.assertEqual(body["recommended_action"], "cancel_then_retry")
+                self.assertGreaterEqual(body["stale_seconds"], 60)
+                self.assertEqual(body["stale_after_seconds"], 60)
+                self.assertIn("任务排队后长时间未开始", body["summary"])
+                self.assertIn("取消任务", body["next_actions"])
+                self.assertIn("检查任务队列和执行器", body["next_actions"])
             finally:
                 engine.dispose()
 
