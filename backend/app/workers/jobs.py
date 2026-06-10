@@ -917,6 +917,7 @@ def preprocess_job(self, payload: dict):
                 return _canceled_result(payload)
             audio_dir = _audio_task_temp_dir(task_id)
             media_temp_dirs.append(audio_dir)
+            _safe_update(db, task_id, "running", 20, result_summary="audio split running")
             audio_segment_paths = _split_audio_for_task(db, task_id, source_path, str(audio_dir))
             _safe_update(db, task_id, "running", 35, result_summary=f"audio split done: {len(audio_segment_paths)} segment(s)")
             if _task_is_canceled(db, task_id):
@@ -1029,11 +1030,13 @@ def preprocess_job(self, payload: dict):
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_dir, frame_dir = _media_task_temp_dirs(task_id)
         media_temp_dirs.extend([segment_dir, frame_dir])
+        _safe_update(db, task_id, "running", 20, result_summary="media split running")
         segment_paths = _split_video_for_task(db, task_id, source_path, str(segment_dir))
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         if MEDIA_ENABLE_FRAME_EXTRACTION:
+            _safe_update(db, task_id, "running", 40, result_summary="frame extraction running")
             frame_paths = _extract_frames_for_task(db, task_id, source_path, str(frame_dir))
             frame_extraction_skipped = False
             _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
@@ -1088,6 +1091,7 @@ def preprocess_job(self, payload: dict):
             ocr_skipped = True
             _safe_update(db, task_id, "running", 90, result_summary="ocr skipped: frame extraction disabled")
         elif MEDIA_ENABLE_OCR:
+            _safe_update(db, task_id, "running", 88, result_summary=f"ocr running: {len(frame_paths)} frame(s)")
             ocr_results = _run_ocr_for_task(db, task_id, frame_paths)
             ocr_skipped = False
             _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
