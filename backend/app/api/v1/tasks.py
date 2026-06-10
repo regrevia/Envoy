@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from app.core.config import TASK_STALE_AFTER_SECONDS
+from app.core.storage import storage_client
 from app.db.session import get_db
 from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
@@ -20,6 +23,30 @@ RETRYABLE_TASKS = {
     "export_skill": export_skill_job,
     "export_markdown": export_markdown_job,
 }
+
+
+def _is_remote_source_path(source_path: str):
+    return urlparse(source_path).scheme.lower() in {"http", "https", "s3"}
+
+
+def _asset_storage_file_exists(asset):
+    if asset is None or not asset.file_path:
+        return False
+    if storage_client.mode == "local":
+        return storage_client._local_path(asset.file_path).is_file() or Path(asset.file_path).is_file()
+    metadata = asset.extra_metadata if isinstance(asset.extra_metadata, dict) else {}
+    return metadata.get("storage") in {"minio", "local"}
+
+
+def _retry_input_config(db: Session, original):
+    input_config = dict(original.input_config or {})
+    source_path = str(input_config.get("source_path") or "").strip()
+    if original.task_type == "preprocess" and source_path and not _is_remote_source_path(source_path):
+        asset = get_asset(db, original.asset_id) if original.asset_id else None
+        if not Path(source_path).is_file() and _asset_storage_file_exists(asset):
+            input_config.pop("source_path", None)
+    input_config["retry_of_task_id"] = original.id
+    return input_config
 
 
 def _task_staleness(task):
@@ -189,8 +216,7 @@ def retry_task_api(task_id: str, db: Session = Depends(get_db)):
     worker = RETRYABLE_TASKS.get(original.task_type)
     if worker is None:
         raise HTTPException(status_code=400, detail="Task type is not retryable")
-    input_config = dict(original.input_config or {})
-    input_config["retry_of_task_id"] = original.id
+    input_config = _retry_input_config(db, original)
     payload = TaskCreate(
         project_id=original.project_id,
         asset_id=original.asset_id,
