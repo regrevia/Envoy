@@ -79,6 +79,12 @@ def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_d
     return extract_frames(source_path, output_dir)
 
 
+def _run_ocr_for_task(db, task_id: str | None, frame_paths: list[str]):
+    if _supports_should_cancel(run_ocr_on_frames):
+        return run_ocr_on_frames(frame_paths, should_cancel=lambda: _task_is_canceled(db, task_id))
+    return run_ocr_on_frames(frame_paths)
+
+
 def _canceled_result(payload: dict, semantic: dict | None = None):
     result = {"status": "canceled", "payload": payload}
     if semantic is not None:
@@ -741,7 +747,7 @@ def preprocess_job(self, payload: dict):
             if unit_type == "image":
                 if _task_is_canceled(db, task_id):
                     return _canceled_result(payload)
-                ocr_results = run_ocr_on_frames([source_path])
+                ocr_results = _run_ocr_for_task(db, task_id, [source_path])
                 if _task_is_canceled(db, task_id):
                     return _canceled_result(payload)
                 extracted_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
@@ -961,7 +967,7 @@ def preprocess_job(self, payload: dict):
             ocr_skipped = True
             _safe_update(db, task_id, "running", 90, result_summary="ocr skipped: frame extraction disabled")
         elif MEDIA_ENABLE_OCR:
-            ocr_results = run_ocr_on_frames(frame_paths)
+            ocr_results = _run_ocr_for_task(db, task_id, frame_paths)
             ocr_skipped = False
             _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
         else:

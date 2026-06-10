@@ -6,6 +6,7 @@ from app.core.config import (
     MEDIA_FRAME_INTERVAL_SECONDS,
     MEDIA_MAX_FRAME_COUNT,
     MEDIA_MAX_SEGMENT_COUNT,
+    MEDIA_OCR_TIMEOUT_SEC,
     MEDIA_SEGMENT_SECONDS,
     MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
 )
@@ -35,4 +36,5 @@ def media_health():
         "frame_extraction_enabled": MEDIA_ENABLE_FRAME_EXTRACTION,
         "ocr_enabled": MEDIA_ENABLE_OCR,
         "transcription_timeout_sec": MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
+        "ocr_timeout_sec": MEDIA_OCR_TIMEOUT_SEC,
     }
