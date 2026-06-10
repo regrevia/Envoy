@@ -183,7 +183,10 @@ export default function HomePage() {
     opacity: 0.58,
     cursor: 'not-allowed',
   } as const;
-  const uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#';
+  const uploadOutputsParam = selectedOutputs.join(',');
+  const uploadHref = canProceed
+    ? `/upload?project_id=${selectedProjectId}${uploadOutputsParam ? `&outputs=${encodeURIComponent(uploadOutputsParam)}` : ''}`
+    : '#';
   const semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#';
   const samplesHref = canProceed && selectedOutputs.includes('samples') ?
     `/generated-samples?project_id=${selectedProjectId}` :
