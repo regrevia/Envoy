@@ -762,6 +762,8 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 summaries = [item["summary"] for item in progress_updates if item["summary"]]
                 self.assertIn("media split done: 2 segment(s)", summaries)
                 self.assertIn("frame extraction done: 1 frame pattern(s)", summaries)
+                self.assertIn("audio transcription running: 1/2 segment(s)", summaries)
+                self.assertIn("audio transcription running: 2/2 segment(s)", summaries)
                 self.assertIn("audio transcription done: 2/2 segment(s)", summaries)
                 self.assertIn("ocr done: 1 frame result(s)", summaries)
             finally:
@@ -1211,6 +1213,8 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(result["semantic"]["max_input_seconds"], 600)
                 self.assertEqual(result["semantic"]["source"], "audio_transcript")
                 self.assertIn("audio split done: 2 segment(s)", summaries)
+                self.assertIn("audio transcription running: 1/2 segment(s)", summaries)
+                self.assertIn("audio transcription running: 2/2 segment(s)", summaries)
                 self.assertIn("audio transcription done: 2/2 segment(s)", summaries)
                 self.assertTrue(any(unit.labels.get("source") == "audio_transcript" for unit in units))
                 self.assertTrue(any("audio_segment_000001 stable conversion transcript" in unit.content for unit in units))
