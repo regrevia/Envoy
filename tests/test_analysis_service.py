@@ -65,6 +65,26 @@ class AnalysisServiceTests(unittest.TestCase):
         self.assertIn("RAG", payload["labels"])
         self.assertIn("长文本", payload["labels"])
 
+    def test_analysis_payload_marks_incomplete_ollama_json_without_using_it_as_summary(self):
+        from app.services.analysis_service import build_analysis_payload
+
+        with patch("app.services.analysis_service.generate_with_ollama") as generate:
+            generate.return_value = {
+                "enabled": True,
+                "status": "success",
+                "text": '{"labels": ["不完整"]}',
+                "error": None,
+            }
+
+            payload = build_analysis_payload({"text": "稳定的回退摘要"}, asset_type="text")
+
+        self.assertEqual(payload["llm"]["status"], "success")
+        self.assertEqual(payload["llm"]["parse_status"], "incomplete")
+        self.assertEqual(payload["llm"]["parse_error"], "missing structured field(s): summary")
+        self.assertEqual(payload["llm"]["summary"], "")
+        self.assertEqual(payload["scenes"][0]["summary"], "稳定的回退摘要")
+        self.assertNotIn("不完整", payload["labels"])
+
     def test_analysis_payload_records_ollama_failure_without_breaking_fallback(self):
         from app.services.analysis_service import build_analysis_payload
 

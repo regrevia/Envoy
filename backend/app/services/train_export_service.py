@@ -13,7 +13,7 @@ from app.schemas.artifact import ArtifactCreate
 from app.services.crud_service import create_artifact, create_export_record
 from app.services.export_paths import build_export_root, build_subdir
 from app.services.export_service import build_dataset_jsonl, build_markdown_report
-from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
+from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object_with_status
 
 
 def _dedupe_rows(rows: list[dict]):
@@ -459,6 +459,14 @@ def _ollama_request_metadata(result: dict):
     return metadata
 
 
+def _ollama_parse_metadata(text: str, required_keys: tuple[str, ...]):
+    parsed_result = parse_ollama_json_object_with_status(text, required_keys=required_keys)
+    metadata = {"ollama_parse_status": parsed_result["parse_status"]}
+    if parsed_result.get("parse_error"):
+        metadata["ollama_parse_error"] = parsed_result["parse_error"]
+    return parsed_result["parsed"], metadata
+
+
 def _ollama_rag_metadata(text: str):
     result = generate_with_ollama(
         "Extract RAG metadata from the source. Return JSON with summary, keywords, and usage.",
@@ -468,7 +476,10 @@ def _ollama_rag_metadata(text: str):
     if result.get("status") != "success":
         return metadata
 
-    parsed = parse_ollama_json_object(result.get("text", ""))
+    parsed, parse_metadata = _ollama_parse_metadata(result.get("text", ""), ("summary",))
+    metadata.update(parse_metadata)
+    if parse_metadata["ollama_parse_status"] != "parsed":
+        return metadata
     if isinstance(parsed.get("summary"), str) and parsed["summary"].strip():
         metadata["llm_summary"] = parsed["summary"].strip()
     keywords = parsed.get("keywords")
@@ -489,7 +500,10 @@ def _ollama_markdown_summary(rows: list[dict]):
     if result.get("status") != "success":
         return metadata
 
-    parsed = parse_ollama_json_object(result.get("text", ""))
+    parsed, parse_metadata = _ollama_parse_metadata(result.get("text", ""), ("summary",))
+    metadata.update(parse_metadata)
+    if parse_metadata["ollama_parse_status"] != "parsed":
+        return metadata
     if isinstance(parsed.get("summary"), str) and parsed["summary"].strip():
         metadata["llm_summary"] = parsed["summary"].strip()
     return metadata
@@ -505,7 +519,10 @@ def _ollama_skill_review(rows: list[dict]):
     if result.get("status") != "success":
         return metadata
 
-    parsed = parse_ollama_json_object(result.get("text", ""))
+    parsed, parse_metadata = _ollama_parse_metadata(result.get("text", ""), ("summary",))
+    metadata.update(parse_metadata)
+    if parse_metadata["ollama_parse_status"] != "parsed":
+        return metadata
     if isinstance(parsed.get("summary"), str) and parsed["summary"].strip():
         metadata["llm_summary"] = parsed["summary"].strip()
     if isinstance(parsed.get("usage"), str) and parsed["usage"].strip():
