@@ -62,6 +62,14 @@ def _generated_sample_is_export_source(sample: GeneratedSample, exportable_seman
     return sample.source_unit_id in exportable_semantic_ids
 
 
+def _generated_sample_has_export_content(sample: GeneratedSample):
+    input_text = str(sample.input_text or "").strip()
+    output_text = str(sample.output_text or "").strip()
+    if not input_text or not output_text:
+        return False
+    return output_text != "No source content was available."
+
+
 def _transcribe_audio_for_task(db, task_id: str | None, segment_path: str):
     candidate = getattr(transcribe_audio, "side_effect", None) or transcribe_audio
     try:
@@ -638,6 +646,45 @@ def _readable_source_text(value):
     return "\n".join(deduped).strip() or text
 
 
+def _readable_sample_source_text(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    if not isinstance(parsed, (dict, list)):
+        return text
+
+    parts = []
+    if isinstance(parsed, list):
+        _append_readable_parts(parts, parsed)
+    else:
+        transcript = parsed.get("transcript")
+        if isinstance(transcript, dict):
+            _append_readable_parts(parts, transcript.get("text"))
+        for key in ("ocr", "scenes", "rules", "concepts", "steps", "actions", "keywords"):
+            _append_readable_parts(parts, parsed.get(key))
+        for key in ("summary", "preview", "content", "text", "title"):
+            _append_readable_parts(parts, parsed.get(key))
+
+    deduped = []
+    seen = set()
+    for part in parts:
+        if part in seen:
+            continue
+        seen.add(part)
+        deduped.append(part)
+    return "\n".join(deduped).strip()
+
+
+def _semantic_unit_has_sample_content(unit: SemanticUnit | None):
+    if unit is None:
+        return False
+    return bool(_readable_sample_source_text(unit.content))
+
+
 def _source_content_format(value):
     try:
         parsed = json.loads(str(value or "").strip())
@@ -649,7 +696,7 @@ def _source_content_format(value):
 def _sample_fallback(unit: SemanticUnit | None, payload: dict):
     title = (unit.title if unit else None) or payload.get("title") or "source material"
     content = (unit.content if unit else None) or payload.get("content") or payload.get("text") or ""
-    content = _readable_source_text(content)
+    content = _readable_sample_source_text(content)
     prompt = f"What are the key points from {title}?"
     answer = content[:1200] if content else "No source content was available."
     return {
@@ -668,7 +715,7 @@ def _parse_sample_text(text: str):
 
 def _build_generated_sample(unit: SemanticUnit | None, payload: dict):
     fallback = _sample_fallback(unit, payload)
-    source_text = _readable_source_text(unit.content if unit else fallback["output_text"])
+    source_text = _readable_sample_source_text(unit.content if unit else fallback["output_text"])
     llm_result = generate_with_ollama(
         "Create one high-quality training sample from the source material. Return JSON with sample_type, input, output, and quality_score.",
         str(source_text or ""),
@@ -1254,6 +1301,10 @@ def sample_job(self, payload: dict):
                 message = "Source semantic unit is not exportable for sample generation"
                 _safe_update(db, task_id, "failed", 100, error_message=message)
                 return {"status": "failed", "payload": payload, "error": message}
+            if not _semantic_unit_has_sample_content(unit):
+                message = "Source semantic unit has no usable content for sample generation"
+                _safe_update(db, task_id, "failed", 100, error_message=message)
+                return {"status": "failed", "payload": payload, "error": message}
             sample = _persist_generated_sample(db, project_id, unit, payload)
             _safe_update(db, task_id, "success", 100, result_summary="1 sample generated")
             return {"status": "samples_generated", "payload": payload, "sample_id": sample.id, "sample_count": 1}
@@ -1269,7 +1320,12 @@ def sample_job(self, payload: dict):
             if project_id
             else []
         )
-        units = [unit for unit in units if _semantic_unit_is_sample_source(unit, tasks_by_id)][:batch_limit]
+        units = [
+            unit
+            for unit in units
+            if _semantic_unit_is_sample_source(unit, tasks_by_id)
+            and _semantic_unit_has_sample_content(unit)
+        ][:batch_limit]
         samples = [_persist_generated_sample(db, project_id, unit, payload) for unit in units]
         if not samples:
             message = "No semantic units available for sample generation"
@@ -1303,7 +1359,12 @@ def export_job(self, payload: dict):
         project_semantic_ids = {unit.id for unit in all_semantic_unit_models}
         exportable_semantic_ids = {unit.id for unit in semantic_unit_models}
         all_sample_models = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.asc()).all() if project_id else []
-        sample_models = [sample for sample in all_sample_models if _generated_sample_is_export_source(sample, exportable_semantic_ids, project_semantic_ids)]
+        sample_models = [
+            sample
+            for sample in all_sample_models
+            if _generated_sample_is_export_source(sample, exportable_semantic_ids, project_semantic_ids)
+            and _generated_sample_has_export_content(sample)
+        ]
         if not semantic_unit_models and not sample_models:
             message = "No exportable rows found for project"
             _safe_update(db, task_id, "failed", 100, error_message=message)

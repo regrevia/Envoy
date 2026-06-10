@@ -1548,6 +1548,86 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_auto_export_filters_placeholder_generated_samples(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-placeholder-sample-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="占位样本过滤项目", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="placeholder-source-unit",
+                    project_id=project.id,
+                    asset_id="asset-placeholder",
+                    segment_id=None,
+                    unit_type="text",
+                    title="真实知识",
+                    content="真实知识内容应该保留。",
+                    labels={"source": "text_asset", "stage": "preprocess"},
+                    confidence=0.9,
+                )
+                valid_sample = GeneratedSample(
+                    id="valid-auto-sample",
+                    project_id=project.id,
+                    source_unit_id=unit.id,
+                    sample_type="qa",
+                    input_text="真实问题",
+                    output_text="真实答案应该保留。",
+                    quality_score=0.9,
+                )
+                placeholder_sample = GeneratedSample(
+                    id="placeholder-auto-sample",
+                    project_id=project.id,
+                    source_unit_id=unit.id,
+                    sample_type="qa",
+                    input_text="真实知识\n\nWhat are the key points from 真实知识?",
+                    output_text="No source content was available.",
+                    quality_score=0.45,
+                )
+                db.add_all([unit, valid_sample, placeholder_sample])
+                db.commit()
+                project_id = project.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports/auto",
+                    json={"project_id": project_id, "export_type": "skill", "title": "占位样本过滤"},
+                )
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                skill_text = Path(body["path"]).read_text(encoding="utf-8")
+                manifest_text = Path(body["paths"]["manifest"]).read_text(encoding="utf-8")
+                exported_text = skill_text + "\n" + manifest_text
+
+                self.assertIn("valid-auto-sample", exported_text)
+                self.assertIn("真实答案应该保留", exported_text)
+                self.assertNotIn("placeholder-auto-sample", exported_text)
+                self.assertNotIn("No source content was available", exported_text)
+            finally:
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
