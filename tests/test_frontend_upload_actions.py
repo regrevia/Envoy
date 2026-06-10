@@ -314,6 +314,27 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_train_exports_page_can_auto_export_selected_outputs_from_home(self):
+        page = ROOT_DIR / "frontend" / "app" / "train-exports" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "selectedOutputs",
+            "setSelectedOutputs",
+            "outputsFromQuery.split(',')",
+            "批量自动导出",
+            "导出所选产物",
+            "batchResults",
+            "Promise.all",
+            "selectedOutputs.map",
+            "/api/v1/train-exports/auto",
+            "export_type: item",
+            "Markdown",
+            "Skill",
+            "RAG",
+        ]:
+            self.assertIn(copy, text)
+
     def test_train_exports_page_has_chinese_json_validation_feedback(self):
         page = ROOT_DIR / "frontend" / "app" / "train-exports" / "page.tsx"
         text = page.read_text(encoding="utf-8")
