@@ -479,6 +479,22 @@ class FrontendUploadActionsTests(unittest.TestCase):
             ]:
                 self.assertIn(copy, text)
 
+    def test_task_detail_uses_backend_diagnostics_endpoint(self):
+        task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
+
+        for copy in [
+            "type TaskDiagnostics",
+            "diagnostics",
+            "setDiagnostics",
+            "`/api/v1/tasks/${task_id}/diagnostics`",
+            "recommended_action",
+            "next_actions",
+            "后端诊断",
+            "建议动作",
+            "诊断结论",
+        ]:
+            self.assertIn(copy, task_detail)
+
     def test_task_pages_make_media_processing_limits_visible(self):
         task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
         task_detail = (ROOT_DIR / "frontend" / "app" / "tasks" / "[task_id]" / "page.tsx").read_text(encoding="utf-8")
