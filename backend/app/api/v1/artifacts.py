@@ -23,6 +23,8 @@ MANIFEST_KEYS = {
     "media_processing_limits",
     "ollama_status",
     "ollama_error",
+    "ollama_parse_status",
+    "ollama_parse_error",
     "ollama_truncated",
     "ollama_original_prompt_chars",
     "ollama_sent_prompt_chars",

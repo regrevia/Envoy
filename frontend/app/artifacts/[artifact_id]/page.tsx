@@ -33,6 +33,8 @@ type ArtifactManifest = {
   }> | null;
   ollama_status?: string | null;
   ollama_error?: string | null;
+  ollama_parse_status?: string | null;
+  ollama_parse_error?: string | null;
   ollama_truncated?: boolean | null;
   ollama_original_prompt_chars?: number | null;
   ollama_sent_prompt_chars?: number | null;
@@ -149,6 +151,8 @@ export default function ArtifactDetailPage({ params }: { params: Promise<{ artif
                   <DetailRow label="媒体处理上限" value={mediaLimitsValue(artifact.manifest.media_processing_limits)} />
                   <DetailRow label="Ollama 状态" value={artifact.manifest.ollama_status} />
                   <DetailRow label="Ollama 错误" value={artifact.manifest.ollama_error} />
+                  <DetailRow label="结构解析" value={artifact.manifest.ollama_parse_status} />
+                  <DetailRow label="解析错误" value={artifact.manifest.ollama_parse_error} />
                   <DetailRow label="Ollama 截断" value={booleanValue(artifact.manifest.ollama_truncated)} />
                   <DetailRow label="提示词长度" value={manifestValue(artifact.manifest.ollama_original_prompt_chars)} />
                   <DetailRow label="发送长度" value={manifestValue(artifact.manifest.ollama_sent_prompt_chars)} />
