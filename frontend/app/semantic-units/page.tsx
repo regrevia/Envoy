@@ -68,6 +68,7 @@ function labelSummary(labels?: Record<string, unknown> | null) {
 export default function SemanticUnitsPage() {
   const [units, setUnits] = useState<SemanticUnit[]>([]);
   const [projectId, setProjectId] = useState('');
+  const [outputContext, setOutputContext] = useState('');
   const [loading, setLoading] = useState(true);
   const [generatingUnitId, setGeneratingUnitId] = useState('');
   const [message, setMessage] = useState('就绪');
@@ -91,8 +92,12 @@ export default function SemanticUnitsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectFromQuery = params.get('project_id') || '';
+    const outputsFromQuery = params.get('outputs') || '';
     if (projectFromQuery) {
       setProjectId(projectFromQuery);
+    }
+    if (outputsFromQuery) {
+      setOutputContext(outputsFromQuery);
     }
     void loadUnits(projectFromQuery);
   }, []);
@@ -127,9 +132,22 @@ export default function SemanticUnitsPage() {
     }
   };
 
-  const uploadHref = projectId ? `/upload?project_id=${projectId}` : '/upload';
-  const samplesHref = projectId ? `/generated-samples?project_id=${projectId}` : '/generated-samples';
-  const exportsHref = projectId ? `/train-exports?project_id=${projectId}&export_type=markdown&outputs=markdown,skill,rag` : '/train-exports';
+  const outputQueryParam = outputContext ? `outputs=${encodeURIComponent(outputContext)}` : '';
+  const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}${outputQueryParam ? `&${outputQueryParam}` : ''}` : (outputQueryParam ? `?${outputQueryParam}` : '');
+  const exportOutputs = outputContext || 'markdown,skill,rag';
+  const primaryExportType = exportOutputs.split(',').map((item) => item.trim()).filter(Boolean)[0] || 'markdown';
+  const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&export_type=${encodeURIComponent(primaryExportType)}&outputs=${encodeURIComponent(exportOutputs)}` : (outputQueryParam ? `?${outputQueryParam}` : '');
+  const uploadHref = projectQuery ? `/upload${projectQuery}` : '/upload';
+  const samplesHref = projectQuery ? `/generated-samples${projectQuery}` : '/generated-samples';
+  const exportsHref = projectQuery ? `/train-exports${exportQuery}` : '/train-exports';
+  const unitProjectQuery = (unit: SemanticUnit) => unit.project_id ? `?project_id=${encodeURIComponent(unit.project_id)}${outputQueryParam ? `&${outputQueryParam}` : ''}` : projectQuery;
+  const unitSamplesHref = (unit: SemanticUnit) => unitProjectQuery(unit) ? `/generated-samples${unitProjectQuery(unit)}` : '/generated-samples';
+  const unitExportsHref = (unit: SemanticUnit) => {
+    if (!unit.project_id) {
+      return exportsHref;
+    }
+    return `/train-exports?project_id=${encodeURIComponent(unit.project_id)}&export_type=${encodeURIComponent(primaryExportType)}&outputs=${encodeURIComponent(exportOutputs)}`;
+  };
 
   return (
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -168,6 +186,7 @@ export default function SemanticUnitsPage() {
             <strong style={{ fontSize: 14 }}>状态</strong>
             <span style={{ fontSize: 14 }}>{message}</span>
             {projectId ? <span style={{ color: '#6b7280', fontSize: 13 }}>当前项目：{projectId}</span> : null}
+            {outputContext ? <span style={{ color: '#6b7280', fontSize: 13 }}>生成目标：{outputContext}</span> : null}
           </div>
           <button onClick={() => void loadUnits()} style={buttonStyle}>刷新语义单元</button>
         </div>
@@ -209,8 +228,8 @@ export default function SemanticUnitsPage() {
                   >
                     {generatingUnitId === unit.id ? '正在启动...' : '生成样本'}
                   </button>
-                  <Link href={`/generated-samples?project_id=${unit.project_id}`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看样本</Link>
-                  <Link href={`/train-exports?project_id=${unit.project_id}&export_type=markdown&outputs=markdown,skill,rag`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>导出 md/Skill/RAG</Link>
+                  <Link href={unitSamplesHref(unit)} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看样本</Link>
+                  <Link href={unitExportsHref(unit)} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>导出 md/Skill/RAG</Link>
                 </div>
               </div>
               <pre style={{ margin: '14px 0 0', padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>
