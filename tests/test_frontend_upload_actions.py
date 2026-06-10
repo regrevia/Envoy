@@ -245,12 +245,16 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "请先创建或选择任务后继续",
             "aria-disabled={!canProceed}",
             "uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#'",
+            "semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#'",
+            "samplesHref = canProceed ? `/generated-samples?project_id=${selectedProjectId}` : '#'",
             "exportHref = useMemo(() => {",
             "if (!canProceed) {",
             "return '#';",
         ]:
             self.assertIn(copy, text)
         self.assertNotIn("const uploadHref = selectedProjectId ? `/upload?project_id=${selectedProjectId}` : '/upload';", text)
+        self.assertNotIn('href="/semantic-units"', text)
+        self.assertNotIn('href="/generated-samples"', text)
 
     def test_home_page_explains_complete_conversion_chain(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"

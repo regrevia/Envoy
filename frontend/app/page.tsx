@@ -183,6 +183,8 @@ export default function HomePage() {
     cursor: 'not-allowed',
   } as const;
   const uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#';
+  const semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#';
+  const samplesHref = canProceed ? `/generated-samples?project_id=${selectedProjectId}` : '#';
   const exportHref = useMemo(() => {
     if (!canProceed) {
       return '#';
@@ -411,8 +413,8 @@ export default function HomePage() {
               })}
             </div>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Link href="/semantic-units" style={buttonStyle}>审查语义单元</Link>
-              <Link href="/generated-samples" style={buttonStyle}>审查训练样本</Link>
+              <Link href={semanticHref} aria-disabled={!canProceed} style={{ ...buttonStyle, ...(!canProceed ? disabledActionStyle : {}) }}>审查语义单元</Link>
+              <Link href={samplesHref} aria-disabled={!canProceed} style={{ ...buttonStyle, ...(!canProceed ? disabledActionStyle : {}) }}>审查训练样本</Link>
               <Link href={exportHref} aria-disabled={!canProceed} style={{ ...buttonStyle, background: canProceed ? '#111827' : '#f3f4f6', color: canProceed ? '#ffffff' : '#6b7280', borderColor: canProceed ? '#111827' : '#d1d5db', ...(!canProceed ? disabledActionStyle : {}) }}>进入导出</Link>
             </div>
             {!canProceed ? (
