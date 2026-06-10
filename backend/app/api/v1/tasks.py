@@ -39,7 +39,7 @@ def _can_cancel(task):
 
 
 def _can_retry(task):
-    return task.status in {"failed", "dispatch_failed"}
+    return task.status in {"failed", "dispatch_failed", "canceled"}
 
 
 def _task_diagnostics_payload(task):
@@ -68,9 +68,9 @@ def _task_diagnostics_payload(task):
         next_actions = ["查看错误信息", "重试任务"]
     elif task.status == "canceled":
         severity = "canceled"
-        recommended_action = "create_new_task"
-        summary = "任务已取消，原任务不会继续执行。"
-        next_actions = ["重新创建任务或从失败任务重试"]
+        recommended_action = "retry"
+        summary = "任务已取消，原任务不会继续执行，可从原任务上下文重试。"
+        next_actions = ["重试任务", "检查媒体处理配置和服务日志"]
     elif task.status == "success":
         severity = "complete"
         recommended_action = "review_outputs"
@@ -184,8 +184,8 @@ def retry_task_api(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     if original.status in {"pending", "running"}:
         raise HTTPException(status_code=409, detail="Task is still active")
-    if original.status not in {"failed", "dispatch_failed"}:
-        raise HTTPException(status_code=400, detail="Only failed tasks can be retried")
+    if original.status not in {"failed", "dispatch_failed", "canceled"}:
+        raise HTTPException(status_code=400, detail="Only failed or canceled tasks can be retried")
     worker = RETRYABLE_TASKS.get(original.task_type)
     if worker is None:
         raise HTTPException(status_code=400, detail="Task type is not retryable")

@@ -55,7 +55,7 @@ function canCancel(task: Task) {
 }
 
 function canRetry(task: Task) {
-  return task.status === 'failed' || task.status === 'dispatch_failed';
+  return task.status === 'failed' || task.status === 'dispatch_failed' || task.status === 'canceled';
 }
 
 function staleLabel(task: Task) {
