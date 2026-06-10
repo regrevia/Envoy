@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
 
 _WHISPER_MODELS = {}
 
@@ -216,7 +216,11 @@ def transcribe_audio(audio_path: str, should_cancel: Callable[[], bool] | None =
     return {"status": "failed", "text": "", "segments": [], "error": "transcription worker returned invalid result"}
 
 
-def run_ocr_on_frames(frame_paths: list[str]):
+def _empty_ocr_results(frame_paths: list[str]):
+    return [{"frame": p, "text": "", "confidence": 0.0} for p in frame_paths]
+
+
+def _run_ocr_worker_logic(frame_paths: list[str]):
     results = []
     try:
         from paddleocr import PaddleOCR
@@ -229,5 +233,45 @@ def run_ocr_on_frames(frame_paths: list[str]):
             except Exception:
                 results.append({"frame": path, "text": "", "confidence": 0.0})
     except Exception:
-        results = [{"frame": p, "text": "", "confidence": 0.0} for p in frame_paths]
+        results = _empty_ocr_results(frame_paths)
     return results
+
+
+def _ocr_worker(frame_paths: list[str], result_queue):
+    try:
+        result_queue.put(_run_ocr_worker_logic(frame_paths))
+    except Exception:
+        result_queue.put(_empty_ocr_results(frame_paths))
+
+
+def run_ocr_on_frames(frame_paths: list[str], should_cancel: Callable[[], bool] | None = None):
+    result_queue = multiprocessing.Queue()
+    process = multiprocessing.Process(target=_ocr_worker, args=(frame_paths, result_queue), daemon=True)
+    timeout_sec = max(int(MEDIA_OCR_TIMEOUT_SEC or 1), 1)
+    process.start()
+    waited = 0
+    while process.is_alive() and waited < timeout_sec:
+        wait_seconds = min(1, timeout_sec - waited)
+        process.join(wait_seconds)
+        waited += wait_seconds
+        if process.is_alive() and should_cancel is not None and should_cancel():
+            _terminate_worker_process(process)
+            return _empty_ocr_results(frame_paths)
+    if process.is_alive():
+        _terminate_worker_process(process)
+        return _empty_ocr_results(frame_paths)
+    try:
+        result = result_queue.get_nowait()
+    except Empty:
+        return _empty_ocr_results(frame_paths)
+    if isinstance(result, list):
+        normalized = []
+        for index, item in enumerate(result):
+            if isinstance(item, dict):
+                normalized.append({
+                    "frame": item.get("frame") or (frame_paths[index] if index < len(frame_paths) else ""),
+                    "text": str(item.get("text", "") or ""),
+                    "confidence": float(item.get("confidence", 0.0) or 0.0),
+                })
+        return normalized if normalized else _empty_ocr_results(frame_paths)
+    return _empty_ocr_results(frame_paths)

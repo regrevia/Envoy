@@ -340,7 +340,9 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "ocr_enabled",
             "max_input_seconds",
             "transcription_timeout_sec",
+            "ocr_timeout_sec",
             "单段转写超时",
+            "OCR 超时",
         ]:
             self.assertIn(copy, text)
 

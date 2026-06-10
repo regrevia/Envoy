@@ -534,6 +534,197 @@ class RuntimeSafetyTests(unittest.TestCase):
                 os.environ["MEDIA_TRANSCRIPTION_TIMEOUT_SEC"] = previous
             reload_media_service()
 
+    def test_ocr_returns_empty_results_when_timeout_expires(self):
+        previous = os.environ.get("MEDIA_OCR_TIMEOUT_SEC")
+        try:
+            os.environ["MEDIA_OCR_TIMEOUT_SEC"] = "1"
+            media_service = reload_media_service()
+
+            class FakeQueue:
+                def get_nowait(self):
+                    raise Empty()
+
+            class FakeProcess:
+                def __init__(self, target, args, daemon):
+                    self.target = target
+                    self.args = args
+                    self.daemon = daemon
+                    self.join_calls = []
+                    self.terminated = False
+
+                def start(self):
+                    return None
+
+                def join(self, timeout=None):
+                    self.join_calls.append(timeout)
+
+                def is_alive(self):
+                    return not self.terminated
+
+                def terminate(self):
+                    self.terminated = True
+
+            processes = []
+
+            def make_process(target, args, daemon):
+                process = FakeProcess(target, args, daemon)
+                processes.append(process)
+                return process
+
+            with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+                patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
+                result = media_service.run_ocr_on_frames(["frame-1.jpg", "frame-2.jpg"])
+
+            self.assertEqual(
+                result,
+                [
+                    {"frame": "frame-1.jpg", "text": "", "confidence": 0.0},
+                    {"frame": "frame-2.jpg", "text": "", "confidence": 0.0},
+                ],
+            )
+            self.assertEqual(processes[0].join_calls, [1, 5])
+            self.assertTrue(processes[0].terminated)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_OCR_TIMEOUT_SEC", None)
+            else:
+                os.environ["MEDIA_OCR_TIMEOUT_SEC"] = previous
+            reload_media_service()
+
+    def test_ocr_terminates_worker_when_canceled(self):
+        previous = os.environ.get("MEDIA_OCR_TIMEOUT_SEC")
+        try:
+            os.environ["MEDIA_OCR_TIMEOUT_SEC"] = "30"
+            media_service = reload_media_service()
+
+            class FakeQueue:
+                def get_nowait(self):
+                    raise Empty()
+
+            class FakeProcess:
+                def __init__(self, target, args, daemon):
+                    self.join_calls = []
+                    self.terminated = False
+
+                def start(self):
+                    return None
+
+                def join(self, timeout=None):
+                    self.join_calls.append(timeout)
+
+                def is_alive(self):
+                    return not self.terminated
+
+                def terminate(self):
+                    self.terminated = True
+
+            processes = []
+
+            def make_process(target, args, daemon):
+                process = FakeProcess(target, args, daemon)
+                processes.append(process)
+                return process
+
+            with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+                patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
+                result = media_service.run_ocr_on_frames(["frame-1.jpg"], should_cancel=lambda: True)
+
+            self.assertEqual(result, [{"frame": "frame-1.jpg", "text": "", "confidence": 0.0}])
+            self.assertEqual(processes[0].join_calls, [1, 5])
+            self.assertTrue(processes[0].terminated)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_OCR_TIMEOUT_SEC", None)
+            else:
+                os.environ["MEDIA_OCR_TIMEOUT_SEC"] = previous
+            reload_media_service()
+
+    def test_ocr_kills_worker_when_terminate_does_not_exit(self):
+        previous = os.environ.get("MEDIA_OCR_TIMEOUT_SEC")
+        try:
+            os.environ["MEDIA_OCR_TIMEOUT_SEC"] = "30"
+            media_service = reload_media_service()
+
+            class FakeQueue:
+                def get_nowait(self):
+                    raise Empty()
+
+            class FakeProcess:
+                def __init__(self, target, args, daemon):
+                    self.join_calls = []
+                    self.terminated = False
+                    self.killed = False
+
+                def start(self):
+                    return None
+
+                def join(self, timeout=None):
+                    self.join_calls.append(timeout)
+
+                def is_alive(self):
+                    return not self.killed
+
+                def terminate(self):
+                    self.terminated = True
+
+                def kill(self):
+                    self.killed = True
+
+            processes = []
+
+            def make_process(target, args, daemon):
+                process = FakeProcess(target, args, daemon)
+                processes.append(process)
+                return process
+
+            with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+                patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
+                result = media_service.run_ocr_on_frames(["frame-1.jpg"], should_cancel=lambda: True)
+
+            self.assertEqual(result, [{"frame": "frame-1.jpg", "text": "", "confidence": 0.0}])
+            self.assertTrue(processes[0].terminated)
+            self.assertTrue(processes[0].killed)
+            self.assertEqual(processes[0].join_calls, [1, 5, 5])
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_OCR_TIMEOUT_SEC", None)
+            else:
+                os.environ["MEDIA_OCR_TIMEOUT_SEC"] = previous
+            reload_media_service()
+
+    def test_worker_ocr_passes_task_cancel_callback_when_supported(self):
+        for name in list(sys.modules):
+            if name.startswith("app."):
+                sys.modules.pop(name, None)
+
+        from app.workers import jobs
+
+        calls = []
+
+        def fake_ocr(frame_paths, should_cancel=None):
+            calls.append({"frame_paths": frame_paths, "canceled": should_cancel() if should_cancel else None})
+            return [{"frame": "frame-1.jpg", "text": "", "confidence": 0.0}]
+
+        with patch("app.workers.jobs.run_ocr_on_frames", side_effect=fake_ocr), \
+            patch("app.workers.jobs._task_is_canceled", return_value=True):
+            result = jobs._run_ocr_for_task(object(), "task-cancel", ["frame-1.jpg"])
+
+        self.assertEqual(result, [{"frame": "frame-1.jpg", "text": "", "confidence": 0.0}])
+        self.assertEqual(calls, [{"frame_paths": ["frame-1.jpg"], "canceled": True}])
+
+    def test_worker_ocr_keeps_one_argument_mock_compatibility(self):
+        for name in list(sys.modules):
+            if name.startswith("app."):
+                sys.modules.pop(name, None)
+
+        from app.workers import jobs
+
+        with patch("app.workers.jobs.run_ocr_on_frames", return_value=[]) as ocr:
+            result = jobs._run_ocr_for_task(object(), "task-id", ["frame-1.jpg"])
+
+        self.assertEqual(result, [])
+        ocr.assert_called_once_with(["frame-1.jpg"])
+
     def test_worker_transcription_passes_task_cancel_callback_when_supported(self):
         for name in list(sys.modules):
             if name.startswith("app."):

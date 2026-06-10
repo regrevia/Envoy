@@ -96,6 +96,7 @@ class OllamaHealthApiTests(unittest.TestCase):
             "MEDIA_ENABLE_FRAME_EXTRACTION",
             "MEDIA_ENABLE_OCR",
             "MEDIA_TRANSCRIPTION_TIMEOUT_SEC",
+            "MEDIA_OCR_TIMEOUT_SEC",
         )
         previous = {key: os.environ.get(key) for key in keys}
         try:
@@ -108,6 +109,7 @@ class OllamaHealthApiTests(unittest.TestCase):
                 os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = "false"
                 os.environ["MEDIA_ENABLE_OCR"] = "false"
                 os.environ["MEDIA_TRANSCRIPTION_TIMEOUT_SEC"] = "120"
+                os.environ["MEDIA_OCR_TIMEOUT_SEC"] = "45"
                 clear_app_modules()
 
                 from fastapi.testclient import TestClient
@@ -128,6 +130,7 @@ class OllamaHealthApiTests(unittest.TestCase):
                         "frame_extraction_enabled": False,
                         "ocr_enabled": False,
                         "transcription_timeout_sec": 120,
+                        "ocr_timeout_sec": 45,
                     },
                 )
         finally:
