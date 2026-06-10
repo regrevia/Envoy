@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -188,6 +189,49 @@ class ApiAssetFlowTests(unittest.TestCase):
                 self.assertEqual(assets[0]["metadata"]["original_name"], "source.txt")
                 self.assertEqual(assets[0]["metadata"]["storage"], "local")
                 self.assertIsNotNone(assets[0]["created_at"])
+            finally:
+                engine.dispose()
+
+    def test_asset_upload_streams_file_without_reading_entire_body(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-stream-upload-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from starlette.datastructures import UploadFile as StarletteUploadFile
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+                project_response = client.post(
+                    "/api/v1/projects",
+                    json={"name": "流式上传项目", "description": "", "domain_type": "video", "status": "active"},
+                )
+                project_id = project_response.json()["id"]
+
+                with patch.object(StarletteUploadFile, "read", side_effect=AssertionError("upload endpoint must stream file object instead of reading it into memory")):
+                    response = client.post(
+                        "/api/v1/assets/upload",
+                        data={"project_id": project_id, "asset_type": "video", "language": "zh"},
+                        files={"file": ("long-video.mp4", b"video-bytes" * 1024, "video/mp4")},
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                uploaded = response.json()
+                self.assertEqual(uploaded["asset"]["asset_type"], "video")
+                self.assertEqual(uploaded["storage"]["storage"], "local")
+                self.assertTrue(Path(uploaded["storage"]["file_path"]).exists())
+                self.assertGreater(Path(uploaded["storage"]["file_path"]).stat().st_size, 0)
             finally:
                 engine.dispose()
 

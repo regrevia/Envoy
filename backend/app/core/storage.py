@@ -1,5 +1,6 @@
 from io import BytesIO
 from pathlib import Path
+import shutil
 from app.core.config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET, STORAGE_MODE, LOCAL_STORAGE_DIR
 
 try:
@@ -36,6 +37,22 @@ class StorageClient:
             if not self.client.bucket_exists(self.bucket):
                 self.client.make_bucket(self.bucket)
             self.client.put_object(self.bucket, object_name, BytesIO(data), len(data), content_type=content_type)
+            return {"bucket": self.bucket, "object_name": object_name, "storage": "minio"}
+        except Exception as exc:
+            return {"bucket": self.bucket, "object_name": object_name, "storage": "local-placeholder", "reason": str(exc)}
+
+    def upload_fileobj(self, object_name: str, file_obj, length: int, content_type: str = "application/octet-stream"):
+        if self.mode == "local":
+            path = self._local_path(object_name)
+            with path.open("wb") as target:
+                shutil.copyfileobj(file_obj, target, length=1024 * 1024)
+            return {"bucket": self.bucket, "object_name": path.name, "storage": "local", "file_path": str(path), "content_type": content_type}
+        if self.client is None:
+            return {"bucket": self.bucket, "object_name": object_name, "storage": "local-placeholder", "reason": "minio-sdk-missing"}
+        try:
+            if not self.client.bucket_exists(self.bucket):
+                self.client.make_bucket(self.bucket)
+            self.client.put_object(self.bucket, object_name, file_obj, length, content_type=content_type)
             return {"bucket": self.bucket, "object_name": object_name, "storage": "minio"}
         except Exception as exc:
             return {"bucket": self.bucket, "object_name": object_name, "storage": "local-placeholder", "reason": str(exc)}
