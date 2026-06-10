@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -209,6 +210,81 @@ class SampleGenerationFlowTests(unittest.TestCase):
                 self.assertEqual(samples[0].input_text, "What metadata should RAG chunks keep?")
                 self.assertEqual(samples[0].output_text, "They should keep source metadata.")
                 self.assertEqual(samples[0].quality_score, 0.91)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_sample_job_uses_readable_text_from_structured_semantic_json(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-structured-json-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from unittest.mock import patch
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="structured sample project", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="unit-structured-json",
+                    project_id=project.id,
+                    asset_id="asset-structured-json",
+                    segment_id=None,
+                    unit_type="scene",
+                    title="结构化媒体摘要",
+                    content=json.dumps(
+                        {
+                            "stage": "preprocess",
+                            "transcript": {"text": "讲解了稳定处理长视频。"},
+                            "ocr": [{"text": "画面文字：RAG Skill"}],
+                            "rules": ["长任务必须可取消"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    labels={"source": "media_asset", "stage": "preprocess"},
+                    confidence=0.84,
+                )
+                db.add(unit)
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-structured-json", task_type="generate_samples", input_config={"source_unit_id": unit.id}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            with patch("app.workers.jobs.generate_with_ollama") as generate:
+                generate.return_value = {"enabled": True, "status": "failed", "text": "", "error": "ollama unavailable"}
+                result = sample_job.run({"task_id": task_id, "project_id": project_id, "source_unit_id": "unit-structured-json"})
+
+            db = SessionLocal()
+            try:
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+                source_text = generate.call_args.args[1]
+
+                self.assertEqual(result["status"], "samples_generated")
+                self.assertEqual(len(samples), 1)
+                for rendered_text in (source_text, samples[0].output_text):
+                    self.assertIn("讲解了稳定处理长视频。", rendered_text)
+                    self.assertIn("画面文字：RAG Skill", rendered_text)
+                    self.assertIn("长任务必须可取消", rendered_text)
+                    self.assertNotIn('"transcript"', rendered_text)
+                    self.assertNotIn('{"stage"', rendered_text)
+                self.assertIn("结构化媒体摘要", samples[0].input_text)
             finally:
                 db.close()
                 engine.dispose()

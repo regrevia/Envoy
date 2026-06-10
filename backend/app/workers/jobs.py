@@ -568,10 +568,59 @@ def _text_chunks(content: str, chunk_chars: int = TEXT_PREPROCESS_CHUNK_CHARS, o
     return chunks
 
 
+def _append_readable_parts(parts: list[str], value):
+    if isinstance(value, str) and value.strip():
+        parts.append(value.strip())
+        return
+    if isinstance(value, list):
+        for item in value:
+            _append_readable_parts(parts, item)
+        return
+    if isinstance(value, dict):
+        for key in ("summary", "text", "content", "name", "rule", "title"):
+            text = value.get(key)
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+                return
+
+
+def _readable_source_text(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    if not isinstance(parsed, (dict, list)):
+        return text
+
+    parts = []
+    if isinstance(parsed, list):
+        _append_readable_parts(parts, parsed)
+    else:
+        transcript = parsed.get("transcript")
+        if isinstance(transcript, dict):
+            _append_readable_parts(parts, transcript.get("text"))
+        for key in ("ocr", "scenes", "rules", "concepts", "steps", "actions", "keywords"):
+            _append_readable_parts(parts, parsed.get(key))
+        for key in ("summary", "preview", "content", "text", "title"):
+            _append_readable_parts(parts, parsed.get(key))
+
+    deduped = []
+    seen = set()
+    for part in parts:
+        if part in seen:
+            continue
+        seen.add(part)
+        deduped.append(part)
+    return "\n".join(deduped).strip() or text
+
+
 def _sample_fallback(unit: SemanticUnit | None, payload: dict):
     title = (unit.title if unit else None) or payload.get("title") or "source material"
     content = (unit.content if unit else None) or payload.get("content") or payload.get("text") or ""
-    content = str(content).strip()
+    content = _readable_source_text(content)
     prompt = f"What are the key points from {title}?"
     answer = content[:1200] if content else "No source content was available."
     return {
@@ -590,7 +639,7 @@ def _parse_sample_text(text: str):
 
 def _build_generated_sample(unit: SemanticUnit | None, payload: dict):
     fallback = _sample_fallback(unit, payload)
-    source_text = unit.content if unit else fallback["output_text"]
+    source_text = _readable_source_text(unit.content if unit else fallback["output_text"])
     llm_result = generate_with_ollama(
         "Create one high-quality training sample from the source material. Return JSON with sample_type, input, output, and quality_score.",
         str(source_text or ""),
