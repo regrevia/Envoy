@@ -469,6 +469,148 @@ class ExportJobFlowTests(unittest.TestCase):
                 self.assertNotIn('"transcript"', rendered_text)
                 self.assertNotIn('{"stage"', rendered_text)
 
+    def test_export_job_filters_empty_structured_semantic_content(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-empty-structured-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import export_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="empty structured export project", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="export-empty-json-object",
+                            project_id=project.id,
+                            asset_id="asset-empty-structured",
+                            segment_id=None,
+                            unit_type="text",
+                            title="空 JSON 对象",
+                            content="{}",
+                            labels={"source": "text_asset", "stage": "preprocess"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
+                            id="export-empty-json-list",
+                            project_id=project.id,
+                            asset_id="asset-empty-structured",
+                            segment_id=None,
+                            unit_type="text",
+                            title="空 JSON 数组",
+                            content="[]",
+                            labels={"source": "text_asset", "stage": "preprocess"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
+                            id="export-empty-structured-media",
+                            project_id=project.id,
+                            asset_id="asset-empty-media",
+                            segment_id=None,
+                            unit_type="transcript",
+                            title="空结构化媒体",
+                            content=json.dumps({"transcript": {"text": ""}, "ocr": []}, ensure_ascii=False),
+                            labels={"source": "media_transcript", "stage": "preprocess"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
+                            id="export-valid-structured-source",
+                            project_id=project.id,
+                            asset_id="asset-valid-structured",
+                            segment_id=None,
+                            unit_type="text",
+                            title="有效导出素材",
+                            content="通用导出只应该包含真实可读内容。",
+                            labels={"source": "text_asset", "stage": "preprocess"},
+                            confidence=0.91,
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        GeneratedSample(
+                            id="export-empty-structured-sample",
+                            project_id=project.id,
+                            source_unit_id="export-empty-structured-media",
+                            sample_type="qa",
+                            input_text="空结构样本输入",
+                            output_text="空结构样本输出不应进入通用导出。",
+                            quality_score=0.4,
+                        ),
+                        GeneratedSample(
+                            id="export-valid-structured-sample",
+                            project_id=project.id,
+                            source_unit_id="export-valid-structured-source",
+                            sample_type="qa",
+                            input_text="有效样本输入",
+                            output_text="有效样本输出可以进入通用导出。",
+                            quality_score=0.92,
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        TraceLink(id="trace-empty-structured-sample", source_type="semantic_unit", source_id="export-empty-structured-media", target_type="generated_sample", target_id="export-empty-structured-sample", relation_type="derived_from"),
+                        TraceLink(id="trace-valid-structured-sample", source_type="semantic_unit", source_id="export-valid-structured-source", target_type="generated_sample", target_id="export-valid-structured-sample", relation_type="derived_from"),
+                    ]
+                )
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="export", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = export_job.run({"task_id": task_id, "project_id": project_id})
+
+            jsonl_path = export_dir / f"{task_id}.jsonl"
+            md_path = export_dir / f"{task_id}.md"
+            rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            report = md_path.read_text(encoding="utf-8")
+            exported_text = json.dumps(rows, ensure_ascii=False) + "\n" + report
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+
+                self.assertEqual(result["status"], "exported")
+                self.assertEqual(result["row_count"], 2)
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual({row["id"] for row in rows}, {"export-valid-structured-source", "export-valid-structured-sample"})
+                self.assertIn("通用导出只应该包含真实可读内容。", exported_text)
+                self.assertIn("有效样本输出可以进入通用导出。", exported_text)
+                self.assertIn("trace-valid-structured-sample", exported_text)
+                self.assertNotIn("export-empty-json-object", exported_text)
+                self.assertNotIn("export-empty-json-list", exported_text)
+                self.assertNotIn("export-empty-structured-media", exported_text)
+                self.assertNotIn("export-empty-structured-sample", exported_text)
+                self.assertNotIn("空 JSON", exported_text)
+                self.assertNotIn("空结构样本", exported_text)
+                self.assertNotIn("trace-empty-structured-sample", exported_text)
+                self.assertNotIn("{}    ", exported_text)
+                self.assertNotIn("[]", exported_text)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_export_job_is_idempotent_for_registered_artifacts_and_trace_links(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             export_dir = Path(tmp_dir) / "exports"

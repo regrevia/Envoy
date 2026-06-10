@@ -659,7 +659,7 @@ def _readable_source_text(value):
             continue
         seen.add(part)
         deduped.append(part)
-    return "\n".join(deduped).strip() or text
+    return "\n".join(deduped).strip()
 
 
 def _readable_sample_source_text(value):
@@ -699,6 +699,12 @@ def _semantic_unit_has_sample_content(unit: SemanticUnit | None):
     if unit is None:
         return False
     return bool(_readable_sample_source_text(unit.content))
+
+
+def _semantic_unit_has_export_content(unit: SemanticUnit | None):
+    if unit is None:
+        return False
+    return bool(_readable_source_text(unit.content))
 
 
 def _source_content_format(value):
@@ -1382,7 +1388,12 @@ def export_job(self, payload: dict):
         project_tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all() if project_id else []
         tasks_by_id = {task.id: task for task in project_tasks}
         all_semantic_unit_models = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.asc()).all() if project_id else []
-        semantic_unit_models = [unit for unit in all_semantic_unit_models if _semantic_unit_is_sample_source(unit, tasks_by_id)]
+        semantic_unit_models = [
+            unit
+            for unit in all_semantic_unit_models
+            if _semantic_unit_is_sample_source(unit, tasks_by_id)
+            and _semantic_unit_has_export_content(unit)
+        ]
         project_semantic_ids = {unit.id for unit in all_semantic_unit_models}
         exportable_semantic_ids = {unit.id for unit in semantic_unit_models}
         all_sample_models = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.asc()).all() if project_id else []
