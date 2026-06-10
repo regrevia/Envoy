@@ -20,6 +20,7 @@ const outputOptions = [
   { id: 'samples', label: '训练样本' },
 ];
 const outputOptionIds = new Set(outputOptions.map((option) => option.id));
+const outputLabelById = Object.fromEntries(outputOptions.map((option) => [option.id, option.label]));
 const uploadRequestTimeoutMs = 120000;
 
 const inputStyle = {
@@ -159,6 +160,10 @@ export default function UploadPage() {
   };
 
   const asset = uploadedAsset(result);
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const outputContext = selectedOutputs.length
+    ? selectedOutputs.map((item) => outputLabelById[item] || item).join('、')
+    : '尚未选择';
   const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));
   const hasMaterialOutput = materialOutputs.length > 0;
   const materialOutputParam = hasMaterialOutput ? materialOutputs.join(',') : '';
@@ -188,17 +193,22 @@ export default function UploadPage() {
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section style={{ maxWidth: 960, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>第 2 步</div>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>多媒体转换任务</h1>
+          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>第 2 步 · 多媒体转换任务</div>
+          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>上传素材并启动预处理</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
             视频/音频/图片/文档/长文本进入预处理转换后，可继续生成 Markdown、Skill、RAG 和训练样本等 AI 素材。
           </p>
         </header>
 
         <section style={{ display: 'grid', gap: 0, borderBottom: '1px solid #e5e7eb' }}>
-          {['1. 确认任务/项目', '2. 上传素材', '3. 选择生成内容'].map((step) => (
-            <div key={step} style={{ padding: '14px 0', borderTop: '1px solid #e5e7eb', fontWeight: 700, color: '#111827' }}>
-              {step}
+          {[
+            ['1. 确认任务/项目', selectedProject ? selectedProject.name : '请先选择任务'],
+            ['2. 上传素材', file ? file.name : '等待选择文件'],
+            ['3. 选择生成内容', outputContext],
+          ].map(([step, detail]) => (
+            <div key={step} style={{ padding: '14px 0', borderTop: '1px solid #e5e7eb', display: 'grid', gridTemplateColumns: 'minmax(150px, 0.8fr) minmax(0, 1.2fr)', gap: 12, alignItems: 'start' }}>
+              <strong style={{ color: '#111827' }}>{step}</strong>
+              <span style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word' }}>{detail}</span>
             </div>
           ))}
         </section>
@@ -208,7 +218,23 @@ export default function UploadPage() {
           <span style={{ fontSize: 14 }}>{message}</span>
         </div>
 
-        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+        <section style={{ padding: '18px 0', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 16, alignItems: 'start' }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18 }}>当前任务上下文</h2>
+              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
+                {selectedProject ? `任务：${selectedProject.name}；项目 ID：${selectedProject.id}` : '还没有选择任务/项目。请从下方选择已有任务，或返回首页创建转换任务。'}
+              </p>
+              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
+                生成目标：{outputContext}
+              </p>
+            </div>
+            <a href="/" style={{ color: '#111827', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回首页创建转换任务</a>
+          </div>
+        </section>
+
+        <section style={{ padding: '22px 0', borderBottom: '1px solid #e5e7eb' }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>1. 确认任务/项目并上传素材</h2>
           <div style={{ display: 'grid', gap: 14 }}>
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ color: '#4b5563', fontSize: 13 }}>选择任务/项目</span>
@@ -234,11 +260,14 @@ export default function UploadPage() {
           </div>
         </section>
 
-        <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
-          <h2 style={{ margin: 0, fontSize: 18 }}>3. 选择生成内容</h2>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+        <section style={{ padding: '22px 0', borderBottom: '1px solid #e5e7eb' }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>2. 选择生成内容</h2>
+          <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
+            这些目标会随预处理任务写入请求上下文，后续审查页和导出页会继续带着同一组选择。
+          </p>
+          <div style={{ display: 'grid', gap: 0, marginTop: 12 }}>
             {outputOptions.map((option) => (
-              <label key={option.id} style={{ display: 'inline-flex', gap: 8, alignItems: 'center', padding: '8px 0', color: '#374151' }}>
+              <label key={option.id} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 10, alignItems: 'center', padding: '11px 0', color: '#374151', borderTop: '1px solid #e5e7eb' }}>
                 <input
                   type="checkbox"
                   checked={selectedOutputs.includes(option.id)}
@@ -256,10 +285,10 @@ export default function UploadPage() {
         </section>
 
         {result ? (
-          <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+          <section style={{ padding: '22px 0', borderBottom: '1px solid #e5e7eb' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: 18 }}>上传结果</h2>
+                <h2 style={{ margin: 0, fontSize: 18 }}>3. 上传结果与预处理</h2>
                 <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
                   {asset?.id ? '素材已上传，可以启动预处理转换' : (result?.error || '素材上传结果')}
                 </p>
