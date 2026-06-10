@@ -1049,6 +1049,8 @@ def preprocess_job(self, payload: dict):
         )
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:
+        if str(exc).endswith(" canceled") and _task_is_canceled(db, payload.get("task_id")):
+            return _canceled_preprocess_result(db, payload.get("asset_id"), payload.get("task_id"), has_previous_preprocess, payload)
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         return {"status": "failed", "payload": payload, "error": str(exc)}
     except Exception as exc:
