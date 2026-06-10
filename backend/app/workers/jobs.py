@@ -929,6 +929,8 @@ def preprocess_job(self, payload: dict):
             for index, segment_path in enumerate(transcription_inputs):
                 if _task_is_canceled(db, task_id):
                     return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+                running_progress = min(74, 35 + int((index / max(transcription_count, 1)) * 40))
+                _safe_update(db, task_id, "running", running_progress, result_summary=f"audio transcription running: {index + 1}/{transcription_count} segment(s)")
                 segment_transcription = _transcribe_audio_for_task(db, task_id, segment_path)
                 transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
                 if isinstance(segment_transcription, dict):
@@ -1049,6 +1051,8 @@ def preprocess_job(self, payload: dict):
         for index, segment_path in enumerate(transcription_inputs):
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+            running_progress = min(74, 55 + int((index / max(transcription_count, 1)) * 20))
+            _safe_update(db, task_id, "running", running_progress, result_summary=f"audio transcription running: {index + 1}/{transcription_count} segment(s)")
             segment_transcription = _transcribe_audio_for_task(db, task_id, segment_path)
             transcription_results.append({"segment": segment_path, "transcript": segment_transcription})
             if isinstance(segment_transcription, dict):
