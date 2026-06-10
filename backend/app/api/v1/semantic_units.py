@@ -22,8 +22,11 @@ def _semantic_unit_payload(row: SemanticUnit):
 
 
 @router.get("/semantic-units")
-def list_semantic_units(db: Session = Depends(get_db)):
-    rows = db.query(SemanticUnit).order_by(SemanticUnit.created_at.desc()).all()
+def list_semantic_units(project_id: str | None = None, db: Session = Depends(get_db)):
+    query = db.query(SemanticUnit)
+    if project_id:
+        query = query.filter(SemanticUnit.project_id == project_id)
+    rows = query.order_by(SemanticUnit.created_at.desc()).all()
     return [_semantic_unit_payload(row) for row in rows]
 
 

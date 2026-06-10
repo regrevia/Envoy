@@ -175,6 +175,38 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_semantic_units_page_accepts_project_context_from_upload(self):
+        page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "URLSearchParams",
+            "project_id",
+            "setProjectId(projectFromQuery)",
+            "const effectiveQuery = nextProjectId ? `?project_id=${encodeURIComponent(nextProjectId)}` : query;",
+            "apiJson<SemanticUnit[]>(`/api/v1/semantic-units${effectiveQuery}`)",
+            "`/upload?project_id=${projectId}`",
+            "`/generated-samples?project_id=${unit.project_id}`",
+            "`/train-exports?project_id=${unit.project_id}",
+        ]:
+            self.assertIn(copy, text)
+
+    def test_generated_samples_page_accepts_project_context_from_upload(self):
+        page = ROOT_DIR / "frontend" / "app" / "generated-samples" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "URLSearchParams",
+            "project_id",
+            "setProjectId(projectFromQuery)",
+            "const effectiveQuery = nextProjectId ? `?project_id=${encodeURIComponent(nextProjectId)}` : query;",
+            "apiJson<GeneratedSample[]>(`/api/v1/generated-samples${effectiveQuery}`)",
+            "`/semantic-units?project_id=${projectId}`",
+            "`/train-exports?project_id=${projectId}",
+            "当前项目",
+        ]:
+            self.assertIn(copy, text)
+
     def test_home_page_starts_with_single_task_creation_flow(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")

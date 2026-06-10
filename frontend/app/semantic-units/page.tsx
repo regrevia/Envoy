@@ -67,15 +67,18 @@ function labelSummary(labels?: Record<string, unknown> | null) {
 
 export default function SemanticUnitsPage() {
   const [units, setUnits] = useState<SemanticUnit[]>([]);
+  const [projectId, setProjectId] = useState('');
   const [loading, setLoading] = useState(true);
   const [generatingUnitId, setGeneratingUnitId] = useState('');
   const [message, setMessage] = useState('就绪');
   const [generationResult, setGenerationResult] = useState<TaskResponse | null>(null);
 
-  const loadUnits = async () => {
+  const loadUnits = async (nextProjectId = projectId) => {
     setLoading(true);
     try {
-      const data = await apiJson<SemanticUnit[]>('/api/v1/semantic-units');
+      const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+      const effectiveQuery = nextProjectId ? `?project_id=${encodeURIComponent(nextProjectId)}` : query;
+      const data = await apiJson<SemanticUnit[]>(`/api/v1/semantic-units${effectiveQuery}`);
       setUnits(data);
     } catch {
       setUnits([]);
@@ -86,7 +89,12 @@ export default function SemanticUnitsPage() {
   };
 
   useEffect(() => {
-    void loadUnits();
+    const params = new URLSearchParams(window.location.search);
+    const projectFromQuery = params.get('project_id') || '';
+    if (projectFromQuery) {
+      setProjectId(projectFromQuery);
+    }
+    void loadUnits(projectFromQuery);
   }, []);
 
   const generateSample = async (unit: SemanticUnit) => {
@@ -119,6 +127,10 @@ export default function SemanticUnitsPage() {
     }
   };
 
+  const uploadHref = projectId ? `/upload?project_id=${projectId}` : '/upload';
+  const samplesHref = projectId ? `/generated-samples?project_id=${projectId}` : '/generated-samples';
+  const exportsHref = projectId ? `/train-exports?project_id=${projectId}&export_type=markdown&outputs=markdown,skill,rag` : '/train-exports';
+
   return (
     <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section className="workspace-shell">
@@ -144,10 +156,10 @@ export default function SemanticUnitsPage() {
 
         <nav aria-label="核心操作" className="quick-actions">
           <Link href="/" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>返回首页创建转换任务</Link>
-          <Link href="/upload" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>上传素材</Link>
+          <Link href={uploadHref} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>上传素材</Link>
           <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>转换任务</Link>
-          <Link href="/generated-samples" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>样本审查</Link>
-          <Link href="/train-exports" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>训练导出</Link>
+          <Link href={samplesHref} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>样本审查</Link>
+          <Link href={exportsHref} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>训练导出</Link>
           <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>成果文件</Link>
         </nav>
 
@@ -155,6 +167,7 @@ export default function SemanticUnitsPage() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <strong style={{ fontSize: 14 }}>状态</strong>
             <span style={{ fontSize: 14 }}>{message}</span>
+            {projectId ? <span style={{ color: '#6b7280', fontSize: 13 }}>当前项目：{projectId}</span> : null}
           </div>
           <button onClick={() => void loadUnits()} style={buttonStyle}>刷新语义单元</button>
         </div>
@@ -165,7 +178,7 @@ export default function SemanticUnitsPage() {
               <h2 style={{ margin: 0, fontSize: 18 }}>语义单元</h2>
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>当前 {units.length} 条，可继续生成样本或进入导出链路</p>
             </div>
-            <Link href="/upload" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>新增多模态素材</Link>
+            <Link href={uploadHref} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>新增多模态素材</Link>
           </div>
 
           {loading ? <div style={{ padding: '22px 0', color: '#6b7280' }}>正在加载...</div> : null}
@@ -196,8 +209,8 @@ export default function SemanticUnitsPage() {
                   >
                     {generatingUnitId === unit.id ? '正在启动...' : '生成样本'}
                   </button>
-                  <Link href="/generated-samples" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看样本</Link>
-                  <Link href="/train-exports" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>导出 md/Skill/RAG</Link>
+                  <Link href={`/generated-samples?project_id=${unit.project_id}`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看样本</Link>
+                  <Link href={`/train-exports?project_id=${unit.project_id}&export_type=markdown&outputs=markdown,skill,rag`} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>导出 md/Skill/RAG</Link>
                 </div>
               </div>
               <pre style={{ margin: '14px 0 0', padding: '12px 0 0', borderTop: '1px solid #e5e7eb', background: '#ffffff', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>
