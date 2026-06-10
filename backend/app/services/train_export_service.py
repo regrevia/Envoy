@@ -114,6 +114,65 @@ def _compact_text(value, max_chars: int = 1400):
     return text[:max_chars].rstrip() + "\n\n（内容已截断，完整结构保存在 manifest 或 RAG 语料中。）"
 
 
+def _parse_json_content(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
+
+
+def _append_structured_list_parts(parts: list[str], value):
+    if not isinstance(value, list):
+        return
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            parts.append(item.strip())
+        elif isinstance(item, dict):
+            for key in ("summary", "text", "content", "name", "rule", "title"):
+                text = item.get(key)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+                    break
+
+
+def _readable_structured_content(value: str):
+    parsed = _parse_json_content(value)
+    if parsed is None:
+        return str(value or "").strip()
+
+    parts = []
+    if isinstance(parsed, list):
+        _append_structured_list_parts(parts, parsed)
+    else:
+        transcript = parsed.get("transcript")
+        if isinstance(transcript, dict):
+            text = transcript.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+
+        _append_structured_list_parts(parts, parsed.get("ocr"))
+        for key in ("scenes", "rules", "concepts", "steps", "actions", "keywords"):
+            _append_structured_list_parts(parts, parsed.get(key))
+        for key in ("summary", "preview", "content", "text", "title"):
+            text = parsed.get(key)
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+
+    seen = set()
+    deduped = []
+    for part in parts:
+        if part in seen:
+            continue
+        seen.add(part)
+        deduped.append(part)
+    if deduped:
+        return "\n".join(deduped)
+    return json.dumps(parsed, ensure_ascii=False)
+
+
 def _row_title(row: dict, index: int):
     return str(row.get("title") or row.get("sample_type") or row.get("relation_type") or f"片段 {index}").strip()
 
@@ -128,7 +187,7 @@ def _row_body(row: dict):
     for key in ("content", "text", "summary", "output_text", "input_text"):
         value = row.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return _readable_structured_content(value)
     useful = []
     for key, value in row.items():
         if key in {"id", "project_id", "asset_id", "segment_id", "labels", "metadata"}:
@@ -648,7 +707,8 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
     if export_type == "rag":
         rows = []
         for su in data["semantic_units"]:
-            content = (su.get("content") or "").strip()
+            raw_content = su.get("content") or ""
+            content = _readable_structured_content(raw_content)
             if not content:
                 continue
             metadata = {
@@ -660,6 +720,7 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
                 "title": su.get("title"),
                 "unit_type": su.get("unit_type"),
                 "confidence": su.get("confidence"),
+                "content_format": "json" if _parse_json_content(raw_content) is not None else "text",
             }
             metadata.update(_ollama_rag_metadata(content))
             rows.append({"text": content, "metadata": metadata})
