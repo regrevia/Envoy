@@ -85,6 +85,8 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                         "task_name": "客服知识转 Skill",
                         "project_id": "project-manifest-001",
                         "ollama_status": "success",
+                        "ollama_parse_status": "parsed",
+                        "ollama_parse_error": None,
                         "ollama_truncated": True,
                         "ollama_original_prompt_chars": 24000,
                         "ollama_sent_prompt_chars": 12000,
@@ -145,6 +147,8 @@ class ApiArtifactsFlowTests(unittest.TestCase):
                 self.assertEqual(detail["manifest"]["source_task_id"], "task-skill-001")
                 self.assertEqual(detail["manifest"]["task_name"], "客服知识转 Skill")
                 self.assertEqual(detail["manifest"]["ollama_status"], "success")
+                self.assertEqual(detail["manifest"]["ollama_parse_status"], "parsed")
+                self.assertIsNone(detail["manifest"]["ollama_parse_error"])
                 self.assertTrue(detail["manifest"]["ollama_truncated"])
                 self.assertEqual(detail["manifest"]["ollama_original_prompt_chars"], 24000)
                 self.assertEqual(detail["manifest"]["ollama_sent_prompt_chars"], 12000)
