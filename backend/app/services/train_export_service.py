@@ -355,14 +355,25 @@ def _semantic_unit_is_exportable(row: SemanticUnit, tasks_by_id: dict[str, Proce
     return task.status == "success"
 
 
+def _generated_sample_is_exportable(row: GeneratedSample, exportable_semantic_ids: set[str], project_semantic_ids: set[str]):
+    if not row.source_unit_id:
+        return True
+    if row.source_unit_id not in project_semantic_ids:
+        return True
+    return row.source_unit_id in exportable_semantic_ids
+
+
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     all_semantic_units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.desc()).all()
-    samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.desc()).all()
+    all_samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.desc()).all()
     assets = db.query(Asset).filter(Asset.project_id == project_id).all()
     tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all()
     artifacts = db.query(Artifact).filter(Artifact.project_id == project_id).all()
     tasks_by_id = {task.id: task for task in tasks}
     semantic_units = [row for row in all_semantic_units if _semantic_unit_is_exportable(row, tasks_by_id)]
+    project_semantic_ids = {row.id for row in all_semantic_units}
+    exportable_semantic_ids = {row.id for row in semantic_units}
+    samples = [row for row in all_samples if _generated_sample_is_exportable(row, exportable_semantic_ids, project_semantic_ids)]
     project_entity_ids = {
         *(row.id for row in semantic_units),
         *(row.id for row in samples),

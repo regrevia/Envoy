@@ -443,6 +443,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             from app.db.session import SessionLocal, engine
             import app.models  # noqa: F401
             from app.main import app
+            from app.models.generated_sample import GeneratedSample
             from app.models.processing_task import ProcessingTask
             from app.models.semantic_unit import SemanticUnit
             from app.schemas.project import ProjectCreate
@@ -517,6 +518,37 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                         ),
                     ]
                 )
+                db.add_all(
+                    [
+                        GeneratedSample(
+                            id="stable-sample",
+                            project_id=project.id,
+                            source_unit_id="stable-unit",
+                            sample_type="qa",
+                            input_text="稳定样本输入",
+                            output_text="稳定样本输出，可进入自动导出。",
+                            quality_score=0.9,
+                        ),
+                        GeneratedSample(
+                            id="canceled-partial-sample",
+                            project_id=project.id,
+                            source_unit_id="canceled-partial-unit",
+                            sample_type="qa",
+                            input_text="取消半成品样本输入",
+                            output_text="取消半成品样本输出不应进入自动导出。",
+                            quality_score=0.4,
+                        ),
+                        GeneratedSample(
+                            id="canceled-checkpoint-sample",
+                            project_id=project.id,
+                            source_unit_id="canceled-checkpoint-unit",
+                            sample_type="qa",
+                            input_text="取消 checkpoint 样本输入",
+                            output_text="取消 checkpoint 样本输出不应进入自动导出。",
+                            quality_score=0.4,
+                        ),
+                    ]
+                )
                 db.commit()
                 project_id = project.id
             finally:
@@ -525,7 +557,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             try:
                 client = TestClient(app)
                 results = {}
-                for export_type in ("markdown", "skill", "rag"):
+                for export_type in ("markdown", "skill", "rag", "sft"):
                     response = client.post(
                         "/api/v1/train-exports/auto",
                         json={"project_id": project_id, "export_type": export_type, "title": f"{export_type} clean export"},
@@ -535,6 +567,11 @@ class TrainExportAutoFlowTests(unittest.TestCase):
 
                 markdown_text = Path(results["markdown"]["path"]).read_text(encoding="utf-8")
                 skill_text = Path(results["skill"]["path"]).read_text(encoding="utf-8")
+                sft_text = "\n".join(
+                    Path(path).read_text(encoding="utf-8")
+                    for path in results["sft"]["paths"].values()
+                    if Path(path).exists()
+                )
                 rag_rows = [
                     json.loads(line)
                     for line in Path(results["rag"]["path"]).read_text(encoding="utf-8").splitlines()
@@ -542,10 +579,14 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 ]
                 rag_text = "\n".join(row["text"] for row in rag_rows)
 
-                for exported_text in (markdown_text, skill_text, rag_text):
+                for exported_text in (markdown_text, skill_text, rag_text, sft_text):
                     self.assertIn("这是成功预处理后的正式内容。", exported_text)
                     self.assertNotIn("这段取消任务产生的半成品", exported_text)
                     self.assertNotIn("取消中的分段 checkpoint", exported_text)
+                    self.assertNotIn("取消半成品样本", exported_text)
+                    self.assertNotIn("取消 checkpoint 样本", exported_text)
+                for exported_text in (markdown_text, skill_text, sft_text):
+                    self.assertIn("稳定样本输出，可进入自动导出。", exported_text)
                 self.assertEqual({row["metadata"]["semantic_unit_id"] for row in rag_rows}, {"stable-unit"})
             finally:
                 engine.dispose()
