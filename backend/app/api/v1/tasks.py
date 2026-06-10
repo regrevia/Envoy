@@ -51,9 +51,10 @@ def _retry_input_config(db: Session, original):
 
 def _task_staleness(task):
     stale_seconds = 0
-    if task.status == "running" and task.updated_at is not None:
+    stale_candidate = task.status in {"pending", "running"}
+    if stale_candidate and task.updated_at is not None:
         stale_seconds = max(int((datetime.utcnow() - task.updated_at).total_seconds()), 0)
-    is_stale = task.status == "running" and stale_seconds >= TASK_STALE_AFTER_SECONDS
+    is_stale = stale_candidate and stale_seconds >= TASK_STALE_AFTER_SECONDS
     return {
         "is_stale": is_stale,
         "stale_seconds": stale_seconds,
@@ -81,8 +82,12 @@ def _task_diagnostics_payload(task):
     if staleness["is_stale"]:
         severity = "stale"
         recommended_action = "cancel_then_retry"
-        summary = "任务长时间未更新，可能卡在媒体处理、转写、OCR 或外部服务调用。"
-        next_actions = ["取消任务", "重试任务", "检查媒体处理配置和服务日志"]
+        if task.status == "pending":
+            summary = "任务排队后长时间未开始，可能卡在任务队列、Celery/Redis 或本地执行器启动阶段。"
+            next_actions = ["取消任务", "重试任务", "检查任务队列和执行器"]
+        else:
+            summary = "任务长时间未更新，可能卡在媒体处理、转写、OCR 或外部服务调用。"
+            next_actions = ["取消任务", "重试任务", "检查媒体处理配置和服务日志"]
     elif task.status == "dispatch_failed":
         severity = "failed"
         recommended_action = "retry"
