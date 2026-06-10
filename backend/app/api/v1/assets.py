@@ -55,6 +55,8 @@ async def upload_asset_api(
     if file_size <= 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
     storage_info = upload_fileobj_to_storage(file.filename, file.file, file_size, file.content_type or "application/octet-stream")
+    if storage_info.get("storage") not in {"local", "minio"}:
+        raise HTTPException(status_code=503, detail=f"Storage backend unavailable: {storage_info.get('reason') or 'unknown'}")
     payload = AssetCreate(
         project_id=project_id,
         asset_type=normalized_asset_type,

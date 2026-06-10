@@ -235,6 +235,48 @@ class ApiAssetFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_asset_upload_rejects_storage_placeholder_without_creating_asset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-placeholder-upload-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import engine
+            import app.models  # noqa: F401
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            try:
+                client = TestClient(app)
+                project_response = client.post(
+                    "/api/v1/projects",
+                    json={"name": "存储占位失败项目", "description": "", "domain_type": "video", "status": "active"},
+                )
+                project_id = project_response.json()["id"]
+
+                with patch(
+                    "app.api.v1.assets.upload_fileobj_to_storage",
+                    return_value={"bucket": "envoy", "object_name": "long-video.mp4", "storage": "local-placeholder", "reason": "minio-sdk-missing"},
+                ):
+                    response = client.post(
+                        "/api/v1/assets/upload",
+                        data={"project_id": project_id, "asset_type": "video", "language": "zh"},
+                        files={"file": ("long-video.mp4", b"video bytes", "video/mp4")},
+                    )
+
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["detail"], "Storage backend unavailable: minio-sdk-missing")
+                self.assertEqual(client.get("/api/v1/assets").json(), [])
+            finally:
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
