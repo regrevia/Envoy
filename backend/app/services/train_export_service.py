@@ -363,6 +363,14 @@ def _generated_sample_is_exportable(row: GeneratedSample, exportable_semantic_id
     return row.source_unit_id in exportable_semantic_ids
 
 
+def _generated_sample_has_export_content(row: GeneratedSample):
+    input_text = str(row.input_text or "").strip()
+    output_text = str(row.output_text or "").strip()
+    if not input_text or not output_text:
+        return False
+    return output_text != "No source content was available."
+
+
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     all_semantic_units = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.desc()).all()
     all_samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.desc()).all()
@@ -373,7 +381,12 @@ def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
     semantic_units = [row for row in all_semantic_units if _semantic_unit_is_exportable(row, tasks_by_id)]
     project_semantic_ids = {row.id for row in all_semantic_units}
     exportable_semantic_ids = {row.id for row in semantic_units}
-    samples = [row for row in all_samples if _generated_sample_is_exportable(row, exportable_semantic_ids, project_semantic_ids)]
+    samples = [
+        row
+        for row in all_samples
+        if _generated_sample_is_exportable(row, exportable_semantic_ids, project_semantic_ids)
+        and _generated_sample_has_export_content(row)
+    ]
     project_entity_ids = {
         *(row.id for row in semantic_units),
         *(row.id for row in samples),

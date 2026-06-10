@@ -641,6 +641,142 @@ class SampleGenerationFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_sample_job_rejects_blank_source_unit_without_creating_placeholder_sample(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-blank-unit-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="blank source unit project", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="blank-source-unit",
+                    project_id=project.id,
+                    asset_id="asset-blank",
+                    segment_id=None,
+                    unit_type="text",
+                    title="空白来源",
+                    content="   ",
+                    labels={"source": "text_asset", "stage": "preprocess"},
+                    confidence=0.2,
+                )
+                db.add(unit)
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="generate_samples", input_config={"source_unit_id": unit.id}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = sample_job.run({"task_id": task_id, "project_id": project_id, "source_unit_id": "blank-source-unit"})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"], "Source semantic unit has no usable content for sample generation")
+                self.assertEqual(stored_task.status, "failed")
+                self.assertEqual(stored_task.error_message, "Source semantic unit has no usable content for sample generation")
+                self.assertEqual(samples, [])
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_sample_job_skips_blank_units_when_generating_project_batch(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-sample-skip-blank-batch-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import sample_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="skip blank batch project", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="blank-batch-unit",
+                            project_id=project.id,
+                            asset_id="asset-batch",
+                            segment_id=None,
+                            unit_type="text",
+                            title="空白批量来源",
+                            content="",
+                            labels={"source": "text_asset", "stage": "preprocess"},
+                            confidence=0.1,
+                        ),
+                        SemanticUnit(
+                            id="valid-batch-unit",
+                            project_id=project.id,
+                            asset_id="asset-batch",
+                            segment_id=None,
+                            unit_type="text",
+                            title="有效批量来源",
+                            content="批量生成样本时，只应该使用真实可读内容。",
+                            labels={"source": "text_asset", "stage": "preprocess"},
+                            confidence=0.9,
+                        ),
+                    ]
+                )
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="generate_samples", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = sample_job.run({"task_id": task_id, "project_id": project_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                samples = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).all()
+
+                self.assertEqual(result["status"], "samples_generated")
+                self.assertEqual(result["sample_count"], 1)
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(len(samples), 1)
+                self.assertEqual(samples[0].source_unit_id, "valid-batch-unit")
+                self.assertIn("真实可读内容", samples[0].output_text)
+                self.assertNotIn("No source content was available", samples[0].output_text)
+            finally:
+                db.close()
+                engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

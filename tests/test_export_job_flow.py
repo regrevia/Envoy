@@ -347,6 +347,15 @@ class ExportJobFlowTests(unittest.TestCase):
                             output_text="取消 checkpoint 样本不能进入通用导出。",
                             quality_score=0.3,
                         ),
+                        GeneratedSample(
+                            id="export-placeholder-sample",
+                            project_id=project.id,
+                            source_unit_id="export-stable-unit",
+                            sample_type="qa",
+                            input_text="稳定导出素材\n\nWhat are the key points from 稳定导出素材?",
+                            output_text="No source content was available.",
+                            quality_score=0.45,
+                        ),
                     ]
                 )
                 db.add_all(
@@ -380,6 +389,7 @@ class ExportJobFlowTests(unittest.TestCase):
                 self.assertEqual({row["id"] for row in rows}, {"export-stable-unit", "export-stable-sample"})
                 self.assertIn("稳定完成的导出内容。", exported_text)
                 self.assertIn("稳定样本输出可以进入通用导出。", exported_text)
+                self.assertNotIn("No source content was available", exported_text)
                 self.assertNotIn("取消任务半成品", exported_text)
                 self.assertNotIn("取消任务 checkpoint", exported_text)
                 self.assertNotIn("取消任务样本", exported_text)
