@@ -22,6 +22,20 @@ type Task = {
   stale_after_seconds?: number;
 };
 
+type TaskDiagnostics = {
+  task_id: string;
+  status?: string | null;
+  severity?: string | null;
+  summary?: string | null;
+  recommended_action?: string | null;
+  next_actions?: string[];
+  can_cancel?: boolean;
+  can_retry?: boolean;
+  is_stale?: boolean;
+  stale_seconds?: number;
+  stale_after_seconds?: number;
+};
+
 const buttonStyle = {
   minHeight: 40,
   padding: '0 14px',
@@ -74,6 +88,17 @@ function staleLabel(task?: Task | null) {
   return minutes > 0 ? `疑似卡住：${minutes} 分钟未更新` : '疑似卡住：长时间未更新';
 }
 
+function actionLabel(action?: string | null) {
+  const labels: Record<string, string> = {
+    monitor: '继续观察',
+    cancel_then_retry: '先取消再重试',
+    retry: '重试任务',
+    create_new_task: '重新创建任务',
+    review_outputs: '审查产物',
+  };
+  return action ? labels[action] || action : '-';
+}
+
 function formatDurationSeconds(value?: number | null) {
   const seconds = Math.max(Number(value ?? 0), 0);
   if (seconds >= 60) return `${Math.floor(seconds / 60)} 分钟`;
@@ -108,6 +133,7 @@ function taskTypeLabel(taskType?: string | null) {
 
 export default function TaskDetailPage({ params }: { params: Promise<{ task_id: string }> }) {
   const [task, setTask] = useState<Task | null>(null);
+  const [diagnostics, setDiagnostics] = useState<TaskDiagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('正在加载任务...');
   const [taskId, setTaskId] = useState('');
@@ -120,12 +146,17 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
       setTaskId(task_id);
       const loadTask = async () => {
         try {
-          const data = await apiJson<Task>(`/api/v1/tasks/${task_id}`);
+          const [data, diagnosticData] = await Promise.all([
+            apiJson<Task>(`/api/v1/tasks/${task_id}`),
+            apiJson<TaskDiagnostics>(`/api/v1/tasks/${task_id}/diagnostics`),
+          ]);
           setTask(data);
+          setDiagnostics(diagnosticData);
           setMessage('任务已加载');
         } catch (error) {
           const text = error instanceof ApiError || error instanceof Error ? error.message : '任务加载失败';
           setTask(null);
+          setDiagnostics(null);
           setMessage(text);
         } finally {
           setLoading(false);
@@ -139,8 +170,12 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
   }, [params]);
 
   const loadTaskOnce = async (id: string) => {
-    const data = await apiJson<Task>(`/api/v1/tasks/${id}`);
+    const [data, diagnosticData] = await Promise.all([
+      apiJson<Task>(`/api/v1/tasks/${id}`),
+      apiJson<TaskDiagnostics>(`/api/v1/tasks/${id}/diagnostics`),
+    ]);
     setTask(data);
+    setDiagnostics(diagnosticData);
     setMessage('任务已加载');
   };
 
@@ -188,9 +223,14 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
           <h2 style={{ margin: 0, fontSize: 18 }}>长任务诊断</h2>
           <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', color: '#4b5563', fontSize: 13 }}>
             <span>自动刷新: 3 秒</span>
-            <span>卡住阈值: {formatDurationSeconds(task?.stale_after_seconds)}</span>
-            <span>未更新时间: {formatDurationSeconds(task?.stale_seconds)}</span>
+            <span>卡住阈值: {formatDurationSeconds(diagnostics?.stale_after_seconds ?? task?.stale_after_seconds)}</span>
+            <span>未更新时间: {formatDurationSeconds(diagnostics?.stale_seconds ?? task?.stale_seconds)}</span>
             <span>{staleLabel(task)}</span>
+          </div>
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb', color: '#374151', display: 'grid', gap: 8 }}>
+            <div><strong>后端诊断</strong>: {diagnostics?.summary || '等待诊断结果'}</div>
+            <div><strong>建议动作</strong>: {actionLabel(diagnostics?.recommended_action)}</div>
+            <div><strong>诊断结论</strong>: {(diagnostics?.next_actions || ['继续观察任务进度']).join(' / ')}</div>
           </div>
         </section>
 
@@ -218,6 +258,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
               <DetailRow label="卡住阈值" value={formatDurationSeconds(task.stale_after_seconds)} />
               <DetailRow label="未更新时间" value={formatDurationSeconds(task.stale_seconds)} />
               <DetailRow label="疑似卡住" value={staleLabel(task)} />
+              <DetailRow label="后端诊断" value={diagnostics?.summary} />
+              <DetailRow label="建议动作" value={actionLabel(diagnostics?.recommended_action)} />
+              <DetailRow label="诊断结论" value={(diagnostics?.next_actions || []).join(' / ')} />
               <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ color: '#6b7280', marginBottom: 8 }}>输入配置</div>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#374151' }}>

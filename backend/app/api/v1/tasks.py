@@ -22,10 +22,81 @@ RETRYABLE_TASKS = {
 }
 
 
-def _task_payload(task):
+def _task_staleness(task):
     stale_seconds = 0
     if task.status == "running" and task.updated_at is not None:
         stale_seconds = max(int((datetime.utcnow() - task.updated_at).total_seconds()), 0)
+    is_stale = task.status == "running" and stale_seconds >= TASK_STALE_AFTER_SECONDS
+    return {
+        "is_stale": is_stale,
+        "stale_seconds": stale_seconds,
+        "stale_after_seconds": TASK_STALE_AFTER_SECONDS,
+    }
+
+
+def _can_cancel(task):
+    return task.status in {"pending", "running", "dispatch_failed"}
+
+
+def _can_retry(task):
+    return task.status in {"failed", "dispatch_failed"}
+
+
+def _task_diagnostics_payload(task):
+    staleness = _task_staleness(task)
+    can_cancel = _can_cancel(task)
+    can_retry = _can_retry(task)
+    severity = "healthy"
+    recommended_action = "monitor"
+    summary = "任务状态正常，继续等待刷新。"
+    next_actions = ["继续观察任务进度"]
+
+    if staleness["is_stale"]:
+        severity = "stale"
+        recommended_action = "cancel_then_retry"
+        summary = "任务长时间未更新，可能卡在媒体处理、转写、OCR 或外部服务调用。"
+        next_actions = ["取消任务", "重试任务", "检查媒体处理配置和服务日志"]
+    elif task.status == "dispatch_failed":
+        severity = "failed"
+        recommended_action = "retry"
+        summary = "任务投递失败，通常与 Redis/Celery 或本地执行器启动失败有关。"
+        next_actions = ["重试任务", "检查任务执行服务"]
+    elif task.status == "failed":
+        severity = "failed"
+        recommended_action = "retry"
+        summary = "任务执行失败，请查看错误信息后重试。"
+        next_actions = ["查看错误信息", "重试任务"]
+    elif task.status == "canceled":
+        severity = "canceled"
+        recommended_action = "create_new_task"
+        summary = "任务已取消，原任务不会继续执行。"
+        next_actions = ["重新创建任务或从失败任务重试"]
+    elif task.status == "success":
+        severity = "complete"
+        recommended_action = "review_outputs"
+        summary = "任务已完成，可以继续审查语义单元、样本或导出产物。"
+        next_actions = ["查看产物", "审查追溯链路"]
+
+    return {
+        "task_id": task.id,
+        "status": task.status,
+        "task_type": task.task_type,
+        "progress": task.progress,
+        "updated_at": task.updated_at,
+        "result_summary": task.result_summary,
+        "error_message": task.error_message,
+        **staleness,
+        "severity": severity,
+        "summary": summary,
+        "recommended_action": recommended_action,
+        "next_actions": next_actions,
+        "can_cancel": can_cancel,
+        "can_retry": can_retry,
+    }
+
+
+def _task_payload(task):
+    staleness = _task_staleness(task)
     return {
         "id": task.id,
         "project_id": task.project_id,
@@ -38,9 +109,7 @@ def _task_payload(task):
         "error_message": task.error_message,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
-        "is_stale": task.status == "running" and stale_seconds >= TASK_STALE_AFTER_SECONDS,
-        "stale_seconds": stale_seconds,
-        "stale_after_seconds": TASK_STALE_AFTER_SECONDS,
+        **staleness,
     }
 
 
@@ -79,6 +148,14 @@ def get_task_api(task_id: str, db: Session = Depends(get_db)):
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return _task_payload(task)
+
+
+@router.get("/tasks/{task_id}/diagnostics")
+def get_task_diagnostics_api(task_id: str, db: Session = Depends(get_db)):
+    task = get_task(db, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return _task_diagnostics_payload(task)
 
 
 @router.post("/tasks/{task_id}/status")
