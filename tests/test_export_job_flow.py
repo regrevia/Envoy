@@ -225,6 +225,170 @@ class ExportJobFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_export_job_filters_canceled_preprocess_units_and_polluted_samples(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-job-filter-canceled-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.generated_sample import GeneratedSample
+            from app.models.processing_task import ProcessingTask
+            from app.models.semantic_unit import SemanticUnit
+            from app.models.trace_link import TraceLink
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task, get_task
+            from app.workers.jobs import export_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="export filter canceled project", description="", domain_type="knowledge", status="active"))
+                db.add_all(
+                    [
+                        ProcessingTask(
+                            id="export-success-preprocess",
+                            project_id=project.id,
+                            asset_id="asset-stable",
+                            task_type="preprocess",
+                            status="success",
+                            progress=100,
+                            input_config={},
+                        ),
+                        ProcessingTask(
+                            id="export-canceled-preprocess",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            task_type="preprocess",
+                            status="canceled",
+                            progress=45,
+                            input_config={},
+                            result_summary="Task canceled by user",
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        SemanticUnit(
+                            id="export-stable-unit",
+                            project_id=project.id,
+                            asset_id="asset-stable",
+                            segment_id=None,
+                            unit_type="text",
+                            title="稳定导出素材",
+                            content="稳定完成的导出内容。",
+                            labels={"source": "document_text", "stage": "preprocess", "task_id": "export-success-preprocess"},
+                            confidence=0.91,
+                        ),
+                        SemanticUnit(
+                            id="export-canceled-unit",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            segment_id=None,
+                            unit_type="document",
+                            title="取消导出半成品",
+                            content="取消任务半成品不能进入通用导出。",
+                            labels={"source": "document_text", "stage": "preprocess", "task_id": "export-canceled-preprocess"},
+                            confidence=0.4,
+                        ),
+                        SemanticUnit(
+                            id="export-canceled-checkpoint",
+                            project_id=project.id,
+                            asset_id="asset-canceled",
+                            segment_id=None,
+                            unit_type="transcript",
+                            title="取消导出 checkpoint",
+                            content="取消任务 checkpoint 不能进入通用导出。",
+                            labels={
+                                "source": "media_transcript",
+                                "stage": "preprocess",
+                                "task_id": "export-canceled-preprocess",
+                                "checkpoint": "segment_transcript",
+                            },
+                            confidence=0.4,
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        GeneratedSample(
+                            id="export-stable-sample",
+                            project_id=project.id,
+                            source_unit_id="export-stable-unit",
+                            sample_type="qa",
+                            input_text="稳定样本输入",
+                            output_text="稳定样本输出可以进入通用导出。",
+                            quality_score=0.92,
+                        ),
+                        GeneratedSample(
+                            id="export-canceled-sample",
+                            project_id=project.id,
+                            source_unit_id="export-canceled-unit",
+                            sample_type="qa",
+                            input_text="取消样本输入",
+                            output_text="取消任务样本不能进入通用导出。",
+                            quality_score=0.3,
+                        ),
+                        GeneratedSample(
+                            id="export-canceled-checkpoint-sample",
+                            project_id=project.id,
+                            source_unit_id="export-canceled-checkpoint",
+                            sample_type="qa",
+                            input_text="取消 checkpoint 样本输入",
+                            output_text="取消 checkpoint 样本不能进入通用导出。",
+                            quality_score=0.3,
+                        ),
+                    ]
+                )
+                db.add_all(
+                    [
+                        TraceLink(id="trace-stable-sample", source_type="semantic_unit", source_id="export-stable-unit", target_type="generated_sample", target_id="export-stable-sample", relation_type="derived_from"),
+                        TraceLink(id="trace-canceled-sample", source_type="semantic_unit", source_id="export-canceled-unit", target_type="generated_sample", target_id="export-canceled-sample", relation_type="derived_from"),
+                    ]
+                )
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=None, task_type="export", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = export_job.run({"task_id": task_id, "project_id": project_id})
+
+            jsonl_path = export_dir / f"{task_id}.jsonl"
+            md_path = export_dir / f"{task_id}.md"
+            rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            report = md_path.read_text(encoding="utf-8")
+            exported_text = json.dumps(rows, ensure_ascii=False) + "\n" + report
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+
+                self.assertEqual(result["status"], "exported")
+                self.assertEqual(result["row_count"], 2)
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual({row["id"] for row in rows}, {"export-stable-unit", "export-stable-sample"})
+                self.assertIn("稳定完成的导出内容。", exported_text)
+                self.assertIn("稳定样本输出可以进入通用导出。", exported_text)
+                self.assertNotIn("取消任务半成品", exported_text)
+                self.assertNotIn("取消任务 checkpoint", exported_text)
+                self.assertNotIn("取消任务样本", exported_text)
+                self.assertNotIn("取消 checkpoint 样本", exported_text)
+                self.assertNotIn("trace-canceled-sample", exported_text)
+            finally:
+                db.close()
+                engine.dispose()
+
     def test_export_job_renders_structured_semantic_content_as_readable_text(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             export_dir = Path(tmp_dir) / "exports"

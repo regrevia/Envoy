@@ -54,6 +54,14 @@ def _semantic_unit_is_sample_source(unit: SemanticUnit, tasks_by_id: dict[str, P
     return task.status == "success"
 
 
+def _generated_sample_is_export_source(sample: GeneratedSample, exportable_semantic_ids: set[str], project_semantic_ids: set[str]):
+    if not sample.source_unit_id:
+        return True
+    if sample.source_unit_id not in project_semantic_ids:
+        return True
+    return sample.source_unit_id in exportable_semantic_ids
+
+
 def _transcribe_audio_for_task(db, task_id: str | None, segment_path: str):
     candidate = getattr(transcribe_audio, "side_effect", None) or transcribe_audio
     try:
@@ -1279,8 +1287,14 @@ def export_job(self, payload: dict):
         out_dir.mkdir(parents=True, exist_ok=True)
         jsonl_path = out_dir / f"{task_id}.jsonl"
         md_path = out_dir / f"{task_id}.md"
-        semantic_unit_models = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.asc()).all() if project_id else []
-        sample_models = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.asc()).all() if project_id else []
+        project_tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all() if project_id else []
+        tasks_by_id = {task.id: task for task in project_tasks}
+        all_semantic_unit_models = db.query(SemanticUnit).filter(SemanticUnit.project_id == project_id).order_by(SemanticUnit.created_at.asc()).all() if project_id else []
+        semantic_unit_models = [unit for unit in all_semantic_unit_models if _semantic_unit_is_sample_source(unit, tasks_by_id)]
+        project_semantic_ids = {unit.id for unit in all_semantic_unit_models}
+        exportable_semantic_ids = {unit.id for unit in semantic_unit_models}
+        all_sample_models = db.query(GeneratedSample).filter(GeneratedSample.project_id == project_id).order_by(GeneratedSample.created_at.asc()).all() if project_id else []
+        sample_models = [sample for sample in all_sample_models if _generated_sample_is_export_source(sample, exportable_semantic_ids, project_semantic_ids)]
         if not semantic_unit_models and not sample_models:
             message = "No exportable rows found for project"
             _safe_update(db, task_id, "failed", 100, error_message=message)
