@@ -59,6 +59,39 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("split_video failed", str(ctx.exception))
         self.assertIn("invalid media data", str(ctx.exception))
 
+    def test_media_command_terminates_process_when_canceled(self):
+        media_service = reload_media_service()
+
+        class FakeProcess:
+            def __init__(self):
+                self.terminated = False
+                self.wait_calls = []
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = -15
+
+            def wait(self, timeout=None):
+                self.wait_calls.append(timeout)
+                return self.returncode
+
+            def communicate(self):
+                return b"", b""
+
+        process = FakeProcess()
+
+        with patch("app.services.media_service.subprocess.Popen", return_value=process):
+            with self.assertRaises(media_service.MediaProcessingError) as ctx:
+                media_service.split_video("cancel-input.mp4", "tmp/test-cancel-segments", should_cancel=lambda: True)
+
+        self.assertIn("split_video canceled", str(ctx.exception))
+        self.assertTrue(process.terminated)
+        self.assertEqual(process.wait_calls, [5])
+
     def test_split_video_uses_configured_segment_duration(self):
         os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
         media_service = reload_media_service()
@@ -439,6 +472,51 @@ class RuntimeSafetyTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         transcribe.assert_called_once_with("segment.wav")
+
+    def test_worker_media_split_passes_task_cancel_callback_when_supported(self):
+        for name in list(sys.modules):
+            if name.startswith("app."):
+                sys.modules.pop(name, None)
+
+        from app.workers import jobs
+
+        calls = []
+
+        def fake_split(source_path, output_dir, should_cancel=None):
+            calls.append({
+                "source_path": source_path,
+                "output_dir": output_dir,
+                "canceled": should_cancel() if should_cancel else None,
+            })
+            return ["segment_000001.mp4"]
+
+        with patch("app.workers.jobs.split_video", side_effect=fake_split), \
+            patch("app.workers.jobs._task_is_canceled", return_value=True):
+            result = jobs._split_video_for_task(object(), "task-cancel", "input.mp4", "out")
+
+        self.assertEqual(result, ["segment_000001.mp4"])
+        self.assertEqual(calls, [{"source_path": "input.mp4", "output_dir": "out", "canceled": True}])
+
+    def test_worker_media_helpers_keep_legacy_mock_compatibility(self):
+        for name in list(sys.modules):
+            if name.startswith("app."):
+                sys.modules.pop(name, None)
+
+        from app.workers import jobs
+
+        with patch("app.workers.jobs.split_audio", return_value=["audio_segment_000001.wav"]) as split_audio, \
+            patch("app.workers.jobs.split_video", return_value=["segment_000001.mp4"]) as split_video, \
+            patch("app.workers.jobs.extract_frames", return_value=["frame_000001.jpg"]) as extract_frames:
+            audio = jobs._split_audio_for_task(object(), "task-id", "input.mp3", "audio-out")
+            video = jobs._split_video_for_task(object(), "task-id", "input.mp4", "video-out")
+            frames = jobs._extract_frames_for_task(object(), "task-id", "input.mp4", "frame-out")
+
+        self.assertEqual(audio, ["audio_segment_000001.wav"])
+        self.assertEqual(video, ["segment_000001.mp4"])
+        self.assertEqual(frames, ["frame_000001.jpg"])
+        split_audio.assert_called_once_with("input.mp3", "audio-out")
+        split_video.assert_called_once_with("input.mp4", "video-out")
+        extract_frames.assert_called_once_with("input.mp4", "frame-out")
 
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""

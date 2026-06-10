@@ -52,6 +52,33 @@ def _transcribe_audio_for_task(db, task_id: str | None, segment_path: str):
     return transcribe_audio(segment_path)
 
 
+def _supports_should_cancel(fn):
+    candidate = getattr(fn, "side_effect", None) or fn
+    try:
+        signature = inspect.signature(candidate)
+    except (TypeError, ValueError):
+        return False
+    return "should_cancel" in signature.parameters
+
+
+def _split_audio_for_task(db, task_id: str | None, source_path: str, output_dir: str):
+    if _supports_should_cancel(split_audio):
+        return split_audio(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id))
+    return split_audio(source_path, output_dir)
+
+
+def _split_video_for_task(db, task_id: str | None, source_path: str, output_dir: str):
+    if _supports_should_cancel(split_video):
+        return split_video(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id))
+    return split_video(source_path, output_dir)
+
+
+def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_dir: str):
+    if _supports_should_cancel(extract_frames):
+        return extract_frames(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id))
+    return extract_frames(source_path, output_dir)
+
+
 def _canceled_result(payload: dict, semantic: dict | None = None):
     result = {"status": "canceled", "payload": payload}
     if semantic is not None:
@@ -771,7 +798,7 @@ def preprocess_job(self, payload: dict):
                 return _canceled_result(payload)
             audio_dir = _audio_task_temp_dir(task_id)
             media_temp_dirs.append(audio_dir)
-            audio_segment_paths = split_audio(source_path, str(audio_dir))
+            audio_segment_paths = _split_audio_for_task(db, task_id, source_path, str(audio_dir))
             _safe_update(db, task_id, "running", 35, result_summary=f"audio split done: {len(audio_segment_paths)} segment(s)")
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
@@ -877,12 +904,12 @@ def preprocess_job(self, payload: dict):
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_dir, frame_dir = _media_task_temp_dirs(task_id)
         media_temp_dirs.extend([segment_dir, frame_dir])
-        segment_paths = split_video(source_path, str(segment_dir))
+        segment_paths = _split_video_for_task(db, task_id, source_path, str(segment_dir))
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         if MEDIA_ENABLE_FRAME_EXTRACTION:
-            frame_paths = extract_frames(source_path, str(frame_dir))
+            frame_paths = _extract_frames_for_task(db, task_id, source_path, str(frame_dir))
             frame_extraction_skipped = False
             _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
         else:
