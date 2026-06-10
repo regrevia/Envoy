@@ -153,13 +153,17 @@ export default function UploadPage() {
 
   const asset = uploadedAsset(result);
   const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));
+  const hasMaterialOutput = materialOutputs.length > 0;
+  const materialOutputParam = hasMaterialOutput ? materialOutputs.join(',') : '';
   const primaryMaterialOutput = materialOutputs[0] || 'markdown';
   const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
-  const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&outputs=${encodeURIComponent(materialOutputs.join(','))}&export_type=${encodeURIComponent(primaryMaterialOutput)}` : '';
+  const exportQuery = projectId && hasMaterialOutput ? `?project_id=${encodeURIComponent(projectId)}&outputs=${encodeURIComponent(materialOutputParam)}&export_type=${encodeURIComponent(primaryMaterialOutput)}` : '';
   const taskHref = preprocessResult?.id ? `/tasks/${preprocessResult.id}` : '/tasks';
   const semanticHref = asset?.project_id ? `/semantic-units?project_id=${asset.project_id}` : `/semantic-units${projectQuery}`;
   const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : `/generated-samples${projectQuery}`;
-  const materialExportHref = asset?.project_id ? `/train-exports?project_id=${asset.project_id}&outputs=${encodeURIComponent(materialOutputs.join(','))}&export_type=${encodeURIComponent(primaryMaterialOutput)}` : `/train-exports${exportQuery}`;
+  const materialExportHref = hasMaterialOutput
+    ? (asset?.project_id ? `/train-exports?project_id=${asset.project_id}&outputs=${encodeURIComponent(materialOutputParam)}&export_type=${encodeURIComponent(primaryMaterialOutput)}` : `/train-exports${exportQuery}`)
+    : '#';
   const traceHref = asset?.id ? `/trace?type=asset&id=${asset.id}` : '/trace';
 
   const toggleOutput = (outputId: string) => {
@@ -284,9 +288,14 @@ export default function UploadPage() {
                     <a href={taskHref} style={{ color: '#111827', fontWeight: 700 }}>查看预处理任务</a>
                     <a href={semanticHref} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</a>
                     <a href={samplesHref} style={{ color: '#111827', fontWeight: 700 }}>生成训练样本</a>
-                    <a href={materialExportHref} style={{ color: '#111827', fontWeight: 700 }}>导出 Markdown / Skill / RAG</a>
+                    <a href={materialExportHref} aria-disabled={!hasMaterialOutput} style={{ color: hasMaterialOutput ? '#111827' : '#6b7280', fontWeight: 700, pointerEvents: hasMaterialOutput ? 'auto' : 'none' }}>导出 Markdown / Skill / RAG</a>
                     <a href={traceHref} style={{ color: '#111827', fontWeight: 700 }}>查看追溯链路</a>
                   </div>
+                  {!hasMaterialOutput ? (
+                    <div style={{ marginTop: 8, color: '#b45309', fontSize: 13 }}>
+                      请先勾选 Markdown、Skill 或 RAG 后再导出 AI 素材。
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : (
