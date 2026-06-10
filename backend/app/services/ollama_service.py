@@ -1,5 +1,6 @@
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -29,6 +30,9 @@ def _normalize_config(payload: dict[str, Any], fallback: dict[str, Any], configu
     raw_model = payload.get("model") if "model" in payload else fallback["model"]
     base_url = str(raw_base_url if raw_base_url is not None else fallback["base_url"]).strip().rstrip("/")
     model = str(raw_model if raw_model is not None else fallback["model"]).strip()
+    parsed_base_url = urlparse(base_url or "http://127.0.0.1:11434")
+    if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.netloc:
+        raise ValueError("Ollama base_url must start with http:// or https://")
     return {
         "base_url": base_url or "http://127.0.0.1:11434",
         "model": model,

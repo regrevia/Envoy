@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.core.config import (
     MEDIA_ENABLE_FRAME_EXTRACTION,
@@ -27,7 +27,10 @@ def ollama_health():
 
 @router.put('/health/ollama/config')
 def configure_ollama(payload: dict):
-    update_ollama_config(payload)
+    try:
+        update_ollama_config(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     status = get_ollama_status(probe=False)
     config = get_ollama_config()
     return {
