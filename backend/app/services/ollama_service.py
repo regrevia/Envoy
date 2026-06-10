@@ -74,13 +74,41 @@ def update_ollama_config(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_ollama_json_object(text: str) -> dict[str, Any]:
+    return parse_ollama_json_object_with_status(text)["parsed"]
+
+
+def _is_meaningful_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict, tuple, set)):
+        return bool(value)
+    return value is not None
+
+
+def parse_ollama_json_object_with_status(text: str, required_keys: tuple[str, ...] = ()) -> dict[str, Any]:
     content = (text or "").strip()
     if not content:
-        return {}
+        return {
+            "parsed": {},
+            "parse_status": "empty",
+            "parse_error": "ollama returned empty response",
+        }
 
     try:
         parsed = json.loads(content)
-        return parsed if isinstance(parsed, dict) else {}
+        if isinstance(parsed, dict):
+            missing = [key for key in required_keys if not _is_meaningful_value(parsed.get(key))]
+            if missing:
+                return {
+                    "parsed": parsed,
+                    "parse_status": "incomplete",
+                    "parse_error": f"missing structured field(s): {', '.join(missing)}",
+                }
+            return {
+                "parsed": parsed,
+                "parse_status": "parsed",
+                "parse_error": None,
+            }
     except json.JSONDecodeError:
         pass
 
@@ -93,8 +121,23 @@ def parse_ollama_json_object(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
         if isinstance(parsed, dict):
-            return parsed
-    return {}
+            missing = [key for key in required_keys if not _is_meaningful_value(parsed.get(key))]
+            if missing:
+                return {
+                    "parsed": parsed,
+                    "parse_status": "incomplete",
+                    "parse_error": f"missing structured field(s): {', '.join(missing)}",
+                }
+            return {
+                "parsed": parsed,
+                "parse_status": "parsed",
+                "parse_error": None,
+            }
+    return {
+        "parsed": {},
+        "parse_status": "unparsed",
+        "parse_error": "ollama response did not contain a JSON object",
+    }
 
 
 def get_ollama_status(client: Any | None = None, probe: bool = True) -> dict[str, Any]:

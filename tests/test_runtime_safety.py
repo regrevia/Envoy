@@ -904,6 +904,17 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(result["original_prompt_chars"], len("Review\n\n" + ("x" * 200)))
         self.assertEqual(result["sent_prompt_chars"], len(prompt))
 
+    def test_ollama_json_parser_reports_incomplete_structured_output(self):
+        sys.modules.pop("app.core.config", None)
+        sys.modules.pop("app.services.ollama_service", None)
+        from app.services.ollama_service import parse_ollama_json_object_with_status
+
+        result = parse_ollama_json_object_with_status('{"keywords":["refund"]}', required_keys=("summary",))
+
+        self.assertEqual(result["parsed"], {"keywords": ["refund"]})
+        self.assertEqual(result["parse_status"], "incomplete")
+        self.assertEqual(result["parse_error"], "missing structured field(s): summary")
+
     def test_storage_local_mode_persists_uploaded_bytes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["ENVOY_STORAGE_MODE"] = "local"

@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
+from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object_with_status
 
 
 def _content_text(source: dict[str, Any] | None) -> str:
@@ -16,9 +16,9 @@ def _content_text(source: dict[str, Any] | None) -> str:
 
 def _parse_llm_text(text: str) -> dict[str, Any]:
     if not text.strip():
-        return {}
-    parsed = parse_ollama_json_object(text)
-    return parsed if parsed else {"summary": text}
+        return {"parsed": {}, "parse_status": "empty", "parse_error": "ollama returned empty response"}
+    parsed = parse_ollama_json_object_with_status(text, required_keys=("summary",))
+    return parsed if parsed["parsed"] else {**parsed, "parsed": {"summary": text}}
 
 
 def build_analysis_payload(source: dict[str, Any] | None, asset_type: str | None = None) -> dict[str, Any]:
@@ -28,9 +28,10 @@ def build_analysis_payload(source: dict[str, Any] | None, asset_type: str | None
         "请将输入素材整理为稳定可用的 AI 素材分析摘要，优先输出 JSON，字段包含 summary 和 labels。",
         text,
     )
-    llm_payload = _parse_llm_text(llm_result.get("text", ""))
-    llm_summary = llm_payload.get("summary") if llm_result.get("status") == "success" else None
-    llm_labels = llm_payload.get("labels") if isinstance(llm_payload.get("labels"), list) else []
+    llm_parse = _parse_llm_text(llm_result.get("text", ""))
+    llm_payload = llm_parse["parsed"]
+    llm_summary = llm_payload.get("summary") if llm_result.get("status") == "success" and llm_parse["parse_status"] in {"parsed", "unparsed"} else None
+    llm_labels = llm_payload.get("labels") if isinstance(llm_payload.get("labels"), list) and llm_parse["parse_status"] == "parsed" else []
 
     labels = ["scene", "event", "rule", "concept", *(str(label) for label in llm_labels)]
     summary = llm_summary or fallback_summary
@@ -57,6 +58,8 @@ def build_analysis_payload(source: dict[str, Any] | None, asset_type: str | None
         "llm": {
             "enabled": llm_result.get("enabled", False),
             "status": llm_result.get("status", "disabled"),
+            "parse_status": llm_parse["parse_status"] if llm_result.get("status") == "success" else None,
+            "parse_error": llm_parse["parse_error"] if llm_result.get("status") == "success" else None,
             "summary": llm_summary or "",
             "error": llm_result.get("error"),
         },
