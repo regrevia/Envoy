@@ -46,6 +46,8 @@ const buttonStyle = {
   cursor: 'pointer',
 } as const;
 
+const exportableOutputTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']);
+
 function formatCreatedAt(value?: string | null) {
   if (!value) {
     return '-';
@@ -134,8 +136,10 @@ export default function SemanticUnitsPage() {
 
   const outputQueryParam = outputContext ? `outputs=${encodeURIComponent(outputContext)}` : '';
   const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}${outputQueryParam ? `&${outputQueryParam}` : ''}` : (outputQueryParam ? `?${outputQueryParam}` : '');
-  const exportOutputs = outputContext || 'markdown,skill,rag';
-  const primaryExportType = exportOutputs.split(',').map((item) => item.trim()).filter(Boolean)[0] || 'markdown';
+  const requestedOutputs = outputContext.split(',').map((item) => item.trim()).filter(Boolean);
+  const exportOutputList = requestedOutputs.filter((item) => exportableOutputTypes.has(item));
+  const exportOutputs = exportOutputList.length ? exportOutputList.join(',') : 'markdown,skill,rag';
+  const primaryExportType = exportOutputList[0] || 'markdown';
   const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&export_type=${encodeURIComponent(primaryExportType)}&outputs=${encodeURIComponent(exportOutputs)}` : (outputQueryParam ? `?${outputQueryParam}` : '');
   const uploadHref = projectQuery ? `/upload${projectQuery}` : '/upload';
   const samplesHref = projectQuery ? `/generated-samples${projectQuery}` : '/generated-samples';
@@ -187,6 +191,7 @@ export default function SemanticUnitsPage() {
             <span style={{ fontSize: 14 }}>{message}</span>
             {projectId ? <span style={{ color: '#6b7280', fontSize: 13 }}>当前项目：{projectId}</span> : null}
             {outputContext ? <span style={{ color: '#6b7280', fontSize: 13 }}>生成目标：{outputContext}</span> : null}
+            {outputContext.includes('samples') ? <span style={{ color: '#6b7280', fontSize: 13 }}>生成样本会保留 samples 目标，但训练导出只接收 Markdown、Skill、RAG 或数据集类型。</span> : null}
           </div>
           <button onClick={() => void loadUnits()} style={buttonStyle}>刷新语义单元</button>
         </div>

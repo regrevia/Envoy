@@ -271,6 +271,20 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_semantic_units_page_filters_samples_out_of_export_context(self):
+        page = ROOT_DIR / "frontend" / "app" / "semantic-units" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const exportableOutputTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']);",
+            "const requestedOutputs = outputContext.split(',').map((item) => item.trim()).filter(Boolean);",
+            "const exportOutputList = requestedOutputs.filter((item) => exportableOutputTypes.has(item));",
+            "const exportOutputs = exportOutputList.length ? exportOutputList.join(',') : 'markdown,skill,rag';",
+            "const primaryExportType = exportOutputList[0] || 'markdown';",
+            "生成样本会保留 samples 目标，但训练导出只接收 Markdown、Skill、RAG 或数据集类型。",
+        ]:
+            self.assertIn(copy, text)
+
     def test_generated_samples_page_accepts_project_context_from_upload(self):
         page = ROOT_DIR / "frontend" / "app" / "generated-samples" / "page.tsx"
         text = page.read_text(encoding="utf-8")
