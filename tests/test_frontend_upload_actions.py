@@ -137,8 +137,8 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "查看追溯链路",
             "preprocessResult?.id",
             "`/tasks/${preprocessResult.id}`",
-            "`/semantic-units?project_id=${asset.project_id}`",
-            "`/generated-samples?project_id=${asset.project_id}`",
+            "const semanticHref = assetProjectQuery ? `/semantic-units${assetProjectQuery}` : '/semantic-units';",
+            "const samplesHref = assetProjectQuery ? `/generated-samples${assetProjectQuery}` : `/generated-samples${projectQuery}`;",
             "`/train-exports?project_id=${asset.project_id}",
             "`/trace?type=asset&id=${asset.id}`",
         ]:
@@ -156,11 +156,25 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "const primaryMaterialOutput = materialOutputs[0] || 'markdown';",
             "outputs=${encodeURIComponent(materialOutputParam)}",
             "export_type=${encodeURIComponent(primaryMaterialOutput)}",
-            "const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : `/generated-samples${projectQuery}`;",
+            "const outputQueryParam = selectedOutputs.length ? `outputs=${encodeURIComponent(selectedOutputs.join(','))}` : '';",
+            "const samplesHref = assetProjectQuery ? `/generated-samples${assetProjectQuery}` : `/generated-samples${projectQuery}`;",
         ]:
             self.assertIn(copy, text)
         self.assertNotIn("export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}", text)
         self.assertNotIn("const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : '/generated-samples';", text)
+
+    def test_upload_page_preserves_output_context_for_review_pages(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const outputQueryParam = selectedOutputs.length ? `outputs=${encodeURIComponent(selectedOutputs.join(','))}` : '';",
+            "const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}${outputQueryParam ? `&${outputQueryParam}` : ''}` : (outputQueryParam ? `?${outputQueryParam}` : '');",
+            "const assetProjectQuery = asset?.project_id ? `?project_id=${encodeURIComponent(asset.project_id)}${outputQueryParam ? `&${outputQueryParam}` : ''}` : projectQuery;",
+            "const semanticHref = assetProjectQuery ? `/semantic-units${assetProjectQuery}` : '/semantic-units';",
+            "const samplesHref = assetProjectQuery ? `/generated-samples${assetProjectQuery}` : `/generated-samples${projectQuery}`;",
+        ]:
+            self.assertIn(copy, text)
 
     def test_upload_page_disables_material_export_when_only_samples_selected(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
@@ -243,12 +257,17 @@ class FrontendUploadActionsTests(unittest.TestCase):
         for copy in [
             "URLSearchParams",
             "project_id",
+            "outputs",
             "setProjectId(projectFromQuery)",
+            "setOutputContext(outputsFromQuery)",
             "const effectiveQuery = nextProjectId ? `?project_id=${encodeURIComponent(nextProjectId)}` : query;",
             "apiJson<SemanticUnit[]>(`/api/v1/semantic-units${effectiveQuery}`)",
-            "`/upload?project_id=${projectId}`",
-            "`/generated-samples?project_id=${unit.project_id}`",
-            "`/train-exports?project_id=${unit.project_id}",
+            "const outputQueryParam = outputContext ? `outputs=${encodeURIComponent(outputContext)}` : '';",
+            "const uploadHref = projectQuery ? `/upload${projectQuery}` : '/upload';",
+            "const samplesHref = projectQuery ? `/generated-samples${projectQuery}` : '/generated-samples';",
+            "const exportsHref = projectQuery ? `/train-exports${exportQuery}` : '/train-exports';",
+            "unitSamplesHref(unit)",
+            "unitExportsHref(unit)",
         ]:
             self.assertIn(copy, text)
 
@@ -259,11 +278,13 @@ class FrontendUploadActionsTests(unittest.TestCase):
         for copy in [
             "URLSearchParams",
             "project_id",
+            "outputs",
             "setProjectId(projectFromQuery)",
+            "setOutputContext(outputsFromQuery)",
             "const effectiveQuery = nextProjectId ? `?project_id=${encodeURIComponent(nextProjectId)}` : query;",
             "apiJson<GeneratedSample[]>(`/api/v1/generated-samples${effectiveQuery}`)",
-            "`/semantic-units?project_id=${projectId}`",
-            "`/train-exports?project_id=${projectId}",
+            "const semanticHref = projectId ? `/semantic-units?project_id=${projectId}${outputQueryParam ? `&${outputQueryParam}` : ''}` : '/semantic-units';",
+            "const exportHref = projectId ? `/train-exports?project_id=${projectId}&export_type=${primaryExportType}&outputs=${encodeURIComponent(selectedExportOutputs.join(','))}` : '/train-exports';",
             "当前项目",
         ]:
             self.assertIn(copy, text)

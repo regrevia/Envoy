@@ -34,6 +34,8 @@ const buttonStyle = {
   cursor: 'pointer',
 } as const;
 
+const supportedExportTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']);
+
 function qualityLabel(score?: number | null) {
   if (score === null || score === undefined) return '-';
   return `${Math.round(score * 100)}%`;
@@ -46,6 +48,7 @@ export default function GeneratedSamplesPage() {
   const [generatingBatch, setGeneratingBatch] = useState(false);
   const [batchTask, setBatchTask] = useState<TaskResponse | null>(null);
   const [message, setMessage] = useState('就绪');
+  const [outputContext, setOutputContext] = useState('');
 
   const loadSamples = async (nextProjectId = projectId) => {
     setLoading(true);
@@ -65,14 +68,26 @@ export default function GeneratedSamplesPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectFromQuery = params.get('project_id') || '';
+    const outputsFromQuery = params.get('outputs') || '';
     if (projectFromQuery) {
       setProjectId(projectFromQuery);
+    }
+    if (outputsFromQuery) {
+      setOutputContext(outputsFromQuery);
     }
     void loadSamples(projectFromQuery);
   }, []);
 
-  const semanticHref = projectId ? `/semantic-units?project_id=${projectId}` : '/semantic-units';
-  const exportHref = projectId ? `/train-exports?project_id=${projectId}&export_type=markdown&outputs=markdown,skill,rag` : '/train-exports';
+  const exportOutputs = outputContext
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => supportedExportTypes.has(item));
+  const fallbackExportOutputs = ['markdown', 'skill', 'rag'];
+  const selectedExportOutputs = exportOutputs.length ? exportOutputs : fallbackExportOutputs;
+  const primaryExportType = selectedExportOutputs[0] || 'markdown';
+  const outputQueryParam = outputContext ? `outputs=${encodeURIComponent(outputContext)}` : '';
+  const semanticHref = projectId ? `/semantic-units?project_id=${projectId}${outputQueryParam ? `&${outputQueryParam}` : ''}` : '/semantic-units';
+  const exportHref = projectId ? `/train-exports?project_id=${projectId}&export_type=${primaryExportType}&outputs=${encodeURIComponent(selectedExportOutputs.join(','))}` : '/train-exports';
 
   const onGenerateProjectSamples = async () => {
     if (!projectId || generatingBatch) {
@@ -119,6 +134,7 @@ export default function GeneratedSamplesPage() {
               <h2 style={{ margin: 0, fontSize: 18 }}>样本列表</h2>
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
                 共 {samples.length} 条样本{projectId ? `；当前项目：${projectId}` : ''}
+                {outputContext ? `；生成目标：${outputContext}` : ''}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
