@@ -92,6 +92,43 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertTrue(process.terminated)
         self.assertEqual(process.wait_calls, [5])
 
+    def test_media_command_kills_process_when_terminate_does_not_exit(self):
+        media_service = reload_media_service()
+
+        class FakeProcess:
+            def __init__(self):
+                self.terminated = False
+                self.killed = False
+                self.wait_calls = []
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                self.terminated = True
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+
+            def wait(self, timeout=None):
+                self.wait_calls.append(timeout)
+                if self.terminated and not self.killed:
+                    raise media_service.subprocess.TimeoutExpired(["ffmpeg"], timeout)
+                return self.returncode
+
+        process = FakeProcess()
+
+        with patch("app.services.media_service.subprocess.Popen", return_value=process):
+            with self.assertRaises(media_service.MediaProcessingError) as ctx:
+                media_service.split_video("stubborn-input.mp4", "tmp/test-stubborn-segments", should_cancel=lambda: True)
+
+        self.assertIn("split_video canceled", str(ctx.exception))
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, [5, 5])
+
     def test_split_video_uses_configured_segment_duration(self):
         os.environ["MEDIA_SEGMENT_SECONDS"] = "600"
         media_service = reload_media_service()
@@ -433,6 +470,63 @@ class RuntimeSafetyTests(unittest.TestCase):
             self.assertEqual(result["error"], "transcription canceled")
             self.assertEqual(processes[0].join_calls, [1, 5])
             self.assertTrue(processes[0].terminated)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_TRANSCRIPTION_TIMEOUT_SEC", None)
+            else:
+                os.environ["MEDIA_TRANSCRIPTION_TIMEOUT_SEC"] = previous
+            reload_media_service()
+
+    def test_transcribe_audio_kills_worker_when_terminate_does_not_exit(self):
+        previous = os.environ.get("MEDIA_TRANSCRIPTION_TIMEOUT_SEC")
+        try:
+            os.environ["MEDIA_TRANSCRIPTION_TIMEOUT_SEC"] = "30"
+            media_service = reload_media_service()
+
+            class FakeQueue:
+                def get_nowait(self):
+                    raise Empty()
+
+            class FakeProcess:
+                def __init__(self, target, args, daemon):
+                    self.target = target
+                    self.args = args
+                    self.daemon = daemon
+                    self.join_calls = []
+                    self.terminated = False
+                    self.killed = False
+
+                def start(self):
+                    return None
+
+                def join(self, timeout=None):
+                    self.join_calls.append(timeout)
+
+                def is_alive(self):
+                    return not self.killed
+
+                def terminate(self):
+                    self.terminated = True
+
+                def kill(self):
+                    self.killed = True
+
+            processes = []
+
+            def make_process(target, args, daemon):
+                process = FakeProcess(target, args, daemon)
+                processes.append(process)
+                return process
+
+            with patch("app.services.media_service.multiprocessing.Queue", return_value=FakeQueue()), \
+                patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
+                result = media_service.transcribe_audio("stubborn-segment.wav", should_cancel=lambda: True)
+
+            self.assertEqual(result["status"], "canceled")
+            self.assertEqual(result["error"], "transcription canceled")
+            self.assertTrue(processes[0].terminated)
+            self.assertTrue(processes[0].killed)
+            self.assertEqual(processes[0].join_calls, [1, 5, 5])
         finally:
             if previous is None:
                 os.environ.pop("MEDIA_TRANSCRIPTION_TIMEOUT_SEC", None)

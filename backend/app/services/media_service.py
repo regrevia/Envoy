@@ -30,6 +30,23 @@ def _error_detail(exc: Exception) -> str:
     return str(exc)
 
 
+def _terminate_subprocess(process):
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _terminate_worker_process(process):
+    process.terminate()
+    process.join(5)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+
+
 def _run_media_command(stage: str, cmd: list[str], should_cancel: Callable[[], bool] | None = None):
     if should_cancel is None:
         try:
@@ -44,13 +61,11 @@ def _run_media_command(stage: str, cmd: list[str], should_cancel: Callable[[], b
         try:
             while process.poll() is None:
                 if should_cancel():
-                    process.terminate()
-                    process.wait(timeout=5)
+                    _terminate_subprocess(process)
                     raise MediaProcessingError(f"{stage} canceled")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    process.terminate()
-                    process.wait(timeout=5)
+                    _terminate_subprocess(process)
                     raise MediaProcessingError(f"{stage} failed: command timed out after {MEDIA_COMMAND_TIMEOUT_SEC} sec")
                 try:
                     process.wait(timeout=min(1, remaining))
@@ -182,12 +197,10 @@ def transcribe_audio(audio_path: str, should_cancel: Callable[[], bool] | None =
         process.join(wait_seconds)
         waited += wait_seconds
         if process.is_alive() and should_cancel is not None and should_cancel():
-            process.terminate()
-            process.join(5)
+            _terminate_worker_process(process)
             return {"status": "canceled", "text": "", "segments": [], "error": "transcription canceled"}
     if process.is_alive():
-        process.terminate()
-        process.join(5)
+        _terminate_worker_process(process)
         return {"status": "failed", "text": "", "segments": [], "error": f"transcription timeout after {timeout_sec} sec"}
     try:
         result = result_queue.get_nowait()
