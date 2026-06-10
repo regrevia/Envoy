@@ -302,6 +302,22 @@ def _media_limit_metadata():
     }
 
 
+def _limit_media_segments(segment_paths: list[str], source_path: str):
+    inputs = [str(path) for path in segment_paths if str(path).strip()]
+    if not inputs:
+        inputs = [source_path]
+    limit = max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
+    original_count = len(inputs)
+    limited_inputs = inputs[:limit]
+    return limited_inputs, original_count > len(limited_inputs), original_count
+
+
+def _segment_truncation_suffix(segment_input_count: int, processed_segment_count: int):
+    if segment_input_count <= processed_segment_count:
+        return ""
+    return f"; segment input truncated to {processed_segment_count}/{segment_input_count} segment(s)"
+
+
 def _transcription_segment_summary(transcription_results: list[dict]):
     failed_segments = []
     success_count = 0
@@ -972,7 +988,7 @@ def preprocess_job(self, payload: dict):
             transcription_parts = []
             transcription_segments = []
             transcription_results = []
-            transcription_inputs = audio_segment_paths or [source_path]
+            transcription_inputs, segments_truncated, segment_input_count = _limit_media_segments(audio_segment_paths, source_path)
             transcription_count = len(transcription_inputs)
             for index, segment_path in enumerate(transcription_inputs):
                 if _task_is_canceled(db, task_id):
@@ -1031,7 +1047,9 @@ def preprocess_job(self, payload: dict):
                 _clear_media_transcript_checkpoints(db, asset_id, task_id, source="audio_transcript")
                 units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86, task_id=task_id, progress_label="audio chunks persisted")
                 semantic_payload = {
-                    "segments": audio_segment_paths,
+                    "segments": transcription_inputs,
+                    "segment_source_count": segment_input_count,
+                    "segment_truncated": segments_truncated,
                     "char_count": len(transcript_text),
                     "preview": transcript_text[:500],
                     "stage": "preprocess",
@@ -1049,10 +1067,16 @@ def preprocess_job(self, payload: dict):
                 if _task_is_canceled(db, task_id):
                     return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
                 _successful_preprocess_replaces_previous(db, asset_id, task_id)
-                _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks{_partial_transcription_suffix(transcription_summary)}")
+                _safe_update(db, task_id, "success", 100, result_summary=f"audio preprocess done: {semantic_payload['char_count']} chars, {len(units)} chunks{_partial_transcription_suffix(transcription_summary)}{_segment_truncation_suffix(segment_input_count, transcription_count)}")
                 return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
             semantic_payload = _build_file_semantic_payload(asset, source_path, "audio_asset")
             semantic_payload.update(_media_limit_metadata())
+            semantic_payload.update({
+                "segments": transcription_inputs,
+                "segment_source_count": segment_input_count,
+                "segment_count": transcription_count,
+                "segment_truncated": segments_truncated,
+            })
             labels = {
                 "stage": "preprocess",
                 "source": "audio_asset",
@@ -1096,7 +1120,7 @@ def preprocess_job(self, payload: dict):
         transcription_parts = []
         transcription_segments = []
         transcription_results = []
-        transcription_inputs = segment_paths or [source_path]
+        transcription_inputs, segments_truncated, segment_input_count = _limit_media_segments(segment_paths, source_path)
         transcription_count = len(transcription_inputs)
         for index, segment_path in enumerate(transcription_inputs):
             if _task_is_canceled(db, task_id):
@@ -1149,7 +1173,10 @@ def preprocess_job(self, payload: dict):
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         semantic_payload = {
-            "segments": segment_paths,
+            "segments": transcription_inputs,
+            "segment_source_count": segment_input_count,
+            "segment_count": transcription_count,
+            "segment_truncated": segments_truncated,
             "frames": frame_paths,
             "transcript": transcription,
             "ocr": ocr_results,
@@ -1230,7 +1257,7 @@ def preprocess_job(self, payload: dict):
             task_id,
             "success",
             100,
-            result_summary=f"media preprocess done: {len(segment_paths)} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}",
+            result_summary=f"media preprocess done: {transcription_count} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}{_segment_truncation_suffix(segment_input_count, transcription_count)}",
         )
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:
