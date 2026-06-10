@@ -172,10 +172,11 @@ export default function HomePage() {
     [projects, selectedProjectId],
   );
 
-  const primaryExportType = useMemo(() => {
-    const supported = selectedOutputs.find((item) => ['markdown', 'skill', 'rag'].includes(item));
-    return supported || 'sft';
-  }, [selectedOutputs]);
+  const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));
+  const datasetOutputs = selectedOutputs.includes('dataset') ? ['sft'] : [];
+  const exportOutputs = [...materialOutputs, ...datasetOutputs];
+  const hasExportableOutput = exportOutputs.length > 0;
+  const primaryExportType = exportOutputs[0] || 'sft';
 
   const canProceed = Boolean(selectedProjectId);
   const disabledActionStyle = {
@@ -184,9 +185,11 @@ export default function HomePage() {
   } as const;
   const uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#';
   const semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#';
-  const samplesHref = canProceed ? `/generated-samples?project_id=${selectedProjectId}` : '#';
+  const samplesHref = canProceed && selectedOutputs.includes('samples') ?
+    `/generated-samples?project_id=${selectedProjectId}` :
+    '#';
   const exportHref = useMemo(() => {
-    if (!canProceed) {
+    if (!canProceed || !hasExportableOutput) {
       return '#';
     }
     const params = new URLSearchParams();
@@ -194,9 +197,9 @@ export default function HomePage() {
       params.set('project_id', selectedProjectId);
     }
     params.set('export_type', primaryExportType);
-    params.set('outputs', selectedOutputs.join(','));
+    params.set('outputs', exportOutputs.join(','));
     return `/train-exports?${params.toString()}`;
-  }, [canProceed, primaryExportType, selectedOutputs, selectedProjectId]);
+  }, [canProceed, exportOutputs, hasExportableOutput, primaryExportType, selectedProjectId]);
 
   const createProject = async () => {
     const trimmedName = name.trim();
@@ -414,12 +417,17 @@ export default function HomePage() {
             </div>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Link href={semanticHref} aria-disabled={!canProceed} style={{ ...buttonStyle, ...(!canProceed ? disabledActionStyle : {}) }}>审查语义单元</Link>
-              <Link href={samplesHref} aria-disabled={!canProceed} style={{ ...buttonStyle, ...(!canProceed ? disabledActionStyle : {}) }}>审查训练样本</Link>
-              <Link href={exportHref} aria-disabled={!canProceed} style={{ ...buttonStyle, background: canProceed ? '#111827' : '#f3f4f6', color: canProceed ? '#ffffff' : '#6b7280', borderColor: canProceed ? '#111827' : '#d1d5db', ...(!canProceed ? disabledActionStyle : {}) }}>进入导出</Link>
+              <Link href={samplesHref} aria-disabled={!canProceed || !selectedOutputs.includes('samples')} style={{ ...buttonStyle, ...(!canProceed || !selectedOutputs.includes('samples') ? disabledActionStyle : {}) }}>审查训练样本</Link>
+              <Link href={exportHref} aria-disabled={!canProceed || !hasExportableOutput} style={{ ...buttonStyle, background: canProceed && hasExportableOutput ? '#111827' : '#f3f4f6', color: canProceed && hasExportableOutput ? '#ffffff' : '#6b7280', borderColor: canProceed && hasExportableOutput ? '#111827' : '#d1d5db', ...(!canProceed || !hasExportableOutput ? disabledActionStyle : {}) }}>进入导出</Link>
             </div>
             {!canProceed ? (
               <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>
                 请先创建或选择任务后继续，导出需要 project_id 才能读取语义单元和生成样本。
+              </div>
+            ) : null}
+            {canProceed && !hasExportableOutput ? (
+              <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>
+                请先勾选 Markdown、Skill、RAG 或数据集后再进入导出。
               </div>
             ) : null}
           </article>

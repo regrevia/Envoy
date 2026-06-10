@@ -275,15 +275,31 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "aria-disabled={!canProceed}",
             "uploadHref = canProceed ? `/upload?project_id=${selectedProjectId}` : '#'",
             "semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#'",
-            "samplesHref = canProceed ? `/generated-samples?project_id=${selectedProjectId}` : '#'",
+            "samplesHref = canProceed && selectedOutputs.includes('samples') ?",
             "exportHref = useMemo(() => {",
-            "if (!canProceed) {",
+            "if (!canProceed || !hasExportableOutput) {",
             "return '#';",
         ]:
             self.assertIn(copy, text)
         self.assertNotIn("const uploadHref = selectedProjectId ? `/upload?project_id=${selectedProjectId}` : '/upload';", text)
         self.assertNotIn('href="/semantic-units"', text)
         self.assertNotIn('href="/generated-samples"', text)
+
+    def test_home_page_keeps_samples_and_dataset_separate_from_material_export_params(self):
+        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));",
+            "const datasetOutputs = selectedOutputs.includes('dataset') ? ['sft'] : [];",
+            "const exportOutputs = [...materialOutputs, ...datasetOutputs];",
+            "const hasExportableOutput = exportOutputs.length > 0;",
+            "const samplesHref = canProceed && selectedOutputs.includes('samples') ?",
+            "params.set('outputs', exportOutputs.join(','));",
+            "请先勾选 Markdown、Skill、RAG 或数据集后再进入导出",
+        ]:
+            self.assertIn(copy, text)
+        self.assertNotIn("params.set('outputs', selectedOutputs.join(','));", text)
 
     def test_home_page_explains_complete_conversion_chain(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
