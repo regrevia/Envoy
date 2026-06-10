@@ -389,7 +389,7 @@ def _trace_link_is_exportable(row: dict, visible_ids: set[str]):
         return False
     source_id = row.get("source_id")
     target_id = row.get("target_id")
-    return str(source_id or "") in visible_ids or str(target_id or "") in visible_ids
+    return str(source_id or "") in visible_ids and str(target_id or "") in visible_ids
 
 
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
