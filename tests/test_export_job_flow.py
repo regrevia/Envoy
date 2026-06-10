@@ -225,6 +225,76 @@ class ExportJobFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_export_job_renders_structured_semantic_content_as_readable_text(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            export_dir = Path(tmp_dir) / "exports"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-structured-json-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(export_dir)
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_project, create_task
+            from app.workers.jobs import export_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="structured export project", description="", domain_type="knowledge", status="active"))
+                unit = SemanticUnit(
+                    id="semantic-export-structured",
+                    project_id=project.id,
+                    asset_id="asset-export-structured",
+                    segment_id=None,
+                    unit_type="scene",
+                    title="结构化导出摘要",
+                    content=json.dumps(
+                        {
+                            "stage": "preprocess",
+                            "transcript": {"text": "讲解了稳定处理长视频。"},
+                            "ocr": [{"text": "画面文字：RAG Skill"}],
+                            "rules": ["长任务必须可取消"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    labels={"source": "media_asset", "stage": "preprocess"},
+                    confidence=0.82,
+                )
+                db.add(unit)
+                db.commit()
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id="asset-export-structured", task_type="export", input_config={}))
+                project_id = project.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = export_job.run({"task_id": task_id, "project_id": project_id})
+
+            jsonl_path = export_dir / f"{task_id}.jsonl"
+            md_path = export_dir / f"{task_id}.md"
+            rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            report = md_path.read_text(encoding="utf-8")
+            semantic_row = next(row for row in rows if row["record_type"] == "semantic_unit")
+            engine.dispose()
+
+            self.assertEqual(result["status"], "exported")
+            self.assertEqual(semantic_row["content_format"], "json")
+            for rendered_text in (semantic_row["content"], report):
+                self.assertIn("讲解了稳定处理长视频。", rendered_text)
+                self.assertIn("画面文字：RAG Skill", rendered_text)
+                self.assertIn("长任务必须可取消", rendered_text)
+                self.assertNotIn('"transcript"', rendered_text)
+                self.assertNotIn('{"stage"', rendered_text)
+
     def test_export_job_is_idempotent_for_registered_artifacts_and_trace_links(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             export_dir = Path(tmp_dir) / "exports"

@@ -617,6 +617,14 @@ def _readable_source_text(value):
     return "\n".join(deduped).strip() or text
 
 
+def _source_content_format(value):
+    try:
+        parsed = json.loads(str(value or "").strip())
+    except (TypeError, ValueError):
+        return "text"
+    return "json" if isinstance(parsed, (dict, list)) else "text"
+
+
 def _sample_fallback(unit: SemanticUnit | None, payload: dict):
     title = (unit.title if unit else None) or payload.get("title") or "source material"
     content = (unit.content if unit else None) or payload.get("content") or payload.get("text") or ""
@@ -689,6 +697,8 @@ def _persist_generated_sample(db, project_id: str, unit: SemanticUnit | None, pa
 
 
 def _semantic_unit_export_row(unit: SemanticUnit):
+    raw_content = unit.content or ""
+    readable_content = _readable_source_text(raw_content)
     return {
         "record_type": "semantic_unit",
         "id": unit.id,
@@ -697,7 +707,8 @@ def _semantic_unit_export_row(unit: SemanticUnit):
         "segment_id": unit.segment_id,
         "unit_type": unit.unit_type,
         "title": unit.title,
-        "content": unit.content,
+        "content": readable_content,
+        "content_format": _source_content_format(raw_content),
         "labels": unit.labels or {},
         "confidence": unit.confidence,
     }
