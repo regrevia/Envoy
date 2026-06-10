@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import tempfile
 import unittest
@@ -211,6 +212,43 @@ class OllamaHealthApiTests(unittest.TestCase):
             self.assertEqual(fake_client.calls[0]["timeout"], 9)
             self.assertLessEqual(len(fake_client.calls[0]["json"]["prompt"]), 32)
             self.assertTrue(result["truncated"])
+
+    def test_ollama_config_api_sanitizes_null_values_without_polluting_runtime_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "ollama_runtime.json"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-ollama-null-config.db'}"
+            os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
+            os.environ["OLLAMA_MODEL"] = ""
+            os.environ["OLLAMA_TIMEOUT_SEC"] = "120"
+            os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "12000"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(config_path)
+            clear_app_modules()
+
+            from fastapi.testclient import TestClient
+            from app.main import app
+
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/health/ollama/config",
+                json={
+                    "base_url": None,
+                    "model": None,
+                    "timeout_sec": 0,
+                    "max_prompt_chars": None,
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["base_url"], "http://127.0.0.1:11434")
+            self.assertEqual(body["model"], "")
+            self.assertEqual(body["timeout_sec"], 120)
+            self.assertEqual(body["max_prompt_chars"], 12000)
+            self.assertEqual(body["configured_from"], "runtime")
+            persisted = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["base_url"], "http://127.0.0.1:11434")
+            self.assertEqual(persisted["model"], "")
+            self.assertNotIn("None", persisted.values())
 
     def test_media_health_reports_runtime_processing_limits(self):
         keys = (

@@ -25,8 +25,10 @@ def _environment_config() -> dict[str, Any]:
 
 
 def _normalize_config(payload: dict[str, Any], fallback: dict[str, Any], configured_from: str) -> dict[str, Any]:
-    base_url = str(payload.get("base_url") or fallback["base_url"]).strip().rstrip("/")
-    model = str(payload.get("model") if "model" in payload else fallback["model"]).strip()
+    raw_base_url = payload.get("base_url") if "base_url" in payload else fallback["base_url"]
+    raw_model = payload.get("model") if "model" in payload else fallback["model"]
+    base_url = str(raw_base_url if raw_base_url is not None else fallback["base_url"]).strip().rstrip("/")
+    model = str(raw_model if raw_model is not None else fallback["model"]).strip()
     return {
         "base_url": base_url or "http://127.0.0.1:11434",
         "model": model,
