@@ -47,6 +47,12 @@ type ExportRecord = {
   created_at?: string | null;
 };
 
+const defaultSelectedOutputs: ExportType[] = ['markdown', 'skill', 'rag'];
+
+function exportLabel(id: ExportType | string) {
+  return exportTypes.find((item) => item.id === id)?.label || id;
+}
+
 function safeSlug(input: string) {
   return (input || 'default')
     .trim()
@@ -68,6 +74,8 @@ export default function TrainExportsPage() {
   const [history, setHistory] = useState<ExportRecord[]>([]);
   const [message, setMessage] = useState('准备就绪');
   const [outputContext, setOutputContext] = useState('');
+  const [selectedOutputs, setSelectedOutputs] = useState<ExportType[]>(defaultSelectedOutputs);
+  const [batchResults, setBatchResults] = useState<any[]>([]);
   const [exporting, setExporting] = useState(false);
   const [autoExporting, setAutoExporting] = useState(false);
 
@@ -101,11 +109,30 @@ export default function TrainExportsPage() {
     }
     if (outputsFromQuery) {
       setOutputContext(outputsFromQuery);
+      const parsedOutputs = outputsFromQuery.split(',')
+        .map((item) => item.trim())
+        .filter((item): item is ExportType => exportTypes.some((type) => type.id === item));
+      if (parsedOutputs.length) {
+        setSelectedOutputs(parsedOutputs);
+        if (!outputFromQuery) {
+          setExportType(parsedOutputs[0]);
+        }
+      }
     }
     void loadHistory();
   }, []);
 
   const hasSourceContext = () => Boolean(projectId.trim() || assetId.trim() || sourceTaskId.trim());
+
+  const toggleSelectedOutput = (item: ExportType) => {
+    setSelectedOutputs((current) => {
+      if (current.includes(item)) {
+        return current.filter((value) => value !== item);
+      }
+      return [...current, item];
+    });
+    setExportType(item);
+  };
 
   const parseSamplesPayload = () => {
     try {
@@ -198,6 +225,43 @@ export default function TrainExportsPage() {
     }
   };
 
+  const onAutoExportSelected = async () => {
+    if (autoExporting) {
+      return;
+    }
+    if (!hasSourceContext()) {
+      setMessage('请填写项目 ID 或来源上下文');
+      return;
+    }
+
+    const outputs = selectedOutputs.length ? selectedOutputs : [exportType];
+    setAutoExporting(true);
+    setBatchResults([]);
+    setMessage('正在批量自动导出...');
+    try {
+      const results = await Promise.all(outputs.map((item) => apiJson('/api/v1/train-exports/auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          export_type: item,
+          project_id: projectId || undefined,
+          source_asset_id: assetId || undefined,
+          source_task_id: sourceTaskId || undefined,
+          title,
+          task_name: taskName ? `${taskName}-${item}` : undefined,
+        }),
+      })));
+      setBatchResults(results);
+      setResult(results[results.length - 1] || null);
+      setMessage(`批量自动导出完成：${outputs.length} 个产物`);
+      void loadHistory();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '批量自动导出失败');
+    } finally {
+      setAutoExporting(false);
+    }
+  };
+
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
       <section style={{ maxWidth: 1160, margin: '0 auto', padding: '44px 24px' }}>
@@ -224,6 +288,11 @@ export default function TrainExportsPage() {
         {outputContext ? (
           <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb', color: '#4b5563', fontSize: 14 }}>
             来自首页选择：{outputContext}
+            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {selectedOutputs.map((item) => (
+                <span key={item} style={{ color: '#111827', fontWeight: 700 }}>{exportLabel(item)}</span>
+              ))}
+            </div>
           </div>
         ) : null}
 
@@ -255,6 +324,32 @@ export default function TrainExportsPage() {
           </div>
 
           <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <strong>导出所选产物</strong>
+              <span style={{ color: '#6b7280', fontSize: 13 }}>批量自动导出会按选择依次生成 Markdown、Skill、RAG 等 AI 素材</span>
+            </div>
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {exportTypes.map((item) => {
+                const active = selectedOutputs.includes(item.id);
+                return (
+                  <button
+                    key={`selected-${item.id}`}
+                    onClick={() => toggleSelectedOutput(item.id)}
+                    style={{
+                      ...buttonStyle,
+                      background: active ? '#111827' : '#ffffff',
+                      color: active ? '#ffffff' : '#111827',
+                      borderColor: active ? '#111827' : '#d1d5db',
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
             <strong>任务目录预览</strong>
             <div style={{ marginTop: 8, fontFamily: 'monospace', wordBreak: 'break-all', color: '#4b5563' }}>
               后端导出根目录 / {previewPath}
@@ -283,10 +378,34 @@ export default function TrainExportsPage() {
             >
               {autoExporting ? '自动导出中...' : '自动读取导出'}
             </button>
+            <button
+              onClick={onAutoExportSelected}
+              disabled={autoExporting}
+              style={{ ...buttonStyle, background: '#0f766e', color: '#fff', borderColor: '#0f766e', opacity: autoExporting ? 0.72 : 1, cursor: autoExporting ? 'not-allowed' : 'pointer' }}
+            >
+              {autoExporting ? '批量导出中...' : '批量自动导出'}
+            </button>
             <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物中心</Link>
             <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物来源统计</Link>
           </div>
         </section>
+
+        {batchResults.length ? (
+          <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>批量导出结果</h2>
+            {batchResults.map((item, index) => (
+              <div key={`${item?.path || item?.root || index}`} style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+                <div style={{ fontWeight: 700 }}>{exportLabel(item?.export_type || selectedOutputs[index] || '产物')}</div>
+                <div style={{ marginTop: 6, color: '#4b5563', wordBreak: 'break-all' }}>目录：{item?.root || item?.path || item?.record?.root_dir || '后端未返回目录'}</div>
+                {item?.record?.id ? (
+                  <Link href={`/train-exports/${item.record.id}`} style={{ display: 'inline-flex', marginTop: 8, color: '#2563eb', textDecoration: 'none', fontWeight: 700 }}>
+                    查看导出记录
+                  </Link>
+                ) : null}
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         {result ? (
           <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
