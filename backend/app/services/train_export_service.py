@@ -170,7 +170,16 @@ def _readable_structured_content(value: str):
         deduped.append(part)
     if deduped:
         return "\n".join(deduped)
-    return json.dumps(parsed, ensure_ascii=False)
+    return ""
+
+
+def _semantic_unit_export_content(row: dict):
+    content = _readable_structured_content(row.get("content") or "")
+    return content.strip()
+
+
+def _semantic_unit_has_export_content(row: dict):
+    return bool(_semantic_unit_export_content(row))
 
 
 def _row_title(row: dict, index: int):
@@ -184,13 +193,17 @@ def _row_source(row: dict):
 
 
 def _row_body(row: dict):
-    for key in ("content", "text", "summary", "output_text", "input_text"):
+    content_keys = ("content", "text", "summary", "output_text", "input_text")
+    skip_keys = {"id", "project_id", "asset_id", "segment_id", "labels", "metadata", *content_keys}
+    for key in content_keys:
         value = row.get(key)
         if isinstance(value, str) and value.strip():
-            return _readable_structured_content(value)
+            readable = _readable_structured_content(value)
+            if readable.strip():
+                return readable
     useful = []
     for key, value in row.items():
-        if key in {"id", "project_id", "asset_id", "segment_id", "labels", "metadata"}:
+        if key in skip_keys:
             continue
         if isinstance(value, (str, int, float)) and str(value).strip():
             useful.append(f"{key}: {value}")
@@ -369,6 +382,14 @@ def _generated_sample_has_export_content(row: GeneratedSample):
     if not input_text or not output_text:
         return False
     return output_text != "No source content was available."
+
+
+def _trace_link_is_exportable(row: dict, visible_ids: set[str]):
+    if not isinstance(row, dict):
+        return False
+    source_id = row.get("source_id")
+    target_id = row.get("target_id")
+    return str(source_id or "") in visible_ids or str(target_id or "") in visible_ids
 
 
 def _auto_rows_from_assets(db, project_id: str, task_name: str | None = None):
@@ -748,9 +769,12 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
     if export_type in ("sft", "instruction", "preference"):
         rows = []
         for su in data["semantic_units"]:
+            content = _semantic_unit_export_content(su)
+            if not content:
+                continue
             rows.append({
                 "instruction": su.get("title") or "总结该内容",
-                "input": su.get("content") or "",
+                "input": content,
                 "output": json.dumps(su.get("labels") or {}, ensure_ascii=False),
             })
         for sample in data["samples"]:
@@ -763,10 +787,10 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
     if export_type == "rag":
         rows = []
         for su in data["semantic_units"]:
-            raw_content = su.get("content") or ""
-            content = _readable_structured_content(raw_content)
+            content = _semantic_unit_export_content(su)
             if not content:
                 continue
+            raw_content = su.get("content") or ""
             metadata = {
                 **(su.get("labels") or {}),
                 "semantic_unit_id": su.get("id"),
@@ -782,7 +806,19 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
             rows.append({"text": content, "metadata": metadata})
         return rows
     if export_type == "skill":
-        return data["semantic_units"] + data["samples"] + data["trace_links"]
+        semantic_units = [row for row in data["semantic_units"] if _semantic_unit_has_export_content(row)]
+        visible_ids = {
+            *(row.get("id") for row in semantic_units if row.get("id")),
+            *(row.get("id") for row in data["samples"] if row.get("id")),
+        }
+        trace_links = [row for row in data["trace_links"] if _trace_link_is_exportable(row, visible_ids)]
+        return semantic_units + data["samples"] + trace_links
     if export_type == "markdown":
-        return data["semantic_units"] + data["samples"] + data["trace_links"]
+        semantic_units = [row for row in data["semantic_units"] if _semantic_unit_has_export_content(row)]
+        visible_ids = {
+            *(row.get("id") for row in semantic_units if row.get("id")),
+            *(row.get("id") for row in data["samples"] if row.get("id")),
+        }
+        trace_links = [row for row in data["trace_links"] if _trace_link_is_exportable(row, visible_ids)]
+        return semantic_units + data["samples"] + trace_links
     return []

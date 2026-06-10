@@ -586,7 +586,8 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                     self.assertNotIn("取消半成品样本", exported_text)
                     self.assertNotIn("取消 checkpoint 样本", exported_text)
                 for exported_text in (markdown_text, skill_text, sft_text):
-                    self.assertIn("稳定样本输出，可进入自动导出。", exported_text)
+                    self.assertIn("稳定样本", exported_text)
+                    self.assertIn("自动导出", exported_text)
                 self.assertEqual({row["metadata"]["semantic_unit_id"] for row in rag_rows}, {"stable-unit"})
             finally:
                 engine.dispose()
@@ -661,7 +662,7 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
-    def test_auto_rag_export_skips_empty_semantic_unit_content(self):
+    def test_auto_exports_skip_empty_semantic_unit_content(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-rag-skip-empty-test.db'}"
             os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
@@ -699,6 +700,39 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                             confidence=0.2,
                         ),
                         SemanticUnit(
+                            id="empty-json-object-unit",
+                            project_id=project.id,
+                            asset_id="asset-empty-json",
+                            segment_id=None,
+                            unit_type="text",
+                            title="空 JSON 对象",
+                            content="{}",
+                            labels={"source": "text_asset"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
+                            id="empty-json-list-unit",
+                            project_id=project.id,
+                            asset_id="asset-empty-json",
+                            segment_id=None,
+                            unit_type="text",
+                            title="空 JSON 数组",
+                            content="[]",
+                            labels={"source": "text_asset"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
+                            id="empty-structured-media-unit",
+                            project_id=project.id,
+                            asset_id="asset-empty-media",
+                            segment_id=None,
+                            unit_type="transcript",
+                            title="空结构化媒体",
+                            content=json.dumps({"transcript": {"text": ""}, "ocr": []}, ensure_ascii=False),
+                            labels={"source": "media_transcript"},
+                            confidence=0.2,
+                        ),
+                        SemanticUnit(
                             id="valid-rag-unit",
                             project_id=project.id,
                             asset_id="asset-valid",
@@ -718,22 +752,49 @@ class TrainExportAutoFlowTests(unittest.TestCase):
 
             try:
                 client = TestClient(app)
-                response = client.post("/api/v1/train-exports/auto", json={"project_id": project_id, "export_type": "rag"})
+                results = {}
+                for export_type in ("markdown", "skill", "rag"):
+                    response = client.post(
+                        "/api/v1/train-exports/auto",
+                        json={"project_id": project_id, "export_type": export_type, "title": f"{export_type} skip empty export"},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    results[export_type] = response.json()
 
-                self.assertEqual(response.status_code, 200)
-                body = response.json()
                 rag_rows = [
                     json.loads(line)
-                    for line in Path(body["path"]).read_text(encoding="utf-8").splitlines()
+                    for line in Path(results["rag"]["path"]).read_text(encoding="utf-8").splitlines()
                     if line.strip()
                 ]
-                manifest = json.loads(Path(body["paths"]["manifest"]).read_text(encoding="utf-8"))
+                rag_manifest = json.loads(Path(results["rag"]["paths"]["manifest"]).read_text(encoding="utf-8"))
+                markdown_text = Path(results["markdown"]["path"]).read_text(encoding="utf-8")
+                markdown_manifest = json.loads(Path(results["markdown"]["paths"]["manifest"]).read_text(encoding="utf-8"))
+                skill_text = Path(results["skill"]["path"]).read_text(encoding="utf-8")
+                skill_manifest = json.loads(Path(results["skill"]["paths"]["manifest"]).read_text(encoding="utf-8"))
 
                 self.assertEqual(len(rag_rows), 1)
                 self.assertEqual(rag_rows[0]["text"], "有效知识内容，可进入 RAG 语料。")
                 self.assertEqual(rag_rows[0]["metadata"]["semantic_unit_id"], "valid-rag-unit")
-                self.assertEqual(manifest["row_count"], 1)
-                self.assertEqual(manifest["source_counts"], {"text_asset": 1})
+                self.assertEqual(rag_manifest["row_count"], 1)
+                self.assertEqual(rag_manifest["source_counts"], {"text_asset": 1})
+                self.assertEqual(markdown_manifest["row_count"], 1)
+                self.assertEqual(skill_manifest["source_counts"], {"text_asset": 1})
+                semantic_material_ids = [item["id"] for item in skill_manifest["materials"] if item.get("unit_type")]
+                self.assertEqual(semantic_material_ids, ["valid-rag-unit"])
+                self.assertNotIn("empty-rag-unit", {item["id"] for item in skill_manifest["materials"] if item.get("unit_type")})
+                self.assertNotIn("empty-json-object-unit", {item["id"] for item in skill_manifest["materials"] if item.get("unit_type")})
+                self.assertNotIn("empty-json-list-unit", {item["id"] for item in skill_manifest["materials"] if item.get("unit_type")})
+                self.assertNotIn("empty-structured-media-unit", {item["id"] for item in skill_manifest["materials"] if item.get("unit_type")})
+                for exported_text in (markdown_text, skill_text, json.dumps(rag_rows, ensure_ascii=False)):
+                    self.assertIn("有效知识内容，可进入 RAG 语料。", exported_text)
+                    self.assertNotIn("empty-rag-unit", exported_text)
+                    self.assertNotIn("empty-json-object-unit", exported_text)
+                    self.assertNotIn("empty-json-list-unit", exported_text)
+                    self.assertNotIn("empty-structured-media-unit", exported_text)
+                    self.assertNotIn("空 JSON", exported_text)
+                    self.assertNotIn("空结构化媒体", exported_text)
+                    self.assertNotIn("{}    ", exported_text)
+                    self.assertNotIn("[]", exported_text)
             finally:
                 engine.dispose()
 
