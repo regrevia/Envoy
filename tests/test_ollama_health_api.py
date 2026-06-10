@@ -250,6 +250,54 @@ class OllamaHealthApiTests(unittest.TestCase):
             self.assertEqual(persisted["model"], "")
             self.assertNotIn("None", persisted.values())
 
+    def test_ollama_config_api_rejects_invalid_base_url_without_polluting_runtime_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "ollama_runtime.json"
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-ollama-invalid-url.db'}"
+            os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
+            os.environ["OLLAMA_MODEL"] = "qwen2.5:7b"
+            os.environ["OLLAMA_TIMEOUT_SEC"] = "120"
+            os.environ["OLLAMA_MAX_PROMPT_CHARS"] = "12000"
+            os.environ["OLLAMA_RUNTIME_CONFIG_PATH"] = str(config_path)
+            clear_app_modules()
+
+            from fastapi.testclient import TestClient
+            from app.main import app
+            from app.services.ollama_service import get_ollama_config
+
+            client = TestClient(app)
+            ok_response = client.put(
+                "/api/v1/health/ollama/config",
+                json={
+                    "base_url": "http://valid-ollama.local:11434",
+                    "model": "qwen2.5:7b",
+                    "timeout_sec": 8,
+                    "max_prompt_chars": 4096,
+                },
+            )
+            self.assertEqual(ok_response.status_code, 200)
+
+            response = client.put(
+                "/api/v1/health/ollama/config",
+                json={
+                    "base_url": "ollama.local:11434",
+                    "model": "qwen3:8b",
+                    "timeout_sec": 9,
+                    "max_prompt_chars": 2048,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "Ollama base_url must start with http:// or https://")
+            runtime_config = get_ollama_config()
+            self.assertEqual(runtime_config["base_url"], "http://valid-ollama.local:11434")
+            self.assertEqual(runtime_config["model"], "qwen2.5:7b")
+            self.assertEqual(runtime_config["timeout_sec"], 8)
+            self.assertEqual(runtime_config["max_prompt_chars"], 4096)
+            persisted = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["base_url"], "http://valid-ollama.local:11434")
+            self.assertEqual(persisted["model"], "qwen2.5:7b")
+
     def test_media_health_reports_runtime_processing_limits(self):
         keys = (
             "MEDIA_SEGMENT_SECONDS",
