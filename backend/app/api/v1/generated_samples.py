@@ -21,8 +21,11 @@ def _serialize_generated_sample(row: GeneratedSample):
 
 
 @router.get("/generated-samples")
-def list_generated_samples(db: Session = Depends(get_db)):
-    rows = db.query(GeneratedSample).order_by(GeneratedSample.created_at.desc()).all()
+def list_generated_samples(project_id: str | None = None, db: Session = Depends(get_db)):
+    query = db.query(GeneratedSample)
+    if project_id:
+        query = query.filter(GeneratedSample.project_id == project_id)
+    rows = query.order_by(GeneratedSample.created_at.desc()).all()
     return [_serialize_generated_sample(row) for row in rows]
 
 

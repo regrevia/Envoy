@@ -33,12 +33,15 @@ function qualityLabel(score?: number | null) {
 
 export default function GeneratedSamplesPage() {
   const [samples, setSamples] = useState<GeneratedSample[]>([]);
+  const [projectId, setProjectId] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const loadSamples = async () => {
+  const loadSamples = async (nextProjectId = projectId) => {
     setLoading(true);
     try {
-      const data = await apiJson<GeneratedSample[]>('/api/v1/generated-samples');
+      const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+      const effectiveQuery = nextProjectId ? `?project_id=${encodeURIComponent(nextProjectId)}` : query;
+      const data = await apiJson<GeneratedSample[]>(`/api/v1/generated-samples${effectiveQuery}`);
       setSamples(data);
     } catch {
       setSamples([]);
@@ -48,8 +51,16 @@ export default function GeneratedSamplesPage() {
   };
 
   useEffect(() => {
-    void loadSamples();
+    const params = new URLSearchParams(window.location.search);
+    const projectFromQuery = params.get('project_id') || '';
+    if (projectFromQuery) {
+      setProjectId(projectFromQuery);
+    }
+    void loadSamples(projectFromQuery);
   }, []);
+
+  const semanticHref = projectId ? `/semantic-units?project_id=${projectId}` : '/semantic-units';
+  const exportHref = projectId ? `/train-exports?project_id=${projectId}&export_type=markdown&outputs=markdown,skill,rag` : '/train-exports';
 
   return (
     <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
@@ -65,9 +76,15 @@ export default function GeneratedSamplesPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>样本列表</h2>
-              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>共 {samples.length} 条样本</p>
+              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
+                共 {samples.length} 条样本{projectId ? `；当前项目：${projectId}` : ''}
+              </p>
             </div>
             <button onClick={() => void loadSamples()} style={buttonStyle}>刷新</button>
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+            <a href={semanticHref} style={{ color: '#111827', fontWeight: 700 }}>返回语义单元</a>
+            <a href={exportHref} style={{ color: '#111827', fontWeight: 700 }}>训练导出</a>
           </div>
 
           {loading ? <div style={{ padding: '22px 0', color: '#6b7280' }}>正在加载...</div> : null}

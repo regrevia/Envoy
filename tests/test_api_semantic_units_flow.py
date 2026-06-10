@@ -36,6 +36,7 @@ class ApiSemanticUnitsFlowTests(unittest.TestCase):
             db = SessionLocal()
             try:
                 project = create_project(db, ProjectCreate(name="semantic api project", description="", domain_type="knowledge", status="active"))
+                other_project = create_project(db, ProjectCreate(name="other semantic project", description="", domain_type="knowledge", status="active"))
                 unit = SemanticUnit(
                     id="semantic-api-001",
                     project_id=project.id,
@@ -48,7 +49,21 @@ class ApiSemanticUnitsFlowTests(unittest.TestCase):
                     confidence=0.93,
                 )
                 db.add(unit)
+                db.add(
+                    SemanticUnit(
+                        id="semantic-api-other",
+                        project_id=other_project.id,
+                        asset_id="asset-api-other",
+                        segment_id=None,
+                        unit_type="text",
+                        title="其他项目片段",
+                        content="不应出现在当前项目过滤结果中。",
+                        labels={"stage": "preprocess"},
+                        confidence=0.81,
+                    )
+                )
                 db.commit()
+                project_id = project.id
             finally:
                 db.close()
 
@@ -56,11 +71,15 @@ class ApiSemanticUnitsFlowTests(unittest.TestCase):
                 client = TestClient(app)
 
                 list_response = client.get("/api/v1/semantic-units")
+                filtered_response = client.get(f"/api/v1/semantic-units?project_id={project_id}")
                 detail_response = client.get("/api/v1/semantic-units/semantic-api-001")
 
                 self.assertEqual(list_response.status_code, 200)
+                self.assertEqual(filtered_response.status_code, 200)
                 self.assertEqual(detail_response.status_code, 200)
-                listed = list_response.json()[0]
+                self.assertEqual({row["id"] for row in list_response.json()}, {"semantic-api-001", "semantic-api-other"})
+                self.assertEqual([row["id"] for row in filtered_response.json()], ["semantic-api-001"])
+                listed = filtered_response.json()[0]
                 detail = detail_response.json()
 
                 for payload in (listed, detail):

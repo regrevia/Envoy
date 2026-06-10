@@ -36,6 +36,7 @@ class ApiGeneratedSamplesFlowTests(unittest.TestCase):
             db = SessionLocal()
             try:
                 project = create_project(db, ProjectCreate(name="sample review project", description="", domain_type="knowledge", status="active"))
+                other_project = create_project(db, ProjectCreate(name="other sample project", description="", domain_type="knowledge", status="active"))
                 db.add(
                     GeneratedSample(
                         id="sample-api-001",
@@ -47,7 +48,19 @@ class ApiGeneratedSamplesFlowTests(unittest.TestCase):
                         quality_score=0.91,
                     )
                 )
+                db.add(
+                    GeneratedSample(
+                        id="sample-api-other",
+                        project_id=other_project.id,
+                        source_unit_id="semantic-api-other",
+                        sample_type="qa",
+                        input_text="Other project input",
+                        output_text="Other project output",
+                        quality_score=0.73,
+                    )
+                )
                 db.commit()
+                project_id = project.id
             finally:
                 db.close()
 
@@ -55,13 +68,16 @@ class ApiGeneratedSamplesFlowTests(unittest.TestCase):
                 client = TestClient(app)
 
                 list_response = client.get("/api/v1/generated-samples")
+                filtered_response = client.get(f"/api/v1/generated-samples?project_id={project_id}")
                 self.assertEqual(list_response.status_code, 200)
+                self.assertEqual(filtered_response.status_code, 200)
                 samples = list_response.json()
-                self.assertEqual(len(samples), 1)
-                self.assertEqual(samples[0]["id"], "sample-api-001")
-                self.assertEqual(samples[0]["input_text"], "What should reviewers inspect?")
-                self.assertEqual(samples[0]["output_text"], "They should inspect generated samples before export.")
-                self.assertEqual(samples[0]["quality_score"], 0.91)
+                self.assertEqual({sample["id"] for sample in samples}, {"sample-api-001", "sample-api-other"})
+                filtered_samples = filtered_response.json()
+                self.assertEqual([sample["id"] for sample in filtered_samples], ["sample-api-001"])
+                self.assertEqual(filtered_samples[0]["input_text"], "What should reviewers inspect?")
+                self.assertEqual(filtered_samples[0]["output_text"], "They should inspect generated samples before export.")
+                self.assertEqual(filtered_samples[0]["quality_score"], 0.91)
 
                 detail_response = client.get("/api/v1/generated-samples/sample-api-001")
                 self.assertEqual(detail_response.status_code, 200)
