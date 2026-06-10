@@ -1,6 +1,8 @@
 import os
 import multiprocessing
 import subprocess
+import tempfile
+import time
 from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
@@ -28,14 +30,44 @@ def _error_detail(exc: Exception) -> str:
     return str(exc)
 
 
-def _run_media_command(stage: str, cmd: list[str]):
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
-    except Exception as exc:
-        raise MediaProcessingError(f"{stage} failed: {_error_detail(exc)}") from exc
+def _run_media_command(stage: str, cmd: list[str], should_cancel: Callable[[], bool] | None = None):
+    if should_cancel is None:
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
+        except Exception as exc:
+            raise MediaProcessingError(f"{stage} failed: {_error_detail(exc)}") from exc
+        return
+
+    with tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=stderr_file)
+        deadline = time.monotonic() + max(int(MEDIA_COMMAND_TIMEOUT_SEC or 1), 1)
+        try:
+            while process.poll() is None:
+                if should_cancel():
+                    process.terminate()
+                    process.wait(timeout=5)
+                    raise MediaProcessingError(f"{stage} canceled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    process.terminate()
+                    process.wait(timeout=5)
+                    raise MediaProcessingError(f"{stage} failed: command timed out after {MEDIA_COMMAND_TIMEOUT_SEC} sec")
+                try:
+                    process.wait(timeout=min(1, remaining))
+                except subprocess.TimeoutExpired:
+                    continue
+
+            if process.returncode:
+                stderr_file.seek(0)
+                stderr = stderr_file.read()
+                raise subprocess.CalledProcessError(process.returncode, cmd, stderr=stderr)
+        except Exception as exc:
+            if isinstance(exc, MediaProcessingError):
+                raise
+            raise MediaProcessingError(f"{stage} failed: {_error_detail(exc)}") from exc
 
 
-def split_video(video_path: str, output_dir: str):
+def split_video(video_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "segment_%06d.mp4")
     if video_path:
@@ -57,7 +89,7 @@ def split_video(video_path: str, output_dir: str):
             "1",
             output_pattern,
         ]
-        _run_media_command("split_video", cmd)
+        _run_media_command("split_video", cmd, should_cancel=should_cancel)
         segment_paths = sorted(str(path) for path in Path(output_dir).glob("segment_*.mp4"))
         return segment_paths or [output_pattern]
     else:
@@ -66,7 +98,7 @@ def split_video(video_path: str, output_dir: str):
         return [output_path]
 
 
-def split_audio(audio_path: str, output_dir: str):
+def split_audio(audio_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "audio_segment_%06d.wav")
     if audio_path:
@@ -89,7 +121,7 @@ def split_audio(audio_path: str, output_dir: str):
             "1",
             output_pattern,
         ]
-        _run_media_command("split_audio", cmd)
+        _run_media_command("split_audio", cmd, should_cancel=should_cancel)
         segment_paths = sorted(str(path) for path in Path(output_dir).glob("audio_segment_*.wav"))
         return segment_paths or [output_pattern]
     else:
@@ -98,7 +130,7 @@ def split_audio(audio_path: str, output_dir: str):
         return [output_path]
 
 
-def extract_frames(video_path: str, output_dir: str):
+def extract_frames(video_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "frame_%06d.jpg")
     if video_path:
@@ -113,7 +145,7 @@ def extract_frames(video_path: str, output_dir: str):
             str(MEDIA_MAX_FRAME_COUNT),
             output_pattern,
         ]
-        _run_media_command("extract_frames", cmd)
+        _run_media_command("extract_frames", cmd, should_cancel=should_cancel)
         frame_paths = sorted(str(path) for path in Path(output_dir).glob("frame_*.jpg"))
         return frame_paths
     else:
