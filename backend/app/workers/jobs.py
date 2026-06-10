@@ -1273,6 +1273,7 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         return {"status": "failed", "payload": payload, "error": str(exc)}
     except Exception as exc:
+        _clear_preprocess_semantic_units(db, payload.get("asset_id"), only_task_id=payload.get("task_id"))
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)
     finally:
