@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import json
-from typing import Any
+from typing import Any, Optional
 
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object_with_status
 
 
-def _content_text(source: dict[str, Any] | None) -> str:
+def _content_text(source: Optional[dict[str, Any]]) -> str:
     source = source or {}
     if isinstance(source.get("text"), str):
         return source["text"]
@@ -21,7 +23,7 @@ def _parse_llm_text(text: str) -> dict[str, Any]:
     return parsed if parsed["parsed"] else {**parsed, "parsed": {"summary": text}}
 
 
-def build_analysis_payload(source: dict[str, Any] | None, asset_type: str | None = None) -> dict[str, Any]:
+def build_analysis_payload(source: Optional[dict[str, Any]], asset_type: Optional[str] = None) -> dict[str, Any]:
     text = _content_text(source)
     fallback_summary = text[:240] if text else "暂无可分析内容"
     llm_result = generate_with_ollama(

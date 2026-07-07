@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -36,9 +39,9 @@ async def upload_asset_api(
     project_id: str = Form(...),
     asset_type: str = Form(...),
     file: UploadFile = File(...),
-    mime_type: str | None = Form(None),
-    duration_sec: int | None = Form(None),
-    language: str | None = Form(None),
+    mime_type: Optional[str] = Form(None),
+    duration_sec: Optional[int] = Form(None),
+    language: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     if get_project(db, project_id) is None:

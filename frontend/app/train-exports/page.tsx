@@ -63,12 +63,14 @@ function safeSlug(input: string) {
 }
 
 export default function TrainExportsPage() {
-  const [exportType, setExportType] = useState<ExportType>('sft');
+  const [exportType, setExportType] = useState<ExportType>('markdown');
   const [projectId, setProjectId] = useState('');
   const [assetId, setAssetId] = useState('');
   const [taskName, setTaskName] = useState('');
-  const [title, setTitle] = useState('Skill Package');
+  const [title, setTitle] = useState('Markdown Bundle');
   const [sourceTaskId, setSourceTaskId] = useState('');
+  const [outputDir, setOutputDir] = useState('');
+  const [markdownEnhanceWithOllama, setMarkdownEnhanceWithOllama] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [samplesText, setSamplesText] = useState('[{"instruction":"示例问题","input":"","output":"示例答案"}]');
   const [history, setHistory] = useState<ExportRecord[]>([]);
@@ -173,6 +175,8 @@ export default function TrainExportsPage() {
         source_task_id: sourceTaskId || undefined,
         title,
         task_name: taskName || undefined,
+        out_dir: outputDir.trim() || undefined,
+        markdown_enhance_with_ollama: exportType === 'markdown' ? markdownEnhanceWithOllama : false,
         payload: parsedSamples,
       };
       const data = await apiJson('/api/v1/train-exports', {
@@ -209,6 +213,8 @@ export default function TrainExportsPage() {
         source_task_id: sourceTaskId || undefined,
         title,
         task_name: taskName || undefined,
+        out_dir: outputDir.trim() || undefined,
+        markdown_enhance_with_ollama: exportType === 'markdown' ? markdownEnhanceWithOllama : false,
       };
       const data = await apiJson('/api/v1/train-exports/auto', {
         method: 'POST',
@@ -249,6 +255,8 @@ export default function TrainExportsPage() {
           source_task_id: sourceTaskId || undefined,
           title,
           task_name: taskName ? `${taskName}-${item}` : undefined,
+          out_dir: outputDir.trim() || undefined,
+          markdown_enhance_with_ollama: item === 'markdown' ? markdownEnhanceWithOllama : false,
         }),
       })));
       setBatchResults(results);
@@ -297,6 +305,14 @@ export default function TrainExportsPage() {
         ) : null}
 
         <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb', display: 'grid', gap: 18 }}>
+          <div style={{ display: 'grid', gap: 8, paddingBottom: 18, borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ color: '#6b7280', fontSize: 13 }}>Markdown 优先工作台</div>
+            <h2 style={{ margin: 0, fontSize: 24 }}>主文档 + 分片文档导出</h2>
+            <p style={{ margin: 0, color: '#4b5563', lineHeight: 1.7 }}>
+              优先生成 `index.md`、主文档、来源文档和分片文档。输出内容统一 UTF-8 编码，适合直接导入其他模型软件。
+            </p>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, paddingBottom: 18, borderBottom: '1px solid #e5e7eb' }}>
             <input placeholder="项目 ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} style={inputStyle} />
             <input placeholder="素材 ID（可选）" value={assetId} onChange={(event) => setAssetId(event.target.value)} style={inputStyle} />
@@ -304,7 +320,10 @@ export default function TrainExportsPage() {
             <input placeholder="任务目录名（可选）" value={taskName} onChange={(event) => setTaskName(event.target.value)} style={inputStyle} />
           </div>
 
-          <input placeholder="导出标题" value={title} onChange={(event) => setTitle(event.target.value)} style={inputStyle} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12, paddingBottom: 18, borderBottom: '1px solid #e5e7eb' }}>
+            <input placeholder="导出标题" value={title} onChange={(event) => setTitle(event.target.value)} style={inputStyle} />
+            <input placeholder="输出根目录（可选）" value={outputDir} onChange={(event) => setOutputDir(event.target.value)} style={inputStyle} />
+          </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px 0', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb' }}>
             {exportTypes.map((item) => (
@@ -323,10 +342,26 @@ export default function TrainExportsPage() {
             ))}
           </div>
 
+          {exportType === 'markdown' ? (
+            <div style={{ display: 'grid', gap: 10, padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
+              <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={markdownEnhanceWithOllama}
+                  onChange={(event) => setMarkdownEnhanceWithOllama(event.target.checked)}
+                />
+                <span>使用 Ollama 优化摘要与标题（失败不阻塞主导出）</span>
+              </label>
+              <div style={{ color: '#6b7280', fontSize: 13 }}>
+                输出目录：{outputDir.trim() || '后端默认导出根目录'} / {previewPath}
+              </div>
+            </div>
+          ) : null}
+
           <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <strong>导出所选产物</strong>
-              <span style={{ color: '#6b7280', fontSize: 13 }}>批量自动导出会按选择依次生成 Markdown、Skill、RAG 等 AI 素材</span>
+              <span style={{ color: '#6b7280', fontSize: 13 }}>优先勾选 Markdown，其次再补 Skill、RAG</span>
             </div>
             <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {exportTypes.map((item) => {
@@ -352,7 +387,7 @@ export default function TrainExportsPage() {
           <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
             <strong>任务目录预览</strong>
             <div style={{ marginTop: 8, fontFamily: 'monospace', wordBreak: 'break-all', color: '#4b5563' }}>
-              后端导出根目录 / {previewPath}
+              {(outputDir.trim() || '后端导出根目录')} / {previewPath}
             </div>
           </div>
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import base64
 import inspect
@@ -5,6 +7,8 @@ import re
 import shutil
 import zipfile
 import zlib
+import subprocess
+import tempfile
 from xml.etree import ElementTree
 from uuid import uuid4
 from pathlib import Path
@@ -350,6 +354,29 @@ def _partial_transcription_suffix(transcription_summary: dict):
     return f"; partial transcription: {failed_count}/{max(total, failed_count)} segment(s) failed"
 
 
+def _media_degraded_capabilities(transcription_summary: dict, segment_truncated: bool, transcript_text: str, ocr_text: str):
+    degraded = []
+    failed_count = int(transcription_summary.get("failed_count") or 0)
+    success_count = int(transcription_summary.get("success_count") or 0)
+    if failed_count and success_count:
+        degraded.append("partial_transcript")
+    elif failed_count and not transcript_text:
+        degraded.append("transcript_unavailable")
+    if segment_truncated:
+        degraded.append("truncated_segments")
+    if not ocr_text:
+        degraded.append("ocr_unavailable")
+    return degraded
+
+
+def _media_extraction_status(transcription_summary: dict, segment_truncated: bool, transcript_text: str, ocr_text: str):
+    if not transcript_text and not ocr_text:
+        return "failed" if int(transcription_summary.get("failed_count") or 0) else "metadata_only"
+    if _media_degraded_capabilities(transcription_summary, segment_truncated, transcript_text, ocr_text):
+        return "partial_success"
+    return "success"
+
+
 def _decode_pdf_literal(value: bytes) -> str:
     output = bytearray()
     index = 0
@@ -394,6 +421,26 @@ def _extract_pdf_text_with_optional_library(source_path: str) -> str:
         return ""
 
 
+def _extract_pdf_page_texts_with_optional_library(source_path: str) -> list[str]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception:
+        PdfReader = None
+    if PdfReader is None:
+        try:
+            from PyPDF2 import PdfReader  # type: ignore
+        except Exception:
+            PdfReader = None
+    if PdfReader is None:
+        return []
+
+    try:
+        reader = PdfReader(source_path)
+        return [(page.extract_text() or "").strip() for page in reader.pages]
+    except Exception:
+        return []
+
+
 def _extract_pdf_text_fallback(source_path: str) -> str:
     try:
         data = Path(source_path).read_bytes()
@@ -426,6 +473,109 @@ def _extract_pdf_text_fallback(source_path: str) -> str:
 
 def _extract_pdf_text(source_path: str) -> str:
     return _extract_pdf_text_with_optional_library(source_path) or _extract_pdf_text_fallback(source_path)
+
+
+def _extract_pdf_page_texts(source_path: str) -> list[str]:
+    page_texts = _extract_pdf_page_texts_with_optional_library(source_path)
+    if page_texts:
+        return page_texts
+    fallback_text = _extract_pdf_text_fallback(source_path)
+    return [fallback_text] if fallback_text else []
+
+
+def _pdf_page_ocr_available():
+    return shutil.which("pdftoppm") is not None and shutil.which("tesseract") is not None and shutil.which("pdfinfo") is not None
+
+
+def _extract_pdf_page_texts_with_ocr_fallback(source_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
+    if not _pdf_page_ocr_available():
+        return []
+
+    page_texts = [text.strip() for text in _extract_pdf_page_texts_with_optional_library(source_path)]
+    if any(page_texts):
+        return page_texts
+
+    page_results = _extract_pdf_page_texts_via_ocr(source_path, output_dir, should_cancel=should_cancel)
+    return [str(item.get("text", "")).strip() for item in page_results]
+
+
+def _extract_pdf_page_semantics(source_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
+    page_texts = [text.strip() for text in _extract_pdf_page_texts_with_optional_library(source_path)]
+    if any(page_texts):
+        return [{"page_number": index + 1, "text": text, "source": "document_text", "mode": "text"} for index, text in enumerate(page_texts)]
+    if not _pdf_page_ocr_available():
+        return [{"page_number": index + 1, "text": text, "source": "document_text", "mode": "text"} for index, text in enumerate(page_texts) if text]
+    page_results = _extract_pdf_page_texts_via_ocr(source_path, output_dir, should_cancel=should_cancel)
+    return [
+        {
+            "page_number": int(item.get("page_number") or 0),
+            "text": str(item.get("text") or "").strip(),
+            "source": "document_ocr",
+            "mode": "ocr",
+        }
+        for item in page_results
+        if str(item.get("text") or "").strip()
+    ]
+
+
+def _extract_pdf_page_texts_via_ocr(source_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    pdfinfo_cmd = ["pdfinfo", source_path]
+    try:
+        pdfinfo_result = subprocess.run(pdfinfo_cmd, check=True, capture_output=True, text=True)
+    except Exception:
+        return []
+    page_count = 0
+    for line in pdfinfo_result.stdout.splitlines():
+        if line.lower().startswith("pages:"):
+            try:
+                page_count = int(line.split(":", 1)[1].strip())
+            except Exception:
+                page_count = 0
+            break
+    if page_count <= 0:
+        return []
+    page_results = []
+    for page_number in range(1, page_count + 1):
+        if should_cancel is not None and should_cancel():
+            break
+        prefix = str(Path(output_dir) / f"page_{page_number:06d}")
+        render_cmd = [
+            "pdftoppm",
+            "-png",
+            "-f",
+            str(page_number),
+            "-l",
+            str(page_number),
+            source_path,
+            prefix,
+        ]
+        try:
+            subprocess.run(render_cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
+        except Exception:
+            page_results.append({"page_number": page_number, "image_path": "", "text": "", "confidence": 0.0, "error": "render_failed"})
+            continue
+        image_path = f"{prefix}-{page_number:06d}.png"
+        if not Path(image_path).is_file():
+            page_results.append({"page_number": page_number, "image_path": "", "text": "", "confidence": 0.0, "error": "render_missing"})
+            continue
+        ocr_cmd = ["tesseract", image_path, "stdout", "--psm", "6", "-l", "chi_sim+eng"]
+        try:
+            ocr_result = subprocess.run(ocr_cmd, check=True, capture_output=True, text=True, timeout=MEDIA_OCR_TIMEOUT_SEC)
+            text = str(ocr_result.stdout or "").strip()
+        except Exception:
+            text = ""
+        page_results.append({
+            "page_number": page_number,
+            "image_path": image_path,
+            "text": text,
+            "confidence": 0.8 if text else 0.0,
+        })
+    return page_results
+
+
+def _extract_pdf_page_ocr_results(source_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
+    return _extract_pdf_page_texts_via_ocr(source_path, output_dir, should_cancel=should_cancel)
 
 
 def _xml_text_nodes(xml_bytes: bytes) -> list[str]:
@@ -894,32 +1044,77 @@ def preprocess_job(self, payload: dict):
             if unit_type == "document":
                 lower_name = asset.file_name.lower() if asset else ""
                 if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
-                    extracted_text = _extract_pdf_text(source_path)
+                    pdf_page_ocr_temp_dir = str((Path(tempfile.gettempdir()) / "envoy-pdf-page-ocr" / (task_id or str(uuid4()))))
+                    page_semantics = _extract_pdf_page_semantics(source_path, pdf_page_ocr_temp_dir, should_cancel=lambda: _task_is_canceled(db, task_id))
+                    page_texts = [str(item.get("text") or "").strip() for item in page_semantics if str(item.get("text") or "").strip()]
+                    used_pdf_ocr = any(item.get("mode") == "ocr" for item in page_semantics)
+                    extracted_text = "\n\n".join(page_texts).strip()
                 else:
+                    page_semantics = []
+                    used_pdf_ocr = False
                     extracted_text = _extract_ooxml_text(source_path)
                 if extracted_text:
-                    chunk_count = len(_text_chunks(extracted_text))
+                    if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
+                        chunk_count = max(len(page_texts), 1)
+                    else:
+                        chunk_count = len(_text_chunks(extracted_text))
                     if _task_is_canceled(db, task_id):
                         return _canceled_result(payload)
-                    units = _persist_text_semantic_units(
-                        db,
-                        project_id,
-                        asset_id,
-                        asset.file_name if asset else "uploaded document",
-                        "document",
-                        extracted_text,
-                        "document_text",
-                        0.88,
-                        task_id=task_id,
-                        progress_label="document chunks persisted",
-                    )
+                    if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
+                        units = []
+                        total_pages = len(page_semantics)
+                        if used_pdf_ocr:
+                            _safe_update(db, task_id, "running", 15, result_summary=f"pdf page ocr running: {total_pages} page(s)")
+                        for index, page_info in enumerate(page_semantics):
+                            if _task_is_canceled(db, task_id):
+                                return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+                            page_text = str(page_info.get("text") or "").strip()
+                            if not page_text.strip():
+                                continue
+                            page_number = int(page_info.get("page_number") or (index + 1))
+                            page_source = str(page_info.get("source") or "document_text")
+                            page_title_prefix = "document OCR page" if page_source == "document_ocr" else "document page"
+                            labels = {
+                                "stage": "preprocess",
+                                "source": page_source,
+                                "task_id": task_id,
+                                "source_name": asset.file_name if asset else "uploaded document",
+                                "page_range": [page_number, page_number],
+                                "section_path": [f"第 {page_number} 页"],
+                                "extraction_status": "text_extracted",
+                                "extraction_mode": "ocr" if page_source == "document_ocr" else "text",
+                            }
+                            title = f"{asset.file_name if asset else 'uploaded document'} {page_title_prefix} {page_number}/{total_pages}"
+                            unit = _persist_single_semantic_unit(db, project_id, asset_id, "document", title, page_text, labels, 0.88)
+                            units.append(unit)
+                            db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
+                            db.commit()
+                            progress = min(95, 15 + int(((index + 1) / max(total_pages, 1)) * 75))
+                            if page_source == "document_ocr":
+                                _safe_update(db, task_id, "running", progress, result_summary=f"pdf page ocr done: {index + 1}/{total_pages} page(s)")
+                            else:
+                                _safe_update(db, task_id, "running", progress, result_summary=f"document chunks persisted: {index + 1}/{total_pages}")
+                    else:
+                        units = _persist_text_semantic_units(
+                            db,
+                            project_id,
+                            asset_id,
+                            asset.file_name if asset else "uploaded document",
+                            "document",
+                            extracted_text,
+                            "document_text",
+                            0.88,
+                            task_id=task_id,
+                            progress_label="document chunks persisted",
+                        )
                     semantic_payload = {
                         "char_count": len(extracted_text),
                         "preview": extracted_text[:500],
                         "stage": "preprocess",
-                        "source": "document_text",
+                        "source": "document_ocr" if used_pdf_ocr else "document_text",
                         "chunk_count": chunk_count,
                         "extraction_status": "text_extracted",
+                        "used_pdf_ocr": used_pdf_ocr,
                     }
                     if _task_is_canceled(db, task_id):
                         return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
@@ -1052,6 +1247,8 @@ def preprocess_job(self, payload: dict):
                     return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
                 _clear_media_transcript_checkpoints(db, asset_id, task_id, source="audio_transcript")
                 units = _persist_text_semantic_units(db, project_id, asset_id, asset.file_name if asset else "uploaded audio", "audio", transcript_text, "audio_transcript", 0.86, task_id=task_id, progress_label="audio chunks persisted")
+                ocr_text = ""
+                degraded_capabilities = _media_degraded_capabilities(transcription_summary, segments_truncated, transcript_text, ocr_text)
                 semantic_payload = {
                     "segments": transcription_inputs,
                     "segment_source_count": segment_input_count,
@@ -1064,7 +1261,9 @@ def preprocess_job(self, payload: dict):
                     "segment_count": transcription_count,
                     "transcript": transcription,
                     "transcript_segment_count": len(segments) if isinstance(segments, list) else 0,
-                    "extraction_status": transcription_summary["extraction_status"],
+                    "extraction_status": "partial_text_extracted" if transcription_summary["failed_count"] else "text_extracted",
+                    "degraded_capabilities": degraded_capabilities,
+                    "usable_text_sources": ["transcript"],
                     "transcription_success_count": transcription_summary["success_count"],
                     "transcription_failed_count": transcription_summary["failed_count"],
                     "transcription_failed_segments": transcription_summary["failed_segments"],
@@ -1178,6 +1377,15 @@ def preprocess_job(self, payload: dict):
             _safe_update(db, task_id, "running", 90, result_summary="ocr skipped: disabled")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+        transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
+        ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
+        transcription_summary = _transcription_segment_summary(transcription_results)
+        degraded_capabilities = _media_degraded_capabilities(transcription_summary, segments_truncated, transcript_text, ocr_text)
+        usable_text_sources = []
+        if transcript_text:
+            usable_text_sources.append("transcript")
+        if ocr_text:
+            usable_text_sources.append("ocr")
         semantic_payload = {
             "segments": transcription_inputs,
             "segment_source_count": segment_input_count,
@@ -1190,17 +1398,17 @@ def preprocess_job(self, payload: dict):
             "ocr_skipped": ocr_skipped,
             "stage": "preprocess",
             "source_path": source_path,
+            "degraded_capabilities": degraded_capabilities,
+            "usable_text_sources": usable_text_sources,
             **_media_limit_metadata(),
         }
-        transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         failed_transcriptions = [
             item["transcript"]
             for item in transcription_results
             if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
         ]
-        transcription_summary = _transcription_segment_summary(transcription_results)
         semantic_payload.update({
-            "extraction_status": transcription_summary["extraction_status"],
+            "extraction_status": _media_extraction_status(transcription_summary, segments_truncated, transcript_text, ocr_text),
             "transcription_success_count": transcription_summary["success_count"],
             "transcription_failed_count": transcription_summary["failed_count"],
             "transcription_failed_segments": transcription_summary["failed_segments"],
@@ -1223,7 +1431,6 @@ def preprocess_job(self, payload: dict):
             )
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
-        ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
         if not transcript_text and not ocr_text and failed_transcriptions and len(failed_transcriptions) == len(transcription_results):
             error = next((str(item.get("error")) for item in failed_transcriptions if item.get("error")), "unknown transcription error")
             message = f"media transcription failed: {error}"
@@ -1251,7 +1458,18 @@ def preprocess_job(self, payload: dict):
             )
             if _task_is_canceled(db, task_id):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
-        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=json.dumps(semantic_payload, ensure_ascii=False), labels={"stage": "preprocess", "source": "media_asset", "task_id": task_id}, confidence=0.8)
+        summary_labels = {
+            "stage": "preprocess",
+            "source": "media_asset",
+            "task_id": task_id,
+            "extraction_status": semantic_payload.get("extraction_status"),
+            "degraded_capabilities": semantic_payload.get("degraded_capabilities", []),
+            "usable_text_sources": semantic_payload.get("usable_text_sources", []),
+            "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
+            "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
+            **_media_limit_metadata(),
+        }
+        su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=json.dumps(semantic_payload, ensure_ascii=False), labels=summary_labels, confidence=0.8)
         db.add(su)
         db.commit()
         db.refresh(su)

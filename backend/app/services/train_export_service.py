@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from pathlib import Path
 import json
 from uuid import uuid4
 
-from app.core.config import EXPORT_DIR
+from app.core.config import EXPORT_DIR, MARKDOWN_CHUNK_MAX_CHARS, MARKDOWN_CHUNK_TARGET_CHARS
 from app.models.generated_sample import GeneratedSample
 from app.models.artifact import Artifact
 from app.models.asset import Asset
@@ -11,7 +13,7 @@ from app.models.semantic_unit import SemanticUnit
 from app.models.trace_link import TraceLink
 from app.schemas.artifact import ArtifactCreate
 from app.services.crud_service import create_artifact, create_export_record
-from app.services.export_paths import build_export_root, build_subdir
+from app.services.export_paths import build_export_root, build_subdir, slugify_name
 from app.services.export_service import build_dataset_jsonl, build_markdown_report
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object_with_status
 
@@ -124,6 +126,10 @@ def _parse_json_content(value):
     return parsed if isinstance(parsed, (dict, list)) else None
 
 
+def _content_format(value):
+    return "json" if _parse_json_content(value) is not None else "text"
+
+
 def _append_structured_list_parts(parts: list[str], value):
     if not isinstance(value, list):
         return
@@ -180,6 +186,365 @@ def _semantic_unit_export_content(row: dict):
 
 def _semantic_unit_has_export_content(row: dict):
     return bool(_semantic_unit_export_content(row))
+
+
+def _row_labels(row: dict):
+    return row.get("labels") if isinstance(row.get("labels"), dict) else {}
+
+
+def _rag_failed_segment_count(row: dict):
+    parsed = _parse_json_content(row.get("content") or "")
+    if not isinstance(parsed, dict):
+        labels = _row_labels(row)
+        return _positive_int_or_none(labels.get("transcription_failed_count")) or 0
+    failed_segments = parsed.get("transcription_failed_segments")
+    if isinstance(failed_segments, list):
+        return len(failed_segments)
+    labels = _row_labels(row)
+    return _positive_int_or_none(labels.get("transcription_failed_count")) or 0
+
+
+def _rag_extraction_status(row: dict):
+    parsed = _parse_json_content(row.get("content") or "")
+    if isinstance(parsed, dict) and isinstance(parsed.get("extraction_status"), str):
+        return parsed["extraction_status"].strip()
+    labels = _row_labels(row)
+    status = labels.get("extraction_status")
+    return str(status).strip() if status else ""
+
+
+def _rag_degraded_capabilities(row: dict):
+    parsed = _parse_json_content(row.get("content") or "")
+    if isinstance(parsed, dict) and isinstance(parsed.get("degraded_capabilities"), list):
+        return [str(item).strip() for item in parsed["degraded_capabilities"] if str(item).strip()]
+    labels = _row_labels(row)
+    degraded = labels.get("degraded_capabilities")
+    if isinstance(degraded, list):
+        return [str(item).strip() for item in degraded if str(item).strip()]
+    return []
+
+
+def _rag_document_row(row: dict):
+    text = _semantic_unit_export_content(row)
+    if not text:
+        return None
+    labels = _row_labels(row)
+    metadata = {}
+    if row.get("confidence") is not None:
+        metadata["confidence"] = row.get("confidence")
+    extraction_status = _rag_extraction_status(row)
+    if extraction_status:
+        metadata["extraction_status"] = extraction_status
+    degraded_capabilities = _rag_degraded_capabilities(row)
+    if degraded_capabilities:
+        metadata["degraded_capabilities"] = degraded_capabilities
+    failed_segment_count = _rag_failed_segment_count(row)
+    if failed_segment_count:
+        metadata["transcription_failed_count"] = failed_segment_count
+    return {
+        "doc_id": str(row.get("id") or row.get("source_unit_id") or row.get("record_type") or uuid4()),
+        "project_id": row.get("project_id"),
+        "asset_id": row.get("asset_id"),
+        "task_id": labels.get("task_id"),
+        "title": _row_title(row, 0),
+        "text": text,
+        "source": _row_source(row),
+        "unit_type": row.get("unit_type"),
+        "content_format": _content_format(row.get("content") or ""),
+        "metadata": metadata,
+    }
+
+
+def _rag_manifest_quality(clean_rows: list[dict], source_rows: list[dict]):
+    partial_count = 0
+    failed_segments = 0
+    for row in source_rows:
+        status = _rag_extraction_status(row)
+        if status == "partial_success":
+            partial_count += 1
+        failed_segments += _rag_failed_segment_count(row)
+    return {
+        "clean_row_count": len(clean_rows),
+        "partial_row_count": partial_count,
+        "failure_breakdown": {
+            "transcription_failed_segments": failed_segments,
+        },
+    }
+
+
+def _row_source_name(row: dict):
+    labels = _row_labels(row)
+    return str(labels.get("source_name") or row.get("title") or row.get("asset_id") or "source").strip()
+
+
+def _row_reference_text(row: dict):
+    labels = _row_labels(row)
+    page_range = labels.get("page_range")
+    if isinstance(page_range, (list, tuple)) and len(page_range) >= 2:
+        return f"第 {page_range[0]}-{page_range[1]} 页"
+    time_range = labels.get("time_range")
+    if isinstance(time_range, (list, tuple)) and len(time_range) >= 2:
+        return f"{time_range[0]} - {time_range[1]}"
+    section_path = labels.get("section_path")
+    if isinstance(section_path, list) and section_path:
+        return " / ".join(str(item).strip() for item in section_path if str(item).strip())
+    return "未标注"
+
+
+def _source_dir_name(order_index: int, row: dict):
+    source = str(_row_source(row) or "text")
+    source_name = slugify_name(_row_source_name(row))
+    return f"{order_index:02d}-{source}-{source_name}"
+
+
+def _markdown_chunk_summary(text: str):
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= 80:
+        return compact
+    return compact[:80].rstrip() + "…"
+
+
+def _markdown_chunk_body(row: dict):
+    body = _semantic_unit_export_content(row)
+    if body:
+        return body
+    return _row_body(row)
+
+
+def _group_rows_by_markdown_source(rows: list[dict]):
+    grouped = {}
+    order = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source_key = (
+            str(_row_source(row) or "unknown"),
+            _row_source_name(row),
+        )
+        if source_key not in grouped:
+            grouped[source_key] = []
+            order.append(source_key)
+        grouped[source_key].append(row)
+    return order, grouped
+
+
+def _section_path(row: dict):
+    labels = _row_labels(row)
+    section_path = labels.get("section_path")
+    if isinstance(section_path, list):
+        cleaned = [str(item).strip() for item in section_path if str(item).strip()]
+        if cleaned:
+            return cleaned
+    title = str(row.get("title") or "").strip()
+    return [title] if title else ["未命名片段"]
+
+
+def _markdown_natural_segments(text: str):
+    normalized = str(text or "").strip()
+    if not normalized:
+        return []
+    blocks = [block.strip() for block in normalized.split("\n\n") if block.strip()]
+    return blocks or [normalized]
+
+
+def _split_long_markdown_block(block: str, target_chars: int):
+    text = str(block or "").strip()
+    if len(text) <= target_chars:
+        return [text] if text else []
+
+    split_tokens = ["\n## ", "\n### ", "\n- ", "\n* ", "\n1. ", "。", "！", "？", ".", "!", "?", "\n"]
+    pieces = [text]
+    for token in split_tokens:
+        next_pieces = []
+        for piece in pieces:
+            if len(piece) <= target_chars:
+                next_pieces.append(piece)
+                continue
+            if token.startswith("\n"):
+                parts = [part.strip() for part in piece.split(token) if part.strip()]
+                if len(parts) > 1:
+                    next_pieces.extend(parts)
+                    continue
+            if token and token in piece:
+                parts = [part.strip() for part in piece.split(token) if part.strip()]
+                if len(parts) > 1:
+                    next_pieces.extend([parts[0]] + [f"{token.strip()}{part}" if token.strip().startswith("#") else part for part in parts[1:]])
+                    continue
+            next_pieces.append(piece)
+        pieces = next_pieces
+
+    final = []
+    for piece in pieces:
+        if len(piece) <= target_chars:
+            final.append(piece)
+            continue
+        start = 0
+        while start < len(piece):
+            end = min(start + target_chars, len(piece))
+            final.append(piece[start:end].strip())
+            start = end
+    return [piece for piece in final if piece]
+
+
+def _markdown_chunk_lines(
+    source_name: str,
+    reference_text: str,
+    chunk_id: str,
+    title: str,
+    summary: str,
+    body: str,
+    section_path: list[str],
+):
+    return [
+        f"# {title}",
+        "",
+        f"> 摘要：{summary}",
+        f"> 来源：{source_name}",
+        f"> 引用：{reference_text}",
+        f"> 分片ID：{chunk_id}",
+        "",
+        "## 正文",
+        body,
+        "",
+        "## 来源说明",
+        f"- 原始来源：{source_name}",
+        f"- 章节路径：{' / '.join(section_path) if section_path else '未标注'}",
+        f"- 引用：{reference_text}",
+    ]
+
+
+def _chunk_title_from_section(section_path: list[str]):
+    if section_path:
+        return str(section_path[-1]).strip() or "未命名分片"
+    return "未命名分片"
+
+
+def _new_markdown_chunk(row: dict, body: str, split_part: int = 1, split_total: int = 1):
+    section_path = _section_path(row)
+    title = _chunk_title_from_section(section_path)
+    if split_total > 1:
+        title = f"{title}（第 {split_part}/{split_total} 部分）"
+    return {
+        "chunk_id": str(row.get("id") or f"chunk-{uuid4().hex[:8]}"),
+        "source_name": _row_source_name(row),
+        "source_type": _row_source(row),
+        "title": title,
+        "summary": _markdown_chunk_summary(body),
+        "body": body.strip(),
+        "reference_text": _row_reference_text(row),
+        "section_path": section_path,
+        "source_row_id": str(row.get("id") or ""),
+        "split_part": split_part,
+        "split_total": split_total,
+        "labels": _row_labels(row),
+        "asset_id": row.get("asset_id"),
+        "project_id": row.get("project_id"),
+        "unit_type": row.get("unit_type"),
+        "status": _rag_extraction_status(row) or "success",
+        "degraded_capabilities": _rag_degraded_capabilities(row),
+        "failed_segment_count": _rag_failed_segment_count(row),
+    }
+
+
+def _finalize_markdown_chunk_parts(row: dict, parts: list[str]):
+    total = len(parts)
+    return [_new_markdown_chunk(row, part, index + 1, total) for index, part in enumerate(parts)]
+
+
+def _split_row_to_markdown_chunks(row: dict, target_chars: int, max_chars: int):
+    body = _markdown_chunk_body(row).strip()
+    if not body:
+        return []
+    segments = _markdown_natural_segments(body)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    def flush():
+        nonlocal current, current_len
+        if current:
+            chunks.append("\n\n".join(current).strip())
+            current = []
+            current_len = 0
+
+    for segment in segments:
+        segment_len = len(segment)
+        if segment_len > target_chars:
+            flush()
+            chunks.extend(_split_long_markdown_block(segment, target_chars))
+            continue
+        projected = current_len + (2 if current else 0) + segment_len
+        if current and projected > target_chars:
+            flush()
+        current.append(segment)
+        current_len += (2 if current_len else 0) + segment_len
+        if current_len >= max_chars:
+            flush()
+    flush()
+    return _finalize_markdown_chunk_parts(row, [part for part in chunks if part.strip()] or [body])
+
+
+def build_markdown_chunks(rows: list[dict], target_chars: int = MARKDOWN_CHUNK_TARGET_CHARS, max_chars: int = MARKDOWN_CHUNK_MAX_CHARS):
+    clean_rows = [row for row in _dedupe_rows(rows) if _markdown_chunk_body(row)]
+    order, grouped = _group_rows_by_markdown_source(clean_rows)
+    final_chunks = []
+    for source_key in order:
+        for row in grouped[source_key]:
+            final_chunks.extend(_split_row_to_markdown_chunks(row, target_chars, max_chars))
+    return final_chunks
+
+
+def enhance_markdown_chunk(chunk: dict, enabled: bool):
+    if not enabled:
+        return chunk, {"status": "skipped", "error": None}
+    prompt = "\n".join(_markdown_chunk_lines(
+        source_name=chunk["source_name"],
+        reference_text=chunk["reference_text"],
+        chunk_id=chunk["chunk_id"],
+        title=chunk["title"],
+        summary=chunk["summary"],
+        body=chunk["body"],
+        section_path=chunk["section_path"],
+    ))
+    result = generate_with_ollama(
+        "Polish the following Markdown chunk metadata. Return JSON with title and summary only.",
+        prompt,
+    )
+    metadata = _ollama_request_metadata(result)
+    if result.get("status") != "success":
+        return chunk, {"status": "failed", **metadata}
+    parsed, parse_metadata = _ollama_parse_metadata(result.get("text", ""), ("title", "summary"))
+    status = "success" if parse_metadata.get("ollama_parse_status") == "parsed" else "failed"
+    updated_chunk = dict(chunk)
+    if status == "success":
+        title = parsed.get("title")
+        summary = parsed.get("summary")
+        if isinstance(title, str) and title.strip():
+            updated_chunk["title"] = title.strip()
+        if isinstance(summary, str) and summary.strip():
+            updated_chunk["summary"] = summary.strip()
+    return updated_chunk, {"status": status, **metadata, **parse_metadata}
+
+
+def _write_utf8_text(path: Path, content: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _markdown_manifest_quality(rows: list[dict]):
+    partial_count = 0
+    failed_segments = 0
+    for row in rows:
+        if _rag_extraction_status(row) == "partial_success":
+            partial_count += 1
+        failed_segments += _rag_failed_segment_count(row)
+    return {
+        "partial_chunk_count": partial_count,
+        "failure_breakdown": {
+            "transcription_failed_segments": failed_segments,
+        },
+    }
 
 
 def _row_title(row: dict, index: int):
@@ -614,18 +979,21 @@ def export_preference_dataset(rows: list[dict], out_dir: str, task_id: str, task
 
 def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: str | None = None, db=None, project_id: str | None = None):
     clean_rows = _dedupe_rows(rows)
+    rag_rows = [row for row in (_rag_document_row(row) for row in clean_rows) if row is not None]
     semantic_metadata = _semantic_source_metadata(clean_rows)
+    quality_metadata = _rag_manifest_quality(rag_rows, clean_rows)
     root = _resolve_root(out_dir, "rag", task_id, task_name)
     data_dir = build_subdir(root, "rag")
     out_path = data_dir / "rag_corpus.jsonl"
     manifest_path = data_dir / "rag_manifest.json"
-    build_dataset_jsonl(clean_rows, str(out_path))
+    build_dataset_jsonl(rag_rows, str(out_path))
     manifest = {
         "schema_version": "envoy.rag.v1",
         "source_task_id": task_id,
         "task_name": task_name,
         "project_id": project_id,
         "row_count": len(clean_rows),
+        **quality_metadata,
         **semantic_metadata,
         "files": {
             "corpus": str(out_path),
@@ -638,6 +1006,7 @@ def export_rag_corpus(rows: list[dict], out_dir: str, task_id: str, task_name: s
         "root": str(root),
         "path": str(out_path),
         "task_id": task_id,
+        "count": len(rag_rows),
         "paths": {
             "corpus": str(out_path),
             "manifest": str(manifest_path),
@@ -713,55 +1082,275 @@ def export_skill_markdown(rows: list[dict], out_dir: str, task_id: str, title: s
     }
 
 
-def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, task_id: str, title: str = "Video Markdown Report", task_name: str | None = None, db=None, project_id: str | None = None):
-    semantic_metadata = _semantic_source_metadata(summary_rows)
+def export_markdown_bundle(
+    rows: list[dict],
+    out_dir: str,
+    task_id: str,
+    title: str = "Markdown Bundle",
+    task_name: str | None = None,
+    db=None,
+    project_id: str | None = None,
+    enhance_with_ollama: bool = False,
+):
+    clean_rows = _dedupe_rows(rows)
+    semantic_rows = [row for row in clean_rows if _markdown_chunk_body(row)]
+    semantic_metadata = _semantic_source_metadata(semantic_rows)
+    quality_metadata = _markdown_manifest_quality(semantic_rows)
+    built_chunks = build_markdown_chunks(semantic_rows)
+    order, _grouped = _group_rows_by_markdown_source(semantic_rows)
+
     root = _resolve_root(out_dir, "markdown", task_id, task_name)
-    md_dir = build_subdir(root, "markdown")
-    out_path = md_dir / "video_summary.md"
-    manifest_path = md_dir / "markdown_manifest.json"
-    llm_metadata = _ollama_markdown_summary(summary_rows)
-    content = []
-    if llm_metadata.get("llm_summary"):
-        content.extend(["## AI 摘要", "", str(llm_metadata["llm_summary"]), ""])
-    content.extend([
-        "## 视频转化摘要",
+    overview_dir = build_subdir(root, "overview")
+    sources_dir = build_subdir(root, "sources")
+    index_path = root / "index.md"
+    overview_path = overview_dir / "00-project-overview.md"
+    manifest_path = root / "manifest.json"
+
+    chunk_paths: list[str] = []
+    source_paths: list[str] = []
+    file_tree_sources: list[dict] = []
+    enhanced_chunks = []
+    ollama_stats = {"enabled": bool(enhance_with_ollama), "succeeded_chunks": 0, "failed_chunks": 0, "skipped_chunks": 0, "errors": []}
+    for chunk in built_chunks:
+        updated_chunk, enhancement = enhance_markdown_chunk(chunk, enhance_with_ollama)
+        enhanced_chunks.append(updated_chunk)
+        if enhancement["status"] == "success":
+            ollama_stats["succeeded_chunks"] += 1
+        elif enhancement["status"] == "failed":
+            ollama_stats["failed_chunks"] += 1
+            if enhancement.get("error"):
+                ollama_stats["errors"].append(str(enhancement["error"]))
+        else:
+            ollama_stats["skipped_chunks"] += 1
+
+    chunk_groups: dict[tuple[str, str], list[dict]] = {}
+    for chunk in enhanced_chunks:
+        source_key = (str(chunk["source_type"] or "unknown"), chunk["source_name"])
+        chunk_groups.setdefault(source_key, []).append(chunk)
+
+    index_lines = [
+        "# 导出索引",
         "",
-        "本报告由 Envoy 根据项目内的文本、转写、OCR、样本和追溯信息自动生成，用于快速审查素材是否已经形成可复用 AI 素材。",
+        f"- 标题：{title}",
+        f"- 任务：{task_name or task_id}",
+        f"- 来源数：{len(order)}",
+        f"- 分片数：{len(enhanced_chunks)}",
+        "",
+        "## 来源目录",
+        "",
+    ]
+    overview_lines = [
+        f"# {title}",
+        "",
+        "## 导航目录",
+        "",
+        "- 素材概览",
+        "- 分来源总览",
+        "- 分片索引",
+        "- 异常与降级说明",
         "",
         "## 素材概览",
         "",
-        *_source_overview_lines(semantic_metadata.get("source_counts", {})),
+        f"- 总来源数：{len(order)}",
+        f"- 总分片数：{len(enhanced_chunks)}",
+        f"- 编码：UTF-8",
         "",
-        "## 核心内容",
+        "## 分来源总览",
         "",
-        *_semantic_markdown_lines(summary_rows),
+    ]
+
+    for source_index, source_key in enumerate(order, 1):
+        source_name = source_key[1]
+        source_rows = [row for row in semantic_rows if (_row_source(row), _row_source_name(row)) == source_key]
+        source_chunks = chunk_groups.get(source_key, [])
+        if not source_rows:
+            continue
+        source_dir = build_subdir(sources_dir, _source_dir_name(source_index, source_rows[0]))
+        chunks_dir = build_subdir(source_dir, "chunks")
+        source_path = source_dir / "source.md"
+        source_rel_path = source_path.relative_to(root).as_posix()
+        index_lines.extend([
+            f"### {source_name}",
+            "",
+            f"- 来源文档：[{source_name}]({source_rel_path})",
+            f"- 来源类型：{_source_label(_row_source(source_rows[0]))}",
+            f"- 分片数：{len(source_chunks)}",
+            "",
+        ])
+        overview_lines.extend([f"### {source_name}", "", f"- 来源类型：{_source_label(_row_source(source_rows[0]))}", f"- 分片数：{len(source_chunks)}", ""])
+
+        source_lines = [
+            f"# {source_name}",
+            "",
+            f"> 来源类型：{_source_label(_row_source(source_rows[0]))}",
+            f"> 原始文件：{source_name}",
+            f"> 来源ID：{source_rows[0].get('asset_id') or source_rows[0].get('id') or source_dir.name}",
+            "",
+            "## 内容摘要",
+            "",
+        ]
+        for row in source_rows:
+            source_lines.append(f"- {' / '.join(_section_path(row))}：{_markdown_chunk_summary(_markdown_chunk_body(row))}")
+        source_lines.extend(["", "## 分片索引", ""])
+
+        file_tree_chunks = []
+        for chunk_index, chunk in enumerate(source_chunks, 1):
+            chunk_slug = slugify_name(chunk["title"])
+            chunk_path = chunks_dir / f"{chunk_index:03d}-{chunk_slug}.md"
+            chunk_content = "\n".join(
+                _markdown_chunk_lines(
+                    source_name=source_name,
+                    reference_text=chunk["reference_text"],
+                    chunk_id=chunk["chunk_id"],
+                    title=chunk["title"],
+                    summary=chunk["summary"],
+                    body=chunk["body"],
+                    section_path=chunk["section_path"],
+                )
+            )
+            _write_utf8_text(chunk_path, chunk_content)
+            chunk_paths.append(str(chunk_path))
+            rel_chunk_path = chunk_path.relative_to(root).as_posix()
+            source_lines.append(f"- [{chunk['title']}](chunks/{chunk_path.name})")
+            index_lines.append(f"- [{chunk['title']}]({rel_chunk_path})：{chunk['reference_text']}")
+            overview_lines.append(f"- [{chunk['title']}]({rel_chunk_path})")
+            file_tree_chunks.append({
+                "title": chunk["title"],
+                "summary": chunk["summary"],
+                "reference_text": chunk["reference_text"],
+                "path": str(chunk_path),
+                "relative_path": rel_chunk_path,
+                "split_part": chunk["split_part"],
+                "split_total": chunk["split_total"],
+                "chunk_id": chunk["chunk_id"],
+            })
+        index_lines.append("")
+        source_lines.extend(["", "## 异常与降级说明", ""])
+        degraded_rows = [row for row in source_rows if _rag_extraction_status(row) == "partial_success"]
+        if degraded_rows:
+            for row in degraded_rows:
+                source_lines.append(f"- {_row_title(row, 0)}：{', '.join(_rag_degraded_capabilities(row)) or 'partial_success'}")
+        else:
+            source_lines.append("- 无")
+        _write_utf8_text(source_path, "\n".join(source_lines))
+        source_paths.append(str(source_path))
+        file_tree_sources.append({
+            "source_type": source_key[0],
+            "source_name": source_name,
+            "source_path": str(source_path),
+            "relative_path": source_rel_path,
+            "chunks_dir": chunks_dir.relative_to(root).as_posix(),
+            "chunks": file_tree_chunks,
+        })
+        overview_lines.append("")
+
+    overview_lines.extend([
+        "## 分片索引",
+        "",
+        *[f"- [{chunk['title']}]({Path(path).relative_to(root).as_posix()})" for chunk, path in zip(enhanced_chunks, chunk_paths)],
+        "",
+        "## 异常与降级说明",
+        "",
+        f"- partial_success 分片数：{quality_metadata['partial_chunk_count']}",
+        f"- 转写失败片段数：{quality_metadata['failure_breakdown']['transcription_failed_segments']}",
     ])
-    build_markdown_report(title, "\n".join(content), str(out_path))
+
+    ollama_status = "skipped"
+    if enhance_with_ollama:
+        ollama_status = "success" if ollama_stats["failed_chunks"] == 0 else "failed"
+
     manifest = {
-        "schema_version": "envoy.markdown.v1",
+        "schema_version": "envoy.markdown.bundle.v1",
         "title": title,
         "source_task_id": task_id,
         "task_name": task_name,
         "project_id": project_id,
-        "row_count": len(summary_rows),
+        "row_count": len(semantic_rows),
+        "source_count": len(order),
+        "chunk_count": len(chunk_paths),
         **semantic_metadata,
-        "files": {
-            "markdown": str(out_path),
-            "manifest": str(manifest_path),
+        **quality_metadata,
+        "encoding": "utf-8",
+        "sources": [
+            {
+                "source_type": source_key[0],
+                "source_name": source_key[1],
+                "source_path": source_paths[index],
+            }
+            for index, source_key in enumerate(order)
+            if index < len(source_paths)
+        ],
+        "chunks": [
+            {
+                "chunk_id": chunk["chunk_id"],
+                "title": chunk["title"],
+                "summary": chunk["summary"],
+                "source_name": chunk["source_name"],
+                "section_path": chunk["section_path"],
+                "reference_text": chunk["reference_text"],
+                "path": chunk_paths[index],
+                "split_part": chunk["split_part"],
+                "split_total": chunk["split_total"],
+            }
+            for index, chunk in enumerate(enhanced_chunks)
+            if index < len(chunk_paths)
+        ],
+        "ollama": {
+            "enabled": ollama_stats["enabled"],
+            "chunk_enhancement_status": ollama_status,
+            "succeeded_chunks": ollama_stats["succeeded_chunks"],
+            "failed_chunks": ollama_stats["failed_chunks"],
+            "skipped_chunks": ollama_stats["skipped_chunks"],
+            "errors": ollama_stats["errors"][:10],
         },
-        **llm_metadata,
+        "files": {
+            "index": str(index_path),
+            "overview": str(overview_path),
+            "manifest": str(manifest_path),
+            "sources": source_paths,
+            "chunks": chunk_paths,
+        },
+        "file_tree": {
+            "root": str(root),
+            "index": str(index_path),
+            "overview": str(overview_path),
+            "manifest": str(manifest_path),
+            "sources_dir": str(sources_dir),
+            "sources": file_tree_sources,
+        },
     }
+
+    _write_utf8_text(index_path, "\n".join(index_lines))
+    _write_utf8_text(overview_path, "\n".join(overview_lines))
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    _finalize_export(db, project_id, task_id, "markdown", task_name, root, [out_path, manifest_path], summary_rows)
+    export_paths = [index_path, overview_path, manifest_path, *(Path(path) for path in source_paths), *(Path(path) for path in chunk_paths)]
+    _finalize_export(db, project_id, task_id, "markdown", task_name, root, export_paths, semantic_rows)
     return {
         "root": str(root),
-        "path": str(out_path),
+        "path": str(overview_path),
         "task_id": task_id,
+        "count": len(chunk_paths),
         "paths": {
-            "markdown": str(out_path),
+            "index": str(index_path),
+            "overview": str(overview_path),
             "manifest": str(manifest_path),
+            "sources": source_paths,
+            "chunks": chunk_paths,
         },
     }
+
+
+def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, task_id: str, title: str = "Video Markdown Report", task_name: str | None = None, db=None, project_id: str | None = None):
+    return export_markdown_bundle(
+        summary_rows,
+        out_dir,
+        task_id,
+        title=title,
+        task_name=task_name,
+        db=db,
+        project_id=project_id,
+        enhance_with_ollama=False,
+    )
 
 
 def build_auto_payload_from_project(db, project_id: str, export_type: str):

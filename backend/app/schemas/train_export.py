@@ -11,3 +11,4 @@ class TrainExportRequest(BaseModel):
     source_task_id: Optional[str] = None
     source_asset_id: Optional[str] = None
     task_name: Optional[str] = None
+    markdown_enhance_with_ollama: bool = False

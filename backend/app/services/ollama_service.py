@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import json
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -147,7 +149,7 @@ def parse_ollama_json_object_with_status(text: str, required_keys: tuple[str, ..
     }
 
 
-def get_ollama_status(client: Any | None = None, probe: bool = True) -> dict[str, Any]:
+def get_ollama_status(client: Optional[Any] = None, probe: bool = True) -> dict[str, Any]:
     config = get_ollama_config()
     base_url = config["base_url"]
     model = config["model"]
@@ -187,7 +189,7 @@ def get_ollama_status(client: Any | None = None, probe: bool = True) -> dict[str
     return status
 
 
-def generate_with_ollama(instruction: str, content: str, client: Any | None = None) -> dict[str, Any]:
+def generate_with_ollama(instruction: str, content: str, client: Optional[Any] = None) -> dict[str, Any]:
     config = get_ollama_config()
     raw_prompt = f"{instruction.strip()}\n\n{content.strip()}".strip()
     max_chars = max(int(config["max_prompt_chars"] or 1), 1)

@@ -25,6 +25,19 @@ def build_pdf_bytes(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def build_multipage_pdf_bytes(page_texts: list[str]) -> bytes:
+    from reportlab.pdfgen import canvas
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer)
+    for index, text in enumerate(page_texts):
+        pdf.drawString(72, 720, text)
+        if index < len(page_texts) - 1:
+            pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
 def build_docx_bytes(text: str) -> bytes:
     buffer = BytesIO()
     document_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -134,6 +147,282 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(units[0].labels["source"], "document_text")
                 self.assertEqual(units[0].labels["extraction_status"], "text_extracted")
                 self.assertIn("Refund playbook requires manager approval", units[0].content)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_extracts_multipage_pdf_with_page_ranges_for_markdown_export(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-multipage-pdf-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.services.train_export_service import export_markdown_bundle
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="multipage pdf project", description="", domain_type="knowledge", status="active"))
+                pdf_storage = storage_client.upload_bytes(
+                    "course-guide.pdf",
+                    build_multipage_pdf_bytes([
+                        "第 1 页 课程背景与目标",
+                        "第 2 页 课程流程与工具",
+                        "第 3 页 课程作业与导入说明",
+                    ]),
+                    "application/pdf",
+                )
+                pdf_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="course-guide.pdf",
+                        file_path=pdf_storage["object_name"],
+                        mime_type="application/pdf",
+                        metadata={"storage": pdf_storage["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = pdf_asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).order_by(SemanticUnit.created_at.asc()).all()
+                rows = [
+                    {
+                        "record_type": "semantic_unit",
+                        "id": unit.id,
+                        "project_id": unit.project_id,
+                        "asset_id": unit.asset_id,
+                        "unit_type": unit.unit_type,
+                        "title": unit.title,
+                        "content": unit.content,
+                        "labels": unit.labels,
+                        "confidence": unit.confidence,
+                    }
+                    for unit in units
+                ]
+                export_result = export_markdown_bundle(
+                    rows,
+                    str(Path(tmp_dir) / "bundle"),
+                    task_id,
+                    title="course-guide",
+                    task_name="course-guide",
+                    project_id=project_id,
+                )
+                manifest = json.loads(Path(export_result["paths"]["manifest"]).read_text(encoding="utf-8"))
+                chunk_text = Path(export_result["paths"]["chunks"][0]).read_text(encoding="utf-8")
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertGreaterEqual(len(units), 3)
+                self.assertTrue(all(unit.labels["source"] == "document_text" for unit in units))
+                self.assertTrue(all(unit.labels.get("page_range") for unit in units))
+                self.assertEqual(manifest["source_count"], 1)
+                self.assertGreaterEqual(manifest["chunk_count"], 3)
+                self.assertTrue(all(unit.labels["page_range"][0] == unit.labels["page_range"][1] for unit in units))
+                self.assertIn("来源：course-guide.pdf", chunk_text)
+                self.assertIn("引用：第 1-1 页", chunk_text)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_falls_back_to_pdf_page_ocr_when_text_extraction_is_blank(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-pdf-ocr-fallback-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status as real_update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pdf ocr fallback project", description="", domain_type="knowledge", status="active"))
+                pdf_storage = storage_client.upload_bytes(
+                    "circuit-notes.pdf",
+                    build_multipage_pdf_bytes([
+                        "第 1 页 电路图说明",
+                        "第 2 页 时序图说明",
+                    ]),
+                    "application/pdf",
+                )
+                pdf_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="circuit-notes.pdf",
+                        file_path=pdf_storage["object_name"],
+                        mime_type="application/pdf",
+                        metadata={"storage": pdf_storage["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = pdf_asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            progress_updates = []
+
+            def record_update(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                progress_updates.append({"status": status, "progress": progress, "summary": result_summary, "error": error_message})
+                return real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+
+            with patch("app.workers.jobs._extract_pdf_page_texts_with_optional_library", return_value=["", ""]), \
+                patch("app.workers.jobs._extract_pdf_text_fallback", return_value=""), \
+                patch("app.workers.jobs._pdf_page_ocr_available", return_value=True), \
+                patch("app.workers.jobs._extract_pdf_page_texts_via_ocr", return_value=[
+                    {"page_number": 1, "image_path": "page_000001.png", "text": "门电路与布线图", "confidence": 0.92},
+                    {"page_number": 2, "image_path": "page_000002.png", "text": "时序波形与说明", "confidence": 0.91},
+                ]) as ocr_mock, \
+                patch("app.workers.jobs.update_task_status", side_effect=record_update):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).order_by(SemanticUnit.created_at.asc()).all()
+                summaries = [item["summary"] for item in progress_updates if item["summary"]]
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertTrue(any("pdf page ocr running" in summary for summary in summaries))
+                self.assertTrue(any("pdf page ocr done" in summary for summary in summaries))
+                self.assertGreaterEqual(ocr_mock.call_count, 1)
+                self.assertTrue(any(unit.labels.get("source") == "document_ocr" for unit in units))
+                self.assertTrue(any("门电路与布线图" in unit.content for unit in units))
+                self.assertTrue(all(unit.labels.get("page_range") for unit in units))
+                self.assertTrue(all(unit.labels.get("extraction_status") == "text_extracted" for unit in units))
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_can_cancel_pdf_page_ocr_midway(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-pdf-ocr-cancel-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task, update_task_status as real_update_task_status
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pdf ocr cancel project", description="", domain_type="knowledge", status="active"))
+                pdf_storage = storage_client.upload_bytes(
+                    "cancel-circuit.pdf",
+                    build_multipage_pdf_bytes([
+                        "第 1 页 电路板布局",
+                        "第 2 页 器件连接说明",
+                        "第 3 页 信号时序图",
+                    ]),
+                    "application/pdf",
+                )
+                pdf_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="cancel-circuit.pdf",
+                        file_path=pdf_storage["object_name"],
+                        mime_type="application/pdf",
+                        metadata={"storage": pdf_storage["storage"]},
+                    ),
+                )
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                project_id = project.id
+                asset_id = pdf_asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            progress_updates = []
+
+            def cancel_on_page_ocr(db, task_id_arg, status, progress=None, result_summary=None, error_message=None):
+                progress_updates.append({"status": status, "progress": progress, "summary": result_summary, "error": error_message})
+                updated = real_update_task_status(db, task_id_arg, status, progress, result_summary, error_message)
+                if result_summary and "pdf page ocr running" in result_summary:
+                    real_update_task_status(db, task_id_arg, "canceled", progress, result_summary="Task canceled by user")
+                return updated
+
+            with patch("app.workers.jobs._extract_pdf_page_texts_with_optional_library", return_value=["", "", ""]), \
+                patch("app.workers.jobs._extract_pdf_text_fallback", return_value=""), \
+                patch("app.workers.jobs._pdf_page_ocr_available", return_value=True), \
+                patch("app.workers.jobs._extract_pdf_page_texts_via_ocr", return_value=[
+                    {"page_number": 1, "image_path": "page_000001.png", "text": "page 1 text", "confidence": 0.9},
+                    {"page_number": 2, "image_path": "page_000002.png", "text": "page 2 text", "confidence": 0.9},
+                    {"page_number": 3, "image_path": "page_000003.png", "text": "page 3 text", "confidence": 0.9},
+                ]), \
+                patch("app.workers.jobs.update_task_status", side_effect=cancel_on_page_ocr):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).all()
+
+                self.assertEqual(result["status"], "canceled")
+                self.assertEqual(stored_task.status, "canceled")
+                self.assertEqual(stored_task.result_summary, "Task canceled by user")
+                self.assertGreater(len(progress_updates), 0)
+                self.assertFalse(any(unit.labels.get("source") == "document_ocr" for unit in units))
             finally:
                 db.close()
                 engine.dispose()

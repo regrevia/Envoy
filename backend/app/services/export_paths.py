@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from pathlib import Path
 from datetime import datetime
 import re
+from typing import Optional
 
 
 def slugify_name(name: str) -> str:
@@ -10,7 +13,7 @@ def slugify_name(name: str) -> str:
     return name or 'default'
 
 
-def build_export_root(base_dir: str, task_type: str, task_id: str, custom_name: str | None = None):
+def build_export_root(base_dir: str, task_type: str, task_id: str, custom_name: Optional[str] = None):
     date_part = datetime.now().strftime('%Y%m%d')
     task_part = slugify_name(custom_name) if custom_name else slugify_name(task_type)
     root = Path(base_dir) / date_part / f'{task_part}_{task_id}'

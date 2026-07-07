@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -7,7 +10,7 @@ router = APIRouter()
 MAX_TRACE_DEPTH = 6
 
 
-def _serialize_trace(row, direction: str | None = None, depth: int | None = None):
+def _serialize_trace(row, direction: Optional[str] = None, depth: Optional[int] = None):
     payload = {
         "id": row.id,
         "source_type": row.source_type,

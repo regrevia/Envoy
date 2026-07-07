@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 from pathlib import Path
 import json
+from typing import Optional
 
 from app.core.config import EXPORT_DIR
 
 
-def ensure_export_dir(base_dir: str | None = None):
+def ensure_export_dir(base_dir: Optional[str] = None):
     base_dir = base_dir or str(EXPORT_DIR)
     path = Path(base_dir)
     path.mkdir(parents=True, exist_ok=True)
