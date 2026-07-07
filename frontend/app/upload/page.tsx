@@ -15,10 +15,10 @@ const fileTypeOptions = [
 ];
 
 const outputOptions = [
-  { id: 'markdown', label: 'Markdown' },
-  { id: 'skill', label: 'Skill' },
-  { id: 'rag', label: 'RAG' },
-  { id: 'samples', label: '训练样本' },
+  { id: 'markdown', label: '知识库文档' },
+  { id: 'skill', label: '可复用流程包' },
+  { id: 'rag', label: '检索语料包' },
+  { id: 'samples', label: '训练问答' },
 ];
 const pdfChunkingOptions = [
   { id: 'auto', label: '自动智能切片' },
@@ -34,18 +34,18 @@ const uploadRequestTimeoutMs = 120000;
 const inputStyle = {
   width: '100%',
   padding: '11px 12px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
+  borderRadius: 999,
+  border: '1px solid #e0e0e0',
   background: '#ffffff',
-  color: '#111827',
+  color: '#1d1d1f',
 } as const;
 
 const buttonStyle = {
   minHeight: 40,
-  padding: '0 14px',
-  borderRadius: 6,
+  padding: '0 18px',
+  borderRadius: 999,
   border: 0,
-  background: '#111827',
+  background: '#0066cc',
   color: '#ffffff',
   fontWeight: 600,
   cursor: 'pointer',
@@ -210,13 +210,13 @@ export default function UploadPage() {
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
+    <main style={{ minHeight: '100vh', background: '#f5f5f7', fontFamily: 'SF Pro Text, system-ui, -apple-system, sans-serif', color: '#1d1d1f' }}>
       <section style={{ maxWidth: 960, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>第 2 步 · 多媒体转换任务</div>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>上传素材并启动预处理</h1>
-          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            视频/音频/图片/文档/长文本进入预处理转换后，可继续生成 Markdown、Skill、RAG 和训练样本等 AI 素材。
+          <div style={{ color: '#7a7a7a', fontSize: 14, marginBottom: 8 }}>第 2 步 · 上传素材</div>
+          <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.1, letterSpacing: '-0.28px', fontWeight: 600 }}>上传素材并开始处理</h1>
+          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#333333', fontSize: 17, lineHeight: 1.47 }}>
+            视频、音频、图片、文档和长文本会被整理成可交付产物，后续可导出知识库文档、可复用流程包、检索语料包和训练问答。
           </p>
         </header>
 
@@ -243,13 +243,13 @@ export default function UploadPage() {
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>当前任务上下文</h2>
               <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
-                {selectedProject ? `任务：${selectedProject.name}；项目 ID：${selectedProject.id}` : '还没有选择任务/项目。请从下方选择已有任务，或返回首页创建转换任务。'}
+                {selectedProject ? `任务：${selectedProject.name}` : '还没有选择任务。请从下方选择已有任务，或返回首页创建转换任务。'}
               </p>
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
                 生成目标：{outputContext}
               </p>
             </div>
-            <Link href="/" style={{ color: '#111827', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回首页创建转换任务</Link>
+            <Link href="/" style={{ color: '#0066cc', fontWeight: 400, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回首页创建转换任务</Link>
           </div>
         </section>
 
@@ -309,9 +309,9 @@ export default function UploadPage() {
             </p>
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
-            <Link href="/tasks" style={{ color: '#111827', fontWeight: 700 }}>查看转换任务</Link>
-            <Link href={`/semantic-units${projectQuery}`} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</Link>
-            <Link href={`/train-exports${exportQuery}`} style={{ color: '#111827', fontWeight: 700 }}>训练导出</Link>
+            <Link href="/tasks" style={{ color: '#0066cc', fontWeight: 400 }}>查看处理进度</Link>
+            <Link href={`/semantic-units${projectQuery}`} style={{ color: '#0066cc', fontWeight: 400 }}>审查内容片段</Link>
+            <Link href={`/train-exports${exportQuery}`} style={{ color: '#0066cc', fontWeight: 400 }}>交付导出</Link>
           </div>
         </section>
 
@@ -328,7 +328,7 @@ export default function UploadPage() {
                 <button
                   onClick={onPreprocess}
                   disabled={preprocessing}
-                  style={{ ...buttonStyle, background: preprocessing ? '#6b7280' : '#111827', color: '#ffffff', flex: '0 0 auto', opacity: preprocessing ? 0.78 : 1, cursor: preprocessing ? 'not-allowed' : 'pointer' }}
+                  style={{ ...buttonStyle, background: preprocessing ? '#7a7a7a' : '#0066cc', color: '#ffffff', flex: '0 0 auto', opacity: preprocessing ? 0.78 : 1, cursor: preprocessing ? 'not-allowed' : 'pointer' }}
                 >
                   {preprocessing ? '正在启动...' : '启动预处理'}
                 </button>
@@ -339,13 +339,13 @@ export default function UploadPage() {
                 <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
                   <strong>素材已上传</strong>
                   <div style={{ marginTop: 6, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-                    素材 ID：{asset.id}；项目 ID：{asset.project_id || projectId}；类型：{asset.asset_type || assetType}；文件：{asset.file_name || file?.name || '-'}
+                    文件：{asset.file_name || file?.name || '-'}；类型：{asset.asset_type || assetType}
                   </div>
                 </div>
                 <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
                   <strong>预处理任务</strong>
                   <div style={{ marginTop: 6, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-                    {preprocessResult?.error ? `启动失败：${preprocessResult.error}` : preprocessResult?.id ? `任务 ID：${preprocessResult.id}；状态：${preprocessResult.status || 'created'}；进度：${preprocessResult.progress ?? 0}%` : '上传完成后点击“启动预处理”，系统会把素材转为语义单元。'}
+                    {preprocessResult?.error ? `启动失败：${preprocessResult.error}` : preprocessResult?.id ? `处理已开始；状态：${preprocessResult.status || 'created'}；进度：${preprocessResult.progress ?? 0}%` : '上传完成后点击“启动预处理”，系统会把素材转为可审查内容片段。'}
                   </div>
                   {preprocessResult?.result_summary ? (
                     <div style={{ marginTop: 6, color: '#374151', fontSize: 13 }}>{preprocessResult.result_summary}</div>
@@ -354,15 +354,15 @@ export default function UploadPage() {
                 <div style={{ padding: '12px 0' }}>
                   <strong>下一步操作</strong>
                   <div style={{ marginTop: 10, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                    <a href={taskHref} style={{ color: '#111827', fontWeight: 700 }}>查看预处理任务</a>
-                    <a href={semanticHref} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</a>
-                    <a href={samplesHref} style={{ color: '#111827', fontWeight: 700 }}>生成训练样本</a>
-                    <a href={materialExportHref} aria-disabled={!hasMaterialOutput} style={{ color: hasMaterialOutput ? '#111827' : '#6b7280', fontWeight: 700, pointerEvents: hasMaterialOutput ? 'auto' : 'none' }}>导出 Markdown / Skill / RAG</a>
-                    <a href={traceHref} style={{ color: '#111827', fontWeight: 700 }}>查看追溯链路</a>
+                    <a href={taskHref} style={{ color: '#0066cc', fontWeight: 400 }}>查看处理进度</a>
+                    <a href={semanticHref} style={{ color: '#0066cc', fontWeight: 400 }}>审查内容片段</a>
+                    <a href={samplesHref} style={{ color: '#0066cc', fontWeight: 400 }}>生成训练问答</a>
+                    <a href={materialExportHref} aria-disabled={!hasMaterialOutput} style={{ color: hasMaterialOutput ? '#0066cc' : '#7a7a7a', fontWeight: 400, pointerEvents: hasMaterialOutput ? 'auto' : 'none' }}>导出交付产物</a>
+                    <a href={traceHref} style={{ color: '#0066cc', fontWeight: 400 }}>查看来源链路</a>
                   </div>
                   {!hasMaterialOutput ? (
                     <div style={{ marginTop: 8, color: '#b45309', fontSize: 13 }}>
-                      请先勾选 Markdown、Skill 或 RAG 后再导出 AI 素材。
+                      请先勾选知识库文档、流程包或检索语料后再导出交付产物。
                     </div>
                   ) : null}
                 </div>

@@ -24,11 +24,11 @@ type Task = {
 const buttonStyle = {
   minHeight: 36,
   padding: '0 12px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
+  borderRadius: 999,
+  border: '1px solid #0066cc',
   background: '#ffffff',
-  color: '#111827',
-  fontWeight: 600,
+  color: '#0066cc',
+  fontWeight: 400,
   cursor: 'pointer',
 } as const;
 
@@ -83,7 +83,7 @@ function taskTypeLabel(taskType?: string | null) {
     sample: '样本生成',
     generate_samples: '样本生成',
     export: '数据集导出',
-    export_skill: 'Skill 导出',
+    export_skill: '流程包导出',
     export_markdown: 'Markdown 导出',
   };
   return taskType ? labels[taskType] || taskType : '-';
@@ -151,11 +151,11 @@ export default function TasksPage() {
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
+    <main style={{ minHeight: '100vh', background: '#f5f5f7', fontFamily: 'SF Pro Text, system-ui, -apple-system, sans-serif', color: '#1d1d1f' }}>
       <section style={{ maxWidth: 1120, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>任务</h1>
-          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
+          <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.1, letterSpacing: '-0.28px', fontWeight: 600 }}>处理进度</h1>
+          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#333333', fontSize: 17, lineHeight: 1.47 }}>
             查看预处理、语义分析、样本生成和导出任务的执行状态。列表会自动刷新，便于发现长任务是否卡住或失败。
           </p>
         </header>
@@ -173,7 +173,7 @@ export default function TasksPage() {
         <section style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: 18 }}>任务列表</h2>
+              <h2 style={{ margin: 0, fontSize: 18 }}>处理列表</h2>
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>共 {tasks.length} 个任务</p>
             </div>
             <button onClick={() => void loadTasks()} style={buttonStyle}>刷新</button>
@@ -193,7 +193,7 @@ export default function TasksPage() {
                       <span style={{ color: statusColor(task.status), fontSize: 13 }}>{statusLabel(task.status)}</span>
                     </div>
                     <div style={{ marginTop: 10, height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
-                      <div style={{ width: `${progress}%`, height: '100%', background: '#111827' }} />
+                      <div style={{ width: `${progress}%`, height: '100%', background: '#0066cc' }} />
                     </div>
                     <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
                       <span>进度: {progress}%</span>
@@ -230,7 +230,7 @@ export default function TasksPage() {
                       <button
                         onClick={() => void retryTask(task.id)}
                         disabled={retryingId === task.id}
-                        style={{ ...buttonStyle, color: '#111827', borderColor: '#9ca3af', opacity: retryingId === task.id ? 0.7 : 1 }}
+                        style={{ ...buttonStyle, color: '#0066cc', borderColor: '#0066cc', opacity: retryingId === task.id ? 0.7 : 1 }}
                       >
                         {retryingId === task.id ? '正在重试...' : '重试任务'}
                       </button>

@@ -114,20 +114,20 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
 
         for copy in [
-            "多媒体转换任务",
+            "上传素材并开始处理",
             "1. 确认任务/项目",
             "2. 上传素材",
             "3. 选择生成内容",
-            "AI 素材",
-            "Markdown",
-            "Skill",
-            "RAG",
-            "训练样本",
-            "视频/音频/图片/文档/长文本",
-            "预处理转换",
-            "查看转换任务",
-            "查看语义单元",
-            "训练导出",
+            "交付产物",
+            "知识库文档",
+            "可复用流程包",
+            "检索语料包",
+            "训练问答",
+            "视频、音频、图片、文档和长文本",
+            "启动预处理",
+            "查看处理进度",
+            "审查内容片段",
+            "交付导出",
         ]:
             self.assertIn(copy, text)
 
@@ -145,11 +145,11 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "下一步操作",
             "素材已上传",
             "预处理任务",
-            "查看预处理任务",
-            "查看语义单元",
-            "生成训练样本",
-            "导出 Markdown / Skill / RAG",
-            "查看追溯链路",
+            "查看处理进度",
+            "审查内容片段",
+            "生成训练问答",
+            "导出交付产物",
+            "查看来源链路",
             "preprocessResult?.id",
             "`/tasks/${preprocessResult.id}`",
             "const semanticHref = assetProjectQuery ? `/semantic-units${assetProjectQuery}` : '/semantic-units';",
@@ -220,7 +220,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "const exportQuery = projectId && hasMaterialOutput ?",
             "const materialExportHref = hasMaterialOutput",
             "aria-disabled={!hasMaterialOutput}",
-            "请先勾选 Markdown、Skill 或 RAG 后再导出 AI 素材",
+            "请先勾选知识库文档、流程包或检索语料后再导出交付产物",
         ]:
             self.assertIn(copy, text)
 
@@ -343,16 +343,16 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         for copy in [
             "创建转换任务",
-            "1. 创建任务/项目",
+            "1. 创建任务",
             "2. 上传素材",
             "3. 选择生成内容",
             "视频",
             "长文本",
-            "多模态文件",
-            "Markdown",
-            "Skill",
-            "RAG",
-            "训练样本",
+            "文档",
+            "知识库文档",
+            "可复用流程包",
+            "检索语料包",
+            "训练问答",
             "/api/v1/projects",
             "project_id=",
             "params.set('outputs'",
@@ -398,7 +398,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "const hasExportableOutput = exportOutputs.length > 0;",
             "const samplesHref = canProceed && selectedOutputs.includes('samples') ?",
             "params.set('outputs', exportOutputs.join(','));",
-            "请先勾选 Markdown、Skill、RAG 或数据集后再进入导出",
+            "请先勾选知识库文档、流程包、检索语料或数据文件后再进入导出",
         ]:
             self.assertIn(copy, text)
         self.assertNotIn("params.set('outputs', selectedOutputs.join(','));", text)
@@ -409,12 +409,12 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         for copy in [
             "完整转换链路",
-            "上传素材 -> 预处理转换 -> 语义单元审查 -> 生成训练样本 -> 自动导出 AI 素材 -> 追溯审查",
-            "预处理转换",
+            "上传素材 -> 内容处理 -> 内容片段审查 -> 生成训练问答 -> 自动整理交付物 -> 来源追溯",
+            "内容处理",
             "长任务诊断",
-            "自动导出 AI 素材",
-            "产物追溯",
-            "查看产物中心",
+            "自动整理交付物",
+            "来源追溯",
+            "查看交付中心",
             "查看追溯链路",
             "href=\"/artifacts\"",
             "href=\"/trace\"",
@@ -490,9 +490,9 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "selectedOutputs.map",
             "/api/v1/train-exports/auto",
             "export_type: item",
-            "Markdown",
-            "Skill",
-            "RAG",
+            "知识库文档",
+            "可复用流程包",
+            "检索语料包",
         ]:
             self.assertIn(copy, text)
 
@@ -502,7 +502,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         for copy in [
             "样本 JSON 格式错误",
-            "请填写项目 ID 或来源上下文",
+            "请从首页或上传页带入来源任务，或填写来源信息",
             "exporting",
             "autoExporting",
             "解析样本 JSON",
@@ -514,15 +514,15 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
 
         for copy in [
-            "从语义单元到 AI 素材",
+            "从任务内容自动整理交付物",
             "1. 确认来源",
             "2. 选择产物",
             "3. 导出并审查",
-            "查看产物来源统计",
-            "Markdown",
-            "Skill",
-            "RAG",
-            "自动读取导出",
+            "查看来源统计",
+            "知识库文档",
+            "可复用流程包",
+            "检索语料包",
+            "自动整理交付物",
             "borderTop: '1px solid #e5e7eb'",
             "borderBottom: '1px solid #e5e7eb'",
         ]:
@@ -769,12 +769,12 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
 
         for copy in [
-            "产物中心",
-            "产物列表",
-            "Markdown",
-            "Skill",
-            "RAG",
-            "产物来源统计",
+            "交付中心",
+            "交付列表",
+            "知识库文档",
+            "流程包",
+            "检索语料",
+            "来源统计",
             "borderTop: '1px solid #e5e7eb'",
             "borderBottom: '1px solid #e5e7eb'",
         ]:
