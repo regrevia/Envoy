@@ -23,7 +23,7 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
-from app.core.config import MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_MAX_SEGMENT_COUNT, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -552,10 +552,11 @@ def _extract_pdf_page_texts_via_ocr(source_path: str, output_dir: str, should_ca
         ]
         try:
             subprocess.run(render_cmd, check=True, capture_output=True, timeout=MEDIA_COMMAND_TIMEOUT_SEC)
-        except Exception:
-            page_results.append({"page_number": page_number, "image_path": "", "text": "", "confidence": 0.0, "error": "render_failed"})
+        except Exception as exc:
+            page_results.append({"page_number": page_number, "image_path": "", "text": "", "confidence": 0.0, "error": f"render_failed: {exc}"})
             continue
-        image_path = f"{prefix}-{page_number:06d}.png"
+        rendered_images = sorted(Path(output_dir).glob(f"page_{page_number:06d}-*.png"))
+        image_path = str(rendered_images[0]) if rendered_images else f"{prefix}-{page_number:06d}.png"
         if not Path(image_path).is_file():
             page_results.append({"page_number": page_number, "image_path": "", "text": "", "confidence": 0.0, "error": "render_missing"})
             continue
@@ -563,13 +564,17 @@ def _extract_pdf_page_texts_via_ocr(source_path: str, output_dir: str, should_ca
         try:
             ocr_result = subprocess.run(ocr_cmd, check=True, capture_output=True, text=True, timeout=MEDIA_OCR_TIMEOUT_SEC)
             text = str(ocr_result.stdout or "").strip()
-        except Exception:
+        except Exception as exc:
             text = ""
+            ocr_error = str(exc)
+        else:
+            ocr_error = ""
         page_results.append({
             "page_number": page_number,
             "image_path": image_path,
             "text": text,
             "confidence": 0.8 if text else 0.0,
+            "error": ocr_error,
         })
     return page_results
 
