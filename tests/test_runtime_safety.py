@@ -223,6 +223,32 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("fps=1/15", cmd)
         self.assertTrue(str(cmd[-1]).endswith("frame_%06d.jpg"))
 
+    def test_extract_frames_uses_configured_target_frame_rate_when_set(self):
+        previous = os.environ.get("MEDIA_TARGET_FRAME_RATE")
+        try:
+            os.environ["MEDIA_TARGET_FRAME_RATE"] = "24"
+            media_service = reload_media_service()
+
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append((cmd, kwargs))
+                return None
+
+            with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+                media_service.extract_frames("high-fps-input.mp4", "tmp/test-target-fps-frames")
+
+            cmd = calls[0][0]
+            self.assertIn("-vf", cmd)
+            self.assertIn("fps=24", cmd)
+            self.assertNotIn("fps=1/", cmd)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIA_TARGET_FRAME_RATE", None)
+            else:
+                os.environ["MEDIA_TARGET_FRAME_RATE"] = previous
+            reload_media_service()
+
     def test_extract_frames_limits_frame_count_and_returns_actual_files(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             previous = {key: os.environ.get(key) for key in ("MEDIA_FRAME_INTERVAL_SECONDS", "MEDIA_MAX_FRAME_COUNT")}
@@ -692,6 +718,44 @@ class RuntimeSafetyTests(unittest.TestCase):
                 os.environ["MEDIA_OCR_TIMEOUT_SEC"] = previous
             reload_media_service()
 
+    def test_ocr_worker_preserves_boxes_and_orders_text_top_left(self):
+        media_service = reload_media_service()
+
+        class FakePaddleOCR:
+            def __init__(self, **_kwargs):
+                pass
+
+            def ocr(self, path, cls=True):
+                return [[
+                    [[[300, 120], [380, 120], [380, 150], [300, 150]], ("right second", 0.91)],
+                    [[[20, 120], [180, 120], [180, 150], [20, 150]], ("left second", 0.95)],
+                    [[[20, 40], [260, 40], [260, 80], [20, 80]], ("top first", 0.98)],
+                ]]
+
+        fake_module = types.SimpleNamespace(PaddleOCR=FakePaddleOCR)
+        with patch.dict(sys.modules, {"paddleocr": fake_module}):
+            result = media_service._run_ocr_worker_logic(["frame-1.jpg"])
+
+        self.assertEqual(result[0]["text"], "top first\nleft second right second")
+        self.assertEqual([item["text"] for item in result[0]["items"]], ["top first", "left second", "right second"])
+        self.assertEqual(result[0]["items"][0]["bbox"], {"x": 20, "y": 40, "width": 240, "height": 40})
+        self.assertEqual(result[0]["reading_order"], "top_left")
+
+    def test_ocr_compresses_consecutive_duplicate_frame_text(self):
+        media_service = reload_media_service()
+
+        compressed = media_service.compress_consecutive_ocr_results([
+            {"frame": "frame-1.jpg", "text": "same slide", "confidence": 0.9},
+            {"frame": "frame-2.jpg", "text": "same slide", "confidence": 0.88},
+            {"frame": "frame-3.jpg", "text": "new slide", "confidence": 0.91},
+        ])
+
+        self.assertEqual(len(compressed), 2)
+        self.assertEqual(compressed[0]["text"], "same slide")
+        self.assertEqual(compressed[0]["repeat_count"], 2)
+        self.assertEqual(compressed[0]["frames"], ["frame-1.jpg", "frame-2.jpg"])
+        self.assertEqual(compressed[1]["text"], "new slide")
+
     def test_worker_ocr_passes_task_cancel_callback_when_supported(self):
         for name in list(sys.modules):
             if name.startswith("app."):
@@ -802,6 +866,26 @@ class RuntimeSafetyTests(unittest.TestCase):
         split_audio.assert_called_once_with("input.mp3", "audio-out")
         split_video.assert_called_once_with("input.mp4", "video-out")
         extract_frames.assert_called_once_with("input.mp4", "frame-out")
+
+    def test_worker_reads_video_frame_sampling_from_task_config(self):
+        for name in list(sys.modules):
+            if name.startswith("app."):
+                sys.modules.pop(name, None)
+
+        from app.workers import jobs
+
+        task = types.SimpleNamespace(input_config={
+            "video_target_frame_rate": 12,
+            "video_frame_interval_seconds": 8,
+            "video_max_frame_count": 96,
+        })
+
+        config = jobs._video_frame_config({"input_config": {}}, task)
+
+        self.assertEqual(config["target_frame_rate"], 12)
+        self.assertEqual(config["frame_interval_seconds"], 8)
+        self.assertEqual(config["max_frame_count"], 96)
+        self.assertEqual(config["mode"], "target_fps")
 
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""

@@ -17,13 +17,13 @@ from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.services.crud_service import update_task_status, create_artifact
 from app.core.storage import storage_client
-from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames
+from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames, compress_consecutive_ocr_results
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -94,6 +94,15 @@ def _supports_should_cancel(fn):
     return "should_cancel" in signature.parameters
 
 
+def _supports_named_parameter(fn, name: str):
+    candidate = getattr(fn, "side_effect", None) or fn
+    try:
+        signature = inspect.signature(candidate)
+    except (TypeError, ValueError):
+        return False
+    return name in signature.parameters
+
+
 def _split_audio_for_task(db, task_id: str | None, source_path: str, output_dir: str):
     if _supports_should_cancel(split_audio):
         return split_audio(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id))
@@ -106,9 +115,9 @@ def _split_video_for_task(db, task_id: str | None, source_path: str, output_dir:
     return split_video(source_path, output_dir)
 
 
-def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_dir: str):
+def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_dir: str, frame_config: dict | None = None):
     if _supports_should_cancel(extract_frames):
-        return extract_frames(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id))
+        return extract_frames(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id), **(frame_config or {}))
     return extract_frames(source_path, output_dir)
 
 
@@ -116,6 +125,12 @@ def _run_ocr_for_task(db, task_id: str | None, frame_paths: list[str]):
     if _supports_should_cancel(run_ocr_on_frames):
         return run_ocr_on_frames(frame_paths, should_cancel=lambda: _task_is_canceled(db, task_id))
     return run_ocr_on_frames(frame_paths)
+
+
+def _extract_frames_for_task_compat(db, task_id: str | None, source_path: str, output_dir: str, frame_config: dict):
+    if _supports_named_parameter(_extract_frames_for_task, "frame_config"):
+        return _extract_frames_for_task(db, task_id, source_path, output_dir, frame_config=frame_config)
+    return _extract_frames_for_task(db, task_id, source_path, output_dir)
 
 
 def _canceled_result(payload: dict, semantic: dict | None = None):
@@ -303,6 +318,41 @@ def _media_limit_metadata():
         "segment_seconds": segment_seconds,
         "max_segment_count": max_segment_count,
         "max_input_seconds": segment_seconds * max_segment_count,
+    }
+
+
+def _positive_int_or_default(value, default: int):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _video_frame_config(payload: dict, task: ProcessingTask | None = None):
+    config = {}
+    if task is not None and isinstance(task.input_config, dict):
+        config.update(task.input_config)
+    payload_config = payload.get("input_config")
+    if isinstance(payload_config, dict):
+        config.update(payload_config)
+    target_frame_rate = _positive_int_or_default(
+        config.get("video_target_frame_rate") or config.get("target_frame_rate") or config.get("frame_rate"),
+        MEDIA_TARGET_FRAME_RATE,
+    )
+    frame_interval_seconds = _positive_int_or_default(
+        config.get("video_frame_interval_seconds") or config.get("frame_interval_seconds"),
+        MEDIA_FRAME_INTERVAL_SECONDS,
+    )
+    max_frame_count = _positive_int_or_default(
+        config.get("video_max_frame_count") or config.get("max_frame_count"),
+        MEDIA_MAX_FRAME_COUNT,
+    )
+    return {
+        "target_frame_rate": target_frame_rate,
+        "frame_interval_seconds": frame_interval_seconds,
+        "max_frame_count": max_frame_count,
+        "mode": "target_fps" if target_frame_rate > 0 else "interval",
     }
 
 
@@ -512,6 +562,9 @@ def _extract_pdf_page_semantics(source_path: str, output_dir: str, should_cancel
             "text": str(item.get("text") or "").strip(),
             "source": "document_ocr",
             "mode": "ocr",
+            "items": item.get("items") if isinstance(item.get("items"), list) else [],
+            "reading_order": item.get("reading_order") or "top_left",
+            "image_path": item.get("image_path"),
         }
         for item in page_results
         if str(item.get("text") or "").strip()
@@ -598,6 +651,16 @@ def _new_pdf_semantic_chunk(pages: list[dict], strategy: str, preserve_page_refs
         "mode": str(pages[0].get("mode") or "text"),
         "strategy": strategy,
         "page_count": len(pages),
+        "ocr_pages": [
+            {
+                "page_number": page.get("page_number"),
+                "items": page.get("items") if isinstance(page.get("items"), list) else [],
+                "reading_order": page.get("reading_order") or "top_left",
+                "image_path": page.get("image_path"),
+            }
+            for page in pages
+            if page.get("mode") == "ocr"
+        ],
     }
 
 
@@ -652,6 +715,74 @@ def _split_pdf_pages_by_strategy(page_semantics: list[dict], config: dict):
     return chunks, strategy
 
 
+def _ocr_sort_key(item: dict):
+    bbox = item.get("bbox") if isinstance(item.get("bbox"), dict) else {}
+    return (int(bbox.get("y", 0)), int(bbox.get("x", 0)))
+
+
+def _join_ocr_items_by_lines(items: list[dict]):
+    lines: list[list[dict]] = []
+    for item in sorted(items, key=_ocr_sort_key):
+        bbox = item.get("bbox") if isinstance(item.get("bbox"), dict) else {}
+        y = int(bbox.get("y", 0))
+        height = max(int(bbox.get("height", 0)), 1)
+        if not lines:
+            lines.append([item])
+            continue
+        first = lines[-1][0]
+        first_bbox = first.get("bbox") if isinstance(first.get("bbox"), dict) else {}
+        first_y = int(first_bbox.get("y", 0))
+        threshold = max(height, int(first_bbox.get("height", 0) or 1)) * 0.6
+        if abs(y - first_y) <= threshold:
+            lines[-1].append(item)
+        else:
+            lines.append([item])
+    text_lines = []
+    for line in lines:
+        ordered = sorted(line, key=lambda item: int((item.get("bbox") or {}).get("x", 0)))
+        words = [str(item.get("text") or "").strip() for item in ordered if str(item.get("text") or "").strip()]
+        if words:
+            text_lines.append(" ".join(words))
+    return "\n".join(text_lines).strip()
+
+
+def _parse_tesseract_tsv(tsv_text: str):
+    lines = [line for line in str(tsv_text or "").splitlines() if line.strip()]
+    if not lines:
+        return []
+    header = lines[0].split("\t")
+    items = []
+    for line in lines[1:]:
+        columns = line.split("\t")
+        if len(columns) < len(header):
+            columns.extend([""] * (len(header) - len(columns)))
+        row = dict(zip(header, columns))
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            confidence = float(row.get("conf", 0) or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < 0:
+            continue
+        bbox = {
+            "x": _positive_int_or_default(row.get("left"), 0),
+            "y": _positive_int_or_default(row.get("top"), 0),
+            "width": _positive_int_or_default(row.get("width"), 0),
+            "height": _positive_int_or_default(row.get("height"), 0),
+        }
+        items.append({
+            "text": text,
+            "confidence": confidence / 100 if confidence > 1 else confidence,
+            "bbox": bbox,
+            "block_num": _positive_int_or_default(row.get("block_num"), 0),
+            "line_num": _positive_int_or_default(row.get("line_num"), 0),
+            "word_num": _positive_int_or_default(row.get("word_num"), 0),
+        })
+    return sorted(items, key=_ocr_sort_key)
+
+
 def _extract_pdf_page_texts_via_ocr(source_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     pdfinfo_cmd = ["pdfinfo", source_path]
@@ -694,20 +825,25 @@ def _extract_pdf_page_texts_via_ocr(source_path: str, output_dir: str, should_ca
         if not Path(image_path).is_file():
             page_results.append({"page_number": page_number, "image_path": "", "text": "", "confidence": 0.0, "error": "render_missing"})
             continue
-        ocr_cmd = ["tesseract", image_path, "stdout", "--psm", "6", "-l", "chi_sim+eng"]
+        ocr_cmd = ["tesseract", image_path, "stdout", "--psm", "6", "-l", "chi_sim+eng", "tsv"]
         try:
             ocr_result = subprocess.run(ocr_cmd, check=True, capture_output=True, text=True, timeout=MEDIA_OCR_TIMEOUT_SEC)
-            text = str(ocr_result.stdout or "").strip()
+            items = _parse_tesseract_tsv(str(ocr_result.stdout or ""))
+            text = _join_ocr_items_by_lines(items)
         except Exception as exc:
             text = ""
+            items = []
             ocr_error = str(exc)
         else:
             ocr_error = ""
+        confidence_values = [float(item.get("confidence") or 0.0) for item in items]
         page_results.append({
             "page_number": page_number,
             "image_path": image_path,
             "text": text,
-            "confidence": 0.8 if text else 0.0,
+            "confidence": max(confidence_values) if confidence_values else (0.8 if text else 0.0),
+            "items": items,
+            "reading_order": "top_left" if items else None,
             "error": ocr_error,
         })
     return page_results
@@ -1235,6 +1371,9 @@ def preprocess_job(self, payload: dict):
                                 "extraction_status": "text_extracted",
                                 "extraction_mode": "ocr" if page_source == "document_ocr" else "text",
                             }
+                            if chunk_info.get("ocr_pages"):
+                                labels["ocr_pages"] = chunk_info.get("ocr_pages")
+                                labels["reading_order"] = "top_left"
                             title = f"{asset.file_name if asset else 'uploaded document'} {title_prefix} {index + 1}/{total_chunks}: {chunk_info.get('title')}"
                             unit = _persist_single_semantic_unit(db, project_id, asset_id, "document", title, chunk_text, labels, 0.88)
                             units.append(unit)
@@ -1466,10 +1605,12 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if MEDIA_ENABLE_FRAME_EXTRACTION:
             _safe_update(db, task_id, "running", 40, result_summary="frame extraction running")
-            frame_paths = _extract_frames_for_task(db, task_id, source_path, str(frame_dir))
+            frame_config = _video_frame_config(payload, task)
+            frame_paths = _extract_frames_for_task_compat(db, task_id, source_path, str(frame_dir), frame_config)
             frame_extraction_skipped = False
             _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
         else:
+            frame_config = _video_frame_config(payload, task)
             frame_paths = []
             frame_extraction_skipped = True
             _safe_update(db, task_id, "running", 55, result_summary="frame extraction skipped: disabled")
@@ -1521,7 +1662,7 @@ def preprocess_job(self, payload: dict):
             _safe_update(db, task_id, "running", 90, result_summary="ocr skipped: frame extraction disabled")
         elif MEDIA_ENABLE_OCR:
             _safe_update(db, task_id, "running", 88, result_summary=f"ocr running: {len(frame_paths)} frame(s)")
-            ocr_results = _run_ocr_for_task(db, task_id, frame_paths)
+            ocr_results = compress_consecutive_ocr_results(_run_ocr_for_task(db, task_id, frame_paths))
             ocr_skipped = False
             _safe_update(db, task_id, "running", 90, result_summary=f"ocr done: {len(ocr_results)} frame result(s)")
         else:
@@ -1545,6 +1686,7 @@ def preprocess_job(self, payload: dict):
             "segment_count": transcription_count,
             "segment_truncated": segments_truncated,
             "frames": frame_paths,
+            "frame_config": frame_config,
             "transcript": transcription,
             "ocr": ocr_results,
             "frame_extraction_skipped": frame_extraction_skipped,
@@ -1554,6 +1696,10 @@ def preprocess_job(self, payload: dict):
             "degraded_capabilities": degraded_capabilities,
             "usable_text_sources": usable_text_sources,
             **_media_limit_metadata(),
+            "target_frame_rate": frame_config["target_frame_rate"],
+            "frame_interval_seconds": frame_config["frame_interval_seconds"],
+            "max_frame_count": frame_config["max_frame_count"],
+            "frame_sampling_mode": frame_config["mode"],
         }
         failed_transcriptions = [
             item["transcript"]
@@ -1617,11 +1763,15 @@ def preprocess_job(self, payload: dict):
             "task_id": task_id,
             "extraction_status": semantic_payload.get("extraction_status"),
             "degraded_capabilities": semantic_payload.get("degraded_capabilities", []),
-            "usable_text_sources": semantic_payload.get("usable_text_sources", []),
-            "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
-            "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
-            **_media_limit_metadata(),
-        }
+                "usable_text_sources": semantic_payload.get("usable_text_sources", []),
+                "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
+                "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
+                "target_frame_rate": semantic_payload.get("target_frame_rate", 0),
+                "frame_interval_seconds": semantic_payload.get("frame_interval_seconds"),
+                "max_frame_count": semantic_payload.get("max_frame_count"),
+                "frame_sampling_mode": semantic_payload.get("frame_sampling_mode"),
+                **_media_limit_metadata(),
+            }
         su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=json.dumps(semantic_payload, ensure_ascii=False), labels=summary_labels, confidence=0.8)
         db.add(su)
         db.commit()

@@ -371,6 +371,7 @@ class OllamaHealthApiTests(unittest.TestCase):
             "MEDIA_SEGMENT_SECONDS",
             "MEDIA_MAX_SEGMENT_COUNT",
             "MEDIA_FRAME_INTERVAL_SECONDS",
+            "MEDIA_TARGET_FRAME_RATE",
             "MEDIA_MAX_FRAME_COUNT",
             "MEDIA_ENABLE_FRAME_EXTRACTION",
             "MEDIA_ENABLE_OCR",
@@ -384,6 +385,7 @@ class OllamaHealthApiTests(unittest.TestCase):
                 os.environ["MEDIA_SEGMENT_SECONDS"] = "300"
                 os.environ["MEDIA_MAX_SEGMENT_COUNT"] = "3"
                 os.environ["MEDIA_FRAME_INTERVAL_SECONDS"] = "20"
+                os.environ["MEDIA_TARGET_FRAME_RATE"] = "24"
                 os.environ["MEDIA_MAX_FRAME_COUNT"] = "40"
                 os.environ["MEDIA_ENABLE_FRAME_EXTRACTION"] = "false"
                 os.environ["MEDIA_ENABLE_OCR"] = "false"
@@ -405,6 +407,7 @@ class OllamaHealthApiTests(unittest.TestCase):
                         "max_segment_count": 3,
                         "max_input_seconds": 900,
                         "frame_interval_seconds": 20,
+                        "target_frame_rate": 24,
                         "max_frame_count": 40,
                         "frame_extraction_enabled": False,
                         "ocr_enabled": False,

@@ -75,6 +75,9 @@ export default function UploadPage() {
   const [assetType, setAssetType] = useState('video');
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'skill', 'rag']);
   const [pdfChunkingStrategy, setPdfChunkingStrategy] = useState('auto');
+  const [videoTargetFrameRate, setVideoTargetFrameRate] = useState('0');
+  const [videoFrameIntervalSeconds, setVideoFrameIntervalSeconds] = useState('15');
+  const [videoMaxFrameCount, setVideoMaxFrameCount] = useState('240');
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<any>(null);
   const [preprocessResult, setPreprocessResult] = useState<any>(null);
@@ -165,6 +168,9 @@ export default function UploadPage() {
             pdf_chunk_max_chars: 4500,
             pdf_preserve_page_refs: true,
             pdf_fallback_to_page_chunks: true,
+            video_target_frame_rate: Number(videoTargetFrameRate) || 0,
+            video_frame_interval_seconds: Number(videoFrameIntervalSeconds) || 15,
+            video_max_frame_count: Number(videoMaxFrameCount) || 240,
           },
         }),
       });
@@ -306,6 +312,26 @@ export default function UploadPage() {
             </label>
             <p style={{ margin: 0, color: '#6b7280', fontSize: 12, lineHeight: 1.7 }}>
               默认自动识别章节和主题；识别不足时保留页级切片，确保长 PDF 不漏页且 Markdown 引用可追溯。
+            </p>
+          </div>
+          <div style={{ display: 'grid', gap: 8, marginTop: 16, paddingTop: 14, borderTop: '1px solid #e5e7eb' }}>
+            <strong style={{ fontSize: 14 }}>视频抽帧设置</strong>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: '#4b5563', fontSize: 13 }}>目标帧率</span>
+                <input type="number" min="0" value={videoTargetFrameRate} onChange={(event) => setVideoTargetFrameRate(event.target.value)} style={inputStyle} />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: '#4b5563', fontSize: 13 }}>间隔秒数</span>
+                <input type="number" min="1" value={videoFrameIntervalSeconds} onChange={(event) => setVideoFrameIntervalSeconds(event.target.value)} style={inputStyle} />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: '#4b5563', fontSize: 13 }}>最大帧数</span>
+                <input type="number" min="1" value={videoMaxFrameCount} onChange={(event) => setVideoMaxFrameCount(event.target.value)} style={inputStyle} />
+              </label>
+            </div>
+            <p style={{ margin: 0, color: '#6b7280', fontSize: 12, lineHeight: 1.7 }}>
+              目标帧率填 0 时按间隔抽帧；高帧率视频可填 24、12 或更低，减少重复画面和 OCR 负担。
             </p>
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>

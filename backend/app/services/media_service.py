@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
 
 _WHISPER_MODELS = {}
 
@@ -147,19 +147,43 @@ def split_audio(audio_path: str, output_dir: str, should_cancel: Callable[[], bo
         return [output_path]
 
 
-def extract_frames(video_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
+def _positive_int(value, default: int):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _frame_filter(target_frame_rate: int | None = None, frame_interval_seconds: int | None = None):
+    fps = _positive_int(target_frame_rate, MEDIA_TARGET_FRAME_RATE)
+    if fps > 0:
+        return f"fps={fps}"
+    interval = _positive_int(frame_interval_seconds, MEDIA_FRAME_INTERVAL_SECONDS)
+    return f"fps=1/{interval}"
+
+
+def extract_frames(
+    video_path: str,
+    output_dir: str,
+    should_cancel: Callable[[], bool] | None = None,
+    target_frame_rate: int | None = None,
+    frame_interval_seconds: int | None = None,
+    max_frame_count: int | None = None,
+):
     ensure_dir(output_dir)
     output_pattern = os.path.join(output_dir, "frame_%06d.jpg")
     if video_path:
+        frame_count = _positive_int(max_frame_count, MEDIA_MAX_FRAME_COUNT)
         cmd = [
             "ffmpeg",
             "-y",
             "-i",
             video_path,
             "-vf",
-            f"fps=1/{MEDIA_FRAME_INTERVAL_SECONDS}",
+            _frame_filter(target_frame_rate=target_frame_rate, frame_interval_seconds=frame_interval_seconds),
             "-frames:v",
-            str(MEDIA_MAX_FRAME_COUNT),
+            str(frame_count),
             output_pattern,
         ]
         _run_media_command("extract_frames", cmd, should_cancel=should_cancel)
@@ -222,6 +246,118 @@ def _empty_ocr_results(frame_paths: list[str]):
     return [{"frame": p, "text": "", "confidence": 0.0} for p in frame_paths]
 
 
+def _bbox_from_points(points):
+    if not isinstance(points, list) or not points:
+        return None
+    xs = []
+    ys = []
+    for point in points:
+        if isinstance(point, (list, tuple)) and len(point) >= 2:
+            try:
+                xs.append(float(point[0]))
+                ys.append(float(point[1]))
+            except (TypeError, ValueError):
+                continue
+    if not xs or not ys:
+        return None
+    left = min(xs)
+    top = min(ys)
+    right = max(xs)
+    bottom = max(ys)
+    return {"x": round(left), "y": round(top), "width": round(right - left), "height": round(bottom - top)}
+
+
+def _flatten_paddle_ocr_output(output):
+    if not isinstance(output, list):
+        return []
+    if output and all(
+        isinstance(item, list)
+        and len(item) >= 2
+        and isinstance(item[0], list)
+        and item[0]
+        and isinstance(item[0][0], (list, tuple))
+        and isinstance(item[1], (list, tuple))
+        and item[1]
+        and isinstance(item[1][0], str)
+        for item in output
+    ):
+        return output
+    flattened = []
+    for item in output:
+        flattened.extend(_flatten_paddle_ocr_output(item))
+    return flattened
+
+
+def _ocr_sort_key(item: dict):
+    bbox = item.get("bbox") if isinstance(item.get("bbox"), dict) else {}
+    return (int(bbox.get("y", 0)), int(bbox.get("x", 0)))
+
+
+def _join_ocr_items_by_lines(items: list[dict]):
+    if not items:
+        return ""
+    lines: list[list[dict]] = []
+    for item in sorted(items, key=_ocr_sort_key):
+        bbox = item.get("bbox") if isinstance(item.get("bbox"), dict) else {}
+        y = int(bbox.get("y", 0))
+        height = max(int(bbox.get("height", 0)), 1)
+        if not lines:
+            lines.append([item])
+            continue
+        last_bbox = lines[-1][0].get("bbox") if isinstance(lines[-1][0].get("bbox"), dict) else {}
+        last_y = int(last_bbox.get("y", 0))
+        threshold = max(height, int(last_bbox.get("height", 0) or 1)) * 0.6
+        if abs(y - last_y) <= threshold:
+            lines[-1].append(item)
+        else:
+            lines.append([item])
+    text_lines = []
+    for line in lines:
+        ordered = sorted(line, key=lambda item: int((item.get("bbox") or {}).get("x", 0)))
+        words = [str(item.get("text") or "").strip() for item in ordered if str(item.get("text") or "").strip()]
+        if words:
+            text_lines.append(" ".join(words))
+    return "\n".join(text_lines).strip()
+
+
+def normalize_ocr_items(raw_items):
+    normalized = []
+    for raw in _flatten_paddle_ocr_output(raw_items):
+        if not isinstance(raw, list) or len(raw) < 2:
+            continue
+        bbox = _bbox_from_points(raw[0])
+        payload = raw[1]
+        if not isinstance(payload, (list, tuple)) or not payload:
+            continue
+        text = str(payload[0] or "").strip()
+        if not text:
+            continue
+        try:
+            confidence = float(payload[1])
+        except (TypeError, ValueError, IndexError):
+            confidence = 0.0
+        normalized.append({"text": text, "confidence": confidence, "bbox": bbox or {"x": 0, "y": 0, "width": 0, "height": 0}})
+    return sorted(normalized, key=_ocr_sort_key)
+
+
+def compress_consecutive_ocr_results(results: list[dict]):
+    compressed = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if compressed and text and text == str(compressed[-1].get("text") or "").strip():
+            compressed[-1]["repeat_count"] = int(compressed[-1].get("repeat_count") or 1) + 1
+            frames = compressed[-1].setdefault("frames", [compressed[-1].get("frame")])
+            frames.append(item.get("frame"))
+            continue
+        next_item = dict(item)
+        if text:
+            next_item["repeat_count"] = int(next_item.get("repeat_count") or 1)
+        compressed.append(next_item)
+    return compressed
+
+
 def _run_ocr_worker_logic(frame_paths: list[str]):
     results = []
     try:
@@ -230,13 +366,23 @@ def _run_ocr_worker_logic(frame_paths: list[str]):
         for path in frame_paths:
             try:
                 out = ocr.ocr(path, cls=True)
-                text = " ".join([item[1][0] for line in out for item in line]) if out else ""
-                results.append({"frame": path, "text": text, "confidence": 0.0})
+                items = normalize_ocr_items(out)
+                text = _join_ocr_items_by_lines(items)
+                confidence_values = [float(item.get("confidence") or 0.0) for item in items]
+                result = {
+                    "frame": path,
+                    "text": text,
+                    "confidence": max(confidence_values) if confidence_values else 0.0,
+                }
+                if items:
+                    result["items"] = items
+                    result["reading_order"] = "top_left"
+                results.append(result)
             except Exception:
                 results.append({"frame": path, "text": "", "confidence": 0.0})
     except Exception:
         results = _empty_ocr_results(frame_paths)
-    return results
+    return compress_consecutive_ocr_results(results)
 
 
 def _ocr_worker(frame_paths: list[str], result_queue):
@@ -274,6 +420,10 @@ def run_ocr_on_frames(frame_paths: list[str], should_cancel: Callable[[], bool] 
                     "frame": item.get("frame") or (frame_paths[index] if index < len(frame_paths) else ""),
                     "text": str(item.get("text", "") or ""),
                     "confidence": float(item.get("confidence", 0.0) or 0.0),
+                    **({"items": item.get("items")} if isinstance(item.get("items"), list) else {}),
+                    **({"reading_order": item.get("reading_order")} if item.get("reading_order") else {}),
+                    **({"repeat_count": item.get("repeat_count")} if item.get("repeat_count") else {}),
+                    **({"frames": item.get("frames")} if isinstance(item.get("frames"), list) else {}),
                 })
-        return normalized if normalized else _empty_ocr_results(frame_paths)
+        return compress_consecutive_ocr_results(normalized) if normalized else _empty_ocr_results(frame_paths)
     return _empty_ocr_results(frame_paths)
