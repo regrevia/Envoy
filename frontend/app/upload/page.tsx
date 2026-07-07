@@ -20,6 +20,12 @@ const outputOptions = [
   { id: 'rag', label: 'RAG' },
   { id: 'samples', label: '训练样本' },
 ];
+const pdfChunkingOptions = [
+  { id: 'auto', label: '自动智能切片' },
+  { id: 'content', label: '按内容主题切片' },
+  { id: 'module', label: '按模块/章节切片' },
+  { id: 'page', label: '按页切片' },
+];
 const outputOptionIds = new Set(outputOptions.map((option) => option.id));
 const outputLabelById = Object.fromEntries(outputOptions.map((option) => [option.id, option.label]));
 const fileTypeOptionIds = new Set(fileTypeOptions.map((option) => option.id));
@@ -68,6 +74,7 @@ export default function UploadPage() {
   const [projectId, setProjectId] = useState('');
   const [assetType, setAssetType] = useState('video');
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'skill', 'rag']);
+  const [pdfChunkingStrategy, setPdfChunkingStrategy] = useState('auto');
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<any>(null);
   const [preprocessResult, setPreprocessResult] = useState<any>(null);
@@ -151,7 +158,14 @@ export default function UploadPage() {
           project_id: asset.project_id,
           asset_id: asset.id,
           task_type: 'preprocess',
-          input_config: { requested_outputs: selectedOutputs },
+          input_config: {
+            requested_outputs: selectedOutputs,
+            pdf_chunking_strategy: pdfChunkingStrategy,
+            pdf_chunk_target_chars: 2500,
+            pdf_chunk_max_chars: 4500,
+            pdf_preserve_page_refs: true,
+            pdf_fallback_to_page_chunks: true,
+          },
         }),
       });
       setPreprocessResult(data);
@@ -282,6 +296,17 @@ export default function UploadPage() {
                 <span>{option.label}</span>
               </label>
             ))}
+          </div>
+          <div style={{ display: 'grid', gap: 8, marginTop: 16, paddingTop: 14, borderTop: '1px solid #e5e7eb' }}>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ color: '#4b5563', fontSize: 13 }}>PDF 切片方式</span>
+              <select value={pdfChunkingStrategy} onChange={(event) => setPdfChunkingStrategy(event.target.value)} style={inputStyle}>
+                {pdfChunkingOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+            <p style={{ margin: 0, color: '#6b7280', fontSize: 12, lineHeight: 1.7 }}>
+              默认自动识别章节和主题；识别不足时保留页级切片，确保长 PDF 不漏页且 Markdown 引用可追溯。
+            </p>
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
             <Link href="/tasks" style={{ color: '#111827', fontWeight: 700 }}>查看转换任务</Link>

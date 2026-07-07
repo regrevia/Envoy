@@ -18,7 +18,7 @@ type ExportRecord = {
 
 function DetailRow({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(0, 1fr)', gap: 16, padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '140px minmax(0, 1fr)', gap: 16, padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
       <div style={{ color: '#7a7a7a' }}>{label}</div>
       <div style={{ wordBreak: 'break-all' }}>{value || '-'}</div>
     </div>
@@ -77,7 +77,7 @@ export default function ExportRecordDetailPage({ params }: { params: Promise<{ r
         Envoy · Export
       </div>
       <section style={{ maxWidth: 1100, margin: '0 auto', padding: '44px 24px 72px' }}>
-        <header style={{ paddingBottom: 24, borderBottom: '1px solid #e0e0e0' }}>
+        <header style={{ paddingBottom: 24, borderBottom: '1px solid #e5e7eb' }}>
           <Link href="/train-exports" style={{ color: '#0066cc', fontSize: 14, textDecoration: 'none' }}>返回训练导出</Link>
           <h1 style={{ margin: '12px 0 0', fontSize: 40, lineHeight: 1.1, letterSpacing: '-0.28px', fontWeight: 600 }}>导出记录详情</h1>
         </header>
@@ -94,14 +94,14 @@ export default function ExportRecordDetailPage({ params }: { params: Promise<{ r
               <DetailRow label="任务名" value={record.task_name} />
               <DetailRow label="根目录" value={record.root_dir} />
               <DetailRow label="创建时间" value={record.created_at} />
-              <div style={{ padding: '14px 0', borderBottom: '1px solid #e0e0e0' }}>
+              <div style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ color: '#7a7a7a', marginBottom: 8 }}>文件列表</div>
-                <pre style={{ margin: 0, padding: '12px 0 0', borderTop: '1px solid #e0e0e0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12, lineHeight: 1.5 }}>
+                <pre style={{ margin: 0, padding: '12px 0 0', borderTop: '1px solid #e5e7eb', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12, lineHeight: 1.5 }}>
                   {record.file_list}
                 </pre>
               </div>
               {parsedFiles.length ? (
-                <section style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid #e0e0e0' }}>
+                <section style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid #e5e7eb' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}>
                     <h2 style={{ margin: 0, fontSize: 28, lineHeight: 1.14, letterSpacing: '-0.2px', fontWeight: 600 }}>Markdown 目录树</h2>
                     <span style={{ color: '#7a7a7a', fontSize: 14 }}>来源 {sourceFiles.length} 个 · 分片 {chunkFiles.length} 个</span>
@@ -114,7 +114,7 @@ export default function ExportRecordDetailPage({ params }: { params: Promise<{ r
                   {sourceTrees.length ? (
                     <div style={{ marginTop: 18 }}>
                       {sourceTrees.map((source, sourceIndex) => (
-                        <section key={`${source.sourceFile || sourceIndex}`} style={{ padding: '18px 0', borderTop: '1px solid #e0e0e0' }}>
+                        <section key={`${source.sourceFile || sourceIndex}`} style={{ padding: '18px 0', borderTop: '1px solid #e5e7eb' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 16, alignItems: 'baseline' }}>
                             <div>
                               <h3 style={{ margin: 0, fontSize: 21, lineHeight: 1.19, fontWeight: 600 }}>{source.sourceName}</h3>
