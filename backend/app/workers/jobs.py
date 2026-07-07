@@ -518,6 +518,140 @@ def _extract_pdf_page_semantics(source_path: str, output_dir: str, should_cancel
     ]
 
 
+PDF_CHUNKING_STRATEGIES = {"auto", "content", "module", "page"}
+PDF_DEFAULT_CHUNK_TARGET_CHARS = 2500
+PDF_DEFAULT_CHUNK_MAX_CHARS = 4500
+PDF_HEADING_RE = re.compile(
+    r"^\s*(第[一二三四五六七八九十百千万零〇两\d]+[章节篇编部分]\s*[^\n]{0,60}|"
+    r"\d+(?:\.\d+){1,3}\s+[\u4e00-\u9fffA-Za-z][^\n]{0,60}|"
+    r"Chapter\s+\d+[^\n]{0,60})",
+    re.IGNORECASE,
+)
+
+
+def _pdf_input_config(payload: dict, task: ProcessingTask | None = None):
+    config = {}
+    if task is not None and isinstance(task.input_config, dict):
+        config.update(task.input_config)
+    payload_config = payload.get("input_config")
+    if isinstance(payload_config, dict):
+        config.update(payload_config)
+    strategy = str(config.get("pdf_chunking_strategy") or "auto").strip().lower()
+    if strategy not in PDF_CHUNKING_STRATEGIES:
+        strategy = "auto"
+    try:
+        target_chars = int(config.get("pdf_chunk_target_chars") or PDF_DEFAULT_CHUNK_TARGET_CHARS)
+    except (TypeError, ValueError):
+        target_chars = PDF_DEFAULT_CHUNK_TARGET_CHARS
+    try:
+        max_chars = int(config.get("pdf_chunk_max_chars") or PDF_DEFAULT_CHUNK_MAX_CHARS)
+    except (TypeError, ValueError):
+        max_chars = PDF_DEFAULT_CHUNK_MAX_CHARS
+    target_chars = max(target_chars, 500)
+    max_chars = max(max_chars, target_chars)
+    return {
+        "strategy": strategy,
+        "target_chars": target_chars,
+        "max_chars": max_chars,
+        "preserve_page_refs": bool(config.get("pdf_preserve_page_refs", True)),
+        "fallback_to_page_chunks": bool(config.get("pdf_fallback_to_page_chunks", True)),
+    }
+
+
+def _pdf_page_heading(text: str):
+    for raw_line in str(text or "").splitlines()[:8]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = PDF_HEADING_RE.match(line)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _pdf_page_chunk_text(pages: list[dict], preserve_page_refs: bool = True):
+    parts = []
+    for page in pages:
+        text = str(page.get("text") or "").strip()
+        if not text:
+            continue
+        if preserve_page_refs:
+            parts.append(f"## 第 {page.get('page_number')} 页\n{text}")
+        else:
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def _new_pdf_semantic_chunk(pages: list[dict], strategy: str, preserve_page_refs: bool = True):
+    if not pages:
+        return None
+    first_page = int(pages[0].get("page_number") or 1)
+    last_page = int(pages[-1].get("page_number") or first_page)
+    first_heading = next((_pdf_page_heading(str(page.get("text") or "")) for page in pages if _pdf_page_heading(str(page.get("text") or ""))), "")
+    title = first_heading or (f"第 {first_page} 页" if first_page == last_page else f"第 {first_page}-{last_page} 页")
+    return {
+        "title": title,
+        "content": _pdf_page_chunk_text(pages, preserve_page_refs=preserve_page_refs),
+        "page_range": [first_page, last_page],
+        "section_path": [title],
+        "source": str(pages[0].get("source") or "document_text"),
+        "mode": str(pages[0].get("mode") or "text"),
+        "strategy": strategy,
+        "page_count": len(pages),
+    }
+
+
+def _split_pdf_pages_by_strategy(page_semantics: list[dict], config: dict):
+    pages = [
+        {
+            **page,
+            "page_number": int(page.get("page_number") or (index + 1)),
+            "text": str(page.get("text") or "").strip(),
+        }
+        for index, page in enumerate(page_semantics)
+        if str(page.get("text") or "").strip()
+    ]
+    if not pages:
+        return [], "empty"
+
+    requested_strategy = str(config.get("strategy") or "auto")
+    preserve_page_refs = bool(config.get("preserve_page_refs", True))
+    target_chars = int(config.get("target_chars") or PDF_DEFAULT_CHUNK_TARGET_CHARS)
+    max_chars = int(config.get("max_chars") or PDF_DEFAULT_CHUNK_MAX_CHARS)
+    heading_count = sum(1 for page in pages if _pdf_page_heading(str(page.get("text") or "")))
+    strategy = requested_strategy
+    if requested_strategy == "auto":
+        strategy = "module" if heading_count >= 2 else "content"
+    if strategy == "module" and heading_count == 0 and bool(config.get("fallback_to_page_chunks", True)):
+        strategy = "page"
+
+    chunks = []
+    current_pages = []
+    current_chars = 0
+    for page in pages:
+        page_text = str(page.get("text") or "").strip()
+        page_heading = _pdf_page_heading(page_text)
+        should_start_new = False
+        if strategy == "page":
+            should_start_new = bool(current_pages)
+        elif strategy == "module":
+            should_start_new = bool(current_pages and page_heading)
+        elif strategy == "content":
+            should_start_new = bool(current_pages and (current_chars + len(page_text) > max_chars or (page_heading and current_chars >= target_chars)))
+        if should_start_new:
+            chunk = _new_pdf_semantic_chunk(current_pages, strategy, preserve_page_refs=preserve_page_refs)
+            if chunk:
+                chunks.append(chunk)
+            current_pages = []
+            current_chars = 0
+        current_pages.append(page)
+        current_chars += len(page_text)
+    chunk = _new_pdf_semantic_chunk(current_pages, strategy, preserve_page_refs=preserve_page_refs)
+    if chunk:
+        chunks.append(chunk)
+    return chunks, strategy
+
+
 def _extract_pdf_page_texts_via_ocr(source_path: str, output_dir: str, should_cancel: Callable[[], bool] | None = None):
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     pdfinfo_cmd = ["pdfinfo", source_path]
@@ -997,6 +1131,7 @@ def preprocess_job(self, payload: dict):
         asset_id = payload.get("asset_id")
         project_id = payload.get("project_id")
         _safe_update(db, task_id, "running", 10)
+        task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first() if task_id else None
         asset = db.query(Asset).filter(Asset.id == asset_id).first() if asset_id else None
         source_path = _resolve_source_path(payload, asset)
         has_previous_preprocess = _has_previous_preprocess_units(db, asset_id, task_id)
@@ -1060,45 +1195,54 @@ def preprocess_job(self, payload: dict):
                     extracted_text = _extract_ooxml_text(source_path)
                 if extracted_text:
                     if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
-                        chunk_count = max(len(page_texts), 1)
+                        pdf_chunking_config = _pdf_input_config(payload, task)
+                        pdf_chunks, pdf_effective_strategy = _split_pdf_pages_by_strategy(page_semantics, pdf_chunking_config)
+                        chunk_count = max(len(pdf_chunks), 1)
                     else:
+                        pdf_chunking_config = {}
+                        pdf_effective_strategy = ""
+                        pdf_chunks = []
                         chunk_count = len(_text_chunks(extracted_text))
                     if _task_is_canceled(db, task_id):
                         return _canceled_result(payload)
                     if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
                         units = []
                         total_pages = len(page_semantics)
+                        total_chunks = len(pdf_chunks)
                         if used_pdf_ocr:
                             _safe_update(db, task_id, "running", 15, result_summary=f"pdf page ocr running: {total_pages} page(s)")
-                        for index, page_info in enumerate(page_semantics):
+                        for index, chunk_info in enumerate(pdf_chunks):
                             if _task_is_canceled(db, task_id):
                                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
-                            page_text = str(page_info.get("text") or "").strip()
-                            if not page_text.strip():
+                            chunk_text = str(chunk_info.get("content") or "").strip()
+                            if not chunk_text.strip():
                                 continue
-                            page_number = int(page_info.get("page_number") or (index + 1))
-                            page_source = str(page_info.get("source") or "document_text")
-                            page_title_prefix = "document OCR page" if page_source == "document_ocr" else "document page"
+                            page_range = chunk_info.get("page_range") or [index + 1, index + 1]
+                            page_source = str(chunk_info.get("source") or "document_text")
+                            title_prefix = "document OCR chunk" if page_source == "document_ocr" else "document chunk"
                             labels = {
                                 "stage": "preprocess",
                                 "source": page_source,
                                 "task_id": task_id,
                                 "source_name": asset.file_name if asset else "uploaded document",
-                                "page_range": [page_number, page_number],
-                                "section_path": [f"第 {page_number} 页"],
+                                "page_range": page_range,
+                                "section_path": chunk_info.get("section_path") or [str(chunk_info.get("title") or f"第 {page_range[0]}-{page_range[1]} 页")],
+                                "pdf_chunking_strategy": str(pdf_chunking_config.get("strategy") or "auto"),
+                                "pdf_effective_chunking_strategy": pdf_effective_strategy,
+                                "chunk_index": index,
+                                "chunk_count": total_chunks,
+                                "page_count": int(chunk_info.get("page_count") or 1),
                                 "extraction_status": "text_extracted",
                                 "extraction_mode": "ocr" if page_source == "document_ocr" else "text",
                             }
-                            title = f"{asset.file_name if asset else 'uploaded document'} {page_title_prefix} {page_number}/{total_pages}"
-                            unit = _persist_single_semantic_unit(db, project_id, asset_id, "document", title, page_text, labels, 0.88)
+                            title = f"{asset.file_name if asset else 'uploaded document'} {title_prefix} {index + 1}/{total_chunks}: {chunk_info.get('title')}"
+                            unit = _persist_single_semantic_unit(db, project_id, asset_id, "document", title, chunk_text, labels, 0.88)
                             units.append(unit)
-                            db.add(TraceLink(id=str(uuid4()), source_type="asset", source_id=asset_id or "", target_type="semantic_unit", target_id=unit.id, relation_type="derived_from"))
-                            db.commit()
-                            progress = min(95, 15 + int(((index + 1) / max(total_pages, 1)) * 75))
+                            progress = min(95, 15 + int(((index + 1) / max(total_chunks, 1)) * 75))
                             if page_source == "document_ocr":
-                                _safe_update(db, task_id, "running", progress, result_summary=f"pdf page ocr done: {index + 1}/{total_pages} page(s)")
+                                _safe_update(db, task_id, "running", progress, result_summary=f"pdf page ocr done: {page_range[1]}/{total_pages} page(s); pdf chunks persisted: {index + 1}/{total_chunks}")
                             else:
-                                _safe_update(db, task_id, "running", progress, result_summary=f"document chunks persisted: {index + 1}/{total_pages}")
+                                _safe_update(db, task_id, "running", progress, result_summary=f"document chunks persisted: {index + 1}/{total_chunks}")
                     else:
                         units = _persist_text_semantic_units(
                             db,
@@ -1121,6 +1265,10 @@ def preprocess_job(self, payload: dict):
                         "extraction_status": "text_extracted",
                         "used_pdf_ocr": used_pdf_ocr,
                     }
+                    if asset.mime_type == "application/pdf" or lower_name.endswith(".pdf"):
+                        semantic_payload["pdf_chunking_strategy"] = str(pdf_chunking_config.get("strategy") or "auto")
+                        semantic_payload["pdf_effective_chunking_strategy"] = pdf_effective_strategy
+                        semantic_payload["page_count"] = len(page_semantics)
                     if _task_is_canceled(db, task_id):
                         return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
                     _successful_preprocess_replaces_previous(db, asset_id, task_id)
@@ -1313,9 +1461,9 @@ def preprocess_job(self, payload: dict):
         media_temp_dirs.extend([segment_dir, frame_dir])
         _safe_update(db, task_id, "running", 20, result_summary="media split running")
         segment_paths = _split_video_for_task(db, task_id, source_path, str(segment_dir))
-        _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
+        _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
         if MEDIA_ENABLE_FRAME_EXTRACTION:
             _safe_update(db, task_id, "running", 40, result_summary="frame extraction running")
             frame_paths = _extract_frames_for_task(db, task_id, source_path, str(frame_dir))

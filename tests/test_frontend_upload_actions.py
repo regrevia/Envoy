@@ -178,6 +178,25 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("export_type=${encodeURIComponent(selectedOutputs[0] || 'markdown')}", text)
         self.assertNotIn("const samplesHref = asset?.project_id ? `/generated-samples?project_id=${asset.project_id}` : '/generated-samples';", text)
 
+    def test_upload_page_sends_pdf_chunking_strategy_with_preprocess_request(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const [pdfChunkingStrategy, setPdfChunkingStrategy] = useState('auto');",
+            "PDF 切片方式",
+            "{ id: 'auto', label: '自动智能切片' }",
+            "{ id: 'content', label: '按内容主题切片' }",
+            "{ id: 'module', label: '按模块/章节切片' }",
+            "{ id: 'page', label: '按页切片' }",
+            "pdf_chunking_strategy: pdfChunkingStrategy",
+            "pdf_chunk_target_chars: 2500",
+            "pdf_chunk_max_chars: 4500",
+            "pdf_preserve_page_refs: true",
+            "pdf_fallback_to_page_chunks: true",
+        ]:
+            self.assertIn(copy, text)
+
     def test_upload_page_preserves_output_context_for_review_pages(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
         text = page.read_text(encoding="utf-8")

@@ -82,6 +82,13 @@ def build_xlsx_bytes(text: str) -> bytes:
 
 
 class PreprocessMediaFlowTests(unittest.TestCase):
+    def test_pdf_heading_detection_ignores_plain_page_number_noise(self):
+        from app.workers.jobs import _pdf_page_heading
+
+        self.assertEqual(_pdf_page_heading("246                      SF Be SMT\neee we en Bei"), "")
+        self.assertEqual(_pdf_page_heading("1.1 数制与编码\n二进制基础"), "1.1 数制与编码")
+        self.assertEqual(_pdf_page_heading("第一章 数制与编码\n二进制基础"), "第一章 数制与编码")
+
     def test_preprocess_extracts_pdf_text_into_semantic_unit(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-pdf-text-test.db'}"
@@ -125,14 +132,18 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                         metadata={"storage": pdf_storage["storage"]},
                     ),
                 )
-                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                input_config = {"pdf_chunking_strategy": "page"}
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config=input_config))
                 project_id = project.id
                 asset_id = pdf_asset.id
                 task_id = task.id
             finally:
                 db.close()
 
-            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+            with patch("app.workers.jobs._extract_pdf_page_texts_with_optional_library", return_value=[
+                "Refund playbook requires manager approval before escalation.",
+            ]):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id, "input_config": input_config})
 
             db = SessionLocal()
             try:
@@ -199,14 +210,20 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                         metadata={"storage": pdf_storage["storage"]},
                     ),
                 )
-                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config={}))
+                input_config = {"pdf_chunking_strategy": "page"}
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config=input_config))
                 project_id = project.id
                 asset_id = pdf_asset.id
                 task_id = task.id
             finally:
                 db.close()
 
-            result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
+            with patch("app.workers.jobs._extract_pdf_page_texts_with_optional_library", return_value=[
+                "第 1 页 课程背景与目标",
+                "第 2 页 课程流程与工具",
+                "第 3 页 课程作业与导入说明",
+            ]):
+                result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id, "input_config": input_config})
 
             db = SessionLocal()
             try:
@@ -247,6 +264,92 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertTrue(all(unit.labels["page_range"][0] == unit.labels["page_range"][1] for unit in units))
                 self.assertIn("来源：course-guide.pdf", chunk_text)
                 self.assertIn("引用：第 1-1 页", chunk_text)
+            finally:
+                db.close()
+                engine.dispose()
+
+    def test_preprocess_pdf_can_group_pages_by_module_strategy(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-pdf-module-chunking-test.db'}"
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(Path(tmp_dir) / "storage")
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.models.semantic_unit import SemanticUnit
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.schemas.task import TaskCreate
+            from app.services.crud_service import create_asset, create_project, create_task, get_task
+            from app.core.storage import storage_client
+            from app.workers.jobs import preprocess_job
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="pdf module chunking project", description="", domain_type="knowledge", status="active"))
+                pdf_storage = storage_client.upload_bytes(
+                    "digital-circuit.pdf",
+                    build_multipage_pdf_bytes(["p1", "p2", "p3", "p4"]),
+                    "application/pdf",
+                )
+                pdf_asset = create_asset(
+                    db,
+                    AssetCreate(
+                        project_id=project.id,
+                        asset_type="document",
+                        file_name="digital-circuit.pdf",
+                        file_path=pdf_storage["object_name"],
+                        mime_type="application/pdf",
+                        metadata={"storage": pdf_storage["storage"]},
+                    ),
+                )
+                input_config = {"pdf_chunking_strategy": "module"}
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=pdf_asset.id, task_type="preprocess", input_config=input_config))
+                project_id = project.id
+                asset_id = pdf_asset.id
+                task_id = task.id
+            finally:
+                db.close()
+
+            page_texts = [
+                "第一章 数制与编码\n二进制、十进制和码制基础。",
+                "逻辑代数基础\n逻辑变量、基本公式和化简方法。",
+                "第二章 组合逻辑电路\n编码器、译码器和数据选择器。",
+                "组合逻辑电路设计\n分析步骤、设计步骤和竞争冒险。",
+            ]
+            with patch("app.workers.jobs._extract_pdf_page_texts_with_optional_library", return_value=page_texts):
+                result = preprocess_job.run({
+                    "task_id": task_id,
+                    "project_id": project_id,
+                    "asset_id": asset_id,
+                    "input_config": input_config,
+                })
+
+            db = SessionLocal()
+            try:
+                stored_task = get_task(db, task_id)
+                units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).order_by(SemanticUnit.created_at.asc()).all()
+
+                self.assertEqual(result["status"], "preprocessed")
+                self.assertEqual(stored_task.status, "success")
+                self.assertEqual(len(units), 2)
+                self.assertEqual(units[0].labels["page_range"], [1, 2])
+                self.assertEqual(units[1].labels["page_range"], [3, 4])
+                self.assertEqual(units[0].labels["pdf_chunking_strategy"], "module")
+                self.assertEqual(units[1].labels["pdf_chunking_strategy"], "module")
+                self.assertEqual(units[0].labels["section_path"], ["第一章 数制与编码"])
+                self.assertEqual(units[1].labels["section_path"], ["第二章 组合逻辑电路"])
+                self.assertIn("逻辑代数基础", units[0].content)
+                self.assertIn("组合逻辑电路设计", units[1].content)
+                self.assertEqual(result["semantic"]["chunk_count"], 2)
             finally:
                 db.close()
                 engine.dispose()
@@ -2443,7 +2546,7 @@ class PreprocessMediaFlowTests(unittest.TestCase):
 
                 self.assertEqual(result["status"], "preprocessed")
                 self.assertEqual(stored_task.status, "success")
-                self.assertEqual(summary_payload["extraction_status"], "partial_text_extracted")
+                self.assertEqual(summary_payload["extraction_status"], "partial_success")
                 self.assertEqual(summary_payload["transcription_success_count"], 2)
                 self.assertEqual(summary_payload["transcription_failed_count"], 1)
                 self.assertEqual(summary_payload["transcription_failed_segments"][0]["segment"], expected_segments[1])
