@@ -291,6 +291,31 @@ def _row_reference_text(row: dict):
     return "未标注"
 
 
+def _row_time_range(row: dict):
+    labels = _row_labels(row)
+    time_range = labels.get("time_range")
+    if isinstance(time_range, (list, tuple)) and len(time_range) >= 2:
+        start = str(time_range[0]).strip()
+        end = str(time_range[1]).strip()
+        if start and end:
+            return [start, end]
+    return None
+
+
+def _is_video_source_type(source_type):
+    return str(source_type or "") in {"media_asset", "media_transcript", "media_ocr", "video"}
+
+
+def _is_video_row(row: dict):
+    return _is_video_source_type(_row_source(row)) or _row_time_range(row) is not None
+
+
+def _time_range_slug(reference_text: str):
+    if not reference_text or reference_text == "未标注":
+        return ""
+    return slugify_name(reference_text.replace(":", "-").replace(" - ", "-"))
+
+
 def _source_dir_name(order_index: int, row: dict):
     source = str(_row_source(row) or "text")
     source_name = slugify_name(_row_source_name(row))
@@ -411,6 +436,37 @@ def _markdown_chunk_lines(
         f"- 章节路径：{' / '.join(section_path) if section_path else '未标注'}",
         f"- 引用：{reference_text}",
     ]
+
+
+def _video_timeline_entry(chunk: dict, relative_path: str | None = None):
+    time_range = None
+    labels = chunk.get("labels") if isinstance(chunk.get("labels"), dict) else {}
+    raw_time_range = labels.get("time_range")
+    if isinstance(raw_time_range, (list, tuple)) and len(raw_time_range) >= 2:
+        time_range = [str(raw_time_range[0]), str(raw_time_range[1])]
+    entry = {
+        "title": chunk["title"],
+        "summary": chunk["summary"],
+        "reference_text": chunk["reference_text"],
+        "time_range": time_range,
+        "chunk_id": chunk["chunk_id"],
+        "source_name": chunk["source_name"],
+        "status": chunk.get("status") or "success",
+        "degraded_capabilities": chunk.get("degraded_capabilities") or [],
+        "failed_segment_count": chunk.get("failed_segment_count") or 0,
+    }
+    if relative_path:
+        entry["relative_path"] = relative_path
+    return entry
+
+
+def _chunk_file_name(chunk_index: int, chunk: dict):
+    title_slug = slugify_name(chunk["title"])
+    if _is_video_source_type(chunk.get("source_type")):
+        time_slug = _time_range_slug(chunk.get("reference_text") or "")
+        if time_slug:
+            return f"{chunk_index:03d}-{time_slug}-{title_slug}.md"
+    return f"{chunk_index:03d}-{title_slug}.md"
 
 
 def _chunk_title_from_section(section_path: list[str]):
@@ -1109,6 +1165,7 @@ def export_markdown_bundle(
     chunk_paths: list[str] = []
     source_paths: list[str] = []
     file_tree_sources: list[dict] = []
+    timeline_index: list[dict] = []
     enhanced_chunks = []
     ollama_stats = {"enabled": bool(enhance_with_ollama), "succeeded_chunks": 0, "failed_chunks": 0, "skipped_chunks": 0, "errors": []}
     for chunk in built_chunks:
@@ -1163,6 +1220,7 @@ def export_markdown_bundle(
         source_name = source_key[1]
         source_rows = [row for row in semantic_rows if (_row_source(row), _row_source_name(row)) == source_key]
         source_chunks = chunk_groups.get(source_key, [])
+        is_video_source = any(_is_video_row(row) for row in source_rows) or _is_video_source_type(source_key[0])
         if not source_rows:
             continue
         source_dir = build_subdir(sources_dir, _source_dir_name(source_index, source_rows[0]))
@@ -1193,10 +1251,14 @@ def export_markdown_bundle(
             source_lines.append(f"- {' / '.join(_section_path(row))}：{_markdown_chunk_summary(_markdown_chunk_body(row))}")
         source_lines.extend(["", "## 分片索引", ""])
 
+        if is_video_source:
+            index_lines.extend(["## 视频时间线", ""])
+            source_lines.extend(["", "## 视频时间线", ""])
+
         file_tree_chunks = []
+        source_timeline = []
         for chunk_index, chunk in enumerate(source_chunks, 1):
-            chunk_slug = slugify_name(chunk["title"])
-            chunk_path = chunks_dir / f"{chunk_index:03d}-{chunk_slug}.md"
+            chunk_path = chunks_dir / _chunk_file_name(chunk_index, chunk)
             chunk_content = "\n".join(
                 _markdown_chunk_lines(
                     source_name=source_name,
@@ -1214,6 +1276,13 @@ def export_markdown_bundle(
             source_lines.append(f"- [{chunk['title']}](chunks/{chunk_path.name})")
             index_lines.append(f"- [{chunk['title']}]({rel_chunk_path})：{chunk['reference_text']}")
             overview_lines.append(f"- [{chunk['title']}]({rel_chunk_path})")
+            if is_video_source:
+                timeline_entry = _video_timeline_entry(chunk, rel_chunk_path)
+                source_timeline.append(timeline_entry)
+                timeline_index.append(timeline_entry)
+                timeline_line = f"- [{chunk['reference_text']}]({rel_chunk_path})：{chunk['title']}；{chunk['summary']}"
+                index_lines.append(timeline_line)
+                source_lines.append(timeline_line)
             file_tree_chunks.append({
                 "title": chunk["title"],
                 "summary": chunk["summary"],
@@ -1223,6 +1292,9 @@ def export_markdown_bundle(
                 "split_part": chunk["split_part"],
                 "split_total": chunk["split_total"],
                 "chunk_id": chunk["chunk_id"],
+                "status": chunk["status"],
+                "degraded_capabilities": chunk["degraded_capabilities"],
+                "failed_segment_count": chunk["failed_segment_count"],
             })
         index_lines.append("")
         source_lines.extend(["", "## 异常与降级说明", ""])
@@ -1232,16 +1304,21 @@ def export_markdown_bundle(
                 source_lines.append(f"- {_row_title(row, 0)}：{', '.join(_rag_degraded_capabilities(row)) or 'partial_success'}")
         else:
             source_lines.append("- 无")
+        if is_video_source:
+            source_lines.append(f"- 转写失败片段数：{sum(chunk.get('failed_segment_count') or 0 for chunk in source_chunks)}")
         _write_utf8_text(source_path, "\n".join(source_lines))
         source_paths.append(str(source_path))
-        file_tree_sources.append({
+        source_tree = {
             "source_type": source_key[0],
             "source_name": source_name,
             "source_path": str(source_path),
             "relative_path": source_rel_path,
             "chunks_dir": chunks_dir.relative_to(root).as_posix(),
             "chunks": file_tree_chunks,
-        })
+        }
+        if is_video_source:
+            source_tree["timeline"] = source_timeline
+        file_tree_sources.append(source_tree)
         overview_lines.append("")
 
     overview_lines.extend([
@@ -1268,6 +1345,8 @@ def export_markdown_bundle(
         "row_count": len(semantic_rows),
         "source_count": len(order),
         "chunk_count": len(chunk_paths),
+        "video_source_count": sum(1 for source in file_tree_sources if "timeline" in source),
+        "timeline_index": timeline_index,
         **semantic_metadata,
         **quality_metadata,
         "encoding": "utf-8",
