@@ -39,11 +39,11 @@ type MediaStatus = {
 };
 
 const outputTypes = [
-  { id: 'markdown', label: 'Markdown', detail: '把长内容整理成可阅读、可复盘、可交付的结构化文档。' },
-  { id: 'skill', label: 'Skill', detail: '沉淀为可复用的技能包、操作流程和执行说明。' },
-  { id: 'rag', label: 'RAG', detail: '生成可检索、可追溯、适合接入知识库的语料。' },
-  { id: 'samples', label: '训练样本', detail: '生成问答、指令和偏好数据，用于后续训练或评测。' },
-  { id: 'dataset', label: '数据集', detail: '汇总为 SFT、instruction、preference 等导出格式。' },
+  { id: 'markdown', label: '知识库文档', detail: '把长内容整理成总览文档和分片文档，适合直接交付或导入知识库。' },
+  { id: 'skill', label: '可复用流程包', detail: '沉淀操作步骤、检查清单和执行说明，方便团队复用。' },
+  { id: 'rag', label: '检索语料包', detail: '生成可检索、可追溯的内容片段，方便问答工具引用来源。' },
+  { id: 'samples', label: '训练问答', detail: '生成可审查的问答样本，用于后续训练或评测。' },
+  { id: 'dataset', label: '数据文件', detail: '汇总为后续模型训练或评估可以使用的数据格式。' },
 ];
 
 const assetTypeOptions = [
@@ -58,20 +58,20 @@ const assetTypeOptions = [
 const inputStyle = {
   width: '100%',
   padding: '11px 12px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
+  borderRadius: 999,
+  border: '1px solid #e0e0e0',
   background: '#ffffff',
-  color: '#111827',
+  color: '#1d1d1f',
 } as const;
 
 const buttonStyle = {
   minHeight: 40,
-  padding: '0 14px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
+  padding: '0 18px',
+  borderRadius: 999,
+  border: '1px solid #0066cc',
   background: '#ffffff',
-  color: '#111827',
-  fontWeight: 600,
+  color: '#0066cc',
+  fontWeight: 400,
   cursor: 'pointer',
   textDecoration: 'none',
   display: 'inline-flex',
@@ -281,13 +281,13 @@ export default function HomePage() {
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: '#ffffff', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
+    <main style={{ minHeight: '100vh', background: '#f5f5f7', fontFamily: 'SF Pro Text, system-ui, -apple-system, sans-serif', color: '#1d1d1f' }}>
       <section className="home-shell">
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <div style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Envoy AI 素材转换工作台</div>
-          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15 }}>创建转换任务</h1>
-          <p style={{ margin: '10px 0 0', maxWidth: 820, color: '#4b5563', lineHeight: 1.7 }}>
-            先确定素材类型和生成目标，再上传视频、长文本或多模态文件，最后生成 Markdown、Skill、RAG、训练样本或数据集。
+          <div style={{ color: '#7a7a7a', fontSize: 14, marginBottom: 8 }}>Envoy 内容交付工作台</div>
+          <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.1, letterSpacing: '-0.28px', fontWeight: 600 }}>创建转换任务</h1>
+          <p style={{ margin: '10px 0 0', maxWidth: 820, color: '#333333', fontSize: 17, lineHeight: 1.47 }}>
+            先确定素材类型和交付目标，再上传视频、长文本或文档，最后生成知识库文档、可复用流程包、检索语料包和训练问答。
           </p>
         </header>
 
@@ -301,7 +301,7 @@ export default function HomePage() {
             {[
               ['1', '创建任务', '确定素材类型和生成目标'],
               ['2', '上传素材', '文件进入当前任务素材池'],
-              ['3', '生成 AI 素材', '输出 Markdown、Skill、RAG 或训练数据'],
+              ['3', '生成交付产物', '输出文档、流程包、检索语料或训练问答'],
             ].map(([index, title, detail]) => (
               <div key={index} className="workflow-strip-item">
                 <span className="workflow-index">{index}</span>
@@ -316,13 +316,13 @@ export default function HomePage() {
           <article className="flow-step first-step">
             <div className="step-heading">
               <div>
-                <div style={{ color: '#6b7280', fontSize: 13 }}>1. 创建任务/项目</div>
+                <div style={{ color: '#7a7a7a', fontSize: 13 }}>1. 创建任务</div>
                 <h2 style={{ margin: '8px 0 0', fontSize: 22 }}>先定义本次转换目标</h2>
               </div>
               <Link href="/projects" style={{ ...buttonStyle, textDecoration: 'none' }}>项目管理</Link>
             </div>
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
-              每个任务承载一批素材和最终交付物，后续上传、预处理、语义单元、生成样本和导出都会围绕这个任务推进。
+              每个任务承载一批素材和最终交付物，后续上传、处理、审查和导出都会围绕这个任务推进。
             </p>
             <section style={{ marginTop: 16, padding: '14px 0', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb' }}>
               <div style={{ color: '#4b5563', fontSize: 13, marginBottom: 10 }}>素材类型</div>
@@ -337,9 +337,9 @@ export default function HomePage() {
                       style={{
                         ...buttonStyle,
                         minHeight: 34,
-                        background: active ? '#111827' : '#ffffff',
-                        color: active ? '#ffffff' : '#111827',
-                        borderColor: active ? '#111827' : '#d1d5db',
+                        background: active ? '#0066cc' : '#ffffff',
+                        color: active ? '#ffffff' : '#1d1d1f',
+                        borderColor: active ? '#0066cc' : '#e0e0e0',
                       }}
                     >
                       {item.label}
@@ -351,7 +351,7 @@ export default function HomePage() {
             <div className="create-grid">
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>任务名称</span>
-                <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：课程视频转 RAG 知识库" style={inputStyle} />
+                <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：数字电路课程知识库" style={inputStyle} />
               </label>
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: '#4b5563', fontSize: 13 }}>目标说明</span>
@@ -361,7 +361,7 @@ export default function HomePage() {
                 <span style={{ color: '#4b5563', fontSize: 13 }}>领域类型</span>
                 <input value={domainType} onChange={(event) => setDomainType(event.target.value)} placeholder="knowledge / course / support / compliance" style={inputStyle} />
               </label>
-              <button onClick={createProject} disabled={creating} style={{ ...buttonStyle, width: 'fit-content', background: '#111827', color: '#ffffff', borderColor: '#111827', opacity: creating ? 0.72 : 1 }}>
+              <button onClick={createProject} disabled={creating} style={{ ...buttonStyle, width: 'fit-content', background: '#0066cc', color: '#ffffff', borderColor: '#0066cc', opacity: creating ? 0.72 : 1 }}>
                 {creating ? '正在创建...' : '创建任务'}
               </button>
             </div>
@@ -378,7 +378,7 @@ export default function HomePage() {
               </label>
               {selectedProject ? (
                 <div style={{ marginTop: 10, color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
-                  当前任务：{selectedProject.name}，ID: {selectedProject.id}
+                  当前任务：{selectedProject.name}
                 </div>
               ) : null}
             </div>
@@ -388,10 +388,10 @@ export default function HomePage() {
             <div style={{ color: '#6b7280', fontSize: 13 }}>2. 上传素材</div>
             <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>把原始素材放入任务</h2>
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
-              支持视频、音频、图片、PDF、Markdown、长文本和其他多模态文件。上传页会携带当前 project_id，并可直接启动预处理转换。
+              支持视频、音频、图片、PDF、Markdown、长文本和其他多模态文件。上传页会自动带入当前任务，并可直接启动内容处理。
             </p>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Link href={uploadHref} aria-disabled={!canProceed} style={{ ...buttonStyle, background: canProceed ? '#111827' : '#f3f4f6', color: canProceed ? '#ffffff' : '#6b7280', borderColor: canProceed ? '#111827' : '#d1d5db', ...(!canProceed ? disabledActionStyle : {}) }}>
+              <Link href={uploadHref} aria-disabled={!canProceed} style={{ ...buttonStyle, background: canProceed ? '#0066cc' : '#fafafc', color: canProceed ? '#ffffff' : '#7a7a7a', borderColor: canProceed ? '#0066cc' : '#e0e0e0', ...(!canProceed ? disabledActionStyle : {}) }}>
                 上传素材
               </Link>
               <Link href="/tasks" style={buttonStyle}>查看转换任务</Link>
@@ -410,7 +410,7 @@ export default function HomePage() {
             <div style={{ color: '#6b7280', fontSize: 13 }}>3. 选择生成内容</div>
             <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>决定最终要交付什么</h2>
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
-              先勾选目标产物，再进入语义单元审查、样本生成或训练导出页面处理细节。
+              先勾选目标产物，再进入内容审查、训练问答或交付导出页面处理细节。
             </p>
             <div style={{ marginTop: 14, display: 'grid', gap: 0 }}>
               {outputTypes.map((item) => {
@@ -427,34 +427,34 @@ export default function HomePage() {
               })}
             </div>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Link href={semanticHref} aria-disabled={!canProceed} style={{ ...buttonStyle, ...(!canProceed ? disabledActionStyle : {}) }}>审查语义单元</Link>
-              <Link href={samplesHref} aria-disabled={!canProceed || !selectedOutputs.includes('samples')} style={{ ...buttonStyle, ...(!canProceed || !selectedOutputs.includes('samples') ? disabledActionStyle : {}) }}>审查训练样本</Link>
-              <Link href={exportHref} aria-disabled={!canProceed || !hasExportableOutput} style={{ ...buttonStyle, background: canProceed && hasExportableOutput ? '#111827' : '#f3f4f6', color: canProceed && hasExportableOutput ? '#ffffff' : '#6b7280', borderColor: canProceed && hasExportableOutput ? '#111827' : '#d1d5db', ...(!canProceed || !hasExportableOutput ? disabledActionStyle : {}) }}>进入导出</Link>
+              <Link href={semanticHref} aria-disabled={!canProceed} style={{ ...buttonStyle, ...(!canProceed ? disabledActionStyle : {}) }}>审查内容片段</Link>
+              <Link href={samplesHref} aria-disabled={!canProceed || !selectedOutputs.includes('samples')} style={{ ...buttonStyle, ...(!canProceed || !selectedOutputs.includes('samples') ? disabledActionStyle : {}) }}>审查训练问答</Link>
+              <Link href={exportHref} aria-disabled={!canProceed || !hasExportableOutput} style={{ ...buttonStyle, background: canProceed && hasExportableOutput ? '#0066cc' : '#fafafc', color: canProceed && hasExportableOutput ? '#ffffff' : '#7a7a7a', borderColor: canProceed && hasExportableOutput ? '#0066cc' : '#e0e0e0', ...(!canProceed || !hasExportableOutput ? disabledActionStyle : {}) }}>进入交付导出</Link>
             </div>
             {!canProceed ? (
               <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>
-                请先创建或选择任务后继续，导出需要 project_id 才能读取语义单元和生成样本。
+                请先创建或选择任务后继续，导出需要明确来源任务。
               </div>
             ) : null}
             {canProceed && !hasExportableOutput ? (
               <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>
-                请先勾选 Markdown、Skill、RAG 或数据集后再进入导出。
+                请先勾选知识库文档、流程包、检索语料或数据文件后再进入导出。
               </div>
             ) : null}
           </article>
 
           <article className="flow-step">
             <div style={{ color: '#6b7280', fontSize: 13 }}>完整转换链路</div>
-            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>从原始素材到可用 AI 素材</h2>
+            <h2 style={{ margin: '8px 0 0', fontSize: 20 }}>从原始素材到可交付内容</h2>
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
-              {'上传素材 -> 预处理转换 -> 语义单元审查 -> 生成训练样本 -> 自动导出 AI 素材 -> 追溯审查。'}
+              {'上传素材 -> 内容处理 -> 内容片段审查 -> 生成训练问答 -> 自动整理交付物 -> 来源追溯。'}
             </p>
             <div style={{ marginTop: 14, display: 'grid', gap: 0 }}>
               {[
-                ['预处理转换', '视频、音频、图片、文档和长文本会先转成语义单元，长任务可在任务页查看进度、取消、重试和疑似卡住状态。'],
+                ['内容处理', '视频、音频、图片、文档和长文本会先转成可审查内容片段，长任务可在任务页查看进度、取消、重试和疑似卡住状态。'],
                 ['长任务诊断', '任务列表会持续展示自动刷新、卡住阈值和未更新时间，便于处理长视频或大文件。'],
-                ['自动导出 AI 素材', '训练导出页可基于项目自动读取语义单元和生成样本，输出 Markdown、Skill、RAG 或数据集。'],
-                ['产物追溯', '产物中心和追溯审查会展示素材、语义单元、生成样本和导出产物之间的链路。'],
+                ['自动整理交付物', '交付导出页可基于任务自动读取内容片段和训练问答，输出文档、流程包、检索语料或数据文件。'],
+                ['来源追溯', '交付中心和追溯审查会展示素材、内容片段、训练问答和交付产物之间的链路。'],
               ].map(([title, detail]) => (
                 <div key={title} style={{ padding: '12px 0', borderTop: '1px solid #e5e7eb' }}>
                   <strong>{title}</strong>
@@ -464,7 +464,7 @@ export default function HomePage() {
             </div>
             <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Link href="/tasks" style={buttonStyle}>查看转换任务</Link>
-              <Link href="/artifacts" style={buttonStyle}>查看产物中心</Link>
+              <Link href="/artifacts" style={buttonStyle}>查看交付中心</Link>
               <Link href="/trace" style={buttonStyle}>查看追溯链路</Link>
             </div>
           </article>
@@ -511,7 +511,7 @@ export default function HomePage() {
                       <input value={ollamaConfig.max_prompt_chars} onChange={(event) => setOllamaConfig((current) => ({ ...current, max_prompt_chars: event.target.value }))} placeholder="12000" style={inputStyle} />
                     </label>
                   </div>
-                  <button onClick={saveOllamaConfig} disabled={savingOllama} style={{ ...buttonStyle, width: 'fit-content', background: '#111827', color: '#ffffff', borderColor: '#111827', opacity: savingOllama ? 0.72 : 1 }}>
+                  <button onClick={saveOllamaConfig} disabled={savingOllama} style={{ ...buttonStyle, width: 'fit-content', background: '#0066cc', color: '#ffffff', borderColor: '#0066cc', opacity: savingOllama ? 0.72 : 1 }}>
                     {savingOllama ? '正在保存...' : '保存配置'}
                   </button>
                   <div style={{ color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>

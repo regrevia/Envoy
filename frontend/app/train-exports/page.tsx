@@ -6,31 +6,31 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiJson } from '@/lib/api';
 
 const exportTypes = [
-  { id: 'sft', label: 'SFT' },
-  { id: 'instruction', label: 'Instruction' },
-  { id: 'preference', label: 'Preference' },
-  { id: 'rag', label: 'RAG' },
-  { id: 'skill', label: 'Skill' },
-  { id: 'markdown', label: 'Markdown' },
+  { id: 'sft', label: '训练数据' },
+  { id: 'instruction', label: '指令数据' },
+  { id: 'preference', label: '偏好数据' },
+  { id: 'rag', label: '检索语料包' },
+  { id: 'skill', label: '可复用流程包' },
+  { id: 'markdown', label: '知识库文档' },
 ] as const;
 
 const inputStyle = {
   width: '100%',
   padding: '11px 12px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
+  borderRadius: 999,
+  border: '1px solid #e0e0e0',
   background: '#ffffff',
-  color: '#111827',
+  color: '#1d1d1f',
 } as const;
 
 const buttonStyle = {
   minHeight: 40,
-  padding: '0 14px',
-  borderRadius: 6,
-  border: '1px solid #d1d5db',
+  padding: '0 18px',
+  borderRadius: 999,
+  border: '1px solid #0066cc',
   background: '#ffffff',
-  color: '#111827',
-  fontWeight: 600,
+  color: '#0066cc',
+  fontWeight: 400,
   cursor: 'pointer',
 } as const;
 
@@ -155,7 +155,7 @@ export default function TrainExportsPage() {
       return;
     }
     if (!hasSourceContext()) {
-      setMessage('请填写项目 ID 或来源上下文');
+      setMessage('请从首页或上传页带入来源任务，或填写来源信息');
       return;
     }
 
@@ -199,7 +199,7 @@ export default function TrainExportsPage() {
       return;
     }
     if (!hasSourceContext()) {
-      setMessage('请填写项目 ID 或来源上下文');
+      setMessage('请从首页或上传页带入来源任务，或填写来源信息');
       return;
     }
 
@@ -236,7 +236,7 @@ export default function TrainExportsPage() {
       return;
     }
     if (!hasSourceContext()) {
-      setMessage('请填写项目 ID 或来源上下文');
+      setMessage('请从首页或上传页带入来源任务，或填写来源信息');
       return;
     }
 
@@ -271,12 +271,12 @@ export default function TrainExportsPage() {
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', color: '#111827' }}>
+    <main style={{ minHeight: '100vh', background: '#f5f5f7', fontFamily: 'SF Pro Text, system-ui, -apple-system, sans-serif', color: '#1d1d1f' }}>
       <section style={{ maxWidth: 1160, margin: '0 auto', padding: '44px 24px' }}>
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
-          <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.2 }}>训练导出</h1>
-          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#4b5563', lineHeight: 1.7 }}>
-            从语义单元到 AI 素材，将项目内容导出为 SFT、Instruction、Preference、RAG、Skill 或 Markdown 产物。
+          <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.1, letterSpacing: '-0.28px', fontWeight: 600 }}>交付导出</h1>
+          <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#333333', fontSize: 17, lineHeight: 1.47 }}>
+            从任务内容自动整理交付物，优先生成知识库文档，也可以补充流程包、检索语料和训练数据。
           </p>
         </header>
 
@@ -287,7 +287,7 @@ export default function TrainExportsPage() {
 
         <section aria-label="导出链路" style={{ borderBottom: '1px solid #e5e7eb' }}>
           {['1. 确认来源', '2. 选择产物', '3. 导出并审查'].map((step) => (
-            <div key={step} style={{ padding: '14px 0', borderTop: '1px solid #e5e7eb', fontWeight: 700, color: '#111827' }}>
+            <div key={step} style={{ padding: '14px 0', borderTop: '1px solid #e5e7eb', fontWeight: 600, color: '#1d1d1f' }}>
               {step}
             </div>
           ))}
@@ -298,7 +298,7 @@ export default function TrainExportsPage() {
             来自首页选择：{outputContext}
             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {selectedOutputs.map((item) => (
-                <span key={item} style={{ color: '#111827', fontWeight: 700 }}>{exportLabel(item)}</span>
+                <span key={item} style={{ color: '#1d1d1f', fontWeight: 600 }}>{exportLabel(item)}</span>
               ))}
             </div>
           </div>
@@ -306,10 +306,10 @@ export default function TrainExportsPage() {
 
         <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb', display: 'grid', gap: 18 }}>
           <div style={{ display: 'grid', gap: 8, paddingBottom: 18, borderBottom: '1px solid #e5e7eb' }}>
-            <div style={{ color: '#6b7280', fontSize: 13 }}>Markdown 优先工作台</div>
+            <div style={{ color: '#7a7a7a', fontSize: 13 }}>Markdown 优先工作台</div>
             <h2 style={{ margin: 0, fontSize: 24 }}>主文档 + 分片文档导出</h2>
             <p style={{ margin: 0, color: '#4b5563', lineHeight: 1.7 }}>
-              优先生成 `index.md`、主文档、来源文档和分片文档。输出内容统一 UTF-8 编码，适合直接导入其他模型软件。
+              优先生成 `index.md`、主文档、来源文档和分片文档。输出内容统一 UTF-8 编码，适合直接交付或导入其他模型软件。
             </p>
           </div>
 
@@ -332,9 +332,9 @@ export default function TrainExportsPage() {
                 onClick={() => setExportType(item.id)}
                 style={{
                   ...buttonStyle,
-                  background: exportType === item.id ? '#111827' : '#ffffff',
-                  color: exportType === item.id ? '#ffffff' : '#111827',
-                  borderColor: exportType === item.id ? '#111827' : '#d1d5db',
+                  background: exportType === item.id ? '#0066cc' : '#ffffff',
+                  color: exportType === item.id ? '#ffffff' : '#0066cc',
+                  borderColor: exportType === item.id ? '#0066cc' : '#e0e0e0',
                 }}
               >
                 {item.label}
@@ -361,7 +361,7 @@ export default function TrainExportsPage() {
           <div style={{ padding: '12px 0', borderBottom: '1px solid #e5e7eb' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <strong>导出所选产物</strong>
-              <span style={{ color: '#6b7280', fontSize: 13 }}>优先勾选 Markdown，其次再补 Skill、RAG</span>
+              <span style={{ color: '#7a7a7a', fontSize: 13 }}>优先勾选知识库文档，其次再补流程包和检索语料</span>
             </div>
             <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {exportTypes.map((item) => {
@@ -372,9 +372,9 @@ export default function TrainExportsPage() {
                     onClick={() => toggleSelectedOutput(item.id)}
                     style={{
                       ...buttonStyle,
-                      background: active ? '#111827' : '#ffffff',
-                      color: active ? '#ffffff' : '#111827',
-                      borderColor: active ? '#111827' : '#d1d5db',
+                      background: active ? '#0066cc' : '#ffffff',
+                      color: active ? '#ffffff' : '#0066cc',
+                      borderColor: active ? '#0066cc' : '#e0e0e0',
                     }}
                   >
                     {item.label}
@@ -402,26 +402,26 @@ export default function TrainExportsPage() {
             <button
               onClick={onExport}
               disabled={exporting}
-              style={{ ...buttonStyle, background: '#111827', color: '#fff', borderColor: '#111827', opacity: exporting ? 0.72 : 1, cursor: exporting ? 'not-allowed' : 'pointer' }}
+              style={{ ...buttonStyle, background: '#0066cc', color: '#fff', borderColor: '#0066cc', opacity: exporting ? 0.72 : 1, cursor: exporting ? 'not-allowed' : 'pointer' }}
             >
               {exporting ? '导出中...' : '开始导出'}
             </button>
             <button
               onClick={onAutoExport}
               disabled={autoExporting}
-              style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb', opacity: autoExporting ? 0.72 : 1, cursor: autoExporting ? 'not-allowed' : 'pointer' }}
+              style={{ ...buttonStyle, background: '#0066cc', color: '#fff', borderColor: '#0066cc', opacity: autoExporting ? 0.72 : 1, cursor: autoExporting ? 'not-allowed' : 'pointer' }}
             >
-              {autoExporting ? '自动导出中...' : '自动读取导出'}
+              {autoExporting ? '自动导出中...' : '自动整理交付物'}
             </button>
             <button
               onClick={onAutoExportSelected}
               disabled={autoExporting}
-              style={{ ...buttonStyle, background: '#0f766e', color: '#fff', borderColor: '#0f766e', opacity: autoExporting ? 0.72 : 1, cursor: autoExporting ? 'not-allowed' : 'pointer' }}
+              style={{ ...buttonStyle, background: '#1d1d1f', color: '#fff', borderColor: '#1d1d1f', opacity: autoExporting ? 0.72 : 1, cursor: autoExporting ? 'not-allowed' : 'pointer' }}
             >
               {autoExporting ? '批量导出中...' : '批量自动导出'}
             </button>
-            <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物中心</Link>
-            <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看产物来源统计</Link>
+            <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看交付中心</Link>
+            <Link href="/artifacts" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>查看来源统计</Link>
           </div>
         </section>
 
@@ -454,7 +454,7 @@ export default function TrainExportsPage() {
         <section style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingBottom: 14, borderBottom: '1px solid #e5e7eb' }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: 18 }}>导出历史</h2>
+              <h2 style={{ margin: 0, fontSize: 18 }}>交付历史</h2>
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>共 {history.length} 条记录</p>
             </div>
             <button onClick={loadHistory} style={buttonStyle}>刷新历史</button>
