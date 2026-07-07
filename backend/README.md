@@ -29,6 +29,8 @@ py -m uvicorn app.main:app --reload
 - `MEDIA_MAX_FRAME_COUNT` (default: `240`) 单个视频任务最多抽帧数量
 - `MEDIA_ENABLE_FRAME_EXTRACTION` (default: `true`) 是否对视频执行抽帧；长视频只需要转写时可设为 `false`
 - `MEDIA_ENABLE_OCR` (default: `true`) 是否对视频抽帧结果执行 OCR；长视频吞吐优先时可设为 `false`
+- 大 PDF 页级 OCR fallback 依赖系统命令 `pdfinfo`、`pdftoppm`、`tesseract`
+- 本地 100MB 级 PDF 验收脚本：`scripts/run_large_pdf_rag_e2e.py`
 - `OLLAMA_BASE_URL` / `OLLAMA_MODEL` / `OLLAMA_MAX_PROMPT_CHARS` 本地 Ollama 辅助生成默认配置
 - `OLLAMA_RUNTIME_CONFIG_PATH` (default: `tmp/config/ollama_runtime.json`) 首页保存的 Ollama 运行时配置文件，服务重启后会优先读取
 

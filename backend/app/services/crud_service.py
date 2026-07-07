@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from uuid import uuid4
 from datetime import datetime
 from sqlalchemy.orm import Session
+from typing import Optional
 from app.models.project import Project
 from app.models.asset import Asset
 from app.models.processing_task import ProcessingTask
@@ -63,7 +66,7 @@ def get_task(db: Session, task_id: str):
     return db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
 
 
-def update_task_status(db: Session, task_id: str, status: str, progress: int | None = None, result_summary: str | None = None, error_message: str | None = None):
+def update_task_status(db: Session, task_id: str, status: str, progress: Optional[int] = None, result_summary: Optional[str] = None, error_message: Optional[str] = None):
     task = get_task(db, task_id)
     if task is None:
         return None
@@ -105,7 +108,7 @@ def list_artifacts(db: Session):
     return db.query(Artifact).order_by(Artifact.created_at.desc()).all()
 
 
-def create_export_record(db: Session, project_id: str, task_id: str, export_type: str, task_name: str | None, root_dir: str, file_list: str):
+def create_export_record(db: Session, project_id: str, task_id: str, export_type: str, task_name: Optional[str], root_dir: str, file_list: str):
     obj = ExportRecord(id=str(uuid4()), project_id=project_id, task_id=task_id, export_type=export_type, task_name=task_name, root_dir=root_dir, file_list=file_list)
     db.add(obj)
     db.commit()

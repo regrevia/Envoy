@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.train_export import TrainExportRequest
-from app.services.train_export_service import export_sft_dataset, export_instruction_dataset, export_preference_dataset, export_rag_corpus, export_skill_markdown, export_markdown_from_video_summary, build_auto_payload_from_project
+from app.services.train_export_service import export_sft_dataset, export_instruction_dataset, export_preference_dataset, export_rag_corpus, export_skill_markdown, export_markdown_bundle, export_markdown_from_video_summary, build_auto_payload_from_project
 from app.services.crud_service import get_asset, get_project, get_task, list_export_records
 from app.core.config import EXPORT_DIR
 
@@ -128,5 +128,14 @@ def create_train_export(payload: TrainExportRequest, db: Session = Depends(get_d
     if payload.export_type == "skill":
         return export_skill_markdown(samples, out_dir, task_id, payload.title or 'Skill Package', payload.task_name, db=db, project_id=project_id)
     if payload.export_type == "markdown":
-        return export_markdown_from_video_summary(samples, out_dir, task_id, payload.title or 'Video Markdown Report', payload.task_name, db=db, project_id=project_id)
+        return export_markdown_bundle(
+            samples,
+            out_dir,
+            task_id,
+            payload.title or 'Markdown Bundle',
+            payload.task_name,
+            db=db,
+            project_id=project_id,
+            enhance_with_ollama=payload.markdown_enhance_with_ollama,
+        )
     return {"error": "unsupported export type"}

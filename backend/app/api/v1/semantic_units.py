@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -22,7 +25,7 @@ def _semantic_unit_payload(row: SemanticUnit):
 
 
 @router.get("/semantic-units")
-def list_semantic_units(project_id: str | None = None, db: Session = Depends(get_db)):
+def list_semantic_units(project_id: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(SemanticUnit)
     if project_id:
         query = query.filter(SemanticUnit.project_id == project_id)

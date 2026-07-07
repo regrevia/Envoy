@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -21,7 +24,7 @@ def _serialize_generated_sample(row: GeneratedSample):
 
 
 @router.get("/generated-samples")
-def list_generated_samples(project_id: str | None = None, db: Session = Depends(get_db)):
+def list_generated_samples(project_id: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(GeneratedSample)
     if project_id:
         query = query.filter(GeneratedSample.project_id == project_id)

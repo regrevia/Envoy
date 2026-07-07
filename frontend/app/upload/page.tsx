@@ -1,5 +1,6 @@
 "use client";
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { ApiError, apiJson } from '../../lib/api';
@@ -234,7 +235,7 @@ export default function UploadPage() {
                 生成目标：{outputContext}
               </p>
             </div>
-            <a href="/" style={{ color: '#111827', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回首页创建转换任务</a>
+            <Link href="/" style={{ color: '#111827', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回首页创建转换任务</Link>
           </div>
         </section>
 
@@ -283,9 +284,9 @@ export default function UploadPage() {
             ))}
           </div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
-            <a href="/tasks" style={{ color: '#111827', fontWeight: 700 }}>查看转换任务</a>
-            <a href={`/semantic-units${projectQuery}`} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</a>
-            <a href={`/train-exports${exportQuery}`} style={{ color: '#111827', fontWeight: 700 }}>训练导出</a>
+            <Link href="/tasks" style={{ color: '#111827', fontWeight: 700 }}>查看转换任务</Link>
+            <Link href={`/semantic-units${projectQuery}`} style={{ color: '#111827', fontWeight: 700 }}>查看语义单元</Link>
+            <Link href={`/train-exports${exportQuery}`} style={{ color: '#111827', fontWeight: 700 }}>训练导出</Link>
           </div>
         </section>
 

@@ -45,6 +45,8 @@ class FrontendTextQualityTests(unittest.TestCase):
             "frontend/app/generated-samples/page.tsx": ["生成样本", "样本列表", "刷新"],
             "frontend/app/trace/page.tsx": ["追溯", "查询追溯", "追溯结果"],
             "frontend/app/train-exports/page.tsx": ["训练导出", "导出历史", "开始导出"],
+            "frontend/app/artifacts/[artifact_id]/page.tsx": ["Markdown bundle 产物", "Markdown 目录树", "分片索引"],
+            "frontend/app/train-exports/[record_id]/page.tsx": ["Markdown 目录树", "分片索引", "导出记录详情"],
         }
         offenders = []
 
