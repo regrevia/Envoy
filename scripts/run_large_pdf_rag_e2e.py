@@ -60,15 +60,18 @@ def main():
             ),
         )
         task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+        project_id = project.id
+        asset_id = asset.id
+        task_id = task.id
     finally:
         db.close()
 
-    result = preprocess_job.run({"task_id": task.id, "project_id": project.id, "asset_id": asset.id})
+    result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
 
     db = SessionLocal()
     try:
-        stored_task = get_task(db, task.id)
-        units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset.id).order_by(SemanticUnit.created_at.asc()).all()
+        stored_task = get_task(db, task_id)
+        units = db.query(SemanticUnit).filter(SemanticUnit.asset_id == asset_id).order_by(SemanticUnit.created_at.asc()).all()
         rows = [
             {
                 "record_type": "semantic_unit",
@@ -84,13 +87,25 @@ def main():
             for unit in units
         ]
         bundle_dir = ROOT / "tmp" / "large-pdf-bundle"
-        export_result = export_markdown_bundle(rows, str(bundle_dir), task.id, title=pdf_path.stem, task_name=pdf_path.stem, project_id=project.id)
+        export_result = export_markdown_bundle(rows, str(bundle_dir), task_id, title=pdf_path.stem, task_name=pdf_path.stem, project_id=project_id)
         manifest = json.loads(Path(export_result["paths"]["manifest"]).read_text(encoding="utf-8"))
+        if stored_task.status != "success" or result.get("status") != "preprocessed":
+            raise SystemExit(f"preprocess failed: task={stored_task.status} result={result.get('status')}")
+        if len(units) < 2 or manifest.get("chunk_count", 0) < 2:
+            raise SystemExit(f"acceptance failed: expected multi-page content, got units={len(units)} chunks={manifest.get('chunk_count', 0)}")
         print(json.dumps({
             "task_status": stored_task.status,
             "result_status": result.get("status"),
             "unit_count": len(units),
-            "manifest": manifest["files"],
+            "source_counts": manifest.get("source_counts"),
+            "unit_type_counts": manifest.get("unit_type_counts"),
+            "chunk_count": manifest.get("chunk_count"),
+            "index": manifest["files"].get("index"),
+            "overview": manifest["files"].get("overview"),
+            "manifest": manifest["files"].get("manifest"),
+            "source_count": len(manifest["files"].get("sources") or []),
+            "first_chunk": (manifest["files"].get("chunks") or [None])[0],
+            "last_chunk": (manifest["files"].get("chunks") or [None])[-1],
             "bundle_dir": str(bundle_dir),
         }, ensure_ascii=False, indent=2))
     finally:
