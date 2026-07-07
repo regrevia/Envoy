@@ -8,6 +8,7 @@ from app.core.config import (
     MEDIA_MAX_SEGMENT_COUNT,
     MEDIA_OCR_TIMEOUT_SEC,
     MEDIA_SEGMENT_SECONDS,
+    MEDIA_TARGET_FRAME_RATE,
     MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
 )
 from app.services.ollama_service import get_ollama_config, get_ollama_status, update_ollama_config
@@ -47,6 +48,7 @@ def media_health():
         "max_segment_count": MEDIA_MAX_SEGMENT_COUNT,
         "max_input_seconds": MEDIA_SEGMENT_SECONDS * MEDIA_MAX_SEGMENT_COUNT,
         "frame_interval_seconds": MEDIA_FRAME_INTERVAL_SECONDS,
+        "target_frame_rate": MEDIA_TARGET_FRAME_RATE,
         "max_frame_count": MEDIA_MAX_FRAME_COUNT,
         "frame_extraction_enabled": MEDIA_ENABLE_FRAME_EXTRACTION,
         "ocr_enabled": MEDIA_ENABLE_OCR,

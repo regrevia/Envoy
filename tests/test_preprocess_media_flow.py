@@ -530,6 +530,41 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 db.close()
                 engine.dispose()
 
+    def test_pdf_page_ocr_preserves_word_positions_and_reading_order(self):
+        from app.workers import jobs
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "pdf-ocr"
+            rendered = output_dir / "page_000001-1.png"
+
+            class FakeCompleted:
+                def __init__(self, stdout=""):
+                    self.stdout = stdout
+
+            def fake_run(cmd, **_kwargs):
+                if cmd[0] == "pdfinfo":
+                    return FakeCompleted("Pages: 1\n")
+                if cmd[0] == "pdftoppm":
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    rendered.write_bytes(b"png")
+                    return FakeCompleted("")
+                if cmd[0] == "tesseract" and "tsv" in cmd:
+                    return FakeCompleted(
+                        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+                        "5\t1\t1\t1\t2\t1\t300\t120\t80\t30\t91\tright\n"
+                        "5\t1\t1\t1\t2\t2\t20\t120\t120\t30\t94\tleft\n"
+                        "5\t1\t1\t1\t1\t1\t20\t40\t220\t40\t97\ttop\n"
+                    )
+                raise AssertionError(f"unexpected command: {cmd}")
+
+            with patch("app.workers.jobs.subprocess.run", side_effect=fake_run):
+                results = jobs._extract_pdf_page_texts_via_ocr("demo.pdf", str(output_dir))
+
+            self.assertEqual(results[0]["text"], "top\nleft right")
+            self.assertEqual(results[0]["reading_order"], "top_left")
+            self.assertEqual([item["text"] for item in results[0]["items"]], ["top", "left", "right"])
+            self.assertEqual(results[0]["items"][0]["bbox"], {"x": 20, "y": 40, "width": 220, "height": 40})
+
     def test_preprocess_extracts_docx_text_into_semantic_unit(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-preprocess-docx-text-test.db'}"

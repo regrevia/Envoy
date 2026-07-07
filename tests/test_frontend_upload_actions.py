@@ -197,6 +197,22 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
+    def test_upload_page_sends_video_frame_sampling_options_with_preprocess_request(self):
+        page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
+        text = page.read_text(encoding="utf-8")
+
+        for copy in [
+            "const [videoTargetFrameRate, setVideoTargetFrameRate] = useState('0');",
+            "const [videoFrameIntervalSeconds, setVideoFrameIntervalSeconds] = useState('15');",
+            "const [videoMaxFrameCount, setVideoMaxFrameCount] = useState('240');",
+            "视频抽帧设置",
+            "目标帧率",
+            "video_target_frame_rate: Number(videoTargetFrameRate) || 0",
+            "video_frame_interval_seconds: Number(videoFrameIntervalSeconds) || 15",
+            "video_max_frame_count: Number(videoMaxFrameCount) || 240",
+        ]:
+            self.assertIn(copy, text)
+
     def test_upload_page_preserves_output_context_for_review_pages(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
         text = page.read_text(encoding="utf-8")
