@@ -270,3 +270,91 @@ def test_markdown_chunking_splits_video_and_document_sources_separately():
     assert video_chunks[0]["reference_text"] == "00:00:00 - 00:02:00"
     assert all(chunk["title"] for chunk in chunks)
     assert all(chunk["summary"] for chunk in chunks)
+
+
+def test_video_markdown_bundle_writes_timeline_index_and_clean_chunk_names(tmp_path):
+    rows = [
+        {
+            "record_type": "semantic_unit",
+            "id": "video-001",
+            "project_id": "project-video",
+            "asset_id": "asset-video",
+            "unit_type": "scene",
+            "title": "开场与课程目标",
+            "content": json.dumps(
+                {
+                    "transcript": {"text": "老师介绍本节课会讲组合逻辑、触发器和实验要求。"},
+                    "ocr": [{"text": "数字电路与逻辑设计 第三章"}],
+                    "extraction_status": "partial_success",
+                    "degraded_capabilities": ["partial_transcript"],
+                    "transcription_failed_segments": [{"segment": "seg-002.mp4", "error": "timeout"}],
+                },
+                ensure_ascii=False,
+            ),
+            "labels": {
+                "source": "media_asset",
+                "task_id": "task-video",
+                "source_name": "数字电路课程.mp4",
+                "section_path": ["第 1 段", "开场与课程目标"],
+                "time_range": ["00:00:00", "00:04:30"],
+                "extraction_status": "partial_success",
+                "degraded_capabilities": ["partial_transcript"],
+                "transcription_failed_count": 1,
+            },
+            "confidence": 0.82,
+        },
+        {
+            "record_type": "semantic_unit",
+            "id": "video-002",
+            "project_id": "project-video",
+            "asset_id": "asset-video",
+            "unit_type": "scene",
+            "title": "触发器例题",
+            "content": json.dumps(
+                {
+                    "transcript": {"text": "这里分析 JK 触发器的状态转换表，并说明时钟边沿。"},
+                    "ocr": [{"text": "JK 触发器 状态转换"}],
+                    "extraction_status": "success",
+                },
+                ensure_ascii=False,
+            ),
+            "labels": {
+                "source": "media_asset",
+                "task_id": "task-video",
+                "source_name": "数字电路课程.mp4",
+                "section_path": ["第 2 段", "触发器例题"],
+                "time_range": ["00:04:30", "00:09:00"],
+                "extraction_status": "success",
+            },
+            "confidence": 0.88,
+        },
+    ]
+
+    result = export_markdown_bundle(
+        rows,
+        out_dir=str(tmp_path),
+        task_id="task-video",
+        title="数字电路课程视频",
+        task_name="digital-video",
+        project_id="project-video",
+        enhance_with_ollama=False,
+    )
+
+    manifest = json.loads(Path(result["paths"]["manifest"]).read_text(encoding="utf-8"))
+    index_text = Path(result["paths"]["index"]).read_text(encoding="utf-8")
+    source_text = Path(result["paths"]["sources"][0]).read_text(encoding="utf-8")
+    chunk_paths = [Path(path) for path in result["paths"]["chunks"]]
+    chunk_text = chunk_paths[0].read_text(encoding="utf-8")
+
+    assert "## 视频时间线" in index_text
+    assert "- [00:00:00 - 00:04:30]" in index_text
+    assert "## 视频时间线" in source_text
+    assert "转写失败片段数：1" in source_text
+    assert "引用：00:00:00 - 00:04:30" in chunk_text
+    assert "老师介绍本节课" in chunk_text
+    assert "数字电路与逻辑设计 第三章" in chunk_text
+    assert any(path.name.startswith("001-00-00-00-00-04-30-") for path in chunk_paths)
+    assert manifest["video_source_count"] == 1
+    assert manifest["timeline_index"][0]["reference_text"] == "00:00:00 - 00:04:30"
+    assert manifest["timeline_index"][0]["degraded_capabilities"] == ["partial_transcript"]
+    assert manifest["file_tree"]["sources"][0]["timeline"][1]["title"] == "触发器例题"
