@@ -27,6 +27,7 @@ type Task = {
 const stages = [
   ["download", "下载"],
   ["preprocess", "语音与画面提取"],
+  ["understand", "连续画面理解"],
   ["export", "Markdown 导出"],
 ] as const;
 
@@ -205,7 +206,9 @@ export default function VideoPage() {
             <ol style={{ margin: "20px 0", padding: 0, listStyle: "none", borderTop: "1px solid #d9e0dd" }}>
               {stages.map(([key, label]) => {
                 const done = checkpoints[key]?.status === "success";
-                const current = !done && active && Number(task.progress || 0) < (key === "download" ? 15 : key === "preprocess" ? 72 : 100);
+                const current = !done && active && Number(task.progress || 0) < (
+                  key === "download" ? 15 : key === "preprocess" ? 68 : key === "understand" ? 72 : 100
+                );
                 return <li key={key} style={{ padding: "11px 0", borderBottom: "1px solid #d9e0dd", color: done ? "#18745c" : "#63716c" }}>{done ? "完成" : current ? "进行中" : "等待"} · {label}</li>;
               })}
             </ol>
