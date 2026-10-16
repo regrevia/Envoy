@@ -1356,7 +1356,11 @@ def video_to_markdown_job(self, payload: dict):
             _safe_update(db, task_id, "running", 12, result_summary="download checkpoint reused")
         else:
             _safe_update(db, task_id, "running", 5, result_summary="video download running")
-            download_info = download_video(source_url, VIDEO_DOWNLOAD_DIR / str(task_id))
+            download_info = download_video(
+                source_url,
+                VIDEO_DOWNLOAD_DIR / str(task_id),
+                auth=config.get("auth"),
+            )
             asset = create_asset(
                 db,
                 AssetCreate(
