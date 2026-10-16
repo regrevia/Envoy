@@ -49,9 +49,6 @@ export default function VideoPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
-  const [authMode, setAuthMode] = useState("auto");
-  const [browser, setBrowser] = useState("chrome");
-  const [cookieFile, setCookieFile] = useState<File | null>(null);
   const [task, setTask] = useState<Task | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -116,32 +113,11 @@ export default function VideoPage() {
         setProjects([project]);
         setProjectId(project.id);
       }
-      let created: Task;
-      if (authMode === "cookies_file") {
-        if (!cookieFile) {
-          setMessage("请选择 Netscape 格式的 cookies.txt");
-          return;
-        }
-        const form = new FormData();
-        form.set("project_id", selectedId);
-        form.set("source_url", url);
-        form.set("cookies_file", cookieFile);
-        created = await apiJson<Task>("/api/v1/tasks/video-to-markdown/upload", {
-          method: "POST",
-          body: form,
-        });
-      } else {
-        const auth = authMode === "auto"
-          ? { mode: "auto" }
-          : authMode === "browser"
-            ? { mode: "browser", browser }
-            : undefined;
-        created = await apiJson<Task>("/api/v1/tasks/video-to-markdown", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ project_id: selectedId, source_url: url, auth }),
-        });
-      }
+      const created = await apiJson<Task>("/api/v1/tasks/video-to-markdown", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: selectedId, source_url: url, auth: { mode: "auto" } }),
+      });
       setTask(created);
     } catch (error) {
       setMessage(errorText(error));
@@ -206,32 +182,9 @@ export default function VideoPage() {
           <p style={{ margin: "11px 0 0", color: "#63716c", fontSize: 13, lineHeight: 1.55 }}>
             B站或抖音需要登录时，选择同机浏览器登录态，或上传 Netscape 格式的 cookies.txt。Cookie 只用于下载，不会写进 Markdown。
           </p>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 240px) minmax(180px, 1fr)", gap: 10, marginTop: 14, alignItems: "center" }}>
-            <label style={{ color: "#45534f", fontSize: 14 }}>
-              访问方式
-              <select value={authMode} onChange={(event) => { setAuthMode(event.target.value); setCookieFile(null); }} style={{ display: "block", width: "100%", minHeight: 36, marginTop: 6, padding: "0 8px", border: "1px solid #c4cfcb", borderRadius: 4, background: "#fff", color: "#17211f" }}>
-                <option value="auto">自动读取公开或本机登录态</option>
-                <option value="public">仅公开访问</option>
-                <option value="browser">读取本机浏览器登录态</option>
-                <option value="cookies_file">上传 cookies.txt</option>
-              </select>
-            </label>
-            {authMode === "browser" ? (
-              <label style={{ color: "#45534f", fontSize: 14 }}>
-                浏览器
-                <select value={browser} onChange={(event) => setBrowser(event.target.value)} style={{ display: "block", width: "100%", minHeight: 36, marginTop: 6, padding: "0 8px", border: "1px solid #c4cfcb", borderRadius: 4, background: "#fff", color: "#17211f" }}>
-                  {["chrome", "edge", "firefox", "safari", "brave", "chromium"].map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-              </label>
-            ) : authMode === "cookies_file" ? (
-              <label style={{ color: "#45534f", fontSize: 14 }}>
-                Cookie 文件
-                <input type="file" accept=".txt,text/plain" onChange={(event) => setCookieFile(event.target.files?.[0] || null)} style={{ display: "block", width: "100%", marginTop: 9, fontSize: 13 }} />
-              </label>
-            ) : (
-              <span style={{ color: "#63716c", fontSize: 13 }}>先尝试公开访问，失败后自动尝试本机浏览器登录态</span>
-            )}
-          </div>
+          <p style={{ margin: "12px 0 0", color: "#63716c", fontSize: 13 }}>
+            Envoy 会先尝试公开访问，失败后自动尝试本机浏览器登录态。请确保运行 Envoy 的电脑上已登录 B 站或抖音。
+          </p>
         </form>
 
         {message ? <div role="alert" style={{ padding: "14px 0", color: "#a3342c", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message}</div> : null}

@@ -83,28 +83,6 @@ def test_download_video_can_read_browser_cookies(tmp_path):
     assert first_command[first_command.index("--cookies-from-browser") + 1] == "chrome"
 
 
-def test_download_video_can_read_netscape_cookie_file(tmp_path):
-    from app.services.video_source_service import download_video
-
-    cookie_path = tmp_path / "cookies.txt"
-    cookie_path.write_text("# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t0\tname\tvalue\n", encoding="utf-8")
-    output_file = tmp_path / "video.mp4"
-    output_file.write_bytes(b"video")
-    metadata = subprocess.CompletedProcess([], 0, '{"id":"abc123","title":"Demo","duration":12.5}\n', "")
-    downloaded = subprocess.CompletedProcess([], 0, f"{output_file}\n", "")
-
-    with patch("app.services.video_source_service.subprocess.run", side_effect=[metadata, downloaded]) as run:
-        download_video(
-            "https://example.com/watch?v=abc123",
-            tmp_path,
-            auth={"mode": "cookies_file", "path": str(cookie_path)},
-        )
-
-    first_command = run.call_args_list[0].args[0]
-    assert "--cookies" in first_command
-    assert first_command[first_command.index("--cookies") + 1] == str(cookie_path.resolve())
-
-
 def test_download_video_auto_falls_back_from_public_to_browser_cookies(tmp_path):
     from app.services.video_source_service import download_video
 

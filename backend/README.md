@@ -26,8 +26,6 @@ python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 
 启动后端和前端后，打开前端的 `/video` 页面，粘贴一个视频 URL。默认“自动读取公开或本机登录态”会先尝试公开访问，再尝试 Chrome、Edge、Firefox、Safari 等本机浏览器的登录态；用户不需要手工复制 Cookie。后端必须和已登录浏览器运行在同一台机器、同一用户下。
 
-如果后端在远程服务器上，选择“上传 cookies.txt”。文件必须是 Netscape 格式；Envoy 会立即加密保存，只在 yt-dlp 下载时短暂解密，SQLite 任务记录只保存随机凭据 ID。Cookie 不会写入 Markdown、提示词或模型请求。生产环境建议设置 `ENVOY_CREDENTIAL_VAULT_KEY`，不要依赖自动生成的本地密钥文件。
-
 当前 URL 下载由 `yt-dlp` 负责，支持其当前版本能够解析的 B 站、抖音及其他站点链接；仍然需要登录、地区限制或被平台拦截的链接会在任务中保留 yt-dlp 原始错误。
 
 命令行验收：
@@ -76,7 +74,6 @@ brew install ffmpeg
 - 本地 100MB 级 PDF 验收脚本：`scripts/run_large_pdf_rag_e2e.py`
 - `OLLAMA_BASE_URL` / `OLLAMA_MODEL` / `OLLAMA_MAX_PROMPT_CHARS` 本地 Ollama 辅助生成默认配置
 - `OLLAMA_RUNTIME_CONFIG_PATH` (default: `tmp/config/ollama_runtime.json`) 首页保存的 Ollama 运行时配置文件，服务重启后会优先读取
-- `ENVOY_CREDENTIAL_VAULT_KEY` / `ENVOY_CREDENTIAL_VAULT_DIR` / `ENVOY_CREDENTIAL_KEY_PATH` 视频站点登录凭据的本地加密存储配置
 
 ## Current Business Coverage
 - 项目、素材、任务、产物、语义单元、追溯、训练导出均已具备基础接口

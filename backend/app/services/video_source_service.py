@@ -5,11 +5,8 @@ import re
 import shutil
 import subprocess
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
-
-from app.services.credential_vault import materialize_cookie_file
 
 class VideoSourceError(RuntimeError):
     pass
@@ -38,28 +35,13 @@ def normalize_video_auth(auth: dict | None) -> dict:
                 f"Unsupported browser for cookies; use one of: {', '.join(sorted(SUPPORTED_BROWSERS))}"
             )
         return {"mode": "browser", "browser": browser}
-    if mode == "cookies_file":
-        raw_path = str(auth.get("path") or "").strip()
-        path = Path(raw_path).expanduser().resolve()
-        if not path.is_file():
-            raise VideoSourceError(f"Cookie file not found: {path}")
-        if path.stat().st_size > 5 * 1024 * 1024:
-            raise VideoSourceError("Cookie file is larger than 5 MiB")
-        return {"mode": "cookies_file", "path": str(path)}
-    if mode == "cookies_vault":
-        credential_id = str(auth.get("credential_id") or "").strip()
-        if not credential_id or Path(credential_id).name != credential_id:
-            raise VideoSourceError("Invalid credential id")
-        return {"mode": "cookies_vault", "credential_id": credential_id}
-    raise VideoSourceError("Video auth mode must be public, browser, or cookies_file")
+    raise VideoSourceError("Video auth mode must be auto, public, or browser")
 
 
 def _auth_args(auth: dict | None) -> list[str]:
     normalized = normalize_video_auth(auth)
     if normalized.get("mode") == "browser":
         return ["--cookies-from-browser", normalized["browser"]]
-    if normalized.get("mode") == "cookies_file":
-        return ["--cookies", normalized["path"]]
     return []
 
 
@@ -71,16 +53,6 @@ def _auth_candidates(auth: dict | None) -> list[dict]:
     if mode == "browser_auto":
         return [{"mode": "browser", "browser": browser} for browser in BROWSER_TRY_ORDER]
     return [normalized]
-
-
-@contextmanager
-def _materialized_auth(auth: dict | None):
-    normalized = normalize_video_auth(auth)
-    if normalized.get("mode") != "cookies_vault":
-        yield normalized
-        return
-    with materialize_cookie_file(normalized["credential_id"]) as path:
-        yield {"mode": "cookies_file", "path": path}
 
 
 def _ytdlp_command() -> list[str]:
@@ -122,50 +94,49 @@ def _run_ytdlp(args: list[str], auth: dict | None = None) -> subprocess.Complete
 
 def download_video(source_url: str, output_dir: str | Path, auth: dict | None = None) -> dict:
     url = validate_video_url(source_url)
-    with _materialized_auth(auth) as resolved_auth:
-        errors = []
-        for candidate in _auth_candidates(resolved_auth):
+    errors = []
+    for candidate in _auth_candidates(auth):
+        try:
+            root = Path(output_dir).resolve()
+            root.mkdir(parents=True, exist_ok=True)
+            info_result = _run_ytdlp(["--dump-single-json", "--skip-download", "--no-playlist", url], candidate)
             try:
-                root = Path(output_dir).resolve()
-                root.mkdir(parents=True, exist_ok=True)
-                info_result = _run_ytdlp(["--dump-single-json", "--skip-download", "--no-playlist", url], candidate)
-                try:
-                    info = json.loads(info_result.stdout)
-                except (TypeError, json.JSONDecodeError) as exc:
-                    raise VideoSourceError(f"yt-dlp returned invalid metadata JSON: {info_result.stdout}") from exc
+                info = json.loads(info_result.stdout)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise VideoSourceError(f"yt-dlp returned invalid metadata JSON: {info_result.stdout}") from exc
 
-                video_id = re.sub(r"[^A-Za-z0-9._-]+", "_", str(info.get("id") or "video")).strip("._") or "video"
-                output_template = str(root / f"{video_id}.%(ext)s")
-                download_result = _run_ytdlp([
-                    "--no-playlist",
-                    "--newline",
-                    "--format", "bestvideo*+bestaudio/best",
-                    "--merge-output-format", "mp4",
-                    "--output", output_template,
-                    "--print", "after_move:filepath",
-                    url,
-                ], candidate)
-                downloaded_path = next(
-                    (Path(line.strip()).resolve() for line in reversed(download_result.stdout.splitlines()) if line.strip()),
-                    None,
+            video_id = re.sub(r"[^A-Za-z0-9._-]+", "_", str(info.get("id") or "video")).strip("._") or "video"
+            output_template = str(root / f"{video_id}.%(ext)s")
+            download_result = _run_ytdlp([
+                "--no-playlist",
+                "--newline",
+                "--format", "bestvideo*+bestaudio/best",
+                "--merge-output-format", "mp4",
+                "--output", output_template,
+                "--print", "after_move:filepath",
+                url,
+            ], candidate)
+            downloaded_path = next(
+                (Path(line.strip()).resolve() for line in reversed(download_result.stdout.splitlines()) if line.strip()),
+                None,
+            )
+            if downloaded_path is None or not downloaded_path.is_file():
+                candidates = sorted(root.glob(f"{video_id}.*"))
+                downloaded_path = candidates[-1].resolve() if candidates else None
+            if downloaded_path is None or not downloaded_path.is_file():
+                raise VideoSourceError(
+                    f"yt-dlp completed without a downloaded file; stdout: {download_result.stdout.strip()}"
                 )
-                if downloaded_path is None or not downloaded_path.is_file():
-                    candidates = sorted(root.glob(f"{video_id}.*"))
-                    downloaded_path = candidates[-1].resolve() if candidates else None
-                if downloaded_path is None or not downloaded_path.is_file():
-                    raise VideoSourceError(
-                        f"yt-dlp completed without a downloaded file; stdout: {download_result.stdout.strip()}"
-                    )
-                return {
-                    "path": str(downloaded_path),
-                    "video_id": str(info.get("id") or video_id),
-                    "title": str(info.get("title") or info.get("fulltitle") or video_id),
-                    "duration_sec": float(info["duration"]) if info.get("duration") is not None else None,
-                    "extractor": str(info.get("extractor_key") or info.get("extractor") or "unknown"),
-                    "webpage_url": str(info.get("webpage_url") or url),
-                    "thumbnail": info.get("thumbnail"),
-                    "description": str(info.get("description") or ""),
-                }
-            except VideoSourceError as exc:
-                errors.append(str(exc))
-        raise VideoSourceError("\n\n".join(errors[-3:]) or "yt-dlp could not download the video")
+            return {
+                "path": str(downloaded_path),
+                "video_id": str(info.get("id") or video_id),
+                "title": str(info.get("title") or info.get("fulltitle") or video_id),
+                "duration_sec": float(info["duration"]) if info.get("duration") is not None else None,
+                "extractor": str(info.get("extractor_key") or info.get("extractor") or "unknown"),
+                "webpage_url": str(info.get("webpage_url") or url),
+                "thumbnail": info.get("thumbnail"),
+                "description": str(info.get("description") or ""),
+            }
+        except VideoSourceError as exc:
+            errors.append(str(exc))
+    raise VideoSourceError("\n\n".join(errors[-3:]) or "yt-dlp could not download the video")
