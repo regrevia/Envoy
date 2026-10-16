@@ -33,6 +33,7 @@ from app.schemas.artifact import ArtifactCreate
 from app.schemas.asset import AssetCreate
 from app.schemas.task import TaskCreate
 from app.services.video_source_service import download_video
+from app.services.vision_service import understand_window, vision_status
 
 
 def _safe_update(db, task_id, status, progress=None, result_summary=None, error_message=None):
@@ -346,6 +347,64 @@ def _cleanup_media_task_temp_dirs(temp_dirs: list[Path]):
         if resolved == tmp_root or tmp_root not in resolved.parents:
             continue
         shutil.rmtree(resolved, ignore_errors=True)
+
+
+def _read_video_understanding_inputs(db, asset_id: str | None):
+    units = (
+        db.query(SemanticUnit)
+        .filter(SemanticUnit.asset_id == asset_id)
+        .order_by(SemanticUnit.created_at.asc())
+        .all()
+    )
+    frames = []
+    transcript_parts = []
+    for unit in units:
+        labels = unit.labels if isinstance(unit.labels, dict) else {}
+        if labels.get("source") == "media_asset":
+            try:
+                payload = json.loads(unit.content or "")
+            except (TypeError, ValueError):
+                payload = {}
+            if isinstance(payload, dict):
+                frames.extend(str(path) for path in payload.get("frames", []) if str(path).strip())
+                transcript = payload.get("transcript")
+                if isinstance(transcript, dict) and str(transcript.get("text") or "").strip():
+                    transcript_parts.append(str(transcript["text"]).strip())
+        elif labels.get("source") == "media_transcript":
+            transcript_parts.append(str(unit.content or "").strip())
+    return list(dict.fromkeys(frames)), "\n".join(dict.fromkeys(part for part in transcript_parts if part))
+
+
+def _video_understanding_unit(db, project_id: str, asset_id: str, task_id: str, result: dict):
+    content = json.dumps({
+        "summary": result.get("text") or "",
+        "model": result.get("model"),
+        "frame_count": result.get("frame_count", 0),
+        "source": "continuous_frame_window",
+        "status": result.get("status"),
+    }, ensure_ascii=False)
+    labels = {
+        "stage": "understand",
+        "source": "video_understanding",
+        "task_id": task_id,
+        "model": result.get("model"),
+        "status": result.get("status"),
+    }
+    unit = SemanticUnit(
+        id=str(uuid4()),
+        project_id=project_id,
+        asset_id=asset_id,
+        segment_id=None,
+        unit_type="scene",
+        title="连续画面理解",
+        content=content,
+        labels=labels,
+        confidence=0.78 if result.get("status") == "success" else 0.35,
+    )
+    db.add(unit)
+    db.commit()
+    db.refresh(unit)
+    return unit
 
 
 def _build_file_semantic_payload(asset: Asset | None, source_path: str, source: str):
@@ -1419,6 +1478,7 @@ def video_to_markdown_job(self, payload: dict):
                 "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 5),
                 "video_target_frame_rate": config.get("video_target_frame_rate", 0),
                 "video_max_frame_count": config.get("video_max_frame_count", 480),
+                "preserve_media_temp_dirs": True,
             }
             child_task = create_task(
                 db,
@@ -1454,6 +1514,41 @@ def video_to_markdown_job(self, payload: dict):
         else:
             _safe_update(db, task_id, "running", 65, result_summary="preprocess checkpoint reused")
 
+        understand_checkpoint = read_video_task_checkpoint(config, "understand")
+        if not understand_checkpoint or understand_checkpoint.get("status") not in {"success", "skipped"}:
+            _safe_update(db, task_id, "running", 68, result_summary="visual understanding running")
+            frame_paths, transcript = _read_video_understanding_inputs(db, asset_id)
+            if not frame_paths:
+                understanding = {"status": "skipped", "text": "", "error": "no frames available"}
+            elif not vision_status().get("enabled"):
+                understanding = {"status": "skipped", "text": "", "error": "vision provider is not configured"}
+            else:
+                understanding = understand_window(
+                    "识别这段游戏/教程视频画面，提取操作步骤、界面变化、物品获取、战斗机制、表格或清单中的具体信息。",
+                    transcript,
+                    frame_paths,
+                )
+            if understanding.get("status") == "success":
+                _video_understanding_unit(db, project_id, asset_id, task_id, understanding)
+            elif understanding.get("status") == "failed":
+                _safe_update(
+                    db,
+                    task_id,
+                    "running",
+                    70,
+                    result_summary=f"visual understanding skipped: {understanding.get('error')}",
+                )
+            merge_video_task_checkpoint(config, "understand", {
+                "status": understanding.get("status") or "skipped",
+                "model": understanding.get("model"),
+                "frame_count": understanding.get("frame_count", 0),
+                "error": understanding.get("error"),
+            })
+            task.input_config = config
+            db.commit()
+        else:
+            _safe_update(db, task_id, "running", 70, result_summary="visual understanding checkpoint reused")
+
         export_checkpoint = read_video_task_checkpoint(config, "export")
         export_path = str(export_checkpoint.get("path") or "") if export_checkpoint else ""
         if not export_path or not Path(export_path).is_file():
@@ -1468,7 +1563,7 @@ def video_to_markdown_job(self, payload: dict):
                 unit
                 for unit in units
                 if isinstance(unit.labels, dict)
-                and unit.labels.get("stage") == "preprocess"
+                and unit.labels.get("stage") in {"preprocess", "understand"}
                 and unit.labels.get("checkpoint") != "segment_transcript"
             ])
             if not rows:
@@ -1507,6 +1602,12 @@ def video_to_markdown_job(self, payload: dict):
             _safe_update(db, task_id, "running", 90, result_summary="Markdown checkpoint reused")
 
         _safe_update(db, task_id, "success", 100, result_summary=f"video Markdown ready: {export_path}")
+        if config.get("preprocess_config", {}).get("preserve_media_temp_dirs"):
+            _cleanup_media_task_temp_dirs([
+                SEGMENT_DIR / f"task-{child_task_id}",
+                FRAME_DIR / f"task-{child_task_id}",
+                AUDIO_DIR / f"task-{child_task_id}",
+            ])
         return {
             "status": "video_markdown_ready",
             "path": export_path,
@@ -2099,7 +2200,8 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, payload.get("task_id"), "failed", 100, error_message=str(exc))
         raise self.retry(exc=exc, countdown=2)
     finally:
-        _cleanup_media_task_temp_dirs(media_temp_dirs)
+        if not (isinstance(payload.get("input_config"), dict) and payload["input_config"].get("preserve_media_temp_dirs")):
+            _cleanup_media_task_temp_dirs(media_temp_dirs)
         db.close()
 
 

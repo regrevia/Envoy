@@ -12,6 +12,7 @@ from app.core.config import (
     MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
 )
 from app.services.ollama_service import get_ollama_config, get_ollama_status, update_ollama_config
+from app.services.vision_service import vision_status
 
 router = APIRouter()
 
@@ -55,3 +56,8 @@ def media_health():
         "transcription_timeout_sec": MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
         "ocr_timeout_sec": MEDIA_OCR_TIMEOUT_SEC,
     }
+
+
+@router.get('/health/vision')
+def vision_health():
+    return vision_status()

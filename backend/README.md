@@ -28,6 +28,8 @@ python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 
 当前 URL 下载由 `yt-dlp` 负责，支持其当前版本能够解析的 B 站、抖音及其他站点链接；仍然需要登录、地区限制或被平台拦截的链接会在任务中保留 yt-dlp 原始错误。
 
+可选的连续画面理解使用 OpenAI Chat Completions 或 Anthropic Messages 兼容接口。配置 `HERMES_VISION_BASE_URL`、`HERMES_VISION_TOKEN`、`HERMES_VISION_MODEL=deepseek-v4.1flash`，并可用 `HERMES_VISION_PROTOCOL=chat|messages` 选择协议。未配置时仍会完成下载、转写、OCR 和 Markdown 导出。
+
 命令行验收：
 
 ```bash
