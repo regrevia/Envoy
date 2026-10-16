@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC
+from app.core.config import FFMPEG_BIN, MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC, MEDIA_WHISPER_MODEL
 
 _WHISPER_MODELS = {}
 
@@ -90,7 +90,7 @@ def split_video(video_path: str, output_dir: str, should_cancel: Callable[[], bo
     if video_path:
         max_input_seconds = max(int(MEDIA_SEGMENT_SECONDS or 1), 1) * max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
         cmd = [
-            "ffmpeg",
+            FFMPEG_BIN,
             "-y",
             "-i",
             video_path,
@@ -121,7 +121,7 @@ def split_audio(audio_path: str, output_dir: str, should_cancel: Callable[[], bo
     if audio_path:
         max_input_seconds = max(int(MEDIA_SEGMENT_SECONDS or 1), 1) * max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
         cmd = [
-            "ffmpeg",
+            FFMPEG_BIN,
             "-y",
             "-i",
             audio_path,
@@ -176,7 +176,7 @@ def extract_frames(
     if video_path:
         frame_count = _positive_int(max_frame_count, MEDIA_MAX_FRAME_COUNT)
         cmd = [
-            "ffmpeg",
+            FFMPEG_BIN,
             "-y",
             "-i",
             video_path,
@@ -196,7 +196,7 @@ def extract_frames(
 
 def _run_whisper_transcription(audio_path: str):
     import whisper
-    model_name = "base"
+    model_name = MEDIA_WHISPER_MODEL
     model = _WHISPER_MODELS.get(model_name)
     if model is None:
         model = whisper.load_model(model_name)
@@ -246,8 +246,15 @@ def _empty_ocr_results(frame_paths: list[str]):
     return [{"frame": p, "text": "", "confidence": 0.0} for p in frame_paths]
 
 
+def _sequence_from_points(points):
+    if hasattr(points, "tolist"):
+        points = points.tolist()
+    return points
+
+
 def _bbox_from_points(points):
-    if not isinstance(points, list) or not points:
+    points = _sequence_from_points(points)
+    if not isinstance(points, (list, tuple)) or not points:
         return None
     xs = []
     ys = []
@@ -265,6 +272,78 @@ def _bbox_from_points(points):
     right = max(xs)
     bottom = max(ys)
     return {"x": round(left), "y": round(top), "width": round(right - left), "height": round(bottom - top)}
+
+
+def _bbox_from_box(box):
+    box = _sequence_from_points(box)
+    if not isinstance(box, (list, tuple)) or len(box) < 4:
+        return None
+    try:
+        left = float(box[0])
+        top = float(box[1])
+        right = float(box[2])
+        bottom = float(box[3])
+    except (TypeError, ValueError):
+        return None
+    return {"x": round(left), "y": round(top), "width": round(right - left), "height": round(bottom - top)}
+
+
+def _ocr_mapping_from_result(result):
+    if isinstance(result, dict):
+        return result
+    json_value = getattr(result, "json", None)
+    if callable(json_value):
+        try:
+            json_value = json_value()
+        except Exception:
+            json_value = None
+    if isinstance(json_value, dict):
+        return json_value.get("res") if isinstance(json_value.get("res"), dict) else json_value
+    return None
+
+
+def _normalize_paddle_predict_output(output):
+    normalized = []
+    if isinstance(output, list):
+        for item in output:
+            normalized.extend(_normalize_paddle_predict_output(item))
+        return normalized
+
+    mapping = _ocr_mapping_from_result(output)
+    if not mapping:
+        return normalized
+
+    texts = mapping.get("rec_texts")
+    if not isinstance(texts, list):
+        return normalized
+    scores = mapping.get("rec_scores") if isinstance(mapping.get("rec_scores"), list) else []
+    polygons = mapping.get("rec_polys") if isinstance(mapping.get("rec_polys"), list) else mapping.get("dt_polys")
+    if not isinstance(polygons, list):
+        polygons = []
+    boxes = mapping.get("rec_boxes")
+    boxes = _sequence_from_points(boxes)
+    if not isinstance(boxes, list):
+        boxes = []
+
+    for index, text_value in enumerate(texts):
+        text = str(text_value or "").strip()
+        if not text:
+            continue
+        try:
+            confidence = float(scores[index])
+        except (TypeError, ValueError, IndexError):
+            confidence = 0.0
+        bbox = None
+        if index < len(polygons):
+            bbox = _bbox_from_points(polygons[index])
+        if bbox is None and index < len(boxes):
+            bbox = _bbox_from_box(boxes[index])
+        normalized.append({
+            "text": text,
+            "confidence": confidence,
+            "bbox": bbox or {"x": 0, "y": 0, "width": 0, "height": 0},
+        })
+    return sorted(normalized, key=_ocr_sort_key)
 
 
 def _flatten_paddle_ocr_output(output):
@@ -321,7 +400,7 @@ def _join_ocr_items_by_lines(items: list[dict]):
 
 
 def normalize_ocr_items(raw_items):
-    normalized = []
+    normalized = _normalize_paddle_predict_output(raw_items)
     for raw in _flatten_paddle_ocr_output(raw_items):
         if not isinstance(raw, list) or len(raw) < 2:
             continue
@@ -365,7 +444,12 @@ def _run_ocr_worker_logic(frame_paths: list[str]):
         ocr = PaddleOCR(use_angle_cls=True, lang="ch")
         for path in frame_paths:
             try:
-                out = ocr.ocr(path, cls=True)
+                try:
+                    out = ocr.ocr(path, cls=True)
+                except TypeError:
+                    if not hasattr(ocr, "predict"):
+                        raise
+                    out = ocr.predict(path)
                 items = normalize_ocr_items(out)
                 text = _join_ocr_items_by_lines(items)
                 confidence_values = [float(item.get("confidence") or 0.0) for item in items]

@@ -39,6 +39,7 @@ type MediaStatus = {
 };
 
 const outputTypes = [
+  { id: 'delivery', label: '商业交付包', detail: '把可读文档、RAG 语料、训练种子和 agent 导入清单打包为统一交付目录。' },
   { id: 'markdown', label: '知识库文档', detail: '把长内容整理成总览文档和分片文档，适合直接交付或导入知识库。' },
   { id: 'skill', label: '可复用流程包', detail: '沉淀操作步骤、检查清单和执行说明，方便团队复用。' },
   { id: 'rag', label: '检索语料包', detail: '生成可检索、可追溯的内容片段，方便问答工具引用来源。' },
@@ -114,7 +115,7 @@ export default function HomePage() {
   const [selectedAssetType, setSelectedAssetType] = useState('video');
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState('先创建或选择一个转换任务');
-  const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'rag']);
+  const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['delivery', 'markdown', 'rag']);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaConfig, setOllamaConfig] = useState({
     base_url: 'http://127.0.0.1:11434',
@@ -182,7 +183,7 @@ export default function HomePage() {
     [projects, selectedProjectId],
   );
 
-  const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));
+  const materialOutputs = selectedOutputs.filter((item) => ['delivery', 'markdown', 'skill', 'rag'].includes(item));
   const datasetOutputs = selectedOutputs.includes('dataset') ? ['sft'] : [];
   const exportOutputs = [...materialOutputs, ...datasetOutputs];
   const hasExportableOutput = exportOutputs.length > 0;
@@ -319,7 +320,10 @@ export default function HomePage() {
                 <div style={{ color: '#7a7a7a', fontSize: 13 }}>1. 创建任务</div>
                 <h2 style={{ margin: '8px 0 0', fontSize: 22 }}>先定义本次转换目标</h2>
               </div>
-              <Link href="/projects" style={{ ...buttonStyle, textDecoration: 'none' }}>项目管理</Link>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Link href="/video" style={{ ...buttonStyle, background: '#0066cc', color: '#ffffff', textDecoration: 'none' }}>粘贴视频链接转 Markdown</Link>
+                <Link href="/projects" style={{ ...buttonStyle, textDecoration: 'none' }}>项目管理</Link>
+              </div>
             </div>
             <p style={{ margin: '10px 0 0', color: '#4b5563', lineHeight: 1.7 }}>
               每个任务承载一批素材和最终交付物，后续上传、处理、审查和导出都会围绕这个任务推进。

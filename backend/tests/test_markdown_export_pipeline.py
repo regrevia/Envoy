@@ -2,7 +2,177 @@ import json
 from pathlib import Path
 
 from app.services import train_export_service
-from app.services.train_export_service import build_markdown_chunks, export_markdown_bundle
+from app.services.train_export_service import build_markdown_chunks, export_delivery_package, export_markdown_bundle
+
+
+def test_delivery_package_writes_importable_agent_and_knowledge_base_indexes(tmp_path):
+    rows = [
+        {
+            "record_type": "semantic_unit",
+            "id": "video-001",
+            "project_id": "project-delivery",
+            "asset_id": "asset-video",
+            "unit_type": "scene",
+            "title": "开场与课程目标",
+            "content": json.dumps(
+                {
+                    "transcript": {"text": "老师介绍本节课会讲组合逻辑、触发器和实验要求。"},
+                    "ocr": [{"text": "数字电路与逻辑设计 第三章"}],
+                    "extraction_status": "partial_success",
+                    "degraded_capabilities": ["partial_transcript"],
+                    "transcription_failed_segments": [{"segment": "seg-002.mp4", "error": "timeout"}],
+                },
+                ensure_ascii=False,
+            ),
+            "labels": {
+                "source": "media_asset",
+                "task_id": "task-delivery",
+                "source_name": "数字电路课程.mp4",
+                "section_path": ["第 1 段", "开场与课程目标"],
+                "time_range": ["00:00:00", "00:04:30"],
+                "extraction_status": "partial_success",
+                "degraded_capabilities": ["partial_transcript"],
+                "transcription_failed_count": 1,
+            },
+            "confidence": 0.82,
+        },
+        {
+            "record_type": "semantic_unit",
+            "id": "doc-001",
+            "project_id": "project-delivery",
+            "asset_id": "asset-doc",
+            "unit_type": "document",
+            "title": "实验说明",
+            "content": "# 实验说明\n\n## 操作步骤\n\n连接芯片并记录状态转换。",
+            "labels": {
+                "source": "document_text",
+                "task_id": "task-delivery",
+                "source_name": "实验指导书.pdf",
+                "section_path": ["实验说明", "操作步骤"],
+                "page_range": [4, 6],
+            },
+            "confidence": 0.9,
+        },
+    ]
+
+    result = export_delivery_package(
+        rows,
+        out_dir=str(tmp_path),
+        task_id="task-delivery",
+        title="数字电路课程交付包",
+        task_name="digital-delivery",
+        project_id="project-delivery",
+    )
+
+    root = Path(result["root"])
+    manifest = json.loads(Path(result["paths"]["manifest"]).read_text(encoding="utf-8"))
+    import_manifest = json.loads(Path(result["paths"]["import_manifest"]).read_text(encoding="utf-8"))
+    chunk_index = json.loads(Path(result["paths"]["chunk_index"]).read_text(encoding="utf-8"))
+    source_index = json.loads(Path(result["paths"]["source_index"]).read_text(encoding="utf-8"))
+    quality_report = json.loads(Path(result["paths"]["quality_report"]).read_text(encoding="utf-8"))
+
+    assert manifest["schema_version"] == "envoy.delivery.v1"
+    assert manifest["directories"] == {
+        "readable": "readable",
+        "knowledge_base": "knowledge_base",
+        "training": "training",
+        "agent": "agent",
+        "indexes": "indexes",
+    }
+    assert Path(root / "README.md").is_file()
+    assert Path(root / "readable" / "index.md").is_file()
+    assert Path(root / "knowledge_base" / "rag_corpus.jsonl").is_file()
+    assert Path(root / "training" / "instruction_train.jsonl").is_file()
+    assert Path(root / "agent" / "skill.md").is_file()
+    assert import_manifest["schema_version"] == "envoy.agent.import.v1"
+    assert import_manifest["compatible_targets"] == [
+        "generic_rag_jsonl",
+        "markdown_knowledge_base",
+        "agent_skill_context",
+        "instruction_tuning_seed",
+    ]
+    target_profiles = import_manifest["target_profiles"]
+    assert target_profiles["generic_rag_jsonl"]["primary_file"] == "knowledge_base/rag_corpus.jsonl"
+    assert target_profiles["generic_rag_jsonl"]["required_fields"] == ["doc_id", "title", "text", "metadata"]
+    assert target_profiles["markdown_knowledge_base"]["file_globs"] == ["readable/index.md", "readable/sources/*.md", "knowledge_base/chunks/*.md"]
+    assert target_profiles["agent_skill_context"]["primary_file"] == "agent/skill.md"
+    assert target_profiles["instruction_tuning_seed"]["primary_file"] == "training/instruction_train.jsonl"
+    assert target_profiles["instruction_tuning_seed"]["required_fields"] == ["instruction", "input", "output"]
+    assert import_manifest["recommended_import_order"][0]["path"] == "knowledge_base/rag_corpus.jsonl"
+    assert import_manifest["recommended_import_order"][0]["use"] == "rag_knowledge_base"
+    assert import_manifest["recommended_import_order"][1]["path"] == "readable/index.md"
+    assert chunk_index["chunk_count"] >= 2
+    assert any(item["reference_text"] == "00:00:00 - 00:04:30" for item in chunk_index["chunks"])
+    assert source_index["source_count"] == 2
+    assert quality_report["partial_chunk_count"] == 1
+    assert quality_report["failure_breakdown"]["transcription_failed_segments"] == 1
+    assert result["paths"]["rag_corpus"].endswith("knowledge_base/rag_corpus.jsonl")
+
+
+def test_delivery_package_avoids_duplicate_media_summary_when_transcript_exists(tmp_path):
+    rows = [
+        {
+            "record_type": "semantic_unit",
+            "id": "transcript-001",
+            "project_id": "project-video",
+            "asset_id": "asset-video",
+            "unit_type": "transcript",
+            "title": "media transcript",
+            "content": "Envoy delivery package converts long videos into retrieval ready chunks.",
+            "labels": {
+                "source": "media_transcript",
+                "source_name": "media transcript",
+                "task_id": "task-video",
+            },
+        },
+        {
+            "record_type": "semantic_unit",
+            "id": "summary-001",
+            "project_id": "project-video",
+            "asset_id": "asset-video",
+            "unit_type": "scene",
+            "title": "preprocess summary",
+            "content": json.dumps(
+                {
+                    "transcript": {"text": "Envoy delivery package converts long videos into retrieval ready chunks."},
+                    "ocr": [],
+                    "extraction_status": "partial_success",
+                    "degraded_capabilities": ["ocr_unavailable"],
+                },
+                ensure_ascii=False,
+            ),
+            "labels": {
+                "source": "media_asset",
+                "source_name": "preprocess summary",
+                "task_id": "task-video",
+                "extraction_status": "partial_success",
+                "degraded_capabilities": ["ocr_unavailable"],
+            },
+        },
+    ]
+
+    result = export_delivery_package(
+        rows,
+        out_dir=str(tmp_path),
+        task_id="task-video",
+        title="视频交付包",
+        task_name="video-delivery",
+        project_id="project-video",
+    )
+
+    rag_rows = [
+        json.loads(line)
+        for line in Path(result["paths"]["rag_corpus"]).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    chunk_index = json.loads(Path(result["paths"]["chunk_index"]).read_text(encoding="utf-8"))
+    quality_report = json.loads(Path(result["paths"]["quality_report"]).read_text(encoding="utf-8"))
+
+    assert [row["source"] for row in rag_rows] == ["media_transcript"]
+    assert chunk_index["chunk_count"] == 1
+    assert chunk_index["chunks"][0]["source_type"] == "media_transcript"
+    assert quality_report["partial_chunk_count"] == 1
+    assert quality_report["source_counts"]["media_asset"] == 1
 
 
 def test_markdown_export_writes_overview_index_and_chunk_tree(tmp_path):

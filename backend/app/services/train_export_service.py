@@ -225,11 +225,14 @@ def _rag_degraded_capabilities(row: dict):
 
 
 def _rag_document_row(row: dict):
-    text = _semantic_unit_export_content(row)
+    prebuilt_metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    text = str(row.get("text") or "").strip() if row.get("text") is not None else ""
+    if not text:
+        text = _semantic_unit_export_content(row)
     if not text:
         return None
     labels = _row_labels(row)
-    metadata = {}
+    metadata = dict(prebuilt_metadata)
     if row.get("confidence") is not None:
         metadata["confidence"] = row.get("confidence")
     extraction_status = _rag_extraction_status(row)
@@ -243,14 +246,14 @@ def _rag_document_row(row: dict):
         metadata["transcription_failed_count"] = failed_segment_count
     return {
         "doc_id": str(row.get("id") or row.get("source_unit_id") or row.get("record_type") or uuid4()),
-        "project_id": row.get("project_id"),
-        "asset_id": row.get("asset_id"),
+        "project_id": row.get("project_id") or metadata.get("project_id"),
+        "asset_id": row.get("asset_id") or metadata.get("asset_id"),
         "task_id": labels.get("task_id"),
         "title": _row_title(row, 0),
         "text": text,
         "source": _row_source(row),
-        "unit_type": row.get("unit_type"),
-        "content_format": _content_format(row.get("content") or ""),
+        "unit_type": row.get("unit_type") or metadata.get("unit_type"),
+        "content_format": metadata.get("content_format") or _content_format(row.get("content") or ""),
         "metadata": metadata,
     }
 
@@ -1147,11 +1150,15 @@ def export_markdown_bundle(
     db=None,
     project_id: str | None = None,
     enhance_with_ollama: bool = False,
+    include_video_timeline: bool = True,
+    full_content_in_overview: bool = False,
+    include_video_summary_heading: bool = True,
 ):
     clean_rows = _dedupe_rows(rows)
     semantic_rows = [row for row in clean_rows if _markdown_chunk_body(row)]
     semantic_metadata = _semantic_source_metadata(semantic_rows)
     quality_metadata = _markdown_manifest_quality(semantic_rows)
+    llm_metadata = _ollama_markdown_summary(semantic_rows)
     built_chunks = build_markdown_chunks(semantic_rows)
     order, _grouped = _group_rows_by_markdown_source(semantic_rows)
 
@@ -1199,10 +1206,17 @@ def export_markdown_bundle(
     overview_lines = [
         f"# {title}",
         "",
+    ]
+    if include_video_summary_heading:
+        overview_lines.extend(["## 视频转化摘要", ""])
+    if llm_metadata.get("llm_summary"):
+        overview_lines.extend(["## AI 摘要", "", str(llm_metadata["llm_summary"]), ""])
+    overview_lines.extend([
         "## 导航目录",
         "",
         "- 素材概览",
         "- 分来源总览",
+        "- 核心内容",
         "- 分片索引",
         "- 异常与降级说明",
         "",
@@ -1214,7 +1228,7 @@ def export_markdown_bundle(
         "",
         "## 分来源总览",
         "",
-    ]
+    ])
 
     for source_index, source_key in enumerate(order, 1):
         source_name = source_key[1]
@@ -1251,7 +1265,7 @@ def export_markdown_bundle(
             source_lines.append(f"- {' / '.join(_section_path(row))}：{_markdown_chunk_summary(_markdown_chunk_body(row))}")
         source_lines.extend(["", "## 分片索引", ""])
 
-        if is_video_source:
+        if is_video_source and include_video_timeline:
             index_lines.extend(["## 视频时间线", ""])
             source_lines.extend(["", "## 视频时间线", ""])
 
@@ -1276,7 +1290,7 @@ def export_markdown_bundle(
             source_lines.append(f"- [{chunk['title']}](chunks/{chunk_path.name})")
             index_lines.append(f"- [{chunk['title']}]({rel_chunk_path})：{chunk['reference_text']}")
             overview_lines.append(f"- [{chunk['title']}]({rel_chunk_path})")
-            if is_video_source:
+            if is_video_source and include_video_timeline:
                 timeline_entry = _video_timeline_entry(chunk, rel_chunk_path)
                 source_timeline.append(timeline_entry)
                 timeline_index.append(timeline_entry)
@@ -1316,10 +1330,25 @@ def export_markdown_bundle(
             "chunks_dir": chunks_dir.relative_to(root).as_posix(),
             "chunks": file_tree_chunks,
         }
-        if is_video_source:
+        if is_video_source and include_video_timeline:
             source_tree["timeline"] = source_timeline
         file_tree_sources.append(source_tree)
         overview_lines.append("")
+
+    overview_lines.extend(["## 核心内容", ""])
+    for index, row in enumerate(semantic_rows, 1):
+        overview_lines.extend([
+            f"### {index}. {_row_title(row, index)}",
+            "",
+            f"- 来源：{_source_label(_row_source(row))}",
+        ])
+        if row.get("unit_type"):
+            overview_lines.append(f"- 类型：{_unit_type_label(row.get('unit_type'))}")
+        overview_lines.extend([
+            "",
+            _markdown_chunk_body(row) if full_content_in_overview else _compact_text(_markdown_chunk_body(row), 600),
+            "",
+        ])
 
     overview_lines.extend([
         "## 分片索引",
@@ -1349,6 +1378,7 @@ def export_markdown_bundle(
         "timeline_index": timeline_index,
         **semantic_metadata,
         **quality_metadata,
+        **llm_metadata,
         "encoding": "utf-8",
         "sources": [
             {
@@ -1419,7 +1449,17 @@ def export_markdown_bundle(
     }
 
 
-def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, task_id: str, title: str = "Video Markdown Report", task_name: str | None = None, db=None, project_id: str | None = None):
+def export_markdown_from_video_summary(
+    summary_rows: list[dict],
+    out_dir: str,
+    task_id: str,
+    title: str = "Video Markdown Report",
+    task_name: str | None = None,
+    db=None,
+    project_id: str | None = None,
+    include_video_timeline: bool = True,
+    include_video_summary_heading: bool = False,
+):
     return export_markdown_bundle(
         summary_rows,
         out_dir,
@@ -1429,7 +1469,420 @@ def export_markdown_from_video_summary(summary_rows: list[dict], out_dir: str, t
         db=db,
         project_id=project_id,
         enhance_with_ollama=False,
+        include_video_timeline=include_video_timeline,
+        full_content_in_overview=True,
+        include_video_summary_heading=include_video_summary_heading,
     )
+
+
+def _relative_file(path: Path, root: Path):
+    return path.relative_to(root).as_posix()
+
+
+def _delivery_instruction_rows(rows: list[dict]):
+    instruction_rows = []
+    for row in rows:
+        content = _semantic_unit_export_content(row)
+        if not content:
+            continue
+        instruction_rows.append({
+            "instruction": row.get("title") or "总结该素材内容",
+            "input": content,
+            "output": json.dumps(row.get("labels") or {}, ensure_ascii=False),
+        })
+    return instruction_rows
+
+
+def _delivery_content_rows(rows: list[dict]):
+    derived_media_asset_ids = {
+        row.get("asset_id")
+        for row in rows
+        if row.get("asset_id") and _row_source(row) in {"media_transcript", "media_ocr"}
+    }
+    if not derived_media_asset_ids:
+        return rows
+    return [
+        row
+        for row in rows
+        if not (row.get("asset_id") in derived_media_asset_ids and _row_source(row) == "media_asset")
+    ]
+
+
+def _write_delivery_readme(path: Path, title: str, manifest_name: str):
+    lines = [
+        f"# {title}",
+        "",
+        "该目录是 Envoy 长视频/长文件商业交付包，可直接用于知识库导入、agent 初始化、训练数据整理和人工阅读。",
+        "",
+        "## 推荐使用顺序",
+        "",
+        "1. 将 `knowledge_base/rag_corpus.jsonl` 导入 RAG 或知识库系统。",
+        "2. 将 `readable/index.md` 和 `readable/sources/*.md` 作为可读素材导入长上下文工具。",
+        "3. 将 `agent/import_manifest.json` 提供给 agent 编排器，按清单读取能力描述和语料。",
+        "4. 将 `training/instruction_train.jsonl` 作为训练或样本生成的起点。",
+        "",
+        "## 关键索引",
+        "",
+        f"- `{manifest_name}`：交付包总清单",
+        "- `indexes/chunk_index.json`：分片索引",
+        "- `indexes/source_index.json`：来源索引",
+        "- `indexes/timeline_index.json`：视频时间线索引",
+        "- `indexes/quality_report.json`：降级与质量报告",
+    ]
+    _write_utf8_text(path, "\n".join(lines))
+
+
+def export_delivery_package(
+    rows: list[dict],
+    out_dir: str,
+    task_id: str,
+    title: str = "Envoy Delivery Package",
+    task_name: str | None = None,
+    db=None,
+    project_id: str | None = None,
+):
+    clean_rows = _dedupe_rows(rows)
+    quality_rows = [row for row in clean_rows if _semantic_unit_has_export_content(row)]
+    semantic_rows = _delivery_content_rows(quality_rows)
+    semantic_metadata = _semantic_source_metadata(quality_rows)
+    quality_metadata = _markdown_manifest_quality(quality_rows)
+    chunks = build_markdown_chunks(semantic_rows)
+    rag_rows = [row for row in (_rag_document_row(row) for row in semantic_rows) if row is not None]
+    instruction_rows = _delivery_instruction_rows(semantic_rows)
+
+    root = _resolve_root(out_dir, "delivery", task_id, task_name)
+    readable_dir = build_subdir(root, "readable")
+    readable_sources_dir = build_subdir(readable_dir, "sources")
+    knowledge_dir = build_subdir(root, "knowledge_base")
+    knowledge_chunks_dir = build_subdir(knowledge_dir, "chunks")
+    training_dir = build_subdir(root, "training")
+    agent_dir = build_subdir(root, "agent")
+    indexes_dir = build_subdir(root, "indexes")
+
+    readme_path = root / "README.md"
+    manifest_path = root / "delivery_manifest.json"
+    readable_index_path = readable_dir / "index.md"
+    rag_corpus_path = knowledge_dir / "rag_corpus.jsonl"
+    documents_path = knowledge_dir / "documents.jsonl"
+    train_path = training_dir / "instruction_train.jsonl"
+    dataset_card_path = training_dir / "dataset_card.md"
+    skill_path = agent_dir / "skill.md"
+    skill_manifest_path = agent_dir / "skill.json"
+    import_manifest_path = agent_dir / "import_manifest.json"
+    chunk_index_path = indexes_dir / "chunk_index.json"
+    source_index_path = indexes_dir / "source_index.json"
+    timeline_index_path = indexes_dir / "timeline_index.json"
+    quality_report_path = indexes_dir / "quality_report.json"
+
+    _write_delivery_readme(readme_path, title, manifest_path.name)
+    build_dataset_jsonl(rag_rows, str(rag_corpus_path))
+    build_dataset_jsonl(rag_rows, str(documents_path))
+    build_dataset_jsonl(instruction_rows, str(train_path))
+
+    readable_lines = [
+        f"# {title}",
+        "",
+        "## 导入入口",
+        "",
+        "- RAG 语料：`../knowledge_base/rag_corpus.jsonl`",
+        "- Agent 导入清单：`../agent/import_manifest.json`",
+        "- 分片索引：`../indexes/chunk_index.json`",
+        "",
+        "## 分片目录",
+        "",
+    ]
+    chunk_index_items = []
+    timeline_items = []
+    chunk_paths = []
+    for index, chunk in enumerate(chunks, 1):
+        chunk_path = knowledge_chunks_dir / _chunk_file_name(index, chunk)
+        chunk_content = "\n".join(_markdown_chunk_lines(
+            source_name=chunk["source_name"],
+            reference_text=chunk["reference_text"],
+            chunk_id=chunk["chunk_id"],
+            title=chunk["title"],
+            summary=chunk["summary"],
+            body=chunk["body"],
+            section_path=chunk["section_path"],
+        ))
+        _write_utf8_text(chunk_path, chunk_content)
+        chunk_paths.append(chunk_path)
+        relative_chunk_path = _relative_file(chunk_path, root)
+        readable_lines.append(f"- [{chunk['title']}](../{relative_chunk_path})：{chunk['reference_text']}")
+        chunk_item = {
+            "chunk_id": chunk["chunk_id"],
+            "title": chunk["title"],
+            "summary": chunk["summary"],
+            "source_name": chunk["source_name"],
+            "source_type": chunk["source_type"],
+            "asset_id": chunk.get("asset_id"),
+            "project_id": chunk.get("project_id"),
+            "unit_type": chunk.get("unit_type"),
+            "section_path": chunk["section_path"],
+            "reference_text": chunk["reference_text"],
+            "path": relative_chunk_path,
+            "status": chunk["status"],
+            "degraded_capabilities": chunk["degraded_capabilities"],
+            "failed_segment_count": chunk["failed_segment_count"],
+            "split_part": chunk["split_part"],
+            "split_total": chunk["split_total"],
+        }
+        chunk_index_items.append(chunk_item)
+        if _is_video_source_type(chunk.get("source_type")) or _row_time_range({"labels": chunk.get("labels") or {}}):
+            timeline_items.append(_video_timeline_entry(chunk, relative_chunk_path))
+    _write_utf8_text(readable_index_path, "\n".join(readable_lines))
+
+    order, grouped = _group_rows_by_markdown_source(semantic_rows)
+    source_index_items = []
+    source_paths = []
+    for source_number, source_key in enumerate(order, 1):
+        source_rows = grouped.get(source_key, [])
+        if not source_rows:
+            continue
+        source_name = source_key[1]
+        source_path = readable_sources_dir / f"{source_number:02d}-{slugify_name(source_name)}.md"
+        lines = [
+            f"# {source_name}",
+            "",
+            f"- 来源类型：{_source_label(source_key[0])}",
+            f"- 素材 ID：{source_rows[0].get('asset_id') or '未标注'}",
+            "",
+            "## 内容片段",
+            "",
+        ]
+        for row in source_rows:
+            lines.append(f"- {' / '.join(_section_path(row))}：{_markdown_chunk_summary(_markdown_chunk_body(row))}")
+        _write_utf8_text(source_path, "\n".join(lines))
+        source_paths.append(source_path)
+        source_index_items.append({
+            "source_type": source_key[0],
+            "source_name": source_name,
+            "asset_id": source_rows[0].get("asset_id"),
+            "path": _relative_file(source_path, root),
+            "chunk_count": sum(1 for item in chunk_index_items if item["source_name"] == source_name),
+        })
+
+    dataset_card_lines = [
+        f"# {title} Dataset Card",
+        "",
+        f"- Project ID: {project_id or 'unknown'}",
+        f"- Source task ID: {task_id}",
+        f"- RAG rows: {len(rag_rows)}",
+        f"- Instruction rows: {len(instruction_rows)}",
+        f"- Partial chunks: {quality_metadata['partial_chunk_count']}",
+    ]
+    _write_utf8_text(dataset_card_path, "\n".join(dataset_card_lines))
+
+    skill_lines = [
+        f"# {title} Agent Skill",
+        "",
+        "## Purpose",
+        "",
+        "Use this package to answer questions over the processed long video or long document corpus with traceable source references.",
+        "",
+        "## Inputs",
+        "",
+        "- `knowledge_base/rag_corpus.jsonl` for retrieval",
+        "- `indexes/chunk_index.json` for source references",
+        "- `indexes/quality_report.json` for degraded segments",
+    ]
+    _write_utf8_text(skill_path, "\n".join(skill_lines))
+    skill_manifest = {
+        "schema_version": "envoy.skill.v1",
+        "title": title,
+        "source_task_id": task_id,
+        "project_id": project_id,
+        "files": {
+            "markdown": _relative_file(skill_path, root),
+            "import_manifest": _relative_file(import_manifest_path, root),
+            "rag_corpus": _relative_file(rag_corpus_path, root),
+        },
+    }
+    skill_manifest_path.write_text(json.dumps(skill_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    quality_report = {
+        "schema_version": "envoy.quality.v1",
+        "source_task_id": task_id,
+        "project_id": project_id,
+        "row_count": len(semantic_rows),
+        "chunk_count": len(chunk_index_items),
+        **quality_metadata,
+        **semantic_metadata,
+    }
+    quality_report_path.write_text(json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    chunk_index = {
+        "schema_version": "envoy.chunk_index.v1",
+        "chunk_count": len(chunk_index_items),
+        "chunks": chunk_index_items,
+    }
+    chunk_index_path.write_text(json.dumps(chunk_index, ensure_ascii=False, indent=2), encoding="utf-8")
+    source_index = {
+        "schema_version": "envoy.source_index.v1",
+        "source_count": len(source_index_items),
+        "sources": source_index_items,
+    }
+    source_index_path.write_text(json.dumps(source_index, ensure_ascii=False, indent=2), encoding="utf-8")
+    timeline_index = {
+        "schema_version": "envoy.timeline_index.v1",
+        "timeline_count": len(timeline_items),
+        "items": timeline_items,
+    }
+    timeline_index_path.write_text(json.dumps(timeline_index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    import_manifest = {
+        "schema_version": "envoy.agent.import.v1",
+        "title": title,
+        "source_task_id": task_id,
+        "project_id": project_id,
+        "compatible_targets": [
+            "generic_rag_jsonl",
+            "markdown_knowledge_base",
+            "agent_skill_context",
+            "instruction_tuning_seed",
+        ],
+        "target_profiles": {
+            "generic_rag_jsonl": {
+                "primary_file": _relative_file(rag_corpus_path, root),
+                "format": "jsonl",
+                "required_fields": ["doc_id", "title", "text", "metadata"],
+                "metadata_index": _relative_file(chunk_index_path, root),
+                "quality_index": _relative_file(quality_report_path, root),
+            },
+            "markdown_knowledge_base": {
+                "format": "markdown",
+                "file_globs": [
+                    _relative_file(readable_index_path, root),
+                    "readable/sources/*.md",
+                    "knowledge_base/chunks/*.md",
+                ],
+                "source_index": _relative_file(source_index_path, root),
+                "chunk_index": _relative_file(chunk_index_path, root),
+            },
+            "agent_skill_context": {
+                "primary_file": _relative_file(skill_path, root),
+                "format": "markdown",
+                "supporting_files": [
+                    _relative_file(import_manifest_path, root),
+                    _relative_file(quality_report_path, root),
+                    _relative_file(chunk_index_path, root),
+                ],
+            },
+            "instruction_tuning_seed": {
+                "primary_file": _relative_file(train_path, root),
+                "format": "jsonl",
+                "required_fields": ["instruction", "input", "output"],
+                "dataset_card": _relative_file(dataset_card_path, root),
+            },
+        },
+        "recommended_import_order": [
+            {
+                "path": _relative_file(rag_corpus_path, root),
+                "format": "jsonl",
+                "use": "rag_knowledge_base",
+                "index": _relative_file(chunk_index_path, root),
+            },
+            {
+                "path": _relative_file(readable_index_path, root),
+                "format": "markdown",
+                "use": "readable_context",
+                "index": _relative_file(source_index_path, root),
+            },
+            {
+                "path": _relative_file(skill_path, root),
+                "format": "markdown",
+                "use": "agent_instruction",
+                "index": _relative_file(quality_report_path, root),
+            },
+            {
+                "path": _relative_file(train_path, root),
+                "format": "jsonl",
+                "use": "training_seed",
+                "index": _relative_file(quality_report_path, root),
+            },
+        ],
+    }
+    import_manifest_path.write_text(json.dumps(import_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    manifest = {
+        "schema_version": "envoy.delivery.v1",
+        "title": title,
+        "source_task_id": task_id,
+        "task_name": task_name,
+        "project_id": project_id,
+        "encoding": "utf-8",
+        "directories": {
+            "readable": "readable",
+            "knowledge_base": "knowledge_base",
+            "training": "training",
+            "agent": "agent",
+            "indexes": "indexes",
+        },
+        "counts": {
+            "sources": len(source_index_items),
+            "chunks": len(chunk_index_items),
+            "rag_rows": len(rag_rows),
+            "instruction_rows": len(instruction_rows),
+        },
+        "files": {
+            "readme": _relative_file(readme_path, root),
+            "readable_index": _relative_file(readable_index_path, root),
+            "rag_corpus": _relative_file(rag_corpus_path, root),
+            "documents": _relative_file(documents_path, root),
+            "instruction_train": _relative_file(train_path, root),
+            "skill": _relative_file(skill_path, root),
+            "import_manifest": _relative_file(import_manifest_path, root),
+            "chunk_index": _relative_file(chunk_index_path, root),
+            "source_index": _relative_file(source_index_path, root),
+            "timeline_index": _relative_file(timeline_index_path, root),
+            "quality_report": _relative_file(quality_report_path, root),
+        },
+        **quality_metadata,
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    export_paths = [
+        readme_path,
+        manifest_path,
+        readable_index_path,
+        rag_corpus_path,
+        documents_path,
+        train_path,
+        dataset_card_path,
+        skill_path,
+        skill_manifest_path,
+        import_manifest_path,
+        chunk_index_path,
+        source_index_path,
+        timeline_index_path,
+        quality_report_path,
+        *chunk_paths,
+        *source_paths,
+    ]
+    _finalize_export(db, project_id, task_id, "delivery", task_name, root, export_paths, semantic_rows)
+    return {
+        "export_type": "delivery",
+        "root": str(root),
+        "path": str(manifest_path),
+        "task_id": task_id,
+        "count": len(chunk_index_items),
+        "paths": {
+            "manifest": str(manifest_path),
+            "readme": str(readme_path),
+            "readable_index": str(readable_index_path),
+            "rag_corpus": str(rag_corpus_path),
+            "documents": str(documents_path),
+            "instruction_train": str(train_path),
+            "skill": str(skill_path),
+            "skill_manifest": str(skill_manifest_path),
+            "import_manifest": str(import_manifest_path),
+            "chunk_index": str(chunk_index_path),
+            "source_index": str(source_index_path),
+            "timeline_index": str(timeline_index_path),
+            "quality_report": str(quality_report_path),
+            "chunks": [str(path) for path in chunk_paths],
+            "sources": [str(path) for path in source_paths],
+        },
+    }
 
 
 def build_auto_payload_from_project(db, project_id: str, export_type: str):
@@ -1481,7 +1934,7 @@ def build_auto_payload_from_project(db, project_id: str, export_type: str):
         }
         trace_links = [row for row in data["trace_links"] if _trace_link_is_exportable(row, visible_ids)]
         return semantic_units + data["samples"] + trace_links
-    if export_type == "markdown":
+    if export_type in ("markdown", "delivery"):
         semantic_units = [row for row in data["semantic_units"] if _semantic_unit_has_export_content(row)]
         visible_ids = {
             *(row.get("id") for row in semantic_units if row.get("id")),

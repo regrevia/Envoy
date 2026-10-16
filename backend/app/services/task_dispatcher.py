@@ -14,6 +14,9 @@ def _task_payload(task):
         "task_type": task.task_type,
         "status": task.status,
         "progress": task.progress,
+        "project_id": task.project_id,
+        "asset_id": task.asset_id,
+        "input_config": task.input_config,
         "result_summary": task.result_summary,
         "error_message": task.error_message,
     }

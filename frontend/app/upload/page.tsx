@@ -15,6 +15,7 @@ const fileTypeOptions = [
 ];
 
 const outputOptions = [
+  { id: 'delivery', label: '商业交付包' },
   { id: 'markdown', label: '知识库文档' },
   { id: 'skill', label: '可复用流程包' },
   { id: 'rag', label: '检索语料包' },
@@ -73,7 +74,7 @@ export default function UploadPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
   const [assetType, setAssetType] = useState('video');
-  const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['markdown', 'skill', 'rag']);
+  const [selectedOutputs, setSelectedOutputs] = useState<string[]>(['delivery', 'markdown', 'skill', 'rag']);
   const [pdfChunkingStrategy, setPdfChunkingStrategy] = useState('auto');
   const [videoTargetFrameRate, setVideoTargetFrameRate] = useState('0');
   const [videoFrameIntervalSeconds, setVideoFrameIntervalSeconds] = useState('15');
@@ -190,7 +191,7 @@ export default function UploadPage() {
   const outputContext = selectedOutputs.length
     ? selectedOutputs.map((item) => outputLabelById[item] || item).join('、')
     : '尚未选择';
-  const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));
+  const materialOutputs = selectedOutputs.filter((item) => ['delivery', 'markdown', 'skill', 'rag'].includes(item));
   const hasMaterialOutput = materialOutputs.length > 0;
   const materialOutputParam = hasMaterialOutput ? materialOutputs.join(',') : '';
   const primaryMaterialOutput = materialOutputs[0] || 'markdown';

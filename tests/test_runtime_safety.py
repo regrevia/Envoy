@@ -174,6 +174,31 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn("-vn", cmd)
         self.assertTrue(str(cmd[-1]).endswith("audio_segment_%06d.wav"))
 
+    def test_media_commands_use_configured_ffmpeg_binary(self):
+        previous = os.environ.get("FFMPEG_BIN")
+        try:
+            os.environ["FFMPEG_BIN"] = "/opt/envoy/bin/ffmpeg"
+            media_service = reload_media_service()
+
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append((cmd, kwargs))
+                return None
+
+            with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+                media_service.split_video("input.mp4", "tmp/test-configured-video-bin")
+                media_service.split_audio("input.mp3", "tmp/test-configured-audio-bin")
+                media_service.extract_frames("input.mp4", "tmp/test-configured-frame-bin")
+
+            self.assertEqual([cmd[0] for cmd, _kwargs in calls], ["/opt/envoy/bin/ffmpeg"] * 3)
+        finally:
+            if previous is None:
+                os.environ.pop("FFMPEG_BIN", None)
+            else:
+                os.environ["FFMPEG_BIN"] = previous
+            reload_media_service()
+
     def test_media_segmentation_limits_total_input_duration_from_config(self):
         previous = {key: os.environ.get(key) for key in ("MEDIA_SEGMENT_SECONDS", "MEDIA_MAX_SEGMENT_COUNT")}
         try:
@@ -333,6 +358,32 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(calls, ["base"])
         self.assertEqual(first["text"], "transcribed segment-1.wav")
         self.assertEqual(second["text"], "transcribed segment-2.wav")
+
+    def test_whisper_transcription_uses_configured_model_name(self):
+        previous = os.environ.get("MEDIA_WHISPER_MODEL")
+        calls = []
+
+        class FakeModel:
+            def transcribe(self, audio_path):
+                return {"text": f"tiny transcript {audio_path}", "segments": []}
+
+        fake_whisper = types.SimpleNamespace(load_model=lambda model_name: calls.append(model_name) or FakeModel())
+        sys.modules["whisper"] = fake_whisper
+        try:
+            os.environ["MEDIA_WHISPER_MODEL"] = "tiny"
+            media_service = reload_media_service()
+
+            result = media_service._run_whisper_transcription("segment-tiny.wav")
+        finally:
+            sys.modules.pop("whisper", None)
+            if previous is None:
+                os.environ.pop("MEDIA_WHISPER_MODEL", None)
+            else:
+                os.environ["MEDIA_WHISPER_MODEL"] = previous
+            reload_media_service()
+
+        self.assertEqual(calls, ["tiny"])
+        self.assertEqual(result["text"], "tiny transcript segment-tiny.wav")
 
     def test_transcribe_audio_returns_isolated_worker_result(self):
         media_service = reload_media_service()
@@ -741,6 +792,41 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(result[0]["items"][0]["bbox"], {"x": 20, "y": 40, "width": 240, "height": 40})
         self.assertEqual(result[0]["reading_order"], "top_left")
 
+    def test_ocr_worker_supports_paddleocr_predict_results(self):
+        media_service = reload_media_service()
+
+        class FakePredictResult(dict):
+            pass
+
+        class FakePaddleOCR:
+            def __init__(self, **_kwargs):
+                pass
+
+            def ocr(self, path, cls=True):
+                raise TypeError("predict() got an unexpected keyword argument 'cls'")
+
+            def predict(self, path):
+                return [
+                    FakePredictResult({
+                        "rec_texts": ["top first", "left second", "right second"],
+                        "rec_scores": [0.98, 0.95, 0.91],
+                        "rec_polys": [
+                            [[20, 40], [260, 40], [260, 80], [20, 80]],
+                            [[20, 120], [180, 120], [180, 150], [20, 150]],
+                            [[300, 120], [380, 120], [380, 150], [300, 150]],
+                        ],
+                    })
+                ]
+
+        fake_module = types.SimpleNamespace(PaddleOCR=FakePaddleOCR)
+        with patch.dict(sys.modules, {"paddleocr": fake_module}):
+            result = media_service._run_ocr_worker_logic(["frame-1.jpg"])
+
+        self.assertEqual(result[0]["text"], "top first\nleft second right second")
+        self.assertEqual([item["text"] for item in result[0]["items"]], ["top first", "left second", "right second"])
+        self.assertEqual(result[0]["confidence"], 0.98)
+        self.assertEqual(result[0]["reading_order"], "top_left")
+
     def test_ocr_compresses_consecutive_duplicate_frame_text(self):
         media_service = reload_media_service()
 
@@ -886,6 +972,46 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(config["frame_interval_seconds"], 8)
         self.assertEqual(config["max_frame_count"], 96)
         self.assertEqual(config["mode"], "target_fps")
+
+    def test_worker_extract_frames_ignores_frame_config_metadata_keys(self):
+        for name in list(sys.modules):
+            if name.startswith("app."):
+                sys.modules.pop(name, None)
+
+        from app.workers import jobs
+
+        calls = []
+
+        def fake_extract_frames(source_path, output_dir, should_cancel=None, target_frame_rate=None, frame_interval_seconds=None, max_frame_count=None):
+            calls.append({
+                "source_path": source_path,
+                "output_dir": output_dir,
+                "target_frame_rate": target_frame_rate,
+                "frame_interval_seconds": frame_interval_seconds,
+                "max_frame_count": max_frame_count,
+                "canceled": should_cancel() if should_cancel else None,
+            })
+            return ["frame_000001.jpg"]
+
+        frame_config = {
+            "target_frame_rate": 12,
+            "frame_interval_seconds": 8,
+            "max_frame_count": 96,
+            "mode": "target_fps",
+        }
+        with patch("app.workers.jobs.extract_frames", side_effect=fake_extract_frames), \
+            patch("app.workers.jobs._task_is_canceled", return_value=False):
+            frames = jobs._extract_frames_for_task(object(), "task-id", "input.mp4", "frame-out", frame_config=frame_config)
+
+        self.assertEqual(frames, ["frame_000001.jpg"])
+        self.assertEqual(calls, [{
+            "source_path": "input.mp4",
+            "output_dir": "frame-out",
+            "target_frame_rate": 12,
+            "frame_interval_seconds": 8,
+            "max_frame_count": 96,
+            "canceled": False,
+        }])
 
     def test_ollama_returns_disabled_result_without_model(self):
         os.environ["OLLAMA_MODEL"] = ""
