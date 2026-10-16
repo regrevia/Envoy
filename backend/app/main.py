@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from app.core.config import DATABASE_URL
+from app.db.base import Base
+from app.db.session import engine
+import app.models  # noqa: F401
 from app.api.v1.health import router as health_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.assets import router as assets_router
@@ -35,3 +38,10 @@ app.include_router(semantic_units_router, prefix="/api/v1", tags=["semantic-unit
 app.include_router(generated_samples_router, prefix="/api/v1", tags=["generated-samples"])
 app.include_router(trace_router, prefix="/api/v1", tags=["trace"])
 app.include_router(train_exports_router, prefix="/api/v1", tags=["train-exports"])
+
+
+@app.on_event("startup")
+def initialize_sqlite_schema():
+    """Make the local SQLite acceptance mode usable without a separate migration step."""
+    if DATABASE_URL.startswith("sqlite"):
+        Base.metadata.create_all(bind=engine)

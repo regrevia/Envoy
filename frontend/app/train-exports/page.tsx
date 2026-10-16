@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiJson } from '@/lib/api';
 
 const exportTypes = [
+  { id: 'delivery', label: '商业交付包' },
   { id: 'sft', label: '训练数据' },
   { id: 'instruction', label: '指令数据' },
   { id: 'preference', label: '偏好数据' },
@@ -47,7 +48,7 @@ type ExportRecord = {
   created_at?: string | null;
 };
 
-const defaultSelectedOutputs: ExportType[] = ['markdown', 'skill', 'rag'];
+const defaultSelectedOutputs: ExportType[] = ['delivery', 'markdown', 'skill', 'rag'];
 
 function exportLabel(id: ExportType | string) {
   return exportTypes.find((item) => item.id === id)?.label || id;

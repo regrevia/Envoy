@@ -167,7 +167,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
 
         for copy in [
-            "const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));",
+            "const materialOutputs = selectedOutputs.filter((item) => ['delivery', 'markdown', 'skill', 'rag'].includes(item));",
             "const primaryMaterialOutput = materialOutputs[0] || 'markdown';",
             "outputs=${encodeURIComponent(materialOutputParam)}",
             "export_type=${encodeURIComponent(primaryMaterialOutput)}",
@@ -326,10 +326,10 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
 
         for copy in [
-            "const exportableOutputTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']);",
+            "const exportableOutputTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown', 'delivery']);",
             "const requestedOutputs = outputContext.split(',').map((item) => item.trim()).filter(Boolean);",
             "const exportOutputList = requestedOutputs.filter((item) => exportableOutputTypes.has(item));",
-            "const exportOutputs = exportOutputList.length ? exportOutputList.join(',') : 'markdown,skill,rag';",
+            "const exportOutputs = exportOutputList.length ? exportOutputList.join(',') : 'delivery,markdown,skill,rag';",
             "const primaryExportType = exportOutputList[0] || 'markdown';",
             "生成样本会保留 samples 目标，但训练导出只接收 Markdown、Skill、RAG 或数据集类型。",
         ]:
@@ -408,7 +408,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
 
         for copy in [
-            "const materialOutputs = selectedOutputs.filter((item) => ['markdown', 'skill', 'rag'].includes(item));",
+            "const materialOutputs = selectedOutputs.filter((item) => ['delivery', 'markdown', 'skill', 'rag'].includes(item));",
             "const datasetOutputs = selectedOutputs.includes('dataset') ? ['sft'] : [];",
             "const exportOutputs = [...materialOutputs, ...datasetOutputs];",
             "const hasExportableOutput = exportOutputs.length > 0;",

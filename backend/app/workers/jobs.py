@@ -15,14 +15,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 from app.workers.celery_app import celery_app
 from app.db.session import SessionLocal
-from app.services.crud_service import update_task_status, create_artifact
+from app.services.crud_service import update_task_status, create_artifact, create_asset, create_task
 from app.core.storage import storage_client
 from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames, compress_consecutive_ocr_results
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
 from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
-from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR
+from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR, VIDEO_DOWNLOAD_DIR
 from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
@@ -30,11 +30,59 @@ from app.models.generated_sample import GeneratedSample
 from app.models.processing_task import ProcessingTask
 from app.models.trace_link import TraceLink
 from app.schemas.artifact import ArtifactCreate
+from app.schemas.asset import AssetCreate
+from app.schemas.task import TaskCreate
+from app.services.video_source_service import download_video
 
 
 def _safe_update(db, task_id, status, progress=None, result_summary=None, error_message=None):
     if task_id:
         update_task_status(db, task_id, status, progress, result_summary, error_message)
+
+
+def read_video_task_checkpoint(config: dict, stage: str):
+    checkpoints = config.get("checkpoints") if isinstance(config, dict) else None
+    if not isinstance(checkpoints, dict):
+        return None
+    value = checkpoints.get(stage)
+    return value if isinstance(value, dict) else None
+
+
+def merge_video_task_checkpoint(config: dict, stage: str, value: dict):
+    if not isinstance(config, dict):
+        return
+    checkpoints = config.setdefault("checkpoints", {})
+    if not isinstance(checkpoints, dict):
+        checkpoints = {}
+        config["checkpoints"] = checkpoints
+    checkpoints[stage] = dict(value)
+
+
+def _compact_error_message(message, max_chars: int = 1200):
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    compact_lines = []
+    repeated_count = 0
+    previous = None
+    for line in lines:
+        if line == previous:
+            repeated_count += 1
+            continue
+        if repeated_count:
+            compact_lines.append(f"... repeated previous line {repeated_count} time(s)")
+            repeated_count = 0
+        compact_lines.append(line)
+        previous = line
+    if repeated_count:
+        compact_lines.append(f"... repeated previous line {repeated_count} time(s)")
+    compacted = "\n".join(compact_lines) if compact_lines else text
+    if len(compacted) <= max_chars:
+        return compacted
+    omitted = len(compacted) - max_chars
+    suffix = f"\n... omitted {omitted} chars"
+    return compacted[: max(0, max_chars - len(suffix))].rstrip() + suffix
 
 
 def _task_is_canceled(db, task_id):
@@ -116,9 +164,16 @@ def _split_video_for_task(db, task_id: str | None, source_path: str, output_dir:
 
 
 def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_dir: str, frame_config: dict | None = None):
+    frame_kwargs = {
+        key: value
+        for key, value in (frame_config or {}).items()
+        if key in {"target_frame_rate", "frame_interval_seconds", "max_frame_count"}
+    }
+    if not all(_supports_named_parameter(extract_frames, key) for key in frame_kwargs):
+        frame_kwargs = {}
     if _supports_should_cancel(extract_frames):
-        return extract_frames(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id), **(frame_config or {}))
-    return extract_frames(source_path, output_dir)
+        return extract_frames(source_path, output_dir, should_cancel=lambda: _task_is_canceled(db, task_id), **frame_kwargs)
+    return extract_frames(source_path, output_dir, **frame_kwargs)
 
 
 def _run_ocr_for_task(db, task_id: str | None, frame_paths: list[str]):
@@ -356,9 +411,9 @@ def _video_frame_config(payload: dict, task: ProcessingTask | None = None):
     }
 
 
-def _limit_media_segments(segment_paths: list[str], source_path: str):
+def _limit_media_segments(segment_paths: list[str], source_path: str, allow_source_fallback: bool = True):
     inputs = [str(path) for path in segment_paths if str(path).strip()]
-    if not inputs:
+    if not inputs and allow_source_fallback:
         inputs = [source_path]
     limit = max(int(MEDIA_MAX_SEGMENT_COUNT or 1), 1)
     original_count = len(inputs)
@@ -1253,9 +1308,213 @@ def _trace_link_export_row(link: TraceLink):
     }
 
 
+def _video_export_rows(units):
+    """Keep the final video document knowledge-first without duplicating its summary."""
+    rows = [_semantic_unit_export_row(unit) for unit in units]
+    transcript_assets = {
+        row.get("asset_id")
+        for row in rows
+        if row.get("asset_id")
+        and isinstance(row.get("labels"), dict)
+        and row["labels"].get("source") in {"media_transcript", "media_ocr"}
+    }
+    if not transcript_assets:
+        return rows
+    return [
+        row
+        for row in rows
+        if not (
+            row.get("asset_id") in transcript_assets
+            and isinstance(row.get("labels"), dict)
+            and row["labels"].get("source") == "media_asset"
+        )
+    ]
+
+
 @celery_app.task(bind=True, max_retries=2)
 def ping_job(self):
     return {"status": "ok"}
+
+
+@celery_app.task(bind=True, max_retries=2)
+def video_to_markdown_job(self, payload: dict):
+    db = SessionLocal()
+    task_id = payload.get("task_id")
+    project_id = payload.get("project_id")
+    try:
+        task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task is None:
+            raise RuntimeError(f"Video task not found: {task_id}")
+        config = dict(task.input_config or {})
+        source_url = str(config.get("source_url") or "").strip()
+        if not source_url:
+            raise RuntimeError("Video source_url is missing")
+
+        download_checkpoint = read_video_task_checkpoint(config, "download")
+        if download_checkpoint and Path(str(download_checkpoint.get("path") or "")).is_file():
+            download_info = download_checkpoint
+            _safe_update(db, task_id, "running", 12, result_summary="download checkpoint reused")
+        else:
+            _safe_update(db, task_id, "running", 5, result_summary="video download running")
+            download_info = download_video(source_url, VIDEO_DOWNLOAD_DIR / str(task_id))
+            asset = create_asset(
+                db,
+                AssetCreate(
+                    project_id=project_id,
+                    asset_type="video",
+                    file_name=Path(download_info["path"]).name,
+                    file_path=download_info["path"],
+                    mime_type="video/mp4",
+                    duration_sec=int(download_info["duration_sec"]) if download_info.get("duration_sec") else None,
+                    metadata={
+                        "source_url": source_url,
+                        "webpage_url": download_info.get("webpage_url") or source_url,
+                        "video_id": download_info.get("video_id"),
+                        "extractor": download_info.get("extractor"),
+                        "title": download_info.get("title"),
+                    },
+                ),
+            )
+            task.asset_id = asset.id
+            config["asset_id"] = asset.id
+            download_info = {**download_info, "asset_id": asset.id}
+            merge_video_task_checkpoint(config, "download", {**download_info, "status": "success"})
+            task.input_config = config
+            db.commit()
+            db.refresh(task)
+            _safe_update(db, task_id, "running", 15, result_summary="video download complete")
+
+        asset_id = str(download_info.get("asset_id") or config.get("asset_id") or task.asset_id or "")
+        if not asset_id:
+            asset = create_asset(
+                db,
+                AssetCreate(
+                    project_id=project_id,
+                    asset_type="video",
+                    file_name=Path(download_info["path"]).name,
+                    file_path=download_info["path"],
+                    mime_type="video/mp4",
+                    duration_sec=int(download_info["duration_sec"]) if download_info.get("duration_sec") else None,
+                    metadata={"source_url": source_url, "title": download_info.get("title")},
+                ),
+            )
+            asset_id = asset.id
+            task.asset_id = asset_id
+            config["asset_id"] = asset_id
+            merge_video_task_checkpoint(config, "download", {**download_info, "asset_id": asset_id, "status": "success"})
+            task.input_config = config
+            db.commit()
+
+        preprocess_checkpoint = read_video_task_checkpoint(config, "preprocess")
+        child_task_id = str(preprocess_checkpoint.get("semantic_task_id") or "") if preprocess_checkpoint else ""
+        child_task = db.query(ProcessingTask).filter(ProcessingTask.id == child_task_id).first() if child_task_id else None
+        if child_task is None or child_task.status not in {"success", "partial_success"}:
+            child_config = {
+                **(config.get("preprocess_config") if isinstance(config.get("preprocess_config"), dict) else {}),
+                "source_path": str(download_info["path"]),
+                "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 5),
+                "video_target_frame_rate": config.get("video_target_frame_rate", 0),
+                "video_max_frame_count": config.get("video_max_frame_count", 480),
+            }
+            child_task = create_task(
+                db,
+                TaskCreate(
+                    project_id=project_id,
+                    asset_id=asset_id,
+                    task_type="preprocess",
+                    input_config=child_config,
+                ),
+            )
+            _safe_update(db, task_id, "running", 20, result_summary="media preprocessing running")
+            preprocess_job.run({
+                "task_id": child_task.id,
+                "project_id": project_id,
+                "asset_id": asset_id,
+                "input_config": child_config,
+                "source_path": str(download_info["path"]),
+            })
+            db.expire_all()
+            child_task = db.query(ProcessingTask).filter(ProcessingTask.id == child_task.id).first()
+            if child_task is None or child_task.status not in {"success", "partial_success"}:
+                raise RuntimeError(
+                    f"video preprocessing failed: {child_task.error_message if child_task else 'child task missing'}"
+                )
+            config["preprocess_config"] = child_config
+            merge_video_task_checkpoint(config, "preprocess", {
+                "status": "success",
+                "semantic_task_id": child_task.id,
+                "asset_id": asset_id,
+            })
+            task.input_config = config
+            db.commit()
+        else:
+            _safe_update(db, task_id, "running", 65, result_summary="preprocess checkpoint reused")
+
+        export_checkpoint = read_video_task_checkpoint(config, "export")
+        export_path = str(export_checkpoint.get("path") or "") if export_checkpoint else ""
+        if not export_path or not Path(export_path).is_file():
+            _safe_update(db, task_id, "running", 72, result_summary="Markdown export running")
+            units = (
+                db.query(SemanticUnit)
+                .filter(SemanticUnit.asset_id == asset_id)
+                .order_by(SemanticUnit.created_at.asc())
+                .all()
+            )
+            rows = _video_export_rows([
+                unit
+                for unit in units
+                if isinstance(unit.labels, dict)
+                and unit.labels.get("stage") == "preprocess"
+                and unit.labels.get("checkpoint") != "segment_transcript"
+            ])
+            if not rows:
+                raise RuntimeError("video preprocessing produced no exportable semantic units")
+            title = str(config.get("title") or download_info.get("title") or "Video Markdown Report")
+            export_result = export_markdown_from_video_summary(
+                rows,
+                str(EXPORT_DIR),
+                task_id,
+                title,
+                task_name=f"video-{task_id}",
+                db=db,
+                project_id=project_id,
+                include_video_timeline=False,
+            )
+            export_path = str(export_result["path"])
+            artifact = create_artifact(
+                db,
+                ArtifactCreate(
+                    project_id=project_id,
+                    artifact_type="report",
+                    name=Path(export_path).name,
+                    file_path=export_path,
+                    version="v1",
+                ),
+            )
+            _ensure_trace_link(db, "processing_task", task_id, "artifact", artifact.id, "exported_to")
+            merge_video_task_checkpoint(config, "export", {
+                "status": "success",
+                "path": export_path,
+                "artifact_id": artifact.id,
+            })
+            task.input_config = config
+            db.commit()
+        else:
+            _safe_update(db, task_id, "running", 90, result_summary="Markdown checkpoint reused")
+
+        _safe_update(db, task_id, "success", 100, result_summary=f"video Markdown ready: {export_path}")
+        return {
+            "status": "video_markdown_ready",
+            "path": export_path,
+            "asset_id": asset_id,
+            "payload": payload,
+        }
+    except Exception as exc:
+        message = str(exc)
+        _safe_update(db, task_id, "failed", 100, error_message=message)
+        return {"status": "failed", "error": message, "payload": payload}
+    finally:
+        db.close()
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -1597,18 +1856,35 @@ def preprocess_job(self, payload: dict):
             _safe_update(db, task_id, "success", 100, result_summary="audio preprocess done: metadata captured")
             return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
         segment_dir, frame_dir = _media_task_temp_dirs(task_id)
-        media_temp_dirs.extend([segment_dir, frame_dir])
+        audio_dir = _audio_task_temp_dir(task_id)
+        media_temp_dirs.extend([segment_dir, frame_dir, audio_dir])
         _safe_update(db, task_id, "running", 20, result_summary="media split running")
         segment_paths = _split_video_for_task(db, task_id, source_path, str(segment_dir))
         if _task_is_canceled(db, task_id):
             return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload)
         _safe_update(db, task_id, "running", 35, result_summary=f"media split done: {len(segment_paths)} segment(s)")
+        audio_extraction_error = None
+        try:
+            _safe_update(db, task_id, "running", 36, result_summary="audio extraction running")
+            audio_segment_paths = _split_audio_for_task(db, task_id, source_path, str(audio_dir))
+            _safe_update(db, task_id, "running", 38, result_summary=f"audio extraction done: {len(audio_segment_paths)} segment(s)")
+        except MediaProcessingError as exc:
+            audio_segment_paths = []
+            audio_extraction_error = _compact_error_message(exc)
+            _safe_update(db, task_id, "running", 38, result_summary=f"audio extraction skipped: {audio_extraction_error}")
+        frame_extraction_error = None
         if MEDIA_ENABLE_FRAME_EXTRACTION:
             _safe_update(db, task_id, "running", 40, result_summary="frame extraction running")
             frame_config = _video_frame_config(payload, task)
-            frame_paths = _extract_frames_for_task_compat(db, task_id, source_path, str(frame_dir), frame_config)
-            frame_extraction_skipped = False
-            _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
+            try:
+                frame_paths = _extract_frames_for_task_compat(db, task_id, source_path, str(frame_dir), frame_config)
+                frame_extraction_skipped = False
+                _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction done: {len(frame_paths)} frame pattern(s)")
+            except MediaProcessingError as exc:
+                frame_paths = []
+                frame_extraction_skipped = True
+                frame_extraction_error = _compact_error_message(exc)
+                _safe_update(db, task_id, "running", 55, result_summary=f"frame extraction skipped: {frame_extraction_error}")
         else:
             frame_config = _video_frame_config(payload, task)
             frame_paths = []
@@ -1619,7 +1895,19 @@ def preprocess_job(self, payload: dict):
         transcription_parts = []
         transcription_segments = []
         transcription_results = []
-        transcription_inputs, segments_truncated, segment_input_count = _limit_media_segments(segment_paths, source_path)
+        # Preserve the legacy ffmpeg fallback for the original video splitter,
+        # while keeping explicitly reported audio-extraction failures fail-closed.
+        legacy_video_fallback = (
+            not audio_segment_paths
+            and bool(audio_extraction_error)
+            and getattr(_split_video_for_task, "__module__", None) == __name__
+        )
+        transcription_source_paths = audio_segment_paths or (segment_paths if legacy_video_fallback else [])
+        transcription_inputs, segments_truncated, segment_input_count = _limit_media_segments(
+            transcription_source_paths,
+            source_path,
+            allow_source_fallback=legacy_video_fallback,
+        )
         transcription_count = len(transcription_inputs)
         for index, segment_path in enumerate(transcription_inputs):
             if _task_is_canceled(db, task_id):
@@ -1682,6 +1970,8 @@ def preprocess_job(self, payload: dict):
             usable_text_sources.append("ocr")
         semantic_payload = {
             "segments": transcription_inputs,
+            "video_segments": segment_paths,
+            "audio_segments": audio_segment_paths,
             "segment_source_count": segment_input_count,
             "segment_count": transcription_count,
             "segment_truncated": segments_truncated,
@@ -1690,6 +1980,8 @@ def preprocess_job(self, payload: dict):
             "transcript": transcription,
             "ocr": ocr_results,
             "frame_extraction_skipped": frame_extraction_skipped,
+            "frame_extraction_error": frame_extraction_error,
+            "audio_extraction_error": audio_extraction_error,
             "ocr_skipped": ocr_skipped,
             "stage": "preprocess",
             "source_path": source_path,
@@ -1732,7 +2024,12 @@ def preprocess_job(self, payload: dict):
                 return _canceled_preprocess_result(db, asset_id, task_id, has_previous_preprocess, payload, semantic_payload)
         if not transcript_text and not ocr_text and failed_transcriptions and len(failed_transcriptions) == len(transcription_results):
             error = next((str(item.get("error")) for item in failed_transcriptions if item.get("error")), "unknown transcription error")
-            message = f"media transcription failed: {error}"
+            message = _compact_error_message(f"media transcription failed: {error}", max_chars=1500)
+            _safe_update(db, task_id, "failed", 100, error_message=message)
+            return {"status": "failed", "payload": payload, "error": message, "semantic": {**semantic_payload, "extraction_status": "failed"}}
+        if not transcript_text and not ocr_text and (audio_extraction_error or frame_extraction_error):
+            error_parts = [part for part in (audio_extraction_error, frame_extraction_error) if part]
+            message = _compact_error_message(f"media text extraction unavailable: {'; '.join(error_parts)}", max_chars=1500)
             _safe_update(db, task_id, "failed", 100, error_message=message)
             return {"status": "failed", "payload": payload, "error": message, "semantic": {**semantic_payload, "extraction_status": "failed"}}
         if ocr_text:

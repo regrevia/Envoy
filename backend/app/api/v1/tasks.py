@@ -10,7 +10,8 @@ from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
-from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job
+from app.services.video_source_service import VideoSourceError, validate_video_url
+from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job, video_to_markdown_job
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ RETRYABLE_TASKS = {
     "export": export_job,
     "export_skill": export_skill_job,
     "export_markdown": export_markdown_job,
+    "video_to_markdown": video_to_markdown_job,
 }
 
 
@@ -240,6 +242,27 @@ def create_preprocess_task(payload: TaskCreate, db: Session = Depends(get_db)):
     payload = _validated_task_payload(db, payload)
     task = create_task(db, payload)
     return dispatch_task(db, task, preprocess_job, payload.model_dump())
+
+
+@router.post("/tasks/video-to-markdown")
+def create_video_to_markdown_task(payload: dict, db: Session = Depends(get_db)):
+    project_id = str(payload.get("project_id") or "").strip()
+    try:
+        source_url = validate_video_url(payload.get("source_url"))
+    except VideoSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    task_payload = TaskCreate(
+        project_id=project_id,
+        task_type="video_to_markdown",
+        input_config={
+            **(payload.get("input_config") or {}),
+            "source_url": source_url,
+            "title": payload.get("title") or "",
+        },
+    )
+    task_payload = _validated_task_payload(db, task_payload)
+    task = create_task(db, task_payload)
+    return dispatch_task(db, task, video_to_markdown_job, task_payload.model_dump())
 
 
 @router.post("/tasks/analyze")

@@ -46,7 +46,7 @@ const buttonStyle = {
   cursor: 'pointer',
 } as const;
 
-const exportableOutputTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']);
+const exportableOutputTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown', 'delivery']);
 
 function formatCreatedAt(value?: string | null) {
   if (!value) {
@@ -138,7 +138,7 @@ export default function SemanticUnitsPage() {
   const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}${outputQueryParam ? `&${outputQueryParam}` : ''}` : (outputQueryParam ? `?${outputQueryParam}` : '');
   const requestedOutputs = outputContext.split(',').map((item) => item.trim()).filter(Boolean);
   const exportOutputList = requestedOutputs.filter((item) => exportableOutputTypes.has(item));
-  const exportOutputs = exportOutputList.length ? exportOutputList.join(',') : 'markdown,skill,rag';
+  const exportOutputs = exportOutputList.length ? exportOutputList.join(',') : 'delivery,markdown,skill,rag';
   const primaryExportType = exportOutputList[0] || 'markdown';
   const exportQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}&export_type=${encodeURIComponent(primaryExportType)}&outputs=${encodeURIComponent(exportOutputs)}` : (outputQueryParam ? `?${outputQueryParam}` : '');
   const uploadHref = projectQuery ? `/upload${projectQuery}` : '/upload';

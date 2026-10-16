@@ -66,6 +66,76 @@ class TrainExportAutoFlowTests(unittest.TestCase):
             finally:
                 engine.dispose()
 
+    def test_manual_delivery_export_returns_import_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-delivery-export-test.db'}"
+            os.environ["ENVOY_EXPORT_DIR"] = str(Path(tmp_dir) / "exports")
+            os.environ["ENVOY_STORAGE_MODE"] = "local"
+            os.environ["OLLAMA_MODEL"] = ""
+
+            for name in list(sys.modules):
+                if name.startswith("app."):
+                    sys.modules.pop(name, None)
+
+            from fastapi.testclient import TestClient
+            from app.db.base import Base
+            from app.db.session import SessionLocal, engine
+            import app.models  # noqa: F401
+            from app.main import app
+            from app.schemas.asset import AssetCreate
+            from app.schemas.project import ProjectCreate
+            from app.services.crud_service import create_asset, create_project
+
+            Base.metadata.create_all(bind=engine)
+            db = SessionLocal()
+            try:
+                project = create_project(db, ProjectCreate(name="delivery export", description="", domain_type="knowledge", status="active"))
+                asset = create_asset(
+                    db,
+                    AssetCreate(project_id=project.id, asset_type="video", file_name="lesson.mp4", file_path="lesson.mp4", mime_type="video/mp4"),
+                )
+                project_id = project.id
+                asset_id = asset.id
+            finally:
+                db.close()
+
+            try:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/v1/train-exports",
+                    json={
+                        "source_asset_id": asset_id,
+                        "export_type": "delivery",
+                        "title": "课程交付包",
+                        "task_name": "lesson-delivery",
+                        "payload": [
+                            {
+                                "record_type": "semantic_unit",
+                                "id": "manual-video-unit",
+                                "project_id": project_id,
+                                "asset_id": asset_id,
+                                "unit_type": "scene",
+                                "title": "课程片段",
+                                "content": "课程讲解长视频如何沉淀为知识库。",
+                                "labels": {
+                                    "source": "media_transcript",
+                                    "source_name": "lesson.mp4",
+                                    "time_range": ["00:00:00", "00:03:00"],
+                                },
+                            }
+                        ],
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body["export_type"], "delivery")
+                import_manifest = json.loads(Path(body["paths"]["import_manifest"]).read_text(encoding="utf-8"))
+                self.assertEqual(import_manifest["schema_version"], "envoy.agent.import.v1")
+                self.assertEqual(import_manifest["recommended_import_order"][0]["path"], "knowledge_base/rag_corpus.jsonl")
+            finally:
+                engine.dispose()
+
     def test_manual_export_resolves_project_from_source_task(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["DATABASE_URL"] = f"sqlite:///{Path(tmp_dir) / 'envoy-export-source-task-test.db'}"
@@ -229,15 +299,18 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 self.assertIn("来源：视频 OCR", markdown_text)
                 self.assertIn("第一段核心知识", markdown_text)
                 self.assertNotIn('"content":', markdown_text)
-                self.assertEqual(markdown_manifest["schema_version"], "envoy.markdown.v1")
+                self.assertEqual(markdown_manifest["schema_version"], "envoy.markdown.bundle.v1")
                 self.assertEqual(markdown_manifest["source_task_id"], results["markdown"]["task_id"])
                 self.assertEqual(markdown_manifest["project_id"], project_id)
                 self.assertEqual(markdown_manifest["row_count"], 3)
+                self.assertEqual(markdown_manifest["chunk_count"], 3)
                 self.assertEqual(markdown_manifest["source_counts"], {"text_asset": 1, "media_transcript": 1, "media_ocr": 1})
                 self.assertEqual(markdown_manifest["unit_type_counts"], {"text": 1, "transcript": 1, "ocr": 1})
                 self.assertEqual(markdown_manifest["media_processing_limits"], [{"segment_seconds": 300, "max_segment_count": 2, "max_input_seconds": 600, "unit_count": 2}])
-                self.assertEqual(Path(markdown_manifest["files"]["markdown"]).name, "video_summary.md")
-                self.assertEqual(Path(markdown_manifest["files"]["manifest"]).name, "markdown_manifest.json")
+                self.assertEqual(Path(markdown_manifest["files"]["overview"]).name, "00-project-overview.md")
+                self.assertEqual(Path(markdown_manifest["files"]["index"]).name, "index.md")
+                self.assertEqual(Path(markdown_manifest["files"]["manifest"]).name, "manifest.json")
+                self.assertEqual(len(markdown_manifest["files"]["chunks"]), 3)
                 self.assertIn("## 输入摘要", skill_text)
                 self.assertIn("## 能力用途", skill_text)
                 self.assertIn("## 输入素材", skill_text)
@@ -281,9 +354,14 @@ class TrainExportAutoFlowTests(unittest.TestCase):
                 rag_artifacts = [item for item in artifacts if item["artifact_type"] == "rag"]
                 self.assertEqual({Path(item["file_path"]).name for item in rag_artifacts}, {"rag_corpus.jsonl", "rag_manifest.json"})
                 markdown_artifacts = [item for item in artifacts if item["artifact_type"] == "markdown"]
-                self.assertEqual({Path(item["file_path"]).name for item in markdown_artifacts}, {"video_summary.md", "markdown_manifest.json"})
+                markdown_artifact_names = {Path(item["file_path"]).name for item in markdown_artifacts}
+                self.assertIn("index.md", markdown_artifact_names)
+                self.assertIn("00-project-overview.md", markdown_artifact_names)
+                self.assertIn("manifest.json", markdown_artifact_names)
+                self.assertIn("source.md", markdown_artifact_names)
+                self.assertEqual(len([item for item in markdown_artifacts if "/chunks/" in item["file_path"]]), 3)
 
-                markdown_artifact = next(item for item in markdown_artifacts if Path(item["file_path"]).name == "video_summary.md")
+                markdown_artifact = next(item for item in markdown_artifacts if Path(item["file_path"]).name == "00-project-overview.md")
                 download = client.get(f"/api/v1/artifacts/{markdown_artifact['id']}/download")
                 self.assertEqual(download.status_code, 200)
                 self.assertIn("第一段核心知识", download.text)

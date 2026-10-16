@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.train_export import TrainExportRequest
-from app.services.train_export_service import export_sft_dataset, export_instruction_dataset, export_preference_dataset, export_rag_corpus, export_skill_markdown, export_markdown_bundle, export_markdown_from_video_summary, build_auto_payload_from_project
+from app.services.train_export_service import export_sft_dataset, export_instruction_dataset, export_preference_dataset, export_rag_corpus, export_skill_markdown, export_markdown_bundle, export_delivery_package, export_markdown_from_video_summary, build_auto_payload_from_project
 from app.services.crud_service import get_asset, get_project, get_task, list_export_records
 from app.core.config import EXPORT_DIR
 
 router = APIRouter()
-SUPPORTED_EXPORT_TYPES = {"sft", "instruction", "preference", "rag", "skill", "markdown"}
+SUPPORTED_EXPORT_TYPES = {"sft", "instruction", "preference", "rag", "skill", "markdown", "delivery"}
 
 
 def _validate_export_type(export_type: str):
@@ -137,5 +137,15 @@ def create_train_export(payload: TrainExportRequest, db: Session = Depends(get_d
             db=db,
             project_id=project_id,
             enhance_with_ollama=payload.markdown_enhance_with_ollama,
+        )
+    if payload.export_type == "delivery":
+        return export_delivery_package(
+            samples,
+            out_dir,
+            task_id,
+            payload.title or 'Envoy Delivery Package',
+            payload.task_name,
+            db=db,
+            project_id=project_id,
         )
     return {"error": "unsupported export type"}

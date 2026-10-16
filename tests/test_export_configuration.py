@@ -31,6 +31,7 @@ class ExportConfigurationTests(unittest.TestCase):
             "MEDIA_MAX_SEGMENT_COUNT": "0",
             "MEDIA_FRAME_INTERVAL_SECONDS": "bad",
             "MEDIA_MAX_FRAME_COUNT": "0",
+            "MEDIA_WHISPER_MODEL": "tiny",
             "TEXT_PREPROCESS_CHUNK_CHARS": "-20",
             "TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS": "bad",
             "SAMPLE_GENERATION_BATCH_LIMIT": "0",
@@ -49,6 +50,7 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertEqual(config.MEDIA_MAX_SEGMENT_COUNT, 12)
             self.assertEqual(config.MEDIA_FRAME_INTERVAL_SECONDS, 15)
             self.assertEqual(config.MEDIA_MAX_FRAME_COUNT, 240)
+            self.assertEqual(config.MEDIA_WHISPER_MODEL, "tiny")
             self.assertEqual(config.TEXT_PREPROCESS_CHUNK_CHARS, 6000)
             self.assertEqual(config.TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, 400)
             self.assertEqual(config.SAMPLE_GENERATION_BATCH_LIMIT, 50)
@@ -78,6 +80,23 @@ class ExportConfigurationTests(unittest.TestCase):
         self.assertEqual(config.OLLAMA_MODEL, "qwen2.5:7b")
         self.assertEqual(config.OLLAMA_TIMEOUT_SEC, 120)
 
+    def test_media_binary_configuration_comes_from_environment(self):
+        previous = {key: os.environ.get(key) for key in ("FFMPEG_BIN", "FFPROBE_BIN")}
+        try:
+            os.environ["FFMPEG_BIN"] = "/opt/envoy/bin/ffmpeg"
+            os.environ["FFPROBE_BIN"] = "/opt/envoy/bin/ffprobe"
+            config = reload_backend_modules("app.core.config")[0]
+
+            self.assertEqual(config.FFMPEG_BIN, "/opt/envoy/bin/ffmpeg")
+            self.assertEqual(config.FFPROBE_BIN, "/opt/envoy/bin/ffprobe")
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            sys.modules.pop("app.core.config", None)
+
     def test_export_markdown_uses_readable_chinese_headings(self):
         from app.services.train_export_service import export_markdown_from_video_summary, export_skill_markdown
 
@@ -95,7 +114,7 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertEqual(skill_manifest["title"], "Skill Title")
             self.assertEqual(skill_manifest["source_task_id"], "task-001")
             self.assertEqual(skill_manifest["materials"][0]["topic"], "alpha")
-            self.assertIn("## 视频转化摘要", report_text)
+            self.assertNotIn("## 视频转化摘要\n\n## 导航目录", report_text)
             self.assertIn("task-001", skill["root"])
             self.assertIn("task-002", report["root"])
 
@@ -127,6 +146,37 @@ class ExportConfigurationTests(unittest.TestCase):
             self.assertEqual(manifest["source_counts"], {"media_transcript": 1})
             self.assertEqual(manifest["unit_type_counts"], {"transcript": 1})
             self.assertNotIn("media_processing_limits", manifest)
+
+    def test_video_markdown_can_be_knowledge_first_without_timeline_or_overview_truncation(self):
+        from app.services.train_export_service import export_markdown_from_video_summary
+
+        long_text = "知识点。" * 400
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = export_markdown_from_video_summary(
+                [
+                    {
+                        "id": "transcript-1",
+                        "asset_id": "asset-1",
+                        "unit_type": "transcript",
+                        "title": "完整转写",
+                        "content": long_text,
+                        "labels": {"source": "media_transcript", "source_name": "demo.mp4"},
+                    },
+                ],
+                tmp_dir,
+                "task-video-no-timeline",
+                "Demo Video",
+                include_video_timeline=False,
+            )
+
+            overview = Path(result["path"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(result["paths"]["manifest"]).read_text(encoding="utf-8"))
+
+            self.assertIn(long_text, overview)
+            self.assertNotIn("视频时间线", overview)
+            self.assertEqual(manifest["timeline_index"], [])
+            self.assertEqual(manifest["video_source_count"], 0)
+            self.assertNotIn("## 视频转化摘要\n\n## 导航目录", overview)
 
     def test_worker_export_jobs_use_configured_export_dir(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -34,7 +34,7 @@ const buttonStyle = {
   cursor: 'pointer',
 } as const;
 
-const supportedExportTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown']);
+const supportedExportTypes = new Set(['sft', 'instruction', 'preference', 'rag', 'skill', 'markdown', 'delivery']);
 
 function qualityLabel(score?: number | null) {
   if (score === null || score === undefined) return '-';
@@ -82,7 +82,7 @@ export default function GeneratedSamplesPage() {
     .split(',')
     .map((item) => item.trim())
     .filter((item) => supportedExportTypes.has(item));
-  const fallbackExportOutputs = ['markdown', 'skill', 'rag'];
+  const fallbackExportOutputs = ['delivery', 'markdown', 'skill', 'rag'];
   const selectedExportOutputs = exportOutputs.length ? exportOutputs : fallbackExportOutputs;
   const primaryExportType = selectedExportOutputs[0] || 'markdown';
   const outputQueryParam = outputContext ? `outputs=${encodeURIComponent(outputContext)}` : '';
