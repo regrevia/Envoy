@@ -31,8 +31,6 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 LOCAL_STORAGE_DIR = Path(os.getenv("ENVOY_LOCAL_STORAGE_DIR", str(BASE_DIR / "tmp" / "storage")))
 EXPORT_DIR = Path(os.getenv("ENVOY_EXPORT_DIR", str(BASE_DIR / "tmp" / "exports")))
 VIDEO_DOWNLOAD_DIR = Path(os.getenv("ENVOY_VIDEO_DOWNLOAD_DIR", str(BASE_DIR / "tmp" / "video-downloads")))
-CREDENTIAL_VAULT_DIR = Path(os.getenv("ENVOY_CREDENTIAL_VAULT_DIR", str(BASE_DIR / "tmp" / "credentials")))
-CREDENTIAL_KEY_PATH = Path(os.getenv("ENVOY_CREDENTIAL_KEY_PATH", str(BASE_DIR / "tmp" / "config" / "credential-vault.key")))
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")

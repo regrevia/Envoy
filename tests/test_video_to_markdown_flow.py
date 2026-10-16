@@ -49,47 +49,6 @@ def test_video_to_markdown_task_api_creates_one_resumable_task(tmp_path):
         engine.dispose()
 
 
-def test_video_to_markdown_upload_api_stores_only_cookie_file_reference(tmp_path):
-    import os
-
-    os.environ["DATABASE_URL"] = f"sqlite:///{tmp_path / 'envoy-video-cookie-api.db'}"
-    os.environ["ENVOY_STORAGE_MODE"] = "local"
-    os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(tmp_path / "storage")
-    os.environ["ENVOY_VIDEO_DOWNLOAD_DIR"] = str(tmp_path / "downloads")
-    os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
-    for name in list(sys.modules):
-        if name.startswith("app."):
-            sys.modules.pop(name, None)
-
-    from fastapi.testclient import TestClient
-    from app.db.base import Base
-    from app.db.session import engine, SessionLocal
-    import app.models  # noqa: F401
-    from app.main import app
-    from app.schemas.project import ProjectCreate
-    from app.services.crud_service import create_project, get_task
-
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        project = create_project(db, ProjectCreate(name="cookie video", description="", domain_type="video", status="active"))
-        with patch("app.api.v1.tasks.video_to_markdown_job.delay") as delay:
-            response = TestClient(app).post(
-                "/api/v1/tasks/video-to-markdown/upload",
-                data={"project_id": project.id, "source_url": "https://www.douyin.com/video/123"},
-                files={"cookies_file": ("cookies.txt", b"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t0\tname\tvalue\n", "text/plain")},
-            )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["input_config"]["auth"]["mode"] == "cookies_vault"
-        assert "value" not in body["input_config"]
-        assert len(body["input_config"]["auth"]["credential_id"]) == 32
-        delay.assert_called_once()
-    finally:
-        db.close()
-        engine.dispose()
-
-
 def test_video_checkpoint_round_trip_is_json_safe():
     from app.workers.jobs import merge_video_task_checkpoint, read_video_task_checkpoint
     from app.api.v1.tasks import RETRYABLE_TASKS

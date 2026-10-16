@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -11,7 +11,6 @@ from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
-from app.services.credential_vault import CredentialVaultError, store_cookie_bytes
 from app.services.video_source_service import VideoSourceError, normalize_video_auth, validate_video_url
 from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job, video_to_markdown_job
 
@@ -282,40 +281,6 @@ def create_video_to_markdown_task(payload: dict, db: Session = Depends(get_db)):
         auth,
     )
     return _create_video_task(db, task_payload)
-
-
-@router.post("/tasks/video-to-markdown/upload")
-async def create_video_to_markdown_upload_task(
-    project_id: str = Form(...),
-    source_url: str = Form(...),
-    title: str = Form(""),
-    cookies_file: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
-):
-    if cookies_file is None or not cookies_file.filename:
-        raise HTTPException(status_code=400, detail="cookies_file is required")
-    raw = await cookies_file.read()
-    if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Cookie file is larger than 5 MiB")
-    if b"# Netscape HTTP Cookie File" not in raw[:4096] and b"\t" not in raw[:4096]:
-        raise HTTPException(status_code=400, detail="Cookie file must be Netscape cookies.txt format")
-
-    task_payload = _video_task_payload(project_id, source_url, title)
-    task = _validated_task_payload(db, task_payload)
-    task = create_task(db, task)
-    config = dict(task.input_config or {})
-    try:
-        credential_id = store_cookie_bytes(raw)
-    except CredentialVaultError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config["auth"] = {"mode": "cookies_vault", "credential_id": credential_id}
-    task.input_config = config
-    db.commit()
-    db.refresh(task)
-    return dispatch_task(db, task, video_to_markdown_job, {
-        **task_payload.model_dump(),
-        "input_config": config,
-    })
 
 
 @router.post("/tasks/analyze")
