@@ -106,7 +106,17 @@ def understand_window(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    *[{"type": "image", "source": {"type": "url", "url": url}} for url in image_urls],
+                    *[
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": url.split(";", 1)[0].split(":", 1)[-1],
+                                "data": url.split(",", 1)[-1],
+                            },
+                        }
+                        for url in image_urls
+                    ],
                 ],
             }],
         }

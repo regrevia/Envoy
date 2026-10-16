@@ -30,6 +30,25 @@ python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 
 可选的连续画面理解使用 OpenAI Chat Completions 或 Anthropic Messages 兼容接口。配置 `HERMES_VISION_BASE_URL`、`HERMES_VISION_TOKEN`、`HERMES_VISION_MODEL=deepseek-v4.1flash`，并可用 `HERMES_VISION_PROTOCOL=chat|messages` 选择协议。未配置时仍会完成下载、转写、OCR 和 Markdown 导出。
 
+稳定版 API：
+
+```http
+POST /api/v1/tasks/video-to-markdown
+Content-Type: application/json
+
+{
+  "project_id": "your-project-id",
+  "source_url": "https://...",
+  "title": "可选标题",
+  "input_config": {
+    "video_frame_interval_seconds": 5,
+    "video_max_frame_count": 480
+  }
+}
+```
+
+接口返回任务 ID；使用 `GET /api/v1/tasks/{task_id}` 轮询，完成后从任务 `input_config.checkpoints.export.artifact_id` 调用 `/api/v1/artifacts/{artifact_id}/download` 下载 Markdown。默认认证策略是 `auto`：公开访问失败后依次尝试本机浏览器登录态。
+
 命令行验收：
 
 ```bash

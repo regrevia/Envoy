@@ -9,6 +9,7 @@ from app.core.storage import storage_client
 from app.db.session import get_db
 from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
+from app.schemas.video_task import VideoToMarkdownCreate
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
 from app.services.video_source_service import VideoSourceError, normalize_video_auth, validate_video_url
@@ -245,22 +246,28 @@ def create_preprocess_task(payload: TaskCreate, db: Session = Depends(get_db)):
     return dispatch_task(db, task, preprocess_job, payload.model_dump())
 
 
-def _video_task_payload(project_id: str, source_url: str, title: str = "", auth: Optional[dict] = None):
+def _video_task_payload(
+    project_id: str,
+    source_url: str,
+    title: str = "",
+    auth: Optional[dict] = None,
+    input_config: Optional[dict] = None,
+):
     try:
         source_url = validate_video_url(source_url)
         normalized_auth = normalize_video_auth(auth)
     except VideoSourceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    input_config = {
+    normalized_config = dict(input_config or {})
+    normalized_config.update({
         "source_url": source_url,
         "title": title or "",
-    }
-    if normalized_auth:
-        input_config["auth"] = normalized_auth
+    })
+    normalized_config["auth"] = normalized_auth or {"mode": "auto"}
     return TaskCreate(
         project_id=project_id,
         task_type="video_to_markdown",
-        input_config=input_config,
+        input_config=normalized_config,
     )
 
 
@@ -271,14 +278,15 @@ def _create_video_task(db: Session, task_payload: TaskCreate):
 
 
 @router.post("/tasks/video-to-markdown")
-def create_video_to_markdown_task(payload: dict, db: Session = Depends(get_db)):
-    project_id = str(payload.get("project_id") or "").strip()
-    auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else None
+def create_video_to_markdown_task(payload: VideoToMarkdownCreate, db: Session = Depends(get_db)):
+    project_id = payload.project_id.strip()
+    auth = payload.auth if isinstance(payload.auth, dict) else None
     task_payload = _video_task_payload(
         project_id,
-        str(payload.get("source_url") or ""),
-        str(payload.get("title") or ""),
+        payload.source_url,
+        payload.title,
         auth,
+        payload.input_config,
     )
     return _create_video_task(db, task_payload)
 

@@ -42,6 +42,7 @@ def test_video_to_markdown_task_api_creates_one_resumable_task(tmp_path):
         assert body["task_type"] == "video_to_markdown"
         assert body["status"] == "pending"
         assert body["input_config"]["source_url"].startswith("https://")
+        assert body["input_config"]["auth"]["mode"] == "auto"
         assert body["project_id"] == project.id
         delay.assert_called_once()
     finally:
