@@ -4,6 +4,7 @@ import tempfile
 import types
 import unittest
 import importlib
+import subprocess
 from pathlib import Path
 from queue import Empty
 from unittest.mock import patch
@@ -789,6 +790,26 @@ class RuntimeSafetyTests(unittest.TestCase):
 
         self.assertEqual(result[0]["text"], "top first\nleft second right second")
         self.assertEqual([item["text"] for item in result[0]["items"]], ["top first", "left second", "right second"])
+        self.assertEqual(result[0]["items"][0]["bbox"], {"x": 20, "y": 40, "width": 240, "height": 40})
+        self.assertEqual(result[0]["reading_order"], "top_left")
+
+    def test_ocr_worker_falls_back_to_tesseract_when_paddleocr_is_unavailable(self):
+        media_service = reload_media_service()
+        tsv = "\n".join([
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+            "5\t1\t1\t1\t1\t1\t20\t40\t240\t40\t92\tRED KEY",
+            "5\t1\t1\t1\t2\t1\t20\t120\t300\t40\t88\tVILLAGE BRIDGE",
+        ])
+        completed = subprocess.CompletedProcess([], 0, tsv, "")
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as frame, \
+             patch.dict(sys.modules, {"paddleocr": None}), \
+             patch("app.services.media_service.subprocess.run", return_value=completed):
+            frame.write(b"image")
+            frame.flush()
+            result = media_service._run_ocr_worker_logic([frame.name])
+
+        self.assertEqual(result[0]["text"], "RED KEY\nVILLAGE BRIDGE")
         self.assertEqual(result[0]["items"][0]["bbox"], {"x": 20, "y": 40, "width": 240, "height": 40})
         self.assertEqual(result[0]["reading_order"], "top_left")
 

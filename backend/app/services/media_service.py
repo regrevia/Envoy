@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import multiprocessing
+import shutil
 import subprocess
 import tempfile
 import time
@@ -437,6 +438,76 @@ def compress_consecutive_ocr_results(results: list[dict]):
     return compressed
 
 
+def _run_tesseract_ocr_logic(frame_paths: list[str]):
+    if shutil.which("tesseract") is None:
+        return _empty_ocr_results(frame_paths)
+    results = []
+    for path in frame_paths:
+        try:
+            image_bytes = Path(path).read_bytes()
+            command = ["tesseract", "stdin", "stdout", "--psm", "6", "-l", "chi_sim+eng", "tsv"]
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=False,
+                    input=image_bytes,
+                    timeout=MEDIA_OCR_TIMEOUT_SEC,
+                )
+            except subprocess.CalledProcessError:
+                command[-2] = "eng"
+                completed = subprocess.run(
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=False,
+                    input=image_bytes,
+                    timeout=MEDIA_OCR_TIMEOUT_SEC,
+                )
+            stdout = completed.stdout.decode("utf-8", errors="replace") if isinstance(completed.stdout, bytes) else str(completed.stdout or "")
+            lines = [line for line in stdout.splitlines() if line.strip()]
+            header = lines[0].split("\t") if lines else []
+            items = []
+            for line in lines[1:]:
+                columns = line.split("\t")
+                if len(columns) < len(header):
+                    columns.extend([""] * (len(header) - len(columns)))
+                row = dict(zip(header, columns))
+                text = str(row.get("text") or "").strip()
+                if not text:
+                    continue
+                try:
+                    confidence = float(row.get("conf") or 0)
+                except (TypeError, ValueError):
+                    confidence = 0.0
+                if confidence < 0:
+                    continue
+                items.append({
+                    "text": text,
+                    "confidence": confidence / 100 if confidence > 1 else confidence,
+                    "bbox": {
+                        "x": int(float(row.get("left") or 0)),
+                        "y": int(float(row.get("top") or 0)),
+                        "width": int(float(row.get("width") or 0)),
+                        "height": int(float(row.get("height") or 0)),
+                    },
+                })
+            items.sort(key=_ocr_sort_key)
+            result = {
+                "frame": path,
+                "text": _join_ocr_items_by_lines(items),
+                "confidence": max((item["confidence"] for item in items), default=0.0),
+            }
+            if items:
+                result["items"] = items
+                result["reading_order"] = "top_left"
+            results.append(result)
+        except Exception:
+            results.append({"frame": path, "text": "", "confidence": 0.0})
+    return compress_consecutive_ocr_results(results)
+
+
 def _run_ocr_worker_logic(frame_paths: list[str]):
     results = []
     try:
@@ -465,7 +536,7 @@ def _run_ocr_worker_logic(frame_paths: list[str]):
             except Exception:
                 results.append({"frame": path, "text": "", "confidence": 0.0})
     except Exception:
-        results = _empty_ocr_results(frame_paths)
+        results = _run_tesseract_ocr_logic(frame_paths)
     return compress_consecutive_ocr_results(results)
 
 
