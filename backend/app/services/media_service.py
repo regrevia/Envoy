@@ -185,10 +185,33 @@ def extract_frames(
             _frame_filter(target_frame_rate=target_frame_rate, frame_interval_seconds=frame_interval_seconds),
             "-frames:v",
             str(frame_count),
+            "-c:v",
+            "mjpeg",
+            "-pix_fmt",
+            "yuvj420p",
             output_pattern,
         ]
         _run_media_command("extract_frames", cmd, should_cancel=should_cancel)
         frame_paths = sorted(str(path) for path in Path(output_dir).glob("frame_*.jpg"))
+        if not frame_paths and Path(video_path).is_file() and not (should_cancel and should_cancel()):
+            fallback_path = os.path.join(output_dir, "frame_000001.jpg")
+            fallback_cmd = [
+                FFMPEG_BIN,
+                "-y",
+                "-i",
+                video_path,
+                "-vf",
+                "select='eq(n,0)'",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "mjpeg",
+                "-pix_fmt",
+                "yuvj420p",
+                fallback_path,
+            ]
+            _run_media_command("extract_first_frame", fallback_cmd, should_cancel=should_cancel)
+            frame_paths = sorted(str(path) for path in Path(output_dir).glob("frame_*.jpg"))
         return frame_paths
     else:
         Path(output_pattern.replace("%06d", "000001")).touch(exist_ok=True)
