@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from app.core.config import TASK_STALE_AFTER_SECONDS
@@ -10,10 +11,18 @@ from app.db.session import get_db
 from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
 from app.schemas.video_task import VideoToMarkdownCreate
+from app.schemas.video_batch import VideoBatchAppend, VideoBatchCreate, VideoPlaylistDiscover
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
-from app.services.video_source_service import VideoSourceError, normalize_video_auth, validate_video_url
-from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job, video_to_markdown_job
+from app.services.video_source_service import (
+    VideoSourceError,
+    classify_discovery_error,
+    classify_video_source,
+    discover_video_items,
+    normalize_video_auth,
+    validate_video_url,
+)
+from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job, video_to_markdown_job, video_batch_to_markdown_job
 
 router = APIRouter()
 
@@ -26,6 +35,7 @@ RETRYABLE_TASKS = {
     "export_skill": export_skill_job,
     "export_markdown": export_markdown_job,
     "video_to_markdown": video_to_markdown_job,
+    "video_batch_to_markdown": video_batch_to_markdown_job,
 }
 
 
@@ -289,6 +299,108 @@ def create_video_to_markdown_task(payload: VideoToMarkdownCreate, db: Session = 
         payload.input_config,
     )
     return _create_video_task(db, task_payload)
+
+
+@router.post("/video-playlists/discover")
+def discover_video_playlist(payload: VideoPlaylistDiscover):
+    try:
+        return discover_video_items(str(payload.source_url), limit=payload.limit, auth={"mode": "auto"})
+    except VideoSourceError as exc:
+        error = classify_discovery_error(exc)
+        source = classify_video_source(str(payload.source_url))
+        detail = {
+            **error,
+            "source_url": str(payload.source_url),
+            "platform": source["platform"],
+            "source_kind": source["source_kind"],
+        }
+        raise HTTPException(status_code=409 if error["requires_user_action"] else 400, detail=detail) from exc
+
+
+def _create_video_batch(
+    db: Session,
+    project_id: str,
+    title: str,
+    items: list,
+    library_id: Optional[str] = None,
+    input_config: Optional[dict] = None,
+):
+    normalized_items = []
+    for item in items:
+        if item.asset_id:
+            asset = get_asset(db, item.asset_id)
+            if asset is None:
+                raise HTTPException(status_code=404, detail=f"Video asset not found: {item.asset_id}")
+            if asset.project_id != project_id or asset.asset_type != "video":
+                raise HTTPException(status_code=400, detail=f"Video asset does not belong to project: {item.asset_id}")
+            normalized_items.append({
+                "asset_id": item.asset_id,
+                "title": str(item.title or asset.file_name or "").strip(),
+            })
+        else:
+            normalized_items.append({
+                "source_url": validate_video_url(str(item.source_url)),
+                "title": str(item.title or "").strip(),
+            })
+    config = dict(input_config or {})
+    config.update({
+        "library_id": library_id or str(uuid4()),
+        "library_title": title or "视频知识库",
+        "video_items": normalized_items,
+        "max_parallel": config.get("max_parallel", 2),
+        "auth": {"mode": "auto"},
+    })
+    payload = TaskCreate(
+        project_id=project_id,
+        task_type="video_batch_to_markdown",
+        input_config=config,
+    )
+    payload = _validated_task_payload(db, payload)
+    task = create_task(db, payload)
+    return dispatch_task(db, task, video_batch_to_markdown_job, payload.model_dump())
+
+
+@router.post("/tasks/video-batch-to-markdown")
+def create_video_batch_task(payload: VideoBatchCreate, db: Session = Depends(get_db)):
+    try:
+        return _create_video_batch(
+            db,
+            payload.project_id.strip(),
+            payload.title,
+            payload.items,
+            library_id=payload.library_id,
+            input_config=payload.input_config,
+        )
+    except VideoSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/tasks/{task_id}/append-videos")
+def append_videos_to_library(task_id: str, payload: VideoBatchAppend, db: Session = Depends(get_db)):
+    source_task = get_task(db, task_id)
+    if source_task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if source_task.task_type not in {"video_batch_to_markdown", "video_to_markdown"} or source_task.status != "success":
+        raise HTTPException(status_code=409, detail="Videos can only be appended to a completed video task or library")
+    source_config = source_task.input_config if isinstance(source_task.input_config, dict) else {}
+    library_id = str(source_config.get("library_id") or uuid4())
+    seed_task_ids = list(source_config.get("seed_task_ids") or [])
+    if source_task.task_type == "video_to_markdown":
+        seed_task_ids.append(source_task.id)
+    try:
+        return _create_video_batch(
+            db,
+            source_task.project_id,
+            payload.title or str(source_config.get("library_title") or "视频知识库"),
+            payload.items,
+            library_id=library_id,
+            input_config={
+                "append_to_task_id": source_task.id,
+                "seed_task_ids": list(dict.fromkeys(seed_task_ids)),
+            },
+        )
+    except VideoSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/tasks/analyze")

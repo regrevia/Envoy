@@ -31,6 +31,11 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 LOCAL_STORAGE_DIR = Path(os.getenv("ENVOY_LOCAL_STORAGE_DIR", str(BASE_DIR / "tmp" / "storage")))
 EXPORT_DIR = Path(os.getenv("ENVOY_EXPORT_DIR", str(BASE_DIR / "tmp" / "exports")))
 VIDEO_DOWNLOAD_DIR = Path(os.getenv("ENVOY_VIDEO_DOWNLOAD_DIR", str(BASE_DIR / "tmp" / "video-downloads")))
+VIDEO_BATCH_MAX_PARALLEL = min(_env_positive_int("ENVOY_VIDEO_BATCH_MAX_PARALLEL", 2), 8)
+VIDEO_BATCH_MAX_ITEMS = min(_env_positive_int("ENVOY_VIDEO_BATCH_MAX_ITEMS", 20), 20)
+VIDEO_PLAYLIST_DISCOVERY_LIMIT = min(_env_positive_int("ENVOY_VIDEO_PLAYLIST_DISCOVERY_LIMIT", 100), 100)
+VIDEO_UNDERSTANDING_WINDOW_FRAMES = min(_env_positive_int("ENVOY_VIDEO_UNDERSTANDING_WINDOW_FRAMES", 6), 12)
+VIDEO_UNDERSTANDING_WINDOW_OVERLAP = min(_env_positive_int("ENVOY_VIDEO_UNDERSTANDING_WINDOW_OVERLAP", 1), 5)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")

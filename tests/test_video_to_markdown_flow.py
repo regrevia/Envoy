@@ -63,6 +63,87 @@ def test_video_checkpoint_round_trip_is_json_safe():
     assert "video_to_markdown" in RETRYABLE_TASKS
 
 
+def test_video_batch_and_append_api_create_independent_library_tasks(tmp_path):
+    import os
+
+    os.environ["DATABASE_URL"] = f"sqlite:///{tmp_path / 'envoy-video-batch-api.db'}"
+    os.environ["ENVOY_STORAGE_MODE"] = "local"
+    os.environ["ENVOY_LOCAL_STORAGE_DIR"] = str(tmp_path / "storage")
+    os.environ["ENVOY_VIDEO_DOWNLOAD_DIR"] = str(tmp_path / "downloads")
+    os.environ["ENVOY_TASK_EXECUTION_MODE"] = "celery"
+    for name in list(sys.modules):
+        if name.startswith("app."):
+            sys.modules.pop(name, None)
+
+    from fastapi.testclient import TestClient
+    from app.db.base import Base
+    from app.db.session import engine, SessionLocal
+    import app.models  # noqa: F401
+    from app.main import app
+    from app.schemas.project import ProjectCreate
+    from app.schemas.asset import AssetCreate
+    from app.schemas.task import TaskCreate
+    from app.services.crud_service import create_asset, create_project, create_task
+
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        project = create_project(db, ProjectCreate(name="batch api", description="", domain_type="video", status="active"))
+        local_asset = create_asset(db, AssetCreate(
+            project_id=project.id,
+            asset_type="video",
+            file_name="local-demo.webm",
+            file_path=str(tmp_path / "local-demo.webm"),
+            mime_type="video/webm",
+            metadata={"storage": "local"},
+        ))
+        completed_single = create_task(db, TaskCreate(
+            project_id=project.id,
+            task_type="video_to_markdown",
+            input_config={"source_url": "https://example.test/first", "title": "旧单视频"},
+        ))
+        completed_single.status = "success"
+        db.commit()
+        single_id = completed_single.id
+        project_id = project.id
+
+        with patch("app.api.v1.tasks.video_batch_to_markdown_job.delay") as delay:
+            batch_response = TestClient(app).post(
+                "/api/v1/tasks/video-batch-to-markdown",
+                json={
+                    "project_id": project_id,
+                    "title": "游戏攻略",
+                    "items": [
+                        {"source_url": "https://example.test/a", "title": "攻略 A"},
+                        {"asset_id": local_asset.id, "title": "本地攻略 B"},
+                    ],
+                },
+            )
+            assert batch_response.status_code == 200
+            batch_body = batch_response.json()
+            assert batch_body["task_type"] == "video_batch_to_markdown"
+            assert len(batch_body["input_config"]["video_items"]) == 2
+            assert batch_body["input_config"]["video_items"][1]["asset_id"] == local_asset.id
+            library_id = batch_body["input_config"]["library_id"]
+            delay.assert_called_once()
+
+        with patch("app.api.v1.tasks.video_batch_to_markdown_job.delay") as append_delay:
+            append_response = TestClient(app).post(
+                f"/api/v1/tasks/{single_id}/append-videos",
+                json={"items": [{"source_url": "https://example.test/c", "title": "追加 C"}]},
+            )
+        assert append_response.status_code == 200
+        append_body = append_response.json()
+        assert append_body["task_type"] == "video_batch_to_markdown"
+        assert append_body["input_config"]["seed_task_ids"] == [single_id]
+        assert append_body["input_config"]["video_items"][0]["source_url"] == "https://example.test/c"
+        assert append_body["input_config"]["library_id"] != library_id
+        append_delay.assert_called_once()
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_video_download_checkpoint_is_marked_complete_for_progress_ui():
     from app.workers.jobs import merge_video_task_checkpoint, read_video_task_checkpoint
 
@@ -159,6 +240,32 @@ def test_video_export_rows_drop_redundant_media_summary_when_transcript_exists()
     ])
 
     assert [row["id"] for row in rows] == ["transcript"]
+
+
+def test_long_video_frame_windows_cover_every_frame_with_overlap_and_asr_alignment():
+    from app.workers.jobs import _plan_video_frame_windows, _transcript_for_video_window
+
+    frames = [
+        {"path": f"frame-{index}", "start_sec": index * 5, "end_sec": (index + 1) * 5}
+        for index in range(13)
+    ]
+    windows = _plan_video_frame_windows(frames, window_size=6, overlap=1)
+
+    assert [len(window) for window in windows] == [6, 6, 3]
+    assert windows[0][-1]["path"] == windows[1][0]["path"]
+    covered = {frame["path"] for window in windows for frame in window}
+    assert covered == {frame["path"] for frame in frames}
+
+    transcript = _transcript_for_video_window(
+        [
+            {"start_sec": 4, "end_sec": 9, "text": "窗口一口播"},
+            {"start_sec": 29, "end_sec": 34, "text": "窗口二口播"},
+        ],
+        "全文兜底",
+        5,
+        10,
+    )
+    assert transcript == "窗口一口播"
 
 
 def test_video_worker_reuses_successful_download_and_preprocess_checkpoints(tmp_path):
