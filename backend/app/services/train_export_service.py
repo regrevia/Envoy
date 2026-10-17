@@ -1153,6 +1153,7 @@ def export_markdown_bundle(
     include_video_timeline: bool = True,
     full_content_in_overview: bool = False,
     include_video_summary_heading: bool = True,
+    export_root_id: str | None = None,
 ):
     clean_rows = _dedupe_rows(rows)
     semantic_rows = [row for row in clean_rows if _markdown_chunk_body(row)]
@@ -1162,7 +1163,7 @@ def export_markdown_bundle(
     built_chunks = build_markdown_chunks(semantic_rows)
     order, _grouped = _group_rows_by_markdown_source(semantic_rows)
 
-    root = _resolve_root(out_dir, "markdown", task_id, task_name)
+    root = _resolve_root(out_dir, "markdown", export_root_id or task_id, task_name)
     overview_dir = build_subdir(root, "overview")
     sources_dir = build_subdir(root, "sources")
     index_path = root / "index.md"

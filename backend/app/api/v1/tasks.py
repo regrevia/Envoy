@@ -12,6 +12,7 @@ from app.models.semantic_unit import SemanticUnit
 from app.schemas.task import TaskCreate
 from app.schemas.video_task import VideoToMarkdownCreate
 from app.schemas.video_batch import VideoBatchAppend, VideoBatchCreate, VideoPlaylistDiscover
+from app.schemas.mixed_library import MixedLibraryAppend, MixedLibraryCreate
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
 from app.services.video_source_service import (
@@ -22,7 +23,18 @@ from app.services.video_source_service import (
     normalize_video_auth,
     validate_video_url,
 )
-from app.workers.jobs import ping_job, preprocess_job, analyze_job, sample_job, export_job, export_skill_job, export_markdown_job, video_to_markdown_job, video_batch_to_markdown_job
+from app.workers.jobs import (
+    ping_job,
+    preprocess_job,
+    analyze_job,
+    sample_job,
+    export_job,
+    export_skill_job,
+    export_markdown_job,
+    video_to_markdown_job,
+    video_batch_to_markdown_job,
+    mixed_assets_to_markdown_job,
+)
 
 router = APIRouter()
 
@@ -36,6 +48,7 @@ RETRYABLE_TASKS = {
     "export_markdown": export_markdown_job,
     "video_to_markdown": video_to_markdown_job,
     "video_batch_to_markdown": video_batch_to_markdown_job,
+    "mixed_assets_to_markdown": mixed_assets_to_markdown_job,
 }
 
 
@@ -401,6 +414,81 @@ def append_videos_to_library(task_id: str, payload: VideoBatchAppend, db: Sessio
         )
     except VideoSourceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _create_mixed_library(
+    db: Session,
+    project_id: str,
+    title: str,
+    asset_ids: list[str],
+    library_id: Optional[str] = None,
+    input_config: Optional[dict] = None,
+):
+    normalized_asset_ids = []
+    for asset_id in asset_ids:
+        asset = get_asset(db, str(asset_id))
+        if asset is None:
+            raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
+        if asset.project_id != project_id:
+            raise HTTPException(status_code=400, detail=f"Asset does not belong to project: {asset_id}")
+        normalized_asset_ids.append(asset.id)
+    config = dict(input_config or {})
+    config.update({
+        "library_id": library_id or str(uuid4()),
+        "library_title": title or "混合素材知识库",
+        "asset_ids": list(dict.fromkeys(normalized_asset_ids)),
+        "max_parallel": config.get("max_parallel", 2),
+        "markdown_enhance_with_ollama": bool(config.get("markdown_enhance_with_ollama", False)),
+    })
+    payload = TaskCreate(
+        project_id=project_id,
+        task_type="mixed_assets_to_markdown",
+        input_config=config,
+    )
+    payload = _validated_task_payload(db, payload)
+    task = create_task(db, payload)
+    return dispatch_task(db, task, mixed_assets_to_markdown_job, payload.model_dump())
+
+
+@router.post("/tasks/mixed-library-to-markdown")
+def create_mixed_library_task(payload: MixedLibraryCreate, db: Session = Depends(get_db)):
+    return _create_mixed_library(
+        db,
+        payload.project_id.strip(),
+        payload.title,
+        payload.asset_ids,
+        library_id=payload.library_id,
+        input_config={
+            **payload.input_config,
+            "max_parallel": payload.max_parallel,
+            "markdown_enhance_with_ollama": payload.markdown_enhance_with_ollama,
+        },
+    )
+
+
+@router.post("/tasks/{task_id}/append-assets")
+def append_assets_to_mixed_library(task_id: str, payload: MixedLibraryAppend, db: Session = Depends(get_db)):
+    source_task = get_task(db, task_id)
+    if source_task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if source_task.task_type not in {"mixed_assets_to_markdown", "video_to_markdown", "video_batch_to_markdown"} or source_task.status != "success":
+        raise HTTPException(status_code=409, detail="Assets can only be appended to a completed video or mixed library")
+    source_config = source_task.input_config if isinstance(source_task.input_config, dict) else {}
+    seed_task_ids = list(source_config.get("seed_task_ids") or [])
+    seed_task_ids.append(source_task.id)
+    return _create_mixed_library(
+        db,
+        source_task.project_id,
+        payload.title or str(source_config.get("library_title") or "混合素材知识库"),
+        payload.asset_ids,
+        library_id=str(source_config.get("library_id") or uuid4()),
+        input_config={
+            "append_to_task_id": source_task.id,
+            "seed_task_ids": list(dict.fromkeys(seed_task_ids)),
+            "max_parallel": payload.max_parallel,
+            "markdown_enhance_with_ollama": payload.markdown_enhance_with_ollama,
+        },
+    )
 
 
 @router.post("/tasks/analyze")

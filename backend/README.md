@@ -44,6 +44,17 @@ Content-Type: application/json
 
 成功响应包含 `platform`、`source_kind`、`discovery_method` 和候选项的 `source_url`、标题、时长、封面、发布时间。YouTube 和 B 站主页已完成真实公开链路验证；其他平台按相同契约逐一验收。
 
+## 混合素材知识库
+
+`/video` 页面还支持“混合素材”模式，一次选择最多 50 个图片、PDF、文字、Markdown、音频或视频文件。它们会分别走已有的预处理器：
+
+- 图片：OCR
+- PDF/文档/文字：文本抽取与分片
+- 音频：ASR
+- 视频：ASR、OCR 和连续画面理解
+
+父任务只负责并行调度、断点复用和统一 Markdown 导出，不会把原始文件整体重复发送给模型。默认不调用额外 LLM；开启 Markdown 增强时只对已经分片的内容做可选优化。已完成的混合库可以通过 `POST /api/v1/tasks/{task_id}/append-assets` 追加新素材，保持同一个 `library_id` 和输出目录。
+
 可选的连续画面理解使用 OpenAI Chat Completions 或 Anthropic Messages 兼容接口。配置 `HERMES_VISION_BASE_URL`、`HERMES_VISION_TOKEN`、`HERMES_VISION_MODEL=deepseek-v4.1flash`，并可用 `HERMES_VISION_PROTOCOL=chat|messages` 选择协议。未配置时仍会完成下载、转写、OCR 和 Markdown 导出。
 
 稳定版 API：

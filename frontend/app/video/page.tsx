@@ -96,8 +96,9 @@ export default function VideoPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
-  const [mode, setMode] = useState<"single" | "creator" | "local">("single");
+  const [mode, setMode] = useState<"single" | "creator" | "local" | "mixed">("single");
   const [localFiles, setLocalFiles] = useState<File[]>([]);
+  const [mixedFiles, setMixedFiles] = useState<File[]>([]);
   const [candidates, setCandidates] = useState<VideoCandidate[]>([]);
   const [discoverySummary, setDiscoverySummary] = useState<DiscoverySummary | null>(null);
   const [selectedVideoUrls, setSelectedVideoUrls] = useState<string[]>([]);
@@ -300,6 +301,59 @@ export default function VideoPage() {
     }
   };
 
+  const mixedAssetType = (file: File) => {
+    const name = file.name.toLowerCase();
+    if (file.type.startsWith("video/") || /\.(3gp|avi|flv|m2ts|m4v|mkv|mov|mp4|mpeg|mpg|mts|mxf|ogv|ts|webm|wmv)$/.test(name)) return "video";
+    if (file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|tiff?)$/.test(name)) return "image";
+    if (file.type.startsWith("audio/") || /\.(mp3|wav|m4a|aac|ogg|flac|wma)$/.test(name)) return "audio";
+    if (/\.(pdf|doc|docx|ppt|pptx|xls|xlsx)$/.test(name) || file.type.includes("pdf") || file.type.includes("document")) return "document";
+    if (/\.(md|markdown)$/.test(name)) return "markdown";
+    return "text";
+  };
+
+  const submitMixedFiles = async () => {
+    if (!mixedFiles.length || mixedFiles.length > 50) {
+      setMessage("请选择 1 到 50 个混合素材");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const selectedId = await ensureProjectId();
+      const assetIds: string[] = [];
+      for (const file of mixedFiles) {
+        const form = new FormData();
+        form.append("project_id", selectedId);
+        form.append("asset_type", mixedAssetType(file));
+        form.append("file", file);
+        const uploaded = await apiJson<{ asset: { id: string } }>("/api/v1/assets/upload", {
+          method: "POST",
+          body: form,
+          timeoutMs: Math.max(120000, Math.ceil(file.size / (1024 * 1024) * 5000)),
+        });
+        assetIds.push(uploaded.asset.id);
+      }
+      const append = task?.status === "success" && task.task_type === "mixed_assets_to_markdown";
+      const endpoint = append && task
+        ? `/api/v1/tasks/${task.id}/append-assets`
+        : "/api/v1/tasks/mixed-library-to-markdown";
+      const body = append
+        ? { asset_ids: assetIds, title: task?.input_config?.library_title }
+        : { project_id: selectedId, title: "混合素材知识库", asset_ids: assetIds };
+      const created = await apiJson<Task>(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setTask(created);
+      setMixedFiles([]);
+    } catch (error) {
+      setMessage(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const retry = async () => {
     if (!task) return;
     setBusy(true);
@@ -397,7 +451,7 @@ export default function VideoPage() {
         </header>
 
         <div role="group" aria-label="导入方式" style={{ display: "flex", gap: 4, padding: "18px 0 0", borderBottom: "1px solid #d9e0dd" }}>
-          {([["single", "单个链接"], ["creator", "主页/播放列表"], ["local", "本地视频"]] as const).map(([value, label]) => (
+          {([["single", "单个链接"], ["creator", "主页/播放列表"], ["local", "本地视频"], ["mixed", "混合素材"]] as const).map(([value, label]) => (
             <button key={value} type="button" onClick={() => { setMode(value); setCandidates([]); setDiscoverySummary(null); setSelectedVideoUrls([]); setMessage(""); }} aria-pressed={mode === value} style={{ minHeight: 38, padding: "0 12px", border: 0, borderBottom: mode === value ? "2px solid #18745c" : "2px solid transparent", background: "transparent", color: mode === value ? "#18745c" : "#63716c", fontWeight: mode === value ? 650 : 450, cursor: "pointer" }}>{label}</button>
           ))}
         </div>
@@ -435,9 +489,11 @@ export default function VideoPage() {
           </div>
         </section>
 
-        <form onSubmit={(event) => { event.preventDefault(); if (mode === "single") void submit(event); else if (mode === "creator") void discoverVideos(); else void submitLocalVideos(); }} style={{ padding: "28px 0", borderBottom: "1px solid #d9e0dd" }}>
+        <form onSubmit={(event) => { event.preventDefault(); if (mode === "single") void submit(event); else if (mode === "creator") void discoverVideos(); else if (mode === "local") void submitLocalVideos(); else void submitMixedFiles(); }} style={{ padding: "28px 0", borderBottom: "1px solid #d9e0dd" }}>
           {mode === "local" ? (
             <label htmlFor="local-videos" style={{ display: "block", marginBottom: 9, fontWeight: 600 }}>选择本地视频（最多 20 个）</label>
+          ) : mode === "mixed" ? (
+            <label htmlFor="mixed-files" style={{ display: "block", marginBottom: 9, fontWeight: 600 }}>选择混合素材（最多 50 个）</label>
           ) : (
             <label htmlFor="video-url" style={{ display: "block", marginBottom: 9, fontWeight: 600 }}>{mode === "single" ? "视频链接" : "创作者主页或播放列表链接"}</label>
           )}
@@ -449,6 +505,15 @@ export default function VideoPage() {
                 multiple
                 accept=".3gp,.avi,.flv,.m2ts,.m4v,.mkv,.mov,.mp4,.mpeg,.mpg,.mts,.mxf,.ogv,.ts,.webm,.wmv,video/*"
                 onChange={(event) => setLocalFiles(Array.from(event.target.files ?? []).slice(0, 20))}
+                style={{ flex: "1 1 460px", minWidth: 0, minHeight: 46, boxSizing: "border-box", padding: 8, border: "1px solid #aebdb8", borderRadius: 5, background: "#fff", fontSize: 14 }}
+              />
+            ) : mode === "mixed" ? (
+              <input
+                id="mixed-files"
+                type="file"
+                multiple
+                accept=".3gp,.avi,.flv,.m2ts,.m4v,.mkv,.mov,.mp4,.mpeg,.mpg,.mts,.mxf,.ogv,.ts,.webm,.wmv,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,.mp3,.wav,.m4a,.aac,.ogg,.flac,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.md,.markdown,.txt,video/*,audio/*,image/*,text/plain,application/pdf"
+                onChange={(event) => setMixedFiles(Array.from(event.target.files ?? []).slice(0, 50))}
                 style={{ flex: "1 1 460px", minWidth: 0, minHeight: 46, boxSizing: "border-box", padding: 8, border: "1px solid #aebdb8", borderRadius: 5, background: "#fff", fontSize: 14 }}
               />
             ) : (
@@ -463,7 +528,7 @@ export default function VideoPage() {
             />
             )}
             <button type="submit" disabled={busy || Boolean(active) || discovering} style={{ minHeight: 46, padding: "0 20px", border: 0, borderRadius: 5, background: busy || active || discovering ? "#9daaa6" : "#18745c", color: "white", fontSize: 15, fontWeight: 600, cursor: busy || active || discovering ? "wait" : "pointer" }}>
-              {busy ? "提交中" : active ? "处理中" : mode === "single" ? "生成 Markdown" : mode === "local" ? "上传并生成主题库" : discovering ? "发现中..." : "发现视频"}
+              {busy ? "提交中" : active ? "处理中" : mode === "single" ? "生成 Markdown" : mode === "local" ? "上传并生成主题库" : mode === "mixed" ? "上传并生成混合库" : discovering ? "发现中..." : "发现视频"}
             </button>
           </div>
           {projects.length > 0 ? (
@@ -474,10 +539,10 @@ export default function VideoPage() {
               </select>
             </label>
           ) : null}
-          {mode !== "local" ? <p style={{ margin: "11px 0 0", color: "#63716c", fontSize: 13, lineHeight: 1.55 }}>
+          {mode === "mixed" ? <p style={{ margin: "11px 0 0", color: "#63716c", fontSize: 13, lineHeight: 1.55 }}>图片、PDF、文字、音频和视频会分别提取，再汇总为一份带索引和来源追踪的 Markdown。默认不调用额外 LLM，减少 token 消耗。</p> : mode !== "local" ? <p style={{ margin: "11px 0 0", color: "#63716c", fontSize: 13, lineHeight: 1.55 }}>
             B站或抖音需要登录时，选择同机浏览器登录态，或上传 Netscape 格式的 cookies.txt。Cookie 只用于下载，不会写进 Markdown。
           </p> : <p style={{ margin: "11px 0 0", color: "#63716c", fontSize: 13, lineHeight: 1.55 }}>支持 MP4、MOV、MKV、WebM、AVI、M4V、TS 等常见格式；多个文件会分别处理并汇总到同一主题库。</p>}
-          {mode !== "local" ? <p style={{ margin: "12px 0 0", color: "#63716c", fontSize: 13 }}>
+          {mode !== "local" && mode !== "mixed" ? <p style={{ margin: "12px 0 0", color: "#63716c", fontSize: 13 }}>
             Envoy 会先尝试公开访问，失败后自动尝试本机浏览器登录态。请确保运行 Envoy 的电脑上已登录 B 站或抖音。
           </p> : null}
         </form>
@@ -561,8 +626,11 @@ export default function VideoPage() {
             {task.status === "success" && exportCheckpoint?.artifact_id ? (
               <a href={`${API_BASE}/api/v1/artifacts/${exportCheckpoint.artifact_id}/download`} style={{ display: "inline-flex", alignItems: "center", minHeight: 42, marginTop: 16, padding: "0 16px", borderRadius: 4, background: "#18745c", color: "white", textDecoration: "none", fontWeight: 600 }}>下载 Markdown</a>
             ) : null}
-            {task.status === "success" && ["video_batch_to_markdown", "video_to_markdown"].includes(task.task_type) ? (
-              <button type="button" onClick={() => setMode("creator")} style={{ display: "block", minHeight: 38, marginTop: 12, padding: "0 12px", border: "1px solid #18745c", borderRadius: 4, background: "white", color: "#18745c", cursor: "pointer" }}>发现并追加更多视频</button>
+            {task.status === "success" && ["video_batch_to_markdown", "video_to_markdown", "mixed_assets_to_markdown"].includes(task.task_type) ? (
+              <button type="button" onClick={() => setMode(task.task_type === "mixed_assets_to_markdown" ? "mixed" : "creator")} style={{ display: "block", minHeight: 38, marginTop: 12, padding: "0 12px", border: "1px solid #18745c", borderRadius: 4, background: "white", color: "#18745c", cursor: "pointer" }}>{task.task_type === "mixed_assets_to_markdown" ? "追加图片、文字或视频" : "发现并追加更多视频"}</button>
+            ) : null}
+            {task.status === "success" && ["video_batch_to_markdown", "video_to_markdown", "mixed_assets_to_markdown"].includes(task.task_type) ? (
+              <button type="button" onClick={() => setMode("mixed")} style={{ display: "block", minHeight: 38, marginTop: 8, padding: "0 12px", border: "1px solid #7a8f87", borderRadius: 4, background: "white", color: "#45534f", cursor: "pointer" }}>追加其他格式素材</button>
             ) : null}
           </section>
         ) : null}
