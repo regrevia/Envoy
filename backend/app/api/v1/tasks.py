@@ -13,6 +13,7 @@ from app.schemas.task import TaskCreate
 from app.schemas.video_task import VideoToMarkdownCreate
 from app.schemas.video_batch import VideoBatchAppend, VideoBatchCreate, VideoPlaylistDiscover
 from app.schemas.mixed_library import MixedLibraryAppend, MixedLibraryCreate
+from app.schemas.video_browser import VideoBrowserSessionCreate
 from app.services.crud_service import create_task, get_asset, get_project, list_tasks, get_task, update_task_status
 from app.services.task_dispatcher import dispatch_task
 from app.services.video_source_service import (
@@ -23,6 +24,7 @@ from app.services.video_source_service import (
     normalize_video_auth,
     validate_video_url,
 )
+from app.services.browser_session_service import BrowserSessionError, browser_session_manager
 from app.workers.jobs import (
     ping_job,
     preprocess_job,
@@ -328,6 +330,35 @@ def discover_video_playlist(payload: VideoPlaylistDiscover):
             "source_kind": source["source_kind"],
         }
         raise HTTPException(status_code=409 if error["requires_user_action"] else 400, detail=detail) from exc
+
+
+@router.post("/video-playlists/browser-sessions")
+def create_browser_discovery_session(payload: VideoBrowserSessionCreate):
+    try:
+        return browser_session_manager.create(str(payload.source_url), payload.limit)
+    except BrowserSessionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/video-playlists/browser-sessions/{session_id}")
+def browser_discovery_session_status(session_id: str):
+    try:
+        return browser_session_manager.status(session_id)
+    except BrowserSessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/video-playlists/browser-sessions/{session_id}/discover")
+def discover_from_browser_session(session_id: str):
+    try:
+        return browser_session_manager.discover(session_id)
+    except BrowserSessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/video-playlists/browser-sessions/{session_id}")
+def close_browser_discovery_session(session_id: str):
+    return browser_session_manager.close(session_id)
 
 
 def _create_video_batch(
