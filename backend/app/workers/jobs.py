@@ -20,7 +20,7 @@ from app.services.crud_service import update_task_status, create_artifact, creat
 from app.core.storage import storage_client
 from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames, compress_consecutive_ocr_results
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
-from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary, export_video_library
+from app.services.train_export_service import export_skill_markdown, export_markdown_bundle, export_markdown_from_video_summary, export_video_library
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR, VIDEO_DOWNLOAD_DIR
@@ -1817,6 +1817,241 @@ def video_to_markdown_job(self, payload: dict):
         message = str(exc)
         _safe_update(db, task_id, "failed", 100, error_message=message)
         return {"status": "failed", "error": message, "payload": payload}
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=2)
+def mixed_assets_to_markdown_job(self, payload: dict):
+    db = SessionLocal()
+    task_id = payload.get("task_id")
+    project_id = payload.get("project_id")
+    try:
+        task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task is None:
+            raise RuntimeError(f"Mixed library task not found: {task_id}")
+        config = dict(task.input_config or {})
+        library_id = str(config.get("library_id") or "").strip()
+        asset_ids = [str(asset_id) for asset_id in (config.get("asset_ids") or []) if asset_id]
+        if not library_id or not asset_ids:
+            raise RuntimeError("Mixed library id or asset list is missing")
+
+        seed_task_ids = [str(seed) for seed in (config.get("seed_task_ids") or []) if seed]
+        all_asset_ids = list(dict.fromkeys(asset_ids))
+        for seed_id in seed_task_ids:
+            seed = db.query(ProcessingTask).filter(ProcessingTask.id == seed_id).first()
+            if seed is None:
+                continue
+            seed_config = seed.input_config if isinstance(seed.input_config, dict) else {}
+            if seed.task_type == "mixed_assets_to_markdown":
+                all_asset_ids.extend(str(value) for value in seed_config.get("asset_ids", []) if value)
+            elif seed.task_type == "video_to_markdown" and seed.asset_id:
+                all_asset_ids.append(str(seed.asset_id))
+            elif seed.task_type == "video_batch_to_markdown":
+                for item in seed_config.get("video_items", []):
+                    if not isinstance(item, dict) or not item.get("child_task_id"):
+                        continue
+                    child = db.query(ProcessingTask).filter(ProcessingTask.id == str(item["child_task_id"])).first()
+                    if child is not None and child.asset_id:
+                        all_asset_ids.append(str(child.asset_id))
+        all_asset_ids = list(dict.fromkeys(all_asset_ids))
+
+        asset_models = {
+            asset.id: asset
+            for asset in db.query(Asset).filter(
+                Asset.project_id == project_id,
+                Asset.id.in_(all_asset_ids),
+            ).all()
+        }
+        missing_assets = [asset_id for asset_id in all_asset_ids if asset_id not in asset_models]
+        if missing_assets:
+            raise RuntimeError(f"Mixed library assets not found: {', '.join(missing_assets)}")
+
+        child_task_ids = dict(config.get("child_task_ids") or {})
+        child_specs = []
+        external_active = []
+        for asset_id in all_asset_ids:
+            asset = asset_models[asset_id]
+            existing_id = str(child_task_ids.get(asset_id) or "")
+            child = db.query(ProcessingTask).filter(ProcessingTask.id == existing_id).first() if existing_id else None
+            if child is None:
+                child = (
+                    db.query(ProcessingTask)
+                    .filter(
+                        ProcessingTask.project_id == project_id,
+                        ProcessingTask.asset_id == asset_id,
+                        ProcessingTask.task_type.in_(["preprocess", "video_to_markdown"]),
+                        ProcessingTask.status == "success",
+                    )
+                    .order_by(ProcessingTask.created_at.desc())
+                    .first()
+                )
+            if child is not None and child.status == "success":
+                child_task_ids[asset_id] = child.id
+                continue
+            if child is not None and child.status in {"pending", "running"}:
+                child_task_ids[asset_id] = child.id
+                external_active.append(child.id)
+                continue
+
+            if asset.asset_type == "video":
+                child_type = "video_to_markdown"
+                child_config = {
+                    "source_asset_id": asset.id,
+                    "title": asset.file_name,
+                    "auth": {"mode": "auto"},
+                    "library_id": library_id,
+                    "library_title": str(config.get("library_title") or "混合素材知识库"),
+                }
+                child_worker = video_to_markdown_job
+            else:
+                child_type = "preprocess"
+                child_config = {
+                    "source_path": _resolve_source_path({}, asset),
+                    "preserve_media_temp_dirs": False,
+                }
+                child_worker = preprocess_job
+            child = create_task(
+                db,
+                TaskCreate(
+                    project_id=project_id,
+                    asset_id=asset.id,
+                    task_type=child_type,
+                    input_config=child_config,
+                ),
+            )
+            child_task_ids[asset_id] = child.id
+            child_specs.append({
+                "task_id": child.id,
+                "project_id": project_id,
+                "asset_id": asset.id,
+                "input_config": child_config,
+                "worker": child_worker,
+            })
+
+        config["asset_ids"] = all_asset_ids
+        config["child_task_ids"] = child_task_ids
+        task.input_config = config
+        db.commit()
+        _safe_update(db, task_id, "running", 5, result_summary=f"mixed material processing started: {len(all_asset_ids)} asset(s)")
+
+        parallel_limit = min(
+            max(int(config.get("max_parallel") or 2), 1),
+            8,
+            max(len(child_specs), 1),
+        )
+        future_map = {}
+        with ThreadPoolExecutor(max_workers=parallel_limit, thread_name_prefix="envoy-mixed-library") as executor:
+            for child_payload in child_specs:
+                future = executor.submit(
+                    child_payload["worker"].run,
+                    {
+                        "task_id": child_payload["task_id"],
+                        "project_id": child_payload["project_id"],
+                        "asset_id": child_payload["asset_id"],
+                        "input_config": child_payload["input_config"],
+                        **child_payload["input_config"],
+                    },
+                )
+                future_map[future] = child_payload["task_id"]
+            for future in as_completed(future_map):
+                child_id = future_map[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first()
+                    if child is not None and child.status != "success":
+                        child.status = "failed"
+                        child.error_message = str(exc)
+                        db.commit()
+
+        active_ids = set(external_active)
+        while active_ids:
+            db.expire_all()
+            for child_id in list(active_ids):
+                child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first()
+                if child is None or child.status not in {"pending", "running"}:
+                    active_ids.discard(child_id)
+            if active_ids:
+                _safe_update(db, task_id, "running", 70, result_summary=f"waiting for existing material task(s): {len(active_ids)}")
+                time.sleep(2)
+
+        db.expire_all()
+        failed_assets = []
+        for asset_id, child_id in child_task_ids.items():
+            child = db.query(ProcessingTask).filter(ProcessingTask.id == str(child_id)).first()
+            if child is None or child.status != "success":
+                failed_assets.append({
+                    "asset_id": asset_id,
+                    "file_name": asset_models.get(asset_id).file_name if asset_models.get(asset_id) else asset_id,
+                    "error": child.error_message if child is not None else "child task not found",
+                })
+
+        units = (
+            db.query(SemanticUnit)
+            .filter(SemanticUnit.project_id == project_id, SemanticUnit.asset_id.in_(all_asset_ids))
+            .order_by(SemanticUnit.created_at.asc())
+            .all()
+        )
+        rows = []
+        for unit in units:
+            if not isinstance(unit.labels, dict) or unit.labels.get("stage") not in {"preprocess", "understand"}:
+                continue
+            if unit.labels.get("checkpoint") == "segment_transcript" or not _semantic_unit_has_export_content(unit):
+                continue
+            row = _semantic_unit_export_row(unit)
+            asset = asset_models.get(str(unit.asset_id))
+            labels = dict(row.get("labels") or {})
+            labels["source_name"] = asset.file_name if asset is not None else str(unit.asset_id)
+            labels["source_type"] = asset.asset_type if asset is not None else "unknown"
+            row["labels"] = labels
+            rows.append(row)
+        if not rows:
+            raise RuntimeError("Mixed material preprocessing produced no exportable semantic units")
+
+        _safe_update(db, task_id, "running", 92, result_summary="building mixed material Markdown index")
+        export_result = export_markdown_bundle(
+            rows,
+            str(EXPORT_DIR),
+            task_id,
+            str(config.get("library_title") or "混合素材知识库"),
+            task_name=f"mixed-library-{library_id}",
+            db=db,
+            project_id=project_id,
+            enhance_with_ollama=bool(config.get("markdown_enhance_with_ollama", False)),
+            include_video_timeline=False,
+            export_root_id=f"mixed-library-{library_id}",
+        )
+        artifact = create_artifact(
+            db,
+            ArtifactCreate(
+                project_id=project_id,
+                artifact_type="mixed_library",
+                name=Path(export_result["path"]).name,
+                file_path=export_result["path"],
+                version="v1",
+            ),
+        )
+        _ensure_trace_link(db, "processing_task", task_id, "artifact", artifact.id, "exported_to")
+        config["library_artifact_id"] = artifact.id
+        config["library_index_path"] = export_result["path"]
+        config["failed_assets"] = failed_assets
+        merge_video_task_checkpoint(config, "collection_export", {
+            "status": "success",
+            "path": export_result["path"],
+            "artifact_id": artifact.id,
+        })
+        task.input_config = config
+        db.commit()
+        if failed_assets:
+            message = f"{len(failed_assets)} asset(s) failed; successful materials are preserved in the mixed library."
+            _safe_update(db, task_id, "failed", 100, result_summary=f"mixed library updated: {len(rows)} semantic row(s)", error_message=message)
+            return {"status": "partial", "path": export_result["path"], "artifact_id": artifact.id, "payload": payload}
+        _safe_update(db, task_id, "success", 100, result_summary=f"mixed library ready: {len(all_asset_ids)} asset(s), {len(rows)} semantic row(s)")
+        return {"status": "mixed_library_ready", "path": export_result["path"], "artifact_id": artifact.id, "payload": payload}
+    except Exception as exc:
+        _safe_update(db, task_id, "failed", 100, error_message=str(exc))
+        return {"status": "failed", "error": str(exc), "payload": payload}
     finally:
         db.close()
 
