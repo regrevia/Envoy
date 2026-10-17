@@ -1484,6 +1484,35 @@ def _video_export_rows(units):
     ]
 
 
+def _mixed_library_export_units(units):
+    grouped = {}
+    for unit in units:
+        grouped.setdefault(str(unit.asset_id or ""), []).append(unit)
+    primary_sources = {
+        "media_transcript",
+        "media_ocr",
+        "video_understanding",
+        "image_text",
+        "document_text",
+        "document_ocr",
+        "text_asset",
+    }
+    selected = []
+    for unit in units:
+        labels = unit.labels if isinstance(unit.labels, dict) else {}
+        source = str(labels.get("source") or "")
+        if source == "media_asset":
+            sibling_sources = {
+                str((sibling.labels or {}).get("source") or "")
+                for sibling in grouped.get(str(unit.asset_id or ""), [])
+                if isinstance(sibling.labels, dict)
+            }
+            if sibling_sources & primary_sources:
+                continue
+        selected.append(unit)
+    return selected
+
+
 @celery_app.task(bind=True, max_retries=2)
 def ping_job(self):
     return {"status": "ok"}
@@ -1993,6 +2022,7 @@ def mixed_assets_to_markdown_job(self, payload: dict):
             .order_by(SemanticUnit.created_at.asc())
             .all()
         )
+        units = _mixed_library_export_units(units)
         rows = []
         for unit in units:
             if not isinstance(unit.labels, dict) or unit.labels.get("stage") not in {"preprocess", "understand"}:

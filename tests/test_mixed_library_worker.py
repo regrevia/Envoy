@@ -88,3 +88,18 @@ def test_mixed_library_worker_exports_selected_text_assets_to_one_markdown_bundl
     finally:
         db.close()
         engine.dispose()
+
+
+def test_mixed_library_export_units_drop_redundant_media_summary():
+    from types import SimpleNamespace
+    from app.workers.jobs import _mixed_library_export_units
+
+    units = [
+        SimpleNamespace(asset_id="video-1", labels={"source": "media_transcript"}, unit_type="transcript"),
+        SimpleNamespace(asset_id="video-1", labels={"source": "media_asset"}, unit_type="scene"),
+        SimpleNamespace(asset_id="image-1", labels={"source": "image_asset"}, unit_type="image"),
+    ]
+
+    result = _mixed_library_export_units(units)
+
+    assert [unit.labels["source"] for unit in result] == ["media_transcript", "image_asset"]

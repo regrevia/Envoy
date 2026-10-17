@@ -20,7 +20,7 @@ python3 scripts/run_media_collection_delivery_e2e.py <media-folder> --out-dir tm
 python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 ```
 
-`ffmpeg/ffprobe` 负责视频/音频切分，`openai-whisper` 负责音频转写，`paddleocr` + `paddlepaddle` 负责视频抽帧 OCR。`paddleocr` 只有同时安装 `paddle` 推理后端时才会被运行时检查视为可用。
+`ffmpeg/ffprobe` 负责视频/音频切分，`openai-whisper` 负责音频转写，`paddleocr` + `paddlepaddle` 负责视频抽帧 OCR。图片和视频 OCR 在 PaddleOCR 不可用时会尝试调用系统 `tesseract`；两者都不可用时保留 metadata-only 降级状态，不会伪造 OCR 内容。`paddleocr` 只有同时安装 `paddle` 推理后端时才会被运行时检查视为可用。
 
 ## URL 转 Markdown 验收
 
