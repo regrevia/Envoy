@@ -247,6 +247,10 @@ class RuntimeSafetyTests(unittest.TestCase):
         cmd = calls[0][0]
         self.assertIn("-vf", cmd)
         self.assertIn("fps=1/15", cmd)
+        self.assertIn("-c:v", cmd)
+        self.assertIn("mjpeg", cmd)
+        self.assertIn("-pix_fmt", cmd)
+        self.assertIn("yuvj420p", cmd)
         self.assertTrue(str(cmd[-1]).endswith("frame_%06d.jpg"))
 
     def test_extract_frames_uses_configured_target_frame_rate_when_set(self):
@@ -273,7 +277,26 @@ class RuntimeSafetyTests(unittest.TestCase):
                 os.environ.pop("MEDIA_TARGET_FRAME_RATE", None)
             else:
                 os.environ["MEDIA_TARGET_FRAME_RATE"] = previous
-            reload_media_service()
+
+    def test_extract_frames_falls_back_to_first_frame_for_short_media(self):
+        media_service = reload_media_service()
+        output_dir = Path(tempfile.mkdtemp(prefix="envoy-short-frames-"))
+        source_path = output_dir / "short.mp4"
+        source_path.write_bytes(b"video")
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 2:
+                (output_dir / "frame_000001.jpg").write_bytes(b"frame")
+            return None
+
+        with patch("app.services.media_service.subprocess.run", side_effect=fake_run):
+            frames = media_service.extract_frames(str(source_path), str(output_dir), frame_interval_seconds=5)
+
+        assert frames == [str(output_dir / "frame_000001.jpg")]
+        assert len(calls) == 2
+        assert "select='eq(n,0)'" in calls[1]
 
     def test_extract_frames_limits_frame_count_and_returns_actual_files(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
