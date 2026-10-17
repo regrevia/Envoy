@@ -89,6 +89,28 @@ def test_vision_settings_are_encrypted_and_status_never_returns_api_key(tmp_path
     assert loaded["base_url"] == "https://provider.example/v1"
 
 
+def test_vision_settings_survive_service_reload_from_envoy_project_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_VISION_CONFIG_PATH", str(tmp_path / "envoy-vision.enc"))
+    monkeypatch.setenv("ENVOY_VISION_KEY_PATH", str(tmp_path / "envoy-vision.key"))
+    from app.services import vision_service
+
+    vision_service.save_vision_config({
+        "base_url": "https://provider.example/v1",
+        "api_key": "reload-secret",
+        "model": "reload-model",
+        "protocol": "messages",
+    })
+
+    sys.modules.pop("app.services.vision_service", None)
+    reloaded = __import__("app.services.vision_service", fromlist=["vision_config"])
+    config = reloaded.vision_config()
+
+    assert config["base_url"] == "https://provider.example/v1"
+    assert config["model"] == "reload-model"
+    assert config["protocol"] == "messages"
+    assert config["token"] == "reload-secret"
+
+
 def test_vision_chat_connection_test_uses_configured_model_and_auth(tmp_path, monkeypatch):
     from app.services import vision_service
 

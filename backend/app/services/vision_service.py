@@ -111,29 +111,33 @@ def _public_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def vision_config() -> dict[str, Any]:
     saved = _read_saved_config()
-    if saved:
-        return {
-            "base_url": saved.get("base_url", ""),
-            "token": saved.get("api_key", ""),
-            "model": saved.get("model", ""),
-            "protocol": saved.get("protocol", "chat"),
-            "timeout_sec": max(int(os.getenv("HERMES_VISION_TIMEOUT_SEC", "180") or 180), 30),
-            "max_images": max(int(os.getenv("HERMES_VISION_MAX_IMAGES", "6") or 6), 1),
-        }
-    base_url = (
+    env_base_url = (
         os.getenv("HERMES_VISION_BASE_URL")
         or os.getenv("HERMES_BASE_URL")
         or os.getenv("HERMES_API_URL")
         or ""
     ).strip().rstrip("/")
-    token = os.getenv("HERMES_VISION_TOKEN") or os.getenv("HERMES_TOKEN") or os.getenv("HERMES_API_KEY") or ""
-    protocol = (os.getenv("HERMES_VISION_PROTOCOL") or "chat").strip().lower()
+    env_token = os.getenv("HERMES_VISION_TOKEN") or os.getenv("HERMES_TOKEN") or os.getenv("HERMES_API_KEY") or ""
+    env_model = os.getenv("HERMES_VISION_MODEL") or ""
+    env_protocol = os.getenv("HERMES_VISION_PROTOCOL") or ""
+    has_environment_override = bool(env_base_url or env_token or env_model or env_protocol)
+    if saved and not has_environment_override:
+        base_url = saved.get("base_url", "")
+        token = saved.get("api_key", "")
+        model = saved.get("model", "")
+        protocol = saved.get("protocol", "chat")
+    else:
+        base_url = env_base_url or saved.get("base_url", "")
+        token = env_token or saved.get("api_key", "")
+        model = env_model or saved.get("model", "")
+        protocol = env_protocol or saved.get("protocol", "chat")
+    protocol = protocol.strip().lower()
     if protocol not in {"chat", "messages"}:
         protocol = "chat"
     return {
         "base_url": base_url,
         "token": token,
-        "model": (os.getenv("HERMES_VISION_MODEL") or "deepseek-v4.1flash").strip(),
+        "model": (model or "deepseek-v4.1flash").strip(),
         "protocol": protocol,
         "timeout_sec": max(int(os.getenv("HERMES_VISION_TIMEOUT_SEC", "180") or 180), 30),
         "max_images": max(int(os.getenv("HERMES_VISION_MAX_IMAGES", "6") or 6), 1),
