@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 from app.core.config import DATABASE_URL
 from app.db.base import Base
 from app.db.session import engine
@@ -16,14 +17,23 @@ from app.api.v1.train_exports import router as train_exports_router
 
 app = FastAPI(title="Envoy API", version="0.1.0")
 
+_default_cors_origins = [
+    "http://127.0.0.1:8200",
+    "http://localhost:8200",
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3001",
+    "http://localhost:3001",
+]
+_configured_cors_origins = [
+    origin.strip()
+    for origin in os.getenv("ENVOY_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:8200",
-        "http://localhost:8200",
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-    ],
+    allow_origins=list(dict.fromkeys(_default_cors_origins + _configured_cors_origins)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
