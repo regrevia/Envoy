@@ -26,7 +26,23 @@ python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 
 启动后端和前端后，打开前端的 `/video` 页面，粘贴一个视频 URL。默认“自动读取公开或本机登录态”会先尝试公开访问，再尝试 Chrome、Edge、Firefox、Safari 等本机浏览器的登录态；用户不需要手工复制 Cookie。后端必须和已登录浏览器运行在同一台机器、同一用户下。
 
-当前 URL 下载由 `yt-dlp` 负责，支持其当前版本能够解析的 B 站、抖音及其他站点链接；仍然需要登录、地区限制或被平台拦截的链接会在任务中保留 yt-dlp 原始错误。
+当前 URL 下载和主页/播放列表发现由统一来源层负责，底层使用 `yt-dlp`。已针对 YouTube、B 站、抖音、Vimeo、Twitch、Instagram、Facebook、X、快手、西瓜视频、优酷、腾讯视频、爱奇艺和小红书做来源分类，并将单视频、分享链接、创作者主页和集合统一转换为候选视频结构。具体可用能力仍以平台当前页面和 yt-dlp 版本为准。
+
+主页发现遇到登录墙、验证码、挑战页或平台风控时，发现 API 返回 `409` 和 `requires_user_action=true`。前端会提供打开原始来源页面、由用户正常完成处理后重试的入口；不绕过验证码、签名校验或设备风控。若平台仍不能返回作品列表，可改用单条视频链接、批量粘贴链接或本地视频上传。
+
+发现接口：
+
+```http
+POST /api/v1/video-playlists/discover
+Content-Type: application/json
+
+{
+  "source_url": "https://www.youtube.com/@TED/videos",
+  "limit": 10
+}
+```
+
+成功响应包含 `platform`、`source_kind`、`discovery_method` 和候选项的 `source_url`、标题、时长、封面、发布时间。YouTube 和 B 站主页已完成真实公开链路验证；其他平台按相同契约逐一验收。
 
 可选的连续画面理解使用 OpenAI Chat Completions 或 Anthropic Messages 兼容接口。配置 `HERMES_VISION_BASE_URL`、`HERMES_VISION_TOKEN`、`HERMES_VISION_MODEL=deepseek-v4.1flash`，并可用 `HERMES_VISION_PROTOCOL=chat|messages` 选择协议。未配置时仍会完成下载、转写、OCR 和 Markdown 导出。
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -12,6 +14,14 @@ router = APIRouter()
 
 
 SUPPORTED_ASSET_TYPES = {"text", "markdown", "document", "image", "audio", "video"}
+SUPPORTED_VIDEO_EXTENSIONS = {
+    ".3gp", ".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4",
+    ".mpeg", ".mpg", ".mts", ".mxf", ".ogv", ".ts", ".webm", ".wmv",
+}
+
+
+def _is_supported_video_filename(filename: str) -> bool:
+    return Path(filename).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
 
 
 def _asset_payload(asset):
@@ -51,13 +61,19 @@ async def upload_asset_api(
         raise HTTPException(status_code=400, detail="Unsupported asset type")
     if not file.filename or not file.filename.strip():
         raise HTTPException(status_code=400, detail="Uploaded file name is empty")
+    if normalized_asset_type == "video" and not _is_supported_video_filename(file.filename):
+        supported = ", ".join(sorted(SUPPORTED_VIDEO_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Unsupported video format; supported extensions: {supported}")
 
     file.file.seek(0, 2)
     file_size = file.file.tell()
     file.file.seek(0)
     if file_size <= 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    storage_info = upload_fileobj_to_storage(file.filename, file.file, file_size, file.content_type or "application/octet-stream")
+    storage_name = file.filename
+    if normalized_asset_type == "video":
+        storage_name = f"{uuid4().hex}{Path(file.filename).suffix.lower()}"
+    storage_info = upload_fileobj_to_storage(storage_name, file.file, file_size, file.content_type or "application/octet-stream")
     if storage_info.get("storage") not in {"local", "minio"}:
         raise HTTPException(status_code=503, detail=f"Storage backend unavailable: {storage_info.get('reason') or 'unknown'}")
     payload = AssetCreate(

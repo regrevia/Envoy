@@ -1475,6 +1475,247 @@ def export_markdown_from_video_summary(
     )
 
 
+def _video_library_slug(value: str) -> str:
+    slug = slugify_name(value)
+    return slug or "video-library"
+
+
+def export_video_library(
+    evidence_rows: list[dict],
+    video_rows: list[dict],
+    out_dir: str,
+    library_id: str,
+    title: str,
+    task_id: str,
+    project_id: str,
+    topic_result: dict | None = None,
+    failed_videos: list[dict] | None = None,
+    db=None,
+) -> dict:
+    """Write a theme-first, progressively disclosed wiki source package."""
+    root = Path(out_dir).resolve() / "video-libraries" / _video_library_slug(library_id)
+    themes_dir = root / "themes"
+    evidence_dir = root / "evidence"
+    root.mkdir(parents=True, exist_ok=True)
+    themes_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    index_path = root / "index.md"
+    video_index_path = root / "videos.md"
+    evidence_jsonl_path = root / "evidence.jsonl"
+    manifest_path = root / "manifest.json"
+
+    normalized_evidence = []
+    evidence_by_id = {}
+    video_by_id = {str(video["video_id"]): video for video in video_rows if video.get("video_id")}
+    for row in evidence_rows:
+        evidence_id = str(row.get("id") or "")
+        content = _semantic_unit_export_content(row)
+        if not evidence_id or not content:
+            continue
+        labels = _row_labels(row)
+        video_id = str(labels.get("video_id") or labels.get("source_task_id") or row.get("asset_id") or "unknown-video")
+        record = {
+            "id": evidence_id,
+            "video_id": video_id,
+            "video_title": str(labels.get("video_title") or video_by_id.get(video_id, {}).get("title") or "Video"),
+            "unit_type": str(row.get("unit_type") or "knowledge"),
+            "title": _row_title(row, len(normalized_evidence) + 1),
+            "source": str(labels.get("source") or "video"),
+            "content": content,
+        }
+        normalized_evidence.append(record)
+        evidence_by_id[evidence_id] = record
+
+    generated_topics = (topic_result or {}).get("topics") or []
+    topics = []
+    used_evidence = set()
+    for topic in generated_topics:
+        if not isinstance(topic, dict):
+            continue
+        points = []
+        for point in topic.get("points", []):
+            if not isinstance(point, dict):
+                continue
+            refs = [str(ref) for ref in point.get("evidence_ids", []) if str(ref) in evidence_by_id]
+            body = str(point.get("text") or "").strip()
+            if body and refs:
+                points.append({"text": body, "evidence_ids": refs})
+                used_evidence.update(refs)
+        topic_title = str(topic.get("title") or "").strip()
+        if topic_title and points:
+            topics.append({
+                "title": topic_title,
+                "summary": str(topic.get("summary") or "").strip(),
+                "points": points,
+            })
+
+    topic_status = (topic_result or {}).get("status") or "skipped"
+    if not topics and normalized_evidence:
+        by_type: dict[str, list[dict]] = {}
+        for evidence in normalized_evidence:
+            by_type.setdefault(evidence["unit_type"], []).append(evidence)
+        topics = [
+            {
+                "title": _unit_type_label(unit_type),
+                "summary": f"按内容类型自动归档，共 {len(items)} 条原始证据；尚未生成 AI 跨视频归纳。",
+                "points": [
+                    {
+                        "text": item["title"],
+                        "evidence_ids": [item["id"]],
+                    }
+                    for item in items
+                ],
+            }
+            for unit_type, items in sorted(by_type.items())
+        ]
+        topic_status = "fallback"
+
+    topic_manifest = []
+    topic_files: list[Path] = []
+    for topic in topics:
+        slug = _video_library_slug(topic["title"])
+        topic_path = themes_dir / f"{slug}.md"
+        lines = [f"# {topic['title']}", ""]
+        if topic.get("summary"):
+            lines.extend([topic["summary"], ""])
+        lines.extend(["## 知识点", ""])
+        referenced_videos: dict[str, dict] = {}
+        for point in topic["points"]:
+            lines.extend([f"### {point['text']}", "", "来源证据："])
+            for evidence_id in point["evidence_ids"]:
+                evidence = evidence_by_id[evidence_id]
+                evidence_rel = Path("..") / "evidence" / f"{_video_library_slug(evidence['video_title'])}-{_video_library_slug(evidence_id)}.md"
+                lines.append(
+                    f"- [{evidence['video_title']} · {evidence['title']}]({evidence_rel.as_posix()}) "
+                    f"(evidence_id: `{evidence_id}`)"
+                )
+                referenced_videos[evidence["video_id"]] = video_by_id.get(
+                    evidence["video_id"],
+                    {"video_id": evidence["video_id"], "title": evidence["video_title"], "source_url": ""},
+                )
+            lines.append("")
+        lines.extend(["## 涉及视频", ""])
+        for video in referenced_videos.values():
+            lines.append(f"- [{video.get('title') or video.get('video_id')}]({video.get('source_url') or '#'})")
+        _write_utf8_text(topic_path, "\n".join(lines))
+        topic_files.append(topic_path)
+        topic_manifest.append({
+            "title": topic["title"],
+            "summary": topic.get("summary", ""),
+            "path": str(topic_path),
+            "relative_path": topic_path.relative_to(root).as_posix(),
+            "video_ids": list(referenced_videos.keys()),
+            "evidence_ids": sorted({
+                evidence_id
+                for point in topic["points"]
+                for evidence_id in point["evidence_ids"]
+            }),
+        })
+
+    evidence_files: list[Path] = []
+    evidence_lines = []
+    for evidence in normalized_evidence:
+        video_slug = _video_library_slug(evidence["video_title"])
+        evidence_slug = _video_library_slug(evidence["id"])
+        evidence_path = evidence_dir / f"{video_slug}-{evidence_slug}.md"
+        video = video_by_id.get(evidence["video_id"], {})
+        _write_utf8_text(evidence_path, "\n".join([
+            f"# {evidence['title']}",
+            "",
+            f"- Video: {evidence['video_title']}",
+            f"- Source: {video.get('source_url') or 'unknown'}",
+            f"- Evidence ID: `{evidence['id']}`",
+            f"- Type: {evidence['unit_type']}",
+            "",
+            "## 内容",
+            "",
+            evidence["content"],
+            "",
+        ]))
+        evidence_files.append(evidence_path)
+        evidence_lines.append(json.dumps(evidence, ensure_ascii=False))
+    _write_utf8_text(evidence_jsonl_path, "\n".join(evidence_lines))
+
+    video_lines = ["# 视频来源目录", "", f"共 {len(video_rows)} 条视频来源。", ""]
+    for video in video_rows:
+        video_lines.extend([
+            f"## {video.get('title') or video.get('video_id')}",
+            "",
+            f"- 来源：{video.get('source_url') or 'unknown'}",
+            f"- 状态：{video.get('status') or 'success'}",
+            f"- 证据数：{video.get('evidence_count', 0)}",
+            "",
+        ])
+    for failed in failed_videos or []:
+        video_lines.extend([
+            f"## 处理失败：{failed.get('title') or failed.get('source_url')}",
+            "",
+            f"- 来源：{failed.get('source_url')}",
+            f"- 错误：{failed.get('error') or 'unknown error'}",
+            "",
+        ])
+    _write_utf8_text(video_index_path, "\n".join(video_lines))
+
+    index_lines = [
+        f"# {title}",
+        "",
+        "> 这是渐进式披露入口。先按主题查找；仅打开相关主题页和证据页。完整证据集见 `evidence.jsonl`。",
+        "",
+        f"- 视频数：{len(video_rows) + len(failed_videos or [])}",
+        f"- 已处理视频：{len(video_rows)}",
+        f"- 失败视频：{len(failed_videos or [])}",
+        f"- 知识证据：{len(normalized_evidence)}",
+        f"- 主题整理：{topic_status}",
+        "",
+        "## 主题索引",
+        "",
+    ]
+    if topics:
+        for item in topic_manifest:
+            index_lines.append(
+                f"- [{item['title']}]({item['relative_path']})：{item['summary']} "
+                f"(视频 {len(item['video_ids'])} 条，证据 {len(item['evidence_ids'])} 条)"
+            )
+    else:
+        index_lines.append("- 暂无可归类知识内容。")
+    index_lines.extend([
+        "",
+        "## 来源与机器检索",
+        "",
+        f"- [视频来源目录]({video_index_path.name})",
+        f"- [完整证据 JSONL]({evidence_jsonl_path.name})",
+        f"- 结构清单：`{manifest_path.name}`",
+    ])
+    _write_utf8_text(index_path, "\n".join(index_lines))
+
+    manifest = {
+        "schema_version": "envoy.video.library.v1",
+        "library_id": library_id,
+        "title": title,
+        "project_id": project_id,
+        "source_task_id": task_id,
+        "video_count": len(video_rows),
+        "failed_video_count": len(failed_videos or []),
+        "evidence_count": len(normalized_evidence),
+        "topic_status": topic_status,
+        "topics": topic_manifest,
+        "videos": video_rows,
+        "failed_videos": failed_videos or [],
+        "evidence": normalized_evidence,
+        "files": {
+            "index": str(index_path),
+            "videos": str(video_index_path),
+            "evidence_jsonl": str(evidence_jsonl_path),
+            "themes": [str(path) for path in topic_files],
+            "evidence_pages": [str(path) for path in evidence_files],
+        },
+    }
+    _write_utf8_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
+    files = [index_path, video_index_path, evidence_jsonl_path, manifest_path, *topic_files, *evidence_files]
+    _finalize_export(db, project_id, task_id, "video_library", f"video-library-{library_id}", root, files, normalized_evidence)
+    return {"root": str(root), "path": str(index_path), "manifest_path": str(manifest_path), "files": [str(path) for path in files]}
+
+
 def _relative_file(path: Path, root: Path):
     return path.relative_to(root).as_posix()
 

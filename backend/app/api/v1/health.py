@@ -12,7 +12,7 @@ from app.core.config import (
     MEDIA_TRANSCRIPTION_TIMEOUT_SEC,
 )
 from app.services.ollama_service import get_ollama_config, get_ollama_status, update_ollama_config
-from app.services.vision_service import vision_status
+from app.services.vision_service import save_vision_config, test_vision_connection, vision_status
 
 router = APIRouter()
 
@@ -61,3 +61,19 @@ def media_health():
 @router.get('/health/vision')
 def vision_health():
     return vision_status()
+
+
+@router.put('/health/vision/config')
+def configure_vision(payload: dict):
+    try:
+        return save_vision_config(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/health/vision/test')
+def test_vision_api():
+    result = test_vision_connection()
+    if result["status"] != "success":
+        raise HTTPException(status_code=502, detail=result)
+    return result

@@ -9,6 +9,7 @@ import zipfile
 import zlib
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from xml.etree import ElementTree
 from uuid import uuid4
 from pathlib import Path
@@ -19,11 +20,11 @@ from app.services.crud_service import update_task_status, create_artifact, creat
 from app.core.storage import storage_client
 from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames, compress_consecutive_ocr_results
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
-from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary
+from app.services.train_export_service import export_skill_markdown, export_markdown_from_video_summary, export_video_library
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR, VIDEO_DOWNLOAD_DIR
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, VIDEO_BATCH_MAX_ITEMS, VIDEO_BATCH_MAX_PARALLEL
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -33,7 +34,7 @@ from app.schemas.artifact import ArtifactCreate
 from app.schemas.asset import AssetCreate
 from app.schemas.task import TaskCreate
 from app.services.video_source_service import download_video
-from app.services.vision_service import understand_window, vision_status
+from app.services.vision_service import understand_window, vision_status, synthesize_video_topics
 
 
 def _safe_update(db, task_id, status, progress=None, result_summary=None, error_message=None):
@@ -358,6 +359,8 @@ def _read_video_understanding_inputs(db, asset_id: str | None):
     )
     frames = []
     transcript_parts = []
+    transcript_segments = []
+    frame_interval = MEDIA_FRAME_INTERVAL_SECONDS
     for unit in units:
         labels = unit.labels if isinstance(unit.labels, dict) else {}
         if labels.get("source") == "media_asset":
@@ -366,45 +369,136 @@ def _read_video_understanding_inputs(db, asset_id: str | None):
             except (TypeError, ValueError):
                 payload = {}
             if isinstance(payload, dict):
-                frames.extend(str(path) for path in payload.get("frames", []) if str(path).strip())
+                interval = payload.get("frame_config", {}).get("frame_interval_seconds") if isinstance(payload.get("frame_config"), dict) else None
+                try:
+                    frame_interval = max(int(interval or frame_interval), 1)
+                except (TypeError, ValueError):
+                    pass
+                for path in payload.get("frames", []):
+                    path = str(path).strip()
+                    if not path:
+                        continue
+                    match = re.search(r"frame_(\d+)", Path(path).name)
+                    frame_index = max(int(match.group(1)) - 1, 0) if match else len(frames)
+                    frames.append({"path": path, "start_sec": frame_index * frame_interval, "end_sec": (frame_index + 1) * frame_interval})
                 transcript = payload.get("transcript")
-                if isinstance(transcript, dict) and str(transcript.get("text") or "").strip():
-                    transcript_parts.append(str(transcript["text"]).strip())
+                if isinstance(transcript, dict):
+                    if str(transcript.get("text") or "").strip():
+                        transcript_parts.append(str(transcript["text"]).strip())
+                    for segment in transcript.get("segments", []):
+                        if not isinstance(segment, dict):
+                            continue
+                        segment_index = int(segment.get("segment_index") or 0)
+                        start_sec = float(segment.get("start_sec", segment_index * MEDIA_SEGMENT_SECONDS + float(segment.get("start") or 0)))
+                        end_sec = float(segment.get("end_sec", segment_index * MEDIA_SEGMENT_SECONDS + float(segment.get("end") or segment.get("start") or 0)))
+                        transcript_segments.append({
+                            "start_sec": start_sec,
+                            "end_sec": end_sec,
+                            "text": str(segment.get("text") or ""),
+                        })
         elif labels.get("source") == "media_transcript":
             transcript_parts.append(str(unit.content or "").strip())
-    return list(dict.fromkeys(frames)), "\n".join(dict.fromkeys(part for part in transcript_parts if part))
+    return frames, "\n".join(dict.fromkeys(part for part in transcript_parts if part)), transcript_segments, frame_interval
 
 
-def _video_understanding_unit(db, project_id: str, asset_id: str, task_id: str, result: dict):
+def _video_understanding_unit(
+    db,
+    project_id: str,
+    asset_id: str,
+    task_id: str,
+    result: dict,
+    window_index: int,
+    window_start_sec: int,
+    window_end_sec: int,
+):
     content = json.dumps({
         "summary": result.get("text") or "",
+        "error": result.get("error"),
         "model": result.get("model"),
         "frame_count": result.get("frame_count", 0),
         "source": "continuous_frame_window",
         "status": result.get("status"),
+        "window_start_sec": window_start_sec,
+        "window_end_sec": window_end_sec,
     }, ensure_ascii=False)
     labels = {
         "stage": "understand",
         "source": "video_understanding",
         "task_id": task_id,
+        "checkpoint": "vision_window",
+        "window_index": window_index,
+        "window_start_sec": window_start_sec,
+        "window_end_sec": window_end_sec,
         "model": result.get("model"),
         "status": result.get("status"),
     }
-    unit = SemanticUnit(
-        id=str(uuid4()),
-        project_id=project_id,
-        asset_id=asset_id,
-        segment_id=None,
-        unit_type="scene",
-        title="连续画面理解",
-        content=content,
-        labels=labels,
-        confidence=0.78 if result.get("status") == "success" else 0.35,
+    unit = (
+        db.query(SemanticUnit)
+        .filter(SemanticUnit.asset_id == asset_id)
+        .all()
     )
-    db.add(unit)
+    unit = next(
+        (
+            item for item in unit
+            if isinstance(item.labels, dict)
+            and item.labels.get("task_id") == task_id
+            and item.labels.get("checkpoint") == "vision_window"
+            and item.labels.get("window_index") == window_index
+        ),
+        None,
+    )
+    if unit is None:
+        unit = SemanticUnit(
+            id=str(uuid4()),
+            project_id=project_id,
+            asset_id=asset_id,
+            segment_id=None,
+            unit_type="scene",
+            title=f"连续画面理解窗口 {window_index + 1}",
+            content=content,
+            labels=labels,
+            confidence=0.78 if result.get("status") == "success" else 0.35,
+        )
+        db.add(unit)
+    else:
+        unit.content = content
+        unit.labels = labels
+        unit.confidence = 0.78 if result.get("status") == "success" else 0.35
     db.commit()
     db.refresh(unit)
     return unit
+
+
+def _plan_video_frame_windows(frames: list[dict], window_size: int, overlap: int) -> list[list[dict]]:
+    if not frames:
+        return []
+    size = max(int(window_size or 1), 1)
+    overlap = min(max(int(overlap or 0), 0), size - 1)
+    stride = max(size - overlap, 1)
+    windows = []
+    for start in range(0, len(frames), stride):
+        window = frames[start : start + size]
+        if window:
+            windows.append(window)
+        if start + size >= len(frames):
+            break
+    return windows
+
+
+def _transcript_for_video_window(
+    segments: list[dict],
+    full_transcript: str,
+    start_sec: int,
+    end_sec: int,
+) -> str:
+    selected = [
+        str(segment.get("text") or "").strip()
+        for segment in segments
+        if float(segment.get("start_sec") or 0) <= end_sec
+        and float(segment.get("end_sec") or segment.get("start_sec") or 0) >= start_sec
+        and str(segment.get("text") or "").strip()
+    ]
+    return "\n".join(selected) if selected else full_transcript
 
 
 def _build_file_semantic_payload(asset: Asset | None, source_path: str, source: str):
@@ -1406,13 +1500,47 @@ def video_to_markdown_job(self, payload: dict):
             raise RuntimeError(f"Video task not found: {task_id}")
         config = dict(task.input_config or {})
         source_url = str(config.get("source_url") or "").strip()
-        if not source_url:
-            raise RuntimeError("Video source_url is missing")
+        source_asset_id = str(config.get("source_asset_id") or "").strip()
+        if not source_url and not source_asset_id:
+            raise RuntimeError("Video source_url or source_asset_id is missing")
 
         download_checkpoint = read_video_task_checkpoint(config, "download")
         if download_checkpoint and Path(str(download_checkpoint.get("path") or "")).is_file():
             download_info = download_checkpoint
             _safe_update(db, task_id, "running", 12, result_summary="download checkpoint reused")
+        elif source_asset_id:
+            asset = db.query(Asset).filter(Asset.id == source_asset_id).first()
+            if asset is None or asset.project_id != project_id or asset.asset_type != "video":
+                raise RuntimeError(f"Uploaded video asset is unavailable or invalid: {source_asset_id}")
+            source_path = _resolve_source_path({}, asset)
+            source_file = Path(source_path)
+            if not source_file.is_file() and storage_client.client is not None:
+                source_file = VIDEO_DOWNLOAD_DIR / str(task_id) / Path(asset.file_name).name
+                source_file.parent.mkdir(parents=True, exist_ok=True)
+                response = storage_client.client.get_object(storage_client.bucket, asset.file_path)
+                try:
+                    with source_file.open("wb") as output:
+                        shutil.copyfileobj(response, output, length=1024 * 1024)
+                finally:
+                    response.close()
+                    response.release_conn()
+            if not source_file.is_file():
+                raise RuntimeError(f"Uploaded video file is missing: {source_path}")
+            metadata = asset.extra_metadata if isinstance(asset.extra_metadata, dict) else {}
+            download_info = {
+                "path": str(source_file),
+                "video_id": source_asset_id,
+                "title": str(config.get("title") or asset.file_name),
+                "duration_sec": asset.duration_sec,
+                "extractor": "local_upload",
+                "webpage_url": str(metadata.get("source_url") or ""),
+                "asset_id": asset.id,
+            }
+            merge_video_task_checkpoint(config, "download", {**download_info, "status": "success"})
+            task.asset_id = asset.id
+            task.input_config = config
+            db.commit()
+            _safe_update(db, task_id, "running", 15, result_summary="local video ready")
         else:
             _safe_update(db, task_id, "running", 5, result_summary="video download running")
             download_info = download_video(
@@ -1517,33 +1645,104 @@ def video_to_markdown_job(self, payload: dict):
         understand_checkpoint = read_video_task_checkpoint(config, "understand")
         if not understand_checkpoint or understand_checkpoint.get("status") not in {"success", "skipped"}:
             _safe_update(db, task_id, "running", 68, result_summary="visual understanding running")
-            frame_paths, transcript = _read_video_understanding_inputs(db, asset_id)
-            if not frame_paths:
-                understanding = {"status": "skipped", "text": "", "error": "no frames available"}
+            frames, full_transcript, transcript_segments, _frame_interval = _read_video_understanding_inputs(db, asset_id)
+            if not frames:
+                understanding_checkpoint = {"status": "skipped", "window_count": 0, "error": "no frames available"}
             elif not vision_status().get("enabled"):
-                understanding = {"status": "skipped", "text": "", "error": "vision provider is not configured"}
+                understanding_checkpoint = {"status": "skipped", "window_count": 0, "error": "vision provider is not configured"}
             else:
-                understanding = understand_window(
-                    "识别这段游戏/教程视频画面，提取操作步骤、界面变化、物品获取、战斗机制、表格或清单中的具体信息。",
-                    transcript,
-                    frame_paths,
+                windows = _plan_video_frame_windows(
+                    frames,
+                    VIDEO_UNDERSTANDING_WINDOW_FRAMES,
+                    VIDEO_UNDERSTANDING_WINDOW_OVERLAP,
                 )
-            if understanding.get("status") == "success":
-                _video_understanding_unit(db, project_id, asset_id, task_id, understanding)
-            elif understanding.get("status") == "failed":
-                _safe_update(
-                    db,
-                    task_id,
-                    "running",
-                    70,
-                    result_summary=f"visual understanding skipped: {understanding.get('error')}",
+                window_checkpoints = dict(
+                    understand_checkpoint.get("windows", {})
+                    if isinstance(understand_checkpoint, dict) else {}
                 )
-            merge_video_task_checkpoint(config, "understand", {
-                "status": understanding.get("status") or "skipped",
-                "model": understanding.get("model"),
-                "frame_count": understanding.get("frame_count", 0),
-                "error": understanding.get("error"),
-            })
+                previous_context = ""
+                failures = []
+                successful_count = 0
+                updated_understanding = False
+                for window_index, window in enumerate(windows):
+                    window_start_sec = int(float(window[0].get("start_sec") or 0))
+                    window_end_sec = int(float(window[-1].get("end_sec") or window[-1].get("start_sec") or 0))
+                    window_key = str(window_index)
+                    prior_checkpoint = window_checkpoints.get(window_key, {})
+                    if prior_checkpoint.get("status") == "success":
+                        unit_id = prior_checkpoint.get("unit_id")
+                        prior_unit = db.query(SemanticUnit).filter(SemanticUnit.id == unit_id).first() if unit_id else None
+                        if prior_unit is not None:
+                            try:
+                                previous_context = str(json.loads(prior_unit.content).get("summary") or "")[:2000]
+                            except (TypeError, ValueError):
+                                previous_context = ""
+                            successful_count += 1
+                            continue
+
+                    window_transcript = _transcript_for_video_window(
+                        transcript_segments,
+                        full_transcript,
+                        window_start_sec,
+                        window_end_sec,
+                    )
+                    result = understand_window(
+                        "识别这段游戏/教程视频画面，提取可执行步骤、界面状态变化、物品获取、战斗机制和表格/清单中每个可辨识条目。保留不确定项，不要猜测。",
+                        window_transcript,
+                        [str(frame["path"]) for frame in window],
+                        context=previous_context,
+                        window_label=f"{window_start_sec}s-{window_end_sec}s",
+                    )
+                    result["frame_count"] = len(window)
+                    unit = _video_understanding_unit(
+                        db,
+                        project_id,
+                        asset_id,
+                        task_id,
+                        result,
+                        window_index,
+                        window_start_sec,
+                        window_end_sec,
+                    )
+                    updated_understanding = True
+                    window_checkpoints[window_key] = {
+                        "status": result.get("status") or "failed",
+                        "unit_id": unit.id,
+                        "window_start_sec": window_start_sec,
+                        "window_end_sec": window_end_sec,
+                        "frame_count": len(window),
+                        "error": result.get("error"),
+                    }
+                    if result.get("status") == "success":
+                        successful_count += 1
+                        previous_context = str(result.get("text") or "")[:2000]
+                    else:
+                        failures.append({"window_index": window_index, "error": result.get("error")})
+                    merge_video_task_checkpoint(config, "understand", {
+                        "status": "partial_success",
+                        "window_count": len(windows),
+                        "completed_window_count": window_index + 1,
+                        "windows": window_checkpoints,
+                    })
+                    task.input_config = config
+                    db.commit()
+                    progress = min(71, 68 + int(3 * (window_index + 1) / max(len(windows), 1)))
+                    _safe_update(db, task_id, "running", progress, result_summary=f"visual window {window_index + 1}/{len(windows)}")
+                overall_status = "success" if not failures else ("partial_success" if successful_count else "failed")
+                understanding_checkpoint = {
+                    "status": overall_status,
+                    "model": vision_status().get("model"),
+                    "window_count": len(windows),
+                    "completed_window_count": len(windows),
+                    "successful_window_count": successful_count,
+                    "failed_windows": failures,
+                    "windows": window_checkpoints,
+                }
+                if updated_understanding:
+                    checkpoints = config.get("checkpoints")
+                    if isinstance(checkpoints, dict):
+                        checkpoints.pop("export", None)
+            merge_video_task_checkpoint(config, "understand", understanding_checkpoint)
             task.input_config = config
             db.commit()
         else:
@@ -1618,6 +1817,247 @@ def video_to_markdown_job(self, payload: dict):
         message = str(exc)
         _safe_update(db, task_id, "failed", 100, error_message=message)
         return {"status": "failed", "error": message, "payload": payload}
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=2)
+def video_batch_to_markdown_job(self, payload: dict):
+    db = SessionLocal()
+    task_id = payload.get("task_id")
+    project_id = payload.get("project_id")
+    try:
+        task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task is None:
+            raise RuntimeError(f"Video library task not found: {task_id}")
+        config = dict(task.input_config or {})
+        library_id = str(config.get("library_id") or "").strip()
+        items = config.get("video_items")
+        if not library_id or not isinstance(items, list) or not items:
+            raise RuntimeError("Video library id or selected video list is missing")
+        items = items[:VIDEO_BATCH_MAX_ITEMS]
+        config["video_items"] = items
+        child_specs = []
+        external_active = []
+
+        for index, item in enumerate(items):
+            item = dict(item)
+            child_id = str(item.get("child_task_id") or "")
+            child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first() if child_id else None
+            if child is not None and child.status == "success":
+                item["status"] = "success"
+                child_specs.append((index, item, child.id, None))
+                continue
+            if child is not None and child.status in {"pending", "running"}:
+                item["status"] = child.status
+                child_specs.append((index, item, child.id, None))
+                external_active.append((index, child.id))
+                continue
+
+            source_url = str(item.get("source_url") or "").strip()
+            source_asset_id = str(item.get("asset_id") or "").strip()
+            if not source_url and not source_asset_id:
+                item["status"] = "failed"
+                item["error"] = "Video source URL or asset id is missing"
+                child_specs.append((index, item, "", None))
+                continue
+            child_config = {
+                **({"source_asset_id": source_asset_id} if source_asset_id else {"source_url": source_url}),
+                "title": str(item.get("title") or ""),
+                "auth": config.get("auth") or {"mode": "auto"},
+                "library_id": library_id,
+                "library_title": str(config.get("library_title") or "视频知识库"),
+            }
+            child = create_task(
+                db,
+                TaskCreate(
+                    project_id=project_id,
+                    asset_id=source_asset_id or None,
+                    task_type="video_to_markdown",
+                    input_config=child_config,
+                ),
+            )
+            item["child_task_id"] = child.id
+            item["status"] = "pending"
+            item.pop("error", None)
+            child_specs.append((index, item, child.id, {
+                "task_id": child.id,
+                "project_id": project_id,
+                "asset_id": source_asset_id or None,
+                "input_config": child_config,
+            }))
+            config["video_items"][index] = item
+
+        task.input_config = config
+        db.commit()
+        _safe_update(db, task_id, "running", 5, result_summary=f"batch video processing started: {len(items)} video(s)")
+
+        parallel_limit = min(
+            max(int(config.get("max_parallel") or VIDEO_BATCH_MAX_PARALLEL), 1),
+            VIDEO_BATCH_MAX_PARALLEL,
+            len(items),
+        )
+        future_map = {}
+        completed_count = sum(1 for _, item, _, child_payload in child_specs if child_payload is None and item.get("status") == "success")
+        with ThreadPoolExecutor(max_workers=parallel_limit, thread_name_prefix="envoy-video-batch") as executor:
+            for index, item, child_id, child_payload in child_specs:
+                if child_payload is not None:
+                    future_map[executor.submit(video_to_markdown_job.run, child_payload)] = (index, child_id)
+
+            for future in as_completed(future_map):
+                index, child_id = future_map[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first()
+                    if child is not None and child.status not in {"success"}:
+                        child.status = "failed"
+                        child.error_message = str(exc)
+                        db.commit()
+                child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first()
+                item = dict(config["video_items"][index])
+                item["status"] = child.status if child is not None else "failed"
+                if child is not None and child.error_message:
+                    item["error"] = child.error_message
+                config["video_items"][index] = item
+                task.input_config = config
+                db.commit()
+                completed_count += 1
+                progress = min(90, 5 + int(80 * completed_count / max(len(items), 1)))
+                _safe_update(db, task_id, "running", progress, result_summary=f"batch video processing: {completed_count}/{len(items)} complete")
+
+        active_ids = {child_id for _, child_id in external_active}
+        while active_ids:
+            db.expire_all()
+            for child_id in list(active_ids):
+                child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first()
+                if child is None or child.status not in {"pending", "running"}:
+                    active_ids.discard(child_id)
+            if active_ids:
+                _safe_update(db, task_id, "running", 80, result_summary=f"waiting for existing child task(s): {len(active_ids)}")
+                time.sleep(2)
+
+        all_tasks = db.query(ProcessingTask).filter(ProcessingTask.project_id == project_id).all()
+        library_batch_tasks = [
+            candidate
+            for candidate in all_tasks
+            if candidate.task_type == "video_batch_to_markdown"
+            and isinstance(candidate.input_config, dict)
+            and candidate.input_config.get("library_id") == library_id
+        ]
+        child_ids = set(str(child_id) for child_id in config.get("seed_task_ids", []) if child_id)
+        for batch_task in library_batch_tasks:
+            batch_config = batch_task.input_config if isinstance(batch_task.input_config, dict) else {}
+            for batch_item in batch_config.get("video_items", []):
+                if isinstance(batch_item, dict) and batch_item.get("child_task_id"):
+                    child_ids.add(str(batch_item["child_task_id"]))
+
+        videos = []
+        failed_videos = []
+        evidence_rows = []
+        for child_id in sorted(child_ids):
+            child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first()
+            if child is None:
+                failed_videos.append({"video_id": child_id, "title": child_id, "error": "Child task not found"})
+                continue
+            child_config = child.input_config if isinstance(child.input_config, dict) else {}
+            source_url = str(child_config.get("source_url") or "")
+            title = str(child_config.get("title") or source_url or child.id)
+            if child.status != "success":
+                failed_videos.append({
+                    "video_id": child.id,
+                    "title": title,
+                    "source_url": source_url,
+                    "error": child.error_message or f"Child task ended with status {child.status}",
+                })
+                continue
+            asset = db.query(Asset).filter(Asset.id == child.asset_id).first() if child.asset_id else None
+            title = str(child_config.get("title") or (asset.file_name if asset else source_url) or child.id)
+            units = (
+                db.query(SemanticUnit)
+                .filter(SemanticUnit.asset_id == child.asset_id)
+                .order_by(SemanticUnit.created_at.asc())
+                .all()
+                if child.asset_id else []
+            )
+            units = [
+                unit for unit in units
+                if isinstance(unit.labels, dict)
+                and unit.labels.get("stage") in {"preprocess", "understand"}
+                and unit.labels.get("checkpoint") != "segment_transcript"
+            ]
+            rows = _video_export_rows(units)
+            video_evidence = []
+            for row in rows:
+                labels = dict(row.get("labels") or {})
+                labels.update({
+                    "video_id": child.id,
+                    "video_title": title,
+                    "video_url": source_url,
+                })
+                row["labels"] = labels
+                evidence_rows.append(row)
+                video_evidence.append({
+                    "id": row["id"],
+                    "kind": row.get("unit_type") or "knowledge",
+                    "content": row.get("content") or "",
+                })
+            videos.append({
+                "video_id": child.id,
+                "title": title,
+                "source_url": source_url,
+                "status": child.status,
+                "evidence_count": len(video_evidence),
+                "evidence": video_evidence,
+            })
+
+        _safe_update(db, task_id, "running", 92, result_summary="building theme-first wiki index")
+        topic_result = synthesize_video_topics(videos)
+        library_result = export_video_library(
+            evidence_rows=evidence_rows,
+            video_rows=videos,
+            out_dir=str(EXPORT_DIR),
+            library_id=library_id,
+            title=str(config.get("library_title") or "视频知识库"),
+            task_id=task_id,
+            project_id=project_id,
+            topic_result=topic_result,
+            failed_videos=failed_videos,
+            db=db,
+        )
+        artifact = create_artifact(
+            db,
+            ArtifactCreate(
+                project_id=project_id,
+                artifact_type="video_library",
+                name=Path(library_result["path"]).name,
+                file_path=library_result["path"],
+                version="v1",
+            ),
+        )
+        _ensure_trace_link(db, "processing_task", task_id, "artifact", artifact.id, "exported_to")
+        config["library_artifact_id"] = artifact.id
+        config["library_index_path"] = library_result["path"]
+        config["failed_video_count"] = len(failed_videos)
+        merge_video_task_checkpoint(config, "collection_export", {
+            "status": "success",
+            "path": library_result["path"],
+            "manifest_path": library_result["manifest_path"],
+            "artifact_id": artifact.id,
+            "evidence_count": len(evidence_rows),
+            "topic_status": topic_result.get("status"),
+        })
+        task.input_config = config
+        db.commit()
+        if failed_videos:
+            error = f"{len(failed_videos)} video(s) failed; successful sources are preserved in the library. Retry to continue failed videos."
+            _safe_update(db, task_id, "failed", 100, result_summary=f"video library updated: {len(videos)} succeeded, {len(failed_videos)} failed", error_message=error)
+            return {"status": "partial", "path": library_result["path"], "artifact_id": artifact.id, "payload": payload}
+        _safe_update(db, task_id, "success", 100, result_summary=f"video library ready: {len(videos)} video(s), {len(evidence_rows)} evidence item(s)")
+        return {"status": "video_library_ready", "path": library_result["path"], "artifact_id": artifact.id, "payload": payload}
+    except Exception as exc:
+        _safe_update(db, task_id, "failed", 100, error_message=str(exc))
+        return {"status": "failed", "error": str(exc), "payload": payload}
     finally:
         db.close()
 
@@ -2039,6 +2479,8 @@ def preprocess_job(self, payload: dict):
                         enriched = dict(item)
                         enriched["source_segment"] = segment_path
                         enriched["segment_index"] = index
+                        enriched["start_sec"] = index * MEDIA_SEGMENT_SECONDS + float(item.get("start") or 0)
+                        enriched["end_sec"] = index * MEDIA_SEGMENT_SECONDS + float(item.get("end") or item.get("start") or 0)
                         transcription_segments.append(enriched)
             progress = min(75, 55 + int(((index + 1) / max(transcription_count, 1)) * 20))
             _safe_update(db, task_id, "running", progress, result_summary=f"audio transcription done: {index + 1}/{transcription_count} segment(s)")

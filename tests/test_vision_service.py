@@ -65,3 +65,110 @@ def test_messages_vision_adapter_parses_anthropic_style_response(tmp_path):
     assert result["status"] == "success"
     assert result["text"] == "表格中的关键条目"
     assert client.post.call_args.args[0].endswith("/messages")
+
+
+def test_vision_settings_are_encrypted_and_status_never_returns_api_key(tmp_path, monkeypatch):
+    from app.services import vision_service
+
+    monkeypatch.setenv("ENVOY_VISION_CONFIG_PATH", str(tmp_path / "vision.enc"))
+    monkeypatch.setenv("ENVOY_VISION_KEY_PATH", str(tmp_path / "vault.key"))
+    saved = vision_service.save_vision_config({
+        "base_url": "https://provider.example/v1",
+        "api_key": "never-return-this-secret",
+        "model": "official-model-id",
+        "protocol": "chat",
+    })
+    encrypted = (tmp_path / "vision.enc").read_bytes()
+    assert b"never-return-this-secret" not in encrypted
+    assert saved["configured"] is True
+    assert "api_key" not in saved
+    assert saved["api_key_configured"] is True
+    loaded = vision_service.vision_config()
+    assert loaded["token"] == "never-return-this-secret"
+    assert loaded["model"] == "official-model-id"
+    assert loaded["base_url"] == "https://provider.example/v1"
+
+
+def test_vision_chat_connection_test_uses_configured_model_and_auth(tmp_path, monkeypatch):
+    from app.services import vision_service
+
+    monkeypatch.setenv("ENVOY_VISION_CONFIG_PATH", str(tmp_path / "vision.enc"))
+    monkeypatch.setenv("ENVOY_VISION_KEY_PATH", str(tmp_path / "vault.key"))
+    vision_service.save_vision_config({
+        "base_url": "https://provider.example/v1",
+        "api_key": "private-key",
+        "model": "official-model-id",
+        "protocol": "chat",
+    })
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+    client = Mock()
+    client.post.return_value = response
+
+    result = vision_service.test_vision_connection(client=client)
+    call = client.post.call_args
+    assert call.args[0] == "https://provider.example/v1/chat/completions"
+    assert call.kwargs["headers"]["Authorization"] == "Bearer private-key"
+    assert call.kwargs["json"]["model"] == "official-model-id"
+    assert result["status"] == "success"
+
+
+def test_messages_adapter_uses_versioned_endpoint_and_official_headers(tmp_path, monkeypatch):
+    from app.services import vision_service
+
+    monkeypatch.setenv("ENVOY_VISION_CONFIG_PATH", str(tmp_path / "messages.enc"))
+    monkeypatch.setenv("ENVOY_VISION_KEY_PATH", str(tmp_path / "messages.key"))
+    vision_service.save_vision_config({
+        "base_url": "https://api.anthropic.example",
+        "api_key": "messages-secret",
+        "model": "claude-model-exact-id",
+        "protocol": "messages",
+    })
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"content": [{"type": "text", "text": "OK"}]}
+    client = Mock()
+    client.post.return_value = response
+
+    result = vision_service.test_vision_connection(client=client)
+    call = client.post.call_args
+    assert call.args[0] == "https://api.anthropic.example/v1/messages"
+    assert call.kwargs["headers"]["x-api-key"] == "messages-secret"
+    assert call.kwargs["headers"]["anthropic-version"]
+    assert call.kwargs["json"]["model"] == "claude-model-exact-id"
+    assert result["status"] == "success"
+
+
+def test_vision_settings_api_saves_key_but_never_returns_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'vision-api.db'}")
+    monkeypatch.setenv("ENVOY_STORAGE_MODE", "local")
+    monkeypatch.setenv("ENVOY_VISION_CONFIG_PATH", str(tmp_path / "vision.enc"))
+    monkeypatch.setenv("ENVOY_VISION_KEY_PATH", str(tmp_path / "vision.key"))
+    for module_name in list(sys.modules):
+        if module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.services import vision_service
+
+    response = TestClient(app).put(
+        "/api/v1/health/vision/config",
+        json={
+            "base_url": "https://provider.example/v1",
+            "api_key": "api-secret-must-not-return",
+            "model": "vendor-model-id",
+            "protocol": "chat",
+        },
+    )
+    assert response.status_code == 200
+    assert "api-secret-must-not-return" not in response.text
+    loaded = TestClient(app).get("/api/v1/health/vision")
+    assert loaded.status_code == 200
+    assert loaded.json()["api_key_configured"] is True
+    assert "api_key" not in loaded.json()
+    assert vision_service.vision_config()["token"] == "api-secret-must-not-return"
+
+    encrypted = (tmp_path / "vision.enc").read_bytes()
+    assert b"api-secret-must-not-return" not in encrypted
