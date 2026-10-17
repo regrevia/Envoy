@@ -30,6 +30,22 @@ python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 
 主页发现遇到登录墙、验证码、挑战页或平台风控时，发现 API 返回 `409` 和 `requires_user_action=true`。前端会提供打开原始来源页面、由用户正常完成处理后重试的入口；不绕过验证码、签名校验或设备风控。若平台仍不能返回作品列表，可改用单条视频链接、批量粘贴链接或本地视频上传。
 
+需要自动读取用户处理后的页面可见作品时，额外安装 `playwright` 并确保运行 Envoy 的机器有 Chrome/Chromium：
+
+```bash
+python3 -m pip install -r backend/requirements-media.txt
+```
+
+浏览器接管接口会启动独立持久化浏览器配置；用户在弹出窗口中完成登录或验证后，Envoy 只读取可见视频卡片链接，不读取 Cookie，也不把页面内容发送给模型。
+
+浏览器接管接口：
+
+```http
+POST /api/v1/video-playlists/browser-sessions
+POST /api/v1/video-playlists/browser-sessions/{session_id}/discover
+DELETE /api/v1/video-playlists/browser-sessions/{session_id}
+```
+
 发现接口：
 
 ```http

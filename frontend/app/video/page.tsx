@@ -104,6 +104,8 @@ export default function VideoPage() {
   const [selectedVideoUrls, setSelectedVideoUrls] = useState<string[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryRecovery, setDiscoveryRecovery] = useState<DiscoveryRecovery | null>(null);
+  const [browserSessionId, setBrowserSessionId] = useState("");
+  const [browserBusy, setBrowserBusy] = useState(false);
   const [task, setTask] = useState<Task | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -372,6 +374,7 @@ export default function VideoPage() {
     setDiscovering(true);
     setMessage("");
     setDiscoveryRecovery(null);
+    setBrowserSessionId("");
     setCandidates([]);
     setDiscoverySummary(null);
     setSelectedVideoUrls([]);
@@ -395,6 +398,59 @@ export default function VideoPage() {
       }
     } finally {
       setDiscovering(false);
+    }
+  };
+
+  const startBrowserDiscovery = async () => {
+    setBrowserBusy(true);
+    setMessage("");
+    try {
+      const result = await apiJson<{ session_id: string; message?: string }>("/api/v1/video-playlists/browser-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_url: sourceUrl.trim(), limit: 100 }),
+        timeoutMs: 120000,
+      });
+      setBrowserSessionId(result.session_id);
+      setMessage(result.message || "本机浏览器已打开，请完成登录或验证后读取作品。");
+    } catch (error) {
+      setMessage(errorText(error));
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
+  const discoverFromBrowser = async () => {
+    if (!browserSessionId) return;
+    setBrowserBusy(true);
+    setMessage("");
+    try {
+      const result = await apiJson<DiscoverySummary & {
+        items: VideoCandidate[];
+        status: string;
+        requires_user_action: boolean;
+      }>(`/api/v1/video-playlists/browser-sessions/${browserSessionId}/discover`, {
+        method: "POST",
+        timeoutMs: 120000,
+      });
+      if (result.requires_user_action || !result.items.length) {
+        setDiscoveryRecovery((current) => ({
+          ...(current || { reason_code: "challenge_required", requires_user_action: true }),
+          requires_user_action: true,
+          raw_error: "页面仍需要完成登录、验证码或安全确认。",
+        }));
+        setMessage("页面仍需要完成登录或安全确认。");
+        return;
+      }
+      setCandidates(result.items);
+      setSelectedVideoUrls(result.items.slice(0, 20).map((item) => item.source_url));
+      setDiscoverySummary(result);
+      setDiscoveryRecovery(null);
+      setMessage(`浏览器已读取 ${result.items.length} 条可见作品。`);
+    } catch (error) {
+      setMessage(errorText(error));
+    } finally {
+      setBrowserBusy(false);
     }
   };
 
@@ -590,6 +646,14 @@ export default function VideoPage() {
               <button type="button" onClick={() => void discoverVideos()} disabled={discovering} style={{ minHeight: 38, padding: "0 12px", border: 0, borderRadius: 4, color: "#fff", background: "#18745c", cursor: discovering ? "wait" : "pointer", fontWeight: 600 }}>
                 {discovering ? "重新发现中..." : "我已处理，重试发现"}
               </button>
+              <button type="button" onClick={() => void startBrowserDiscovery()} disabled={browserBusy} style={{ minHeight: 38, padding: "0 12px", border: "1px solid #7a8f87", borderRadius: 4, color: "#45534f", background: "#fff", cursor: browserBusy ? "wait" : "pointer", fontWeight: 600 }}>
+                {browserBusy && !browserSessionId ? "启动浏览器中..." : "启动本机浏览器接管"}
+              </button>
+              {browserSessionId ? (
+                <button type="button" onClick={() => void discoverFromBrowser()} disabled={browserBusy} style={{ minHeight: 38, padding: "0 12px", border: "1px solid #18745c", borderRadius: 4, color: "#18745c", background: "#f4fbf7", cursor: browserBusy ? "wait" : "pointer", fontWeight: 600 }}>
+                  {browserBusy ? "读取中..." : "读取当前页面作品"}
+                </button>
+              ) : null}
             </div>
           </section>
         ) : null}
