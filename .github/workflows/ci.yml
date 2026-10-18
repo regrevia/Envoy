@@ -26,7 +26,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-media.txt
       - name: Install media runtime dependencies
-        run: python -m pip install -r backend/requirements-media.txt
+        run: |
+          python -m pip install "setuptools<81" wheel
+          python -m pip install --no-build-isolation -r backend/requirements-media.txt
       - name: Run video and export tests
         run: >
           pytest -q
