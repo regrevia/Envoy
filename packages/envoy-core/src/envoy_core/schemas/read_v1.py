@@ -193,6 +193,16 @@ class VisualObservationHistoryRequest(ContractModel):
     max_chars: int = Field(default=4000, ge=128, le=20_000)
 
 
+class MaterialSearchRequest(ContractModel):
+    protocol_version: Literal["envoy.search/1"] = "envoy.search/1"
+    request_id: str = Field(min_length=1, max_length=128)
+    material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    query: str = Field(min_length=1, max_length=5000)
+    max_results: int = Field(default=5, ge=1, le=20)
+    max_chars: int = Field(default=4000, ge=128, le=20_000)
+    max_response_tokens: Optional[int] = Field(default=None, ge=64, le=5000)
+
+
 class TextContent(ContractModel):
     type: Literal["text"] = "text"
     text: str

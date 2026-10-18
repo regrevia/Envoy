@@ -87,6 +87,11 @@ For a follow-up about an image already inspected in this material, call
 before requesting another visual inspection. This reuses saved observations
 without re-fetching the image or spending another vision call.
 
+For a follow-up asking for a fact elsewhere in the same retained source, call
+`envoy_search` with the prior `material_id` and the new question. Use its
+source-located passages directly; if it returns `empty` or `partial`, refine
+the query or expand only the relevant offset.
+
 ## Expand long material
 
 If the response is `partial` and text coverage reports
@@ -137,7 +142,7 @@ For hosts that use stdio MCP tools, launch:
 envoy mcp
 ```
 
-The bridge exposes `envoy_read`, `envoy_expand`, `envoy_doctor`,
+The bridge exposes `envoy_read`, `envoy_expand`, `envoy_search`, `envoy_doctor`,
 `envoy_observe_visual`, and `envoy_visual_history`. Discover
 the catalog once, choose a tool from the user's goal and returned coverage, and
 do not assume a capability that is absent from the catalog. The bridge supports

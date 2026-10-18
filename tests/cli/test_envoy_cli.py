@@ -1130,6 +1130,128 @@ def test_total_token_budget_alone_limits_initial_read_and_stops_expansion(tmp_pa
     assert consumed_tokens <= 64
 
 
+def test_short_material_is_cached_for_goal_directed_followup_search(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest, ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        "<html><body><p>Overview and background.</p>"
+        "<p>Deployment command: envoy start --worker.</p>"
+        "<p>Closing notes.</p></body></html>",
+    ))
+    initial = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-short-search-cache",
+        "source": {"url": "https://example.org/guide"},
+        "goal": "Summarize the overview",
+    }))
+    assert initial.result.value == "ready"
+    assert (tmp_path / f"{initial.material_id}.json").is_file()
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "req-short-search",
+        "material_id": initial.material_id,
+        "query": "deployment command",
+    }))
+
+    assert result.result.value == "ready"
+    assert "envoy start --worker" in result.blocks[0].content.text
+    assert result.blocks[0].locator.block_id == "blk-body-0001"
+    assert result.coverage.modalities["text"].details["matches_found"] == 1
+
+
+def test_material_search_finds_cjk_query_in_later_paragraph(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "e" * 24
+    source_text = (
+        "前言和整体背景。\n\n"
+        "常见问题说明。\n\n"
+        "部署命令是 envoy start --worker，必须先完成配置。\n\n"
+        "结尾说明。"
+    )
+    reader._store_material(material_id, {
+        "source_kind": "text",
+        "source_url": "https://example.org/guide",
+        "source_revision": "f" * 64,
+        "title_text": "部署教程",
+        "text": source_text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": len(source_text),
+            "returned_tokens": reader._estimated_tokens("部署教程" + source_text),
+            "expansion_rounds": 0,
+            "returned_ranges": [[0, len(source_text)]],
+        },
+    })
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "req-cjk-search",
+        "material_id": material_id,
+        "query": "部署命令",
+    }))
+
+    assert "envoy start --worker" in result.blocks[0].content.text
+    assert result.blocks[0].order == source_text.index("部署命令")
+
+
+def test_material_search_consumes_shared_cumulative_token_budget(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "e" * 24
+    text = "\n\n".join(
+        f"Deployment option {index}: configure worker concurrency and retries."
+        for index in range(20)
+    )
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "f" * 64,
+        "title_text": "Deployment guide",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 64,
+            "max_expansion_rounds": 8,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    request = {
+        "protocol_version": "envoy.search/1",
+        "material_id": material_id,
+        "query": "deployment concurrency retries",
+        "max_results": 10,
+        "max_chars": 2000,
+        "max_response_tokens": 64,
+    }
+    first = reader.search_material(MaterialSearchRequest.model_validate({
+        **request,
+        "request_id": "req-search-budget-1",
+    }))
+    used_tokens = first.coverage.modalities["text"].details["returned_tokens"]
+    assert used_tokens > 0
+    second = reader.search_material(MaterialSearchRequest.model_validate({
+        **request,
+        "request_id": "req-search-budget-2",
+    }))
+
+    assert second.result.value == "blocked"
+    assert second.errors[0].code.value == "budget_exceeded"
+
+
 def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ReadRequest

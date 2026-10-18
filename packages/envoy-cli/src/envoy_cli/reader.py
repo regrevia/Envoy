@@ -33,6 +33,7 @@ from envoy_core.schemas.read_v1 import (
     ReadResult,
     ResourceRef,
     Need,
+    MaterialSearchRequest,
     PdfLocator,
     TextContent,
     VisualObservationHistoryRequest,
@@ -45,6 +46,7 @@ MAX_TEXT_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_PDF_BYTES = 64 * 1024 * 1024
 MAX_PDF_PAGES = 500
 MAX_TEXT_CHARS = 2_000_000
+MAX_SEARCH_CACHE_CHARS = 256_000
 MAX_IMAGES = 40
 CHALLENGE_MARKERS = (
     "验证码",
@@ -760,6 +762,222 @@ def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadRe
     )
 
 
+def _material_search_terms(query: str) -> list[str]:
+    terms = _goal_terms(query)
+    cjk_sequences = re.findall(
+        r"[\u2e80-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af\U00020000-\U0002FA1F]+",
+        query,
+    )
+    for sequence in cjk_sequences:
+        if len(sequence) >= 2 and sequence not in terms:
+            terms.append(sequence)
+        for index in range(len(sequence) - 1):
+            pair = sequence[index:index + 2]
+            if pair not in terms:
+                terms.append(pair)
+    return terms[:64]
+
+
+def search_material(request: MaterialSearchRequest) -> ReadResponse:
+    material_id = request.material_id
+    root = _material_root()
+    source_path = root / f"{material_id}.json"
+    expiry_path = root / f"{material_id}.expires"
+    if source_path.is_symlink() or expiry_path.is_symlink():
+        raise PublicPageError("Material is unavailable", ErrorCode.EXPIRED_RESOURCE)
+    try:
+        stored = json.loads(source_path.read_text(encoding="utf-8"))
+        expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+    if expires_at <= time.time():
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+
+    total_text = str(stored.get("text") or "")
+    terms = _material_search_terms(request.query)
+    candidates = []
+    for match in re.finditer(r"[^\n]+", total_text):
+        snippet = match.group(0).strip()
+        if not snippet:
+            continue
+        start = match.start()
+        while start < len(total_text) and total_text[start].isspace():
+            start += 1
+        score = _goal_score(snippet, terms)
+        if score:
+            candidates.append({
+                "start": start,
+                "end": match.end(),
+                "text": snippet,
+                "score": score,
+            })
+    candidates.sort(key=lambda item: (-item["score"], item["start"]))
+    matches_found = len(candidates)
+
+    state = stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {}
+    max_total_chars = int(state.get("max_total_response_chars") or 48_000)
+    returned_chars = int(state.get("returned_chars") or 0)
+    returned_tokens = int(state.get("returned_tokens") or 0)
+    max_total_tokens = state.get("max_total_response_tokens")
+    max_total_tokens = int(max_total_tokens) if max_total_tokens is not None else None
+    remaining_chars = max(0, max_total_chars - returned_chars)
+    remaining_tokens = (
+        max(0, max_total_tokens - returned_tokens)
+        if max_total_tokens is not None
+        else None
+    )
+    response_tokens = request.max_response_tokens
+    if remaining_tokens is not None:
+        response_tokens = min(response_tokens, remaining_tokens) if response_tokens is not None else remaining_tokens
+    char_limit = min(request.max_chars, remaining_chars)
+    if not candidates:
+        return ReadResponse(
+            request_id=request.request_id,
+            session_id=stored.get("session_id"),
+            material_id=material_id,
+            source_revision=str(stored.get("source_revision") or ""),
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.EMPTY,
+            coverage=Coverage(modalities={
+                "text": CoverageItem(
+                    discovered=len(re.findall(r"[^\n]+", total_text)),
+                    extracted=len(re.findall(r"[^\n]+", total_text)),
+                    returned=0,
+                    extraction="complete",
+                    details={
+                        "query_terms": terms,
+                        "matches_found": 0,
+                        "remaining_chars": remaining_chars,
+                        "remaining_tokens": remaining_tokens,
+                    },
+                )
+            }),
+        )
+    if char_limit <= 0 or response_tokens == 0:
+        return _expand_blocked(
+            ExpandRequest(
+                request_id=request.request_id,
+                material_id=material_id,
+            ),
+            "The cumulative material response budget has been exhausted",
+        )
+
+    blocks = []
+    used_chars = 0
+    used_tokens = 0
+    truncated = matches_found > request.max_results
+    for candidate in candidates[:request.max_results]:
+        available_chars = char_limit - used_chars
+        available_tokens = (
+            response_tokens - used_tokens
+            if response_tokens is not None
+            else None
+        )
+        if available_chars <= 0 or available_tokens == 0:
+            truncated = True
+            break
+        content, _ = _take_text_budgeted(
+            candidate["text"],
+            0,
+            available_chars,
+            available_tokens,
+        )
+        if not content:
+            truncated = True
+            break
+        start = candidate["start"]
+        end = start + len(content)
+        if stored.get("source_kind") == "pdf":
+            span = next(
+                (
+                    item for item in stored.get("page_spans", [])
+                    if isinstance(item, dict)
+                    and int(item.get("start") or 0) <= start < int(item.get("end") or 0)
+                ),
+                None,
+            )
+            locator = PdfLocator(
+                type="pdf_page",
+                page_number=int(span["page_number"]) if span else 1,
+            )
+        else:
+            locator = WebLocator(
+                type="web",
+                source_url=str(stored.get("source_url") or ""),
+                block_id="blk-body-0001",
+                quote=content[:MAX_LOCATOR_QUOTE_CHARS],
+            )
+        blocks.append(MaterialBlock(
+            id=f"blk-search-{len(blocks) + 1:04d}",
+            kind=MaterialKind.PARAGRAPH,
+            content=TextContent(type="text", text=content),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=locator,
+            order=start,
+            quality={
+                "engine": "goal_keyword_search",
+                "engine_score": min(1.0, candidate["score"] / max(len(terms), 1)),
+                "unresolved": ["Lexical relevance is a retrieval hint, not semantic verification"],
+            },
+        ))
+        used_chars += len(content)
+        used_tokens += _estimated_tokens(content)
+        if len(content) < len(candidate["text"]):
+            truncated = True
+            break
+
+    if not blocks:
+        return _expand_blocked(
+            ExpandRequest(request_id=request.request_id, material_id=material_id),
+            "The requested search results do not fit the remaining material budget",
+        )
+    state["returned_chars"] = returned_chars + used_chars
+    state["returned_tokens"] = returned_tokens + used_tokens
+    stored["budget_state"] = state
+    try:
+        _store_material(material_id, stored)
+    except OSError:
+        return _expand_blocked(
+            ExpandRequest(request_id=request.request_id, material_id=material_id),
+            "The material budget ledger could not be persisted",
+        )
+
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=stored.get("session_id"),
+        material_id=material_id,
+        source_revision=str(stored.get("source_revision") or ""),
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL if truncated else ReadResult.READY,
+        blocks=blocks,
+        coverage=Coverage(modalities={
+            "text": CoverageItem(
+                discovered=len(re.findall(r"[^\n]+", total_text)),
+                extracted=len(re.findall(r"[^\n]+", total_text)),
+                returned=len(blocks),
+                extraction="partial" if truncated else "complete",
+                unresolved=[
+                    "Search results were limited by result or response budgets"
+                ] if truncated else [],
+                details={
+                    "query_terms": terms,
+                    "matches_found": matches_found,
+                    "returned_chars": used_chars,
+                    "returned_tokens": used_tokens,
+                    "match_offsets": [block.order for block in blocks],
+                    "remaining_chars": max(0, max_total_chars - state["returned_chars"]),
+                    "remaining_tokens": (
+                        max(0, max_total_tokens - state["returned_tokens"])
+                        if max_total_tokens is not None
+                        else None
+                    ),
+                    "token_estimate_basis": "ascii4_nonascii1_v1",
+                },
+            )
+        }),
+    )
+
+
 def expand_material(request: ExpandRequest) -> ReadResponse:
     material_id = request.material_id
     root = _material_root()
@@ -1305,8 +1523,11 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
     material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
     retention_disabled = request.retention.derived_ttl_seconds <= 0
     can_continue = response_budget_exhausted and not retention_disabled
+    should_store_material = can_continue or (
+        not retention_disabled and len(full_text) <= MAX_SEARCH_CACHE_CHARS
+    )
     continuation_storage_failed = False
-    if can_continue:
+    if should_store_material:
         try:
             _store_material(material_id, {
                 "source_kind": "pdf",
@@ -1426,8 +1647,11 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
     material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
     retention_disabled = request.retention.derived_ttl_seconds <= 0
     can_continue = response_partial and not source_truncated and not retention_disabled
+    should_store_material = can_continue or (
+        not retention_disabled and not source_truncated and len(text) <= MAX_SEARCH_CACHE_CHARS
+    )
     continuation_storage_failed = False
-    if can_continue:
+    if should_store_material:
         try:
             _store_material(material_id, {
                 "source_kind": "text",
@@ -1764,7 +1988,15 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         material_id = f"mat-{hashlib.sha256((final_url + source_revision).encode()).hexdigest()[:24]}"
         retention_disabled = request.retention.derived_ttl_seconds <= 0
         can_continue = text_is_partial and not source_text_truncated and not retention_disabled
-        should_store_material = can_continue or bool(selected_images and not retention_disabled)
+        should_store_material = (
+            can_continue
+            or bool(selected_images and not retention_disabled)
+            or (
+                not retention_disabled
+                and not source_text_truncated
+                and len(text) <= MAX_SEARCH_CACHE_CHARS
+            )
+        )
         continuation_storage_failed = False
         if should_store_material:
             try:

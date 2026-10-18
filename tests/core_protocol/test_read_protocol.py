@@ -110,6 +110,23 @@ def test_visual_observation_history_request_has_bounded_query_limits():
     assert request.max_chars == 1200
 
 
+def test_material_search_request_has_bounded_query_limits():
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    request = MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "search-1",
+        "material_id": "mat-" + "a" * 24,
+        "query": "部署命令",
+        "max_results": 3,
+        "max_chars": 1200,
+        "max_response_tokens": 256,
+    })
+
+    assert request.query == "部署命令"
+    assert request.max_results == 3
+
+
 def test_schema_json_is_published_and_does_not_import_web_application():
     script = """
 import json

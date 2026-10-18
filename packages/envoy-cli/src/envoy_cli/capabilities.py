@@ -41,6 +41,10 @@ def capability_catalog() -> dict:
                 "use": "Continue only when read coverage reports more material and a continuation offset.",
             },
             {
+                "tool": "envoy_search",
+                "use": "Find goal-relevant source passages in a retained material without sequential expansion.",
+            },
+            {
                 "tool": "envoy_doctor",
                 "use": "Discover this runtime catalog.",
             },
