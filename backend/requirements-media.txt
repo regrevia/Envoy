@@ -1,3 +1,4 @@
+setuptools<81
 openai-whisper==20240930
 paddleocr==3.7.0
 paddlepaddle==3.3.1
