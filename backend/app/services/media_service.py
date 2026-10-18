@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
-from app.core.config import FFMPEG_BIN, MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC, MEDIA_WHISPER_INITIAL_PROMPT, MEDIA_WHISPER_LANGUAGE, MEDIA_WHISPER_MODEL
+from app.core.config import FFMPEG_BIN, MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_LANG, MEDIA_OCR_PROFILE, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC, MEDIA_WHISPER_INITIAL_PROMPT, MEDIA_WHISPER_LANGUAGE, MEDIA_WHISPER_MODEL
 
 _WHISPER_MODELS = {}
 
@@ -542,7 +542,21 @@ def _run_ocr_worker_logic(frame_paths: list[str]):
     results = []
     try:
         from paddleocr import PaddleOCR
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+        profile_models = {
+            "fast": ("PP-OCRv6_tiny_det", "PP-OCRv6_tiny_rec"),
+            "balanced": ("PP-OCRv6_small_det", "PP-OCRv6_small_rec"),
+            "quality": ("PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
+        }
+        detection_model, recognition_model = profile_models[MEDIA_OCR_PROFILE]
+        try:
+            ocr = PaddleOCR(
+                text_detection_model_name=detection_model,
+                text_recognition_model_name=recognition_model,
+                lang=MEDIA_OCR_LANG,
+            )
+        except TypeError:
+            # Older PaddleOCR releases do not accept named v6 model selection.
+            ocr = PaddleOCR(use_angle_cls=True, lang=MEDIA_OCR_LANG)
         for path in frame_paths:
             try:
                 try:

@@ -132,6 +132,8 @@ brew install ffmpeg
 - `MEDIA_MAX_SEGMENT_COUNT` (default: `12`) 单个媒体任务最多读取的分段数量，避免超长素材拖垮转写任务
 - `MEDIA_TRANSCRIPTION_TIMEOUT_SEC` (default: `900`) 单个音频/视频分段转写最长等待秒数，超时会终止隔离转写进程
 - `MEDIA_OCR_TIMEOUT_SEC` (default: `300`) 单个 OCR 批次最长等待秒数，超时会终止隔离 OCR 进程并返回空 OCR 文本
+- `MEDIA_OCR_PROFILE` (default: `balanced`) OCR 档位：`fast` 使用 PP-OCRv6 tiny，`balanced` 使用 PP-OCRv6 small，`quality` 使用 PP-OCRv6 medium；旧版 PaddleOCR 不支持显式模型参数时自动回退到兼容调用
+- `MEDIA_OCR_LANG` (default: `ch`) OCR 语言参数，例如 `ch` 或 `en`
 - `MEDIA_MAX_FRAME_COUNT` (default: `240`) 单个视频任务最多抽帧数量
 - `MEDIA_WHISPER_MODEL` (default: `base`) Whisper 转写模型；本地验收可用 `tiny` 降低下载和推理成本
 - `MEDIA_ENABLE_FRAME_EXTRACTION` (default: `true`) 是否对视频执行抽帧；长视频只需要转写时可设为 `false`
