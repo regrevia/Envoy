@@ -25,7 +25,7 @@
 | 可供 Agent 消费的 Markdown/HTML/ZIP | 已验证（开发验收） | 公共图文 ZIP 含索引、来源 Markdown、HTML、manifest、`materials.json` 和全部配图；Markdown 适合正文消费，协议 JSON 提供渐进读取和资源定位 |
 | 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；Worker 租约、并发配额、取消贯通仍未达到方案门槛 |
 | 独立无数据库处理核心 | 进行中 | `packages/envoy-core` 已承载第一版 `envoy.read/1` 请求/材料/覆盖/资源 schema；现有 worker 尚未整体迁出 ORM |
-| CLI、宿主 Skill 与视觉协作桥 | 未开始 | 没有发布可安装的 Envoy Skill 或自包含运行包 |
+| CLI、宿主 Skill 与视觉协作桥 | 进行中 | 已有开发版 `packages/envoy-cli`、`envoy read/doctor` 和 `integrations/skills/envoy/SKILL.md`；当前独立运行时只验证公开静态 HTML，尚无自包含安装器或视觉宿主桥 |
 | 跨来源质量/费用基准 | 未开始 | 尚无固定 60 来源/120 任务集，也未测得全链路费用改善数字 |
 
 ## 近期执行顺序
@@ -34,7 +34,7 @@
 
 1. **M0 / D01**：冻结真实来源 fixture、行为和验收结果；记录视频与公开图文基准。
 2. **M1 / D02**：版本化请求、材料块、定位、覆盖、错误和使用量 schema；网站现有公开网页流程先生成协议兼容快照。
-3. **M1 / D03**：创建不依赖 FastAPI、SQLAlchemy、业务数据库的核心包边界与本地状态接口。
+3. **M1 / D03**：创建不依赖 FastAPI、SQLAlchemy、业务数据库的核心包边界、CLI 原型与本地状态接口。
 4. **M2 / D04–D06**：完善通用网页、微信公众号、图片、PDF 和 Office 的真实结构提取。
 5. **M3 / D07–D10**：媒体解析/获取分层、真实时间定位、视觉宿主桥、累计预算、缓存和资源租约。
 6. **M4 / D11**：在目标系统验证标准运行包、安装器、doctor、升级和回滚。
@@ -64,13 +64,15 @@
 
 ### 本轮验证
 
-- 当前基线：`dev`，提交 `df06f4d`，工作区干净；本轮未合并 `main`。
+- 当前基线：`dev`，本轮提交后更新；工作区状态以 Git 为准，本轮未合并 `main`。
 - 协议与公开页面针对性测试：`49 passed, 1 warning`。
-- 仓库根目录全量测试：`355 passed, 143 warnings`。
+- 仓库根目录全量测试：`358 passed, 143 warnings`。
 - 前端生产构建：`npm run build` 成功；仅有 `generated-samples` 和 `semantic-units` 两处既有 Hook 依赖警告。
 - 静态编译检查：`web_content_service.py`、`jobs.py`、`read_v1.py` 通过 `py_compile`。
 - 本轮新增覆盖：`materials.json` 生成、`envoy.read/1` 版本字段、正文/图片/OCR 来源标记和图片资源 URI。
 - 真实抖音页面回归：隔离 Chromium 读取到标题、作者“抖个不停”、531 字正文、4 张图片和 0 个视频 URL；未使用 Cookie 或个人浏览器配置。
+- 独立 CLI 针对性测试：`3 passed`；覆盖公开 HTML 协议输出、私网 URL 结构化阻断和 `doctor` 脱敏输出。
+- 独立 CLI 发行包验证：使用本机虚拟环境普通 wheel 安装成功；`envoy doctor --json` 正常，实际读取 `https://example.org/` 返回 `ready`。
 
 ## 下一次状态更新必须包括
 
