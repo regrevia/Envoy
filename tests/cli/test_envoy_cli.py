@@ -393,6 +393,62 @@ def test_source_text_hard_limit_is_reported_as_partial_not_silent_success(monkey
     assert any("extraction limit" in item for item in response.coverage.modalities["text"].unresolved)
 
 
+def test_direct_image_link_returns_host_visual_need_without_inlining_image(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_source",
+        lambda _url, _max_bytes, _cache: {
+            "kind": "image",
+            "url": "https://cdn.example.org/screenshot.png",
+            "mime_type": "image/png",
+            "size_bytes": 2048,
+        },
+    )
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-image-1",
+        "source": {"url": "https://cdn.example.org/screenshot.png", "kind": "image"},
+        "goal": "Read the table in this screenshot",
+        "host_capabilities": {"image_input": "uri"},
+    }))
+
+    assert response.result.value == "needs_host"
+    assert response.execution_state.value == "waiting_for_host"
+    assert response.needs[0].type == "inspect_visual"
+    assert response.needs[0].resource_ids == ["resource-image"]
+    assert response.resources[0].delivery.uri == "https://cdn.example.org/screenshot.png"
+    assert response.resources[0].delivery.data_base64 is None
+
+
+def test_direct_image_link_is_blocked_when_host_cannot_view_images(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_source",
+        lambda _url, _max_bytes, _cache: {
+            "kind": "image",
+            "url": "https://cdn.example.org/screenshot.png",
+            "mime_type": "image/png",
+            "size_bytes": 2048,
+        },
+    )
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-image-2",
+        "source": {"url": "https://cdn.example.org/screenshot.png", "kind": "image"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "missing_capability"
+
+
 def test_public_dns_validation_reuses_resolution_only_within_one_read(monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ReadRequest

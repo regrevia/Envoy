@@ -76,6 +76,11 @@ pages, videos, OCR, ASR, browser recovery, long tasks, and ZIP exports.
 Do not describe those website-only capabilities as available from this
 standalone Skill until the support matrix says so.
 
+Direct public image links are a supported visual handoff: when the host
+declares URI image input, Envoy returns `needs_host` with an `inspect_visual`
+action and a source-linked resource instead of inlining image bytes. If the
+host has no image capability, report `missing_capability`.
+
 Check the installation before a first read:
 
 ```bash
