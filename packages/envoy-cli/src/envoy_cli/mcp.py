@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from envoy_core.schemas.read_v1 import (
     ExpandRequest,
+    MaterialSearchRequest,
     ReadRequest,
     VisualObservationHistoryRequest,
     VisualObservationRequest,
@@ -21,6 +22,7 @@ from .reader import (
     read_public_page,
     record_visual_observation,
     read_visual_observations,
+    search_material,
 )
 
 
@@ -147,6 +149,15 @@ TOOLS = [
             "continuation_available and next_offset; do not repeat returned ranges."
         ),
         "inputSchema": ExpandRequest.model_json_schema(),
+    },
+    {
+        "name": "envoy_search",
+        "description": (
+            "Find goal-relevant passages in a previously read Envoy material "
+            "without expanding through unrelated ranges. Results preserve source "
+            "locators and consume the material's shared response budget."
+        ),
+        "inputSchema": MaterialSearchRequest.model_json_schema(),
     },
     {
         "name": "envoy_doctor",
@@ -351,6 +362,9 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
             payload = _read_payload(response, compact=modern_request)
         elif name == "envoy_expand":
             response = expand_material(ExpandRequest.model_validate(arguments))
+            payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_search":
+            response = search_material(MaterialSearchRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
         elif name == "envoy_doctor":
             payload = {

@@ -95,7 +95,7 @@ python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
 
 宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、视频、OCR、ASR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
 
-支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand` 和 `envoy_doctor` 三个工具，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
+支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand`、`envoy_search`、`envoy_doctor`、`envoy_observe_visual` 和 `envoy_visual_history`，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
 
 普通链接可直接按用户目标调用 `envoy_read`。`envoy_doctor` 提供版本化能力目录，仅在可选能力不明确时查询；模型根据覆盖信息决定是否续读或请求宿主检查图片，不按网站硬编码提示流程。
 

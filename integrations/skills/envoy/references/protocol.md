@@ -56,6 +56,11 @@ the initial read and expansions. Token estimates use four ASCII characters or
 one non-ASCII code point per token and are scheduling guardrails, not the model
 provider's exact tokenizer or billing measure.
 
+For a follow-up query against a retained material, use `envoy_search` with the
+same `material_id` and the new query. It returns a small number of source-located
+matching passages and consumes the same cumulative character/token budget as
+expansion, without sequentially returning unrelated source ranges.
+
 When a host inspected an image resource, submit only the concise observation
 through `envoy_observe_visual`; keep the original URL, resource ID, source
 block ID, and pass `material_id` when available. Envoy stores a bounded derived

@@ -28,6 +28,7 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     assert {tool["name"] for tool in lines[1]["result"]["tools"]} == {
         "envoy_read",
         "envoy_expand",
+        "envoy_search",
         "envoy_doctor",
         "envoy_observe_visual",
         "envoy_visual_history",
@@ -140,6 +141,72 @@ def test_mcp_bridge_reads_persisted_visual_observations_with_budget(tmp_path, mo
     assert payload["result"] == "ready"
     assert payload["blocks"][0]["content"]["text"] == "The chart shows three stages."
     assert payload["blocks"][0]["origin"] == "host_visual"
+
+
+def test_mcp_bridge_advertises_goal_directed_material_search(capsys):
+    from envoy_cli import mcp
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "tools",
+        "method": "tools/list",
+        "params": {},
+    }])
+    tools = json.loads(capsys.readouterr().out.splitlines()[1])["result"]["tools"]
+    search = next(tool for tool in tools if tool["name"] == "envoy_search")
+    assert "query" in search["inputSchema"]["properties"]
+
+
+def test_mcp_bridge_search_returns_source_located_goal_match(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "a" * 24
+    source = "Overview.\n\nDeployment command: envoy start --worker.\n\nWrap up."
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "b" * 64,
+        "title_text": "Guide",
+        "text": source,
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": len(source),
+            "returned_tokens": reader._estimated_tokens("Guide" + source),
+            "expansion_rounds": 0,
+            "returned_ranges": [[0, len(source)]],
+        },
+    })
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "search",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_search",
+            "arguments": {
+                "protocol_version": "envoy.search/1",
+                "request_id": "mcp-search-1",
+                "material_id": material_id,
+                "query": "deployment command",
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out.splitlines()[1])
+    payload = json.loads(response["result"]["content"][0]["text"])
+    assert payload["blocks"][0]["content"]["text"] == "Deployment command: envoy start --worker."
+    assert payload["blocks"][0]["locator"]["source_url"] == "https://example.org/guide"
 
 
 def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):
