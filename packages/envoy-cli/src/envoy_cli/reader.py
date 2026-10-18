@@ -41,6 +41,7 @@ MAX_FETCH_ATTEMPTS = 3
 MIN_EXPANSION_CHARS = 128
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
+MAX_LOCATOR_QUOTE_CHARS = 120
 SENSITIVE_QUERY_KEYS = {
     "access_token",
     "api_key",
@@ -114,7 +115,7 @@ class _PageParser(HTMLParser):
             self.text_parts.append(value)
 
 
-def _is_public_http_url(value: str) -> bool:
+def _is_public_http_url(value: str, dns_cache: dict[str, bool] | None = None) -> bool:
     try:
         parsed = urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -127,6 +128,8 @@ def _is_public_http_url(value: str) -> bool:
         try:
             addresses = {ipaddress.ip_address(host)}
         except ValueError:
+            if dns_cache is not None and host in dns_cache:
+                return dns_cache[host]
             addresses = {
                 ipaddress.ip_address(item[4][0])
                 for item in socket.getaddrinfo(
@@ -134,6 +137,10 @@ def _is_public_http_url(value: str) -> bool:
                     parsed.port or (443 if parsed.scheme == "https" else 80),
                 )
             }
+            result = bool(addresses) and all(address.is_global for address in addresses)
+            if dns_cache is not None:
+                dns_cache[host] = result
+            return result
         return bool(addresses) and all(address.is_global for address in addresses)
     except (OSError, ValueError, TypeError):
         return False
@@ -307,7 +314,7 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             type="web",
             source_url=str(stored["source_url"]),
             block_id=block_id,
-            quote=content[:500],
+            quote=content[:MAX_LOCATOR_QUOTE_CHARS],
         ),
         order=offset,
     )
@@ -340,12 +347,17 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
     )
 
 
-def _fetch_html(source_url: str, max_bytes: int = MAX_HTML_BYTES) -> tuple[str, str]:
+def _fetch_html(
+    source_url: str,
+    max_bytes: int = MAX_HTML_BYTES,
+    dns_cache: dict[str, bool] | None = None,
+) -> tuple[str, str]:
     current_url = source_url
+    dns_cache = dns_cache if dns_cache is not None else {}
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
     with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False) as client:
         for _ in range(5):
-            if not _is_public_http_url(current_url):
+            if not _is_public_http_url(current_url, dns_cache):
                 raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
             for attempt in range(MAX_FETCH_ATTEMPTS):
                 try:
@@ -401,12 +413,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
     if request.source.kind.value not in {"auto", "article"}:
         return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
-    if not _is_public_http_url(source_url):
+    dns_cache: dict[str, bool] = {}
+    if not _is_public_http_url(source_url, dns_cache):
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     try:
         final_url, html = _fetch_html(
             source_url,
             min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
+            dns_cache,
         )
         parser = _PageParser()
         parser.feed(html)
@@ -421,7 +435,12 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             kind=MaterialKind.HEADING,
             content=TextContent(type="text", text=title),
             origin=MaterialOrigin.SOURCE_TEXT,
-            locator=WebLocator(type="web", source_url=safe_source_url, block_id="blk-title", quote=title),
+            locator=WebLocator(
+                type="web",
+                source_url=safe_source_url,
+                block_id="blk-title",
+                quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
             order=0,
         )
         visual_budget = max(0, request.budget.max_visual_inputs)
@@ -466,7 +485,12 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 kind=MaterialKind.PARAGRAPH,
                 content=TextContent(type="text", text=returned_text),
                 origin=MaterialOrigin.SOURCE_TEXT,
-                locator=WebLocator(type="web", source_url=safe_source_url, block_id="blk-body-0001", quote=returned_text[:500]),
+                locator=WebLocator(
+                    type="web",
+                    source_url=safe_source_url,
+                    block_id="blk-body-0001",
+                    quote=returned_text[:MAX_LOCATOR_QUOTE_CHARS],
+                ),
                 order=1,
             ),
         ]
@@ -478,7 +502,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             if any(_is_sensitive_query_key(key) for key, _value in parse_qsl(urlparse(image_url).query, keep_blank_values=True)):
                 skipped_sensitive_images += 1
                 continue
-            if image_url in seen_images or not _is_public_http_url(image_url):
+            if image_url in seen_images or not _is_public_http_url(image_url, dns_cache):
                 continue
             seen_images.add(image_url)
             block_id = f"blk-image-{index:04d}"

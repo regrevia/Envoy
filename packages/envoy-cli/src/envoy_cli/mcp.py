@@ -124,6 +124,42 @@ def _result(request_id: Any, payload: dict, modern: bool, cacheable: bool = Fals
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
+def _tool_content_text(payload: dict, modern: bool) -> str:
+    if payload.get("tool") == "envoy":
+        return "Envoy doctor ready."
+    if not modern:
+        return json.dumps(payload, ensure_ascii=False)
+    result = str(payload.get("result") or "unknown")
+    blocks = payload.get("blocks") if isinstance(payload.get("blocks"), list) else []
+    resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
+    text_chars = sum(
+        len(str(block.get("content", {}).get("text") or ""))
+        for block in blocks
+        if isinstance(block, dict) and isinstance(block.get("content"), dict)
+    )
+    if result == "blocked":
+        errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+        code = errors[0].get("code", "unknown") if errors and isinstance(errors[0], dict) else "unknown"
+        return f"Envoy read blocked ({code}). See structuredContent.errors for details."
+    return (
+        f"Envoy read {result}: {text_chars} text characters, "
+        f"{len(blocks)} blocks, {len(resources)} resources. "
+        "Full materials are in structuredContent."
+    )
+
+
+def _read_payload(response, compact: bool) -> dict:
+    if not compact:
+        return response.model_dump(mode="json")
+    payload = response.model_dump(
+        mode="json",
+        exclude_none=True,
+        exclude_defaults=True,
+    )
+    payload["protocol_version"] = response.protocol_version
+    return payload
+
+
 def _error(
     request_id: Any,
     code: int,
@@ -234,9 +270,11 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
         return _error(request_id, -32602, "Tool arguments must be an object")
     try:
         if name == "envoy_read":
-            payload = read_public_page(ReadRequest.model_validate(arguments)).model_dump(mode="json")
+            response = read_public_page(ReadRequest.model_validate(arguments))
+            payload = _read_payload(response, compact=modern_request)
         elif name == "envoy_expand":
-            payload = expand_material(ExpandRequest.model_validate(arguments)).model_dump(mode="json")
+            response = expand_material(ExpandRequest.model_validate(arguments))
+            payload = _read_payload(response, compact=modern_request)
         elif name == "envoy_doctor":
             payload = {
                 "tool": "envoy",
@@ -261,7 +299,7 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
     return _result(request_id, {
         "content": [{
             "type": "text",
-            "text": json.dumps(payload, ensure_ascii=False),
+            "text": _tool_content_text(payload, modern_request),
         }],
         "structuredContent": payload,
         "isError": payload.get("result") == "blocked",
