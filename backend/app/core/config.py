@@ -51,7 +51,7 @@ MEDIA_COMMAND_TIMEOUT_SEC = _env_positive_int("MEDIA_COMMAND_TIMEOUT_SEC", 300)
 MEDIA_TRANSCRIPTION_TIMEOUT_SEC = _env_positive_int("MEDIA_TRANSCRIPTION_TIMEOUT_SEC", 900)
 MEDIA_OCR_TIMEOUT_SEC = _env_positive_int("MEDIA_OCR_TIMEOUT_SEC", 300)
 MEDIA_OCR_PROFILE = os.getenv("MEDIA_OCR_PROFILE", "balanced").strip().lower() or "balanced"
-if MEDIA_OCR_PROFILE not in {"fast", "balanced", "quality"}:
+if MEDIA_OCR_PROFILE not in {"fast", "balanced", "quality", "pro"}:
     MEDIA_OCR_PROFILE = "balanced"
 MEDIA_OCR_LANG = os.getenv("MEDIA_OCR_LANG", "ch").strip() or "ch"
 MEDIA_SEGMENT_SECONDS = _env_positive_int("MEDIA_SEGMENT_SECONDS", 600)

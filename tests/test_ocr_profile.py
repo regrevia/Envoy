@@ -58,3 +58,43 @@ def test_ocr_profile_falls_back_for_old_paddleocr_signature(monkeypatch):
         },
         {"use_angle_cls": True, "lang": "en"},
     ]
+
+
+def test_ocr_runtime_profile_overrides_default_profile(monkeypatch):
+    from app.services import media_service
+
+    captured = {}
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def predict(self, _path):
+            return []
+
+    monkeypatch.setattr(media_service, "MEDIA_OCR_PROFILE", "balanced")
+    with patch.dict(sys.modules, {"paddleocr": types.SimpleNamespace(PaddleOCR=FakePaddleOCR)}):
+        media_service._run_ocr_worker_logic(["frame.jpg"], profile="quality")
+
+    assert captured["text_detection_model_name"] == "PP-OCRv6_medium_det"
+    assert captured["text_recognition_model_name"] == "PP-OCRv6_medium_rec"
+
+
+def test_ocr_pro_profile_uses_server_models(monkeypatch):
+    from app.services import media_service
+
+    captured = {}
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def predict(self, _path):
+            return []
+
+    monkeypatch.setattr(media_service, "MEDIA_OCR_PROFILE", "balanced")
+    with patch.dict(sys.modules, {"paddleocr": types.SimpleNamespace(PaddleOCR=FakePaddleOCR)}):
+        media_service._run_ocr_worker_logic(["frame.jpg"], profile="pro")
+
+    assert captured["text_detection_model_name"] == "PP-OCRv5_server_det"
+    assert captured["text_recognition_model_name"] == "PP-OCRv5_server_rec"

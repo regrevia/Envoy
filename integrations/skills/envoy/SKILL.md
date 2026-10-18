@@ -30,6 +30,9 @@ The request must include:
 - a unique `request_id`
 - `source.url`
 - the user's actual reading goal in `goal`
+- optionally `ocr_profile: "fast" | "balanced" | "quality" | "pro"` when
+  reading image-heavy material; `pro` is the highest-quality, slower profile
+  and downloads its OCR models only when first used
 
 Do not put API keys, cookies, browser profile paths, or full chat history in
 the request. Envoy does not read credentials for the independent Skill.

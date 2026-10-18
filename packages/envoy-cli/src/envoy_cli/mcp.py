@@ -55,6 +55,11 @@ TOOLS = [
                     },
                 },
                 "goal": {"type": "string", "maxLength": 20_000},
+                "ocr_profile": {
+                    "type": ["string", "null"],
+                    "enum": ["fast", "balanced", "quality", "pro", None],
+                    "default": None,
+                },
                 "budget": {
                     "type": "object",
                     "additionalProperties": False,

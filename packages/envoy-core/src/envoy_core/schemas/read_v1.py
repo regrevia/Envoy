@@ -156,6 +156,7 @@ class ReadRequest(ContractModel):
     budget: Budget = Field(default_factory=Budget)
     retention: Retention = Field(default_factory=Retention)
     host_capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
+    ocr_profile: Optional[Literal["fast", "balanced", "quality", "pro"]] = None
 
 
 class ExpandRequest(ContractModel):
