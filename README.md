@@ -91,7 +91,7 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{
 python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
 ```
 
-安装包只包含 `SKILL.md`、协议参考和 `envoy-skill.json`，不包含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。
+安装包只包含 `SKILL.md`、协议参考、宿主 MCP 配置和 `envoy-skill.json`，不包含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
 
 宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、视频、OCR、ASR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
 

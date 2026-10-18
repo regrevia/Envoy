@@ -24,10 +24,18 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
     assert payload["manifest"]["entrypoint"] == "SKILL.md"
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()
-        assert names == ["envoy-skill.json", "SKILL.md", "references/protocol.md"]
+        assert names == [
+            "envoy-skill.json",
+            "SKILL.md",
+            "hosts/README.md",
+            "hosts/mcp.json",
+            "references/protocol.md",
+        ]
         manifest = json.loads(archive.read("envoy-skill.json"))
         assert manifest["protocol"] == "envoy.read/1"
         assert b"API Key" not in archive.read("SKILL.md")
+        host_config = json.loads(archive.read("hosts/mcp.json"))
+        assert host_config["mcpServers"]["envoy"]["args"] == ["mcp"]
 
 
 def test_skill_bundle_is_deterministic_for_same_sources(tmp_path):
