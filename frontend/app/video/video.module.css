@@ -15,10 +15,21 @@
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: #155f4d;
   font-size: 14px;
   font-weight: 750;
   text-decoration: none;
+}
+
+.brandMark {
+  width: 28px;
+  height: 28px;
+  display: block;
+  object-fit: contain;
+  border-radius: 7px;
 }
 
 .topActions {

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { AlertCircle, ArrowUpRight, Check, ChevronDown, Download, Folder, Link2, ListChecks, Settings, X } from "lucide-react";
 
@@ -688,7 +689,10 @@ export default function VideoPage() {
   return (
     <main className={styles.app}>
       <header className={styles.topbar}>
-        <Link href="/video" className={styles.brand}>ENVOY</Link>
+        <Link href="/video" className={styles.brand} aria-label="Envoy 视频知识库">
+          <Image src="/brand/envoy-bird.png" alt="" width={28} height={28} className={styles.brandMark} priority />
+          <span>ENVOY</span>
+        </Link>
         <div className={styles.topActions}>
           <Link href="/tasks" className={styles.tasksLink}>
             <ListChecks size={17} aria-hidden="true" />
