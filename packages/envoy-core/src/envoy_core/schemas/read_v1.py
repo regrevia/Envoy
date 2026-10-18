@@ -184,6 +184,15 @@ class VisualObservationRequest(ContractModel):
     locator_quote: Optional[str] = Field(default=None, max_length=500)
 
 
+class VisualObservationHistoryRequest(ContractModel):
+    protocol_version: Literal["envoy.observe/1"] = "envoy.observe/1"
+    request_id: str = Field(min_length=1, max_length=128)
+    material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    resource_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    max_items: int = Field(default=8, ge=1, le=16)
+    max_chars: int = Field(default=4000, ge=128, le=20_000)
+
+
 class TextContent(ContractModel):
     type: Literal["text"] = "text"
     text: str
