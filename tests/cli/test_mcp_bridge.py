@@ -196,6 +196,7 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys)
     read_schema = next(tool for tool in first["result"]["tools"] if tool["name"] == "envoy_read")["inputSchema"]
     assert len(json.dumps(read_schema)) < 2500
     assert "max_response_chars" in read_schema["properties"]["budget"]["properties"]
+    assert "max_total_response_tokens" in read_schema["properties"]["budget"]["properties"]
     assert "max_total_visual_pixels" not in read_schema["properties"]["budget"]["properties"]
     image_capability = read_schema["properties"]["host_capabilities"]["properties"]["image_input"]
     assert image_capability["enum"] == ["none", "uri"]
