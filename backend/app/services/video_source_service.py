@@ -48,6 +48,7 @@ PLATFORM_HOSTS = {
     "tencent_video": {"v.qq.com"},
     "iqiyi": {"iqiyi.com", "www.iqiyi.com"},
     "xiaohongshu": {"xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com"},
+    "dailymotion": {"dailymotion.com", "www.dailymotion.com", "geo.dailymotion.com"},
 }
 
 
@@ -212,9 +213,27 @@ def _is_browser_recoverable_error(error: Exception | str) -> bool:
     ))
 
 
+def _is_permanent_source_error(error: Exception | str) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "http error 404",
+        "http error 410",
+        "not found",
+        "video does not exist",
+        "no video could be found",
+    ))
+
+
 def classify_discovery_error(error: Exception | str) -> dict:
     message = str(error or "").strip()
     lowered = message.lower()
+    if _is_permanent_source_error(message):
+        return {
+            "reason_code": "source_not_found",
+            "requires_user_action": False,
+            "recommended_action": "check_url",
+            "raw_error": message,
+        }
     if any(marker in lowered for marker in (
         "eof occurred in violation of protocol",
         "connection timed out",
@@ -371,6 +390,7 @@ def _source_kind_for_path(platform: str, host: str, path: str) -> str:
         "instagram": ("/reel/", "/reels/", "/p/", "/tv/"),
         "facebook": ("/reel/", "/watch", "/videos/"),
         "x": ("/status/",),
+        "dailymotion": ("/video/",),
         "kuaishou": ("/short-video/", "/video/"),
         "ixigua": ("/video/",),
         "youku": ("/v_show/",),
@@ -506,6 +526,7 @@ def download_video(source_url: str, output_dir: str | Path, auth: dict | None = 
             errors.append(str(exc))
     if (
         normalized_auth.get("mode") == "auto"
+        and not any(_is_permanent_source_error(error) for error in errors)
         and (
             classify_video_source(url).get("supports_browser_discovery")
             or url.startswith(("http://", "https://"))
