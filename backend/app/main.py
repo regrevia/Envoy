@@ -4,6 +4,7 @@ import os
 from app.core.config import DATABASE_URL
 from app.db.base import Base
 from app.db.session import engine
+from app.db.session import SessionLocal
 import app.models  # noqa: F401
 from app.api.v1.health import router as health_router
 from app.api.v1.projects import router as projects_router
@@ -55,3 +56,10 @@ def initialize_sqlite_schema():
     """Make the local SQLite acceptance mode usable without a separate migration step."""
     if DATABASE_URL.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
+    from app.services.task_dispatcher import recover_interrupted_local_tasks
+
+    db = SessionLocal()
+    try:
+        recover_interrupted_local_tasks(db)
+    finally:
+        db.close()

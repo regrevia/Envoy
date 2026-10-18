@@ -177,7 +177,7 @@ export default function SemanticUnitsPage() {
         </section>
 
         <nav aria-label="核心操作" className="quick-actions">
-          <Link href="/" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>返回首页创建转换任务</Link>
+          <Link href="/video" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>返回视频工具</Link>
           <Link href={uploadHref} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', background: '#111827', color: '#ffffff', borderColor: '#111827' }}>上传素材</Link>
           <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>转换任务</Link>
           <Link href={samplesHref} style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>样本审查</Link>

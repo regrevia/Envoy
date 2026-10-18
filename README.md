@@ -1,75 +1,125 @@
-# Envoy v1.0
+# Envoy
 
-闭源 MVP 开发仓库。
+**Let AI watch everything.**
 
-## 当前核心能力
-- 项目管理
-- 素材上传与存储
-- 任务创建、状态更新与详情查看
-- 预处理、分析、样本生成、导出
-- 语义单元与追溯链
-- 训练导出（SFT / Instruction / Preference / RAG / Skill / Markdown）
-- 导出历史记录与导出目录预览
-- 按标准化目录存放输出产物
-- 一键启动脚本（PowerShell / BAT）
+Envoy turns videos and mixed materials into clean, theme-first Markdown/HTML knowledge-base packages for Wiki, RAG, and agents.
 
-## 技术栈
-- 前端：Next.js
-- 后端：FastAPI
-- 异步任务：Celery + Redis
-- 数据库：MySQL
-- 文件存储：MinIO
+## Quick Start
 
-## 本地启动顺序
-### 推荐：一键启动
+### Docker Desktop
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Open `http://localhost:3000`.
+
+On Windows PowerShell:
+
 ```powershell
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+The first build is large because it includes FFmpeg, Whisper, OCR, browser automation, and media dependencies. Later starts reuse Docker volumes.
+
+### Windows Native Development
+
+Requirements:
+
+- Python 3.11+
+- Node.js 20+
+- FFmpeg and FFprobe on `PATH`
+- Docker Desktop for MySQL, Redis, and MinIO
+
+```powershell
+Copy-Item .env.example .env
 .\scripts\start_env.ps1
 ```
 
-### 或使用 BAT
+Or:
+
 ```bat
 scripts\start_env.bat
 ```
 
-### 手动启动
-1. 启动依赖服务：
+The script finds free ports, starts dependencies, starts the API and frontend, and writes local logs under `logs/`.
+
+### Source Development
+
 ```bash
+cp .env.example .env
 docker compose up -d mysql redis minio
-```
 
-2. 启动后端：
-```bash
 cd backend
-py -m uvicorn app.main:app --reload
-```
+python -m venv .venv
+./.venv/bin/pip install -r requirements-media.txt
+python -m uvicorn app.main:app --reload --port 8140
 
-3. 启动前端：
-```bash
+# another terminal
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-## 导出能力
-支持导出：
-- SFT
-- Instruction
-- Preference
-- RAG corpus
-- Skill
-- Markdown
+Open `http://localhost:3000`.
 
-支持：
-- 目录预览
-- 自定义任务目录名
-- 导出历史记录
-- 导出历史详情
-- 一键打开输出目录
+## Configure A Model
 
-## 端口说明
-- 前端：3000
-- 后端：8000
-- MySQL：3307
-- Redis：6379
-- MinIO API：9000
-- MinIO Console：9001
+Envoy starts without a model or API key. After the app starts, open the settings icon in `/video` and enter:
+
+- API Base URL
+- Model name
+- Protocol: Chat Completions or Messages
+- API key
+
+The key is encrypted into local runtime state. It is not included in Docker images, Git, Markdown exports, browser responses, or unrelated model prompts.
+
+## Outputs
+
+Each completed task produces a downloadable package:
+
+- `index.md`: text-first Wiki/agent entry point
+- `index.html`: visual review with keyframes
+- `themes/`: topic pages
+- `assets/frames/`: selected video frames
+- `manifest.json`: machine-readable index
+- `evidence.jsonl`: traceable evidence
+- `versions/`: incremental append history
+
+The package is also available as a ZIP archive.
+
+## Privacy And Secrets
+
+The repository intentionally excludes:
+
+- `.env` files
+- API keys and tokens
+- encrypted vision configuration and encryption keys
+- browser profiles and cookies
+- SQLite/MySQL databases
+- downloaded media and generated exports
+- logs and local runtime state
+
+Before publishing or sharing a build, run:
+
+```bash
+git status --short
+git ls-files | rg '(^|/)(tmp|Check|\.env$|.*\.db$|.*\.enc$|.*\.key$|.*\.mp4$)'
+```
+
+User-provided media and generated exports stay in local Docker volumes or the configured local storage directory. Do not mount a personal browser profile into a public container.
+
+## Development
+
+```bash
+backend/.venv/bin/pytest -q
+cd frontend && npm run build
+```
+
+The main API is available at `http://localhost:8140`; frontend development defaults to `http://localhost:3000`.
+
+## Scope
+
+Envoy supports public video URLs, creator pages, local uploads, mixed documents, incremental knowledge libraries, browser-assisted login recovery, and progressively disclosed Wiki packages. Platform behavior still depends on the source site's access controls, DRM, regional availability, and network conditions.

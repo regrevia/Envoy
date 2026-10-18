@@ -140,7 +140,10 @@ def vision_config() -> dict[str, Any]:
         "model": (model or "deepseek-v4.1flash").strip(),
         "protocol": protocol,
         "timeout_sec": max(int(os.getenv("HERMES_VISION_TIMEOUT_SEC", "180") or 180), 30),
-        "max_images": max(int(os.getenv("HERMES_VISION_MAX_IMAGES", "6") or 6), 1),
+        # DeepSeek V4.1 Flash and several compatible gateways accept at most
+        # four images per request. Keep the default and configured value within
+        # that portable limit so a provider does not reject the whole window.
+        "max_images": min(max(int(os.getenv("HERMES_VISION_MAX_IMAGES", "4") or 4), 1), 4),
     }
 
 
@@ -272,25 +275,53 @@ def _complete_text(prompt: str, client: Any | None = None) -> str:
         raise VisionServiceError("Vision API is not configured")
     messages = [{"role": "user", "content": prompt}]
     if config["protocol"] == "messages":
-        payload = {"model": config["model"], "max_tokens": 3000, "messages": messages}
         endpoint = _endpoint(config["base_url"], "messages")
+        attempts = [
+            {"model": config["model"], "max_tokens": 5000, "messages": messages},
+        ]
     else:
-        payload = {"model": config["model"], "temperature": 0.1, "max_tokens": 3000, "messages": messages}
         endpoint = _endpoint(config["base_url"], "chat/completions")
-    response = (client or httpx).post(
-        endpoint,
-        headers=_headers(config),
-        json=payload,
-        timeout=config["timeout_sec"],
-    )
-    response.raise_for_status()
-    text = _response_text(response, config["protocol"])
-    if not text:
-        raise VisionServiceError("Vision provider returned an empty response")
-    return text
+        attempts = [
+            {
+                "model": config["model"],
+                "temperature": 0.1,
+                "max_tokens": 5000,
+                "reasoning_effort": "low",
+                "messages": messages,
+            },
+            {
+                "model": config["model"],
+                "temperature": 0.1,
+                "max_tokens": 5000,
+                "reasoning_effort": "minimal",
+                "messages": messages,
+            },
+        ]
+    last_error = None
+    for payload in attempts:
+        try:
+            response = (client or httpx).post(
+                endpoint,
+                headers=_headers(config),
+                json=payload,
+                timeout=config["timeout_sec"],
+            )
+            response.raise_for_status()
+            text = _response_text(response, config["protocol"])
+            if text:
+                return text
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise VisionServiceError("Vision provider returned an empty response")
 
 
-def synthesize_video_topics(sources: list[dict[str, Any]], client: Any | None = None) -> dict[str, Any]:
+def synthesize_video_topics(
+    sources: list[dict[str, Any]],
+    client: Any | None = None,
+    topic_hints: list[str] | None = None,
+) -> dict[str, Any]:
     """Create a theme-first navigation layer; complete evidence remains in JSONL."""
     config = vision_config()
     if not config["base_url"] or not config["token"]:
@@ -302,6 +333,12 @@ def synthesize_video_topics(sources: list[dict[str, Any]], client: Any | None = 
         }
     if not sources:
         return {"status": "skipped", "model": config["model"], "topics": [], "error": "No source videos"}
+    topic_hint_text = (
+        "已有主题候选（若新证据属于其中之一，优先复用完全相同的主题名）："
+        + "、".join(str(item).strip() for item in (topic_hints or []) if str(item).strip())
+        if topic_hints
+        else ""
+    )
 
     allowed_evidence_ids = {
         str(evidence["id"])
@@ -309,7 +346,69 @@ def synthesize_video_topics(sources: list[dict[str, Any]], client: Any | None = 
         for evidence in source.get("evidence", [])
         if evidence.get("id")
     }
-    source_groups = [sources[i : i + 4] for i in range(0, len(sources), 4)]
+    if len(sources) == 1:
+        source = sources[0]
+        evidence = source.get("evidence", [])
+        partial_topics = []
+        try:
+            for start in range(0, len(evidence), 2):
+                group = evidence[start : start + 2]
+                blocks = "\n\n".join(
+                    f"EVIDENCE_ID={item.get('id')}\n{str(item.get('content') or '')[:1600]}"
+                    for item in group
+                )
+                prompt = (
+                    "你是游戏攻略编辑。根据证据提炼可直接使用的干货，"
+                    "按球员/对象归纳进阶价值、推荐徽章或技能、机制、适用场景和不推荐项。"
+                    "不要输出原始转写、窗口编号或时间轴，不要猜测。"
+                    f"{topic_hint_text}"
+                    "只返回严格 JSON："
+                    "{\"title\":\"主题标题\",\"summary\":\"一句话结论\","
+                    "\"points\":[{\"text\":\"具体干货\",\"evidence_ids\":[\"原样证据ID\"]}]}。\n\n"
+                    + blocks
+                )
+                try:
+                    parsed = _json_object_from_text(_complete_text(prompt, client=client))
+                except Exception:
+                    continue
+                if isinstance(parsed, dict) and parsed.get("title") and parsed.get("points"):
+                    partial_topics.append(parsed)
+            topics = []
+            for topic in partial_topics:
+                points = []
+                for point in topic.get("points", []):
+                    refs = [
+                        str(ref)
+                        for ref in point.get("evidence_ids", [])
+                        if str(ref) in allowed_evidence_ids
+                    ]
+                    text = str(point.get("text") or "").strip()
+                    if text and refs:
+                        points.append({"text": text, "evidence_ids": refs})
+                if points:
+                    topics.append({
+                        "title": str(topic.get("title") or "").strip(),
+                        "summary": str(topic.get("summary") or "").strip(),
+                        "points": points,
+                    })
+            if topics:
+                return {"status": "success", "model": config["model"], "topics": topics, "error": None}
+        except Exception as exc:
+            error = str(exc).replace(config["token"], "[redacted]")[:1500]
+            return {"status": "failed", "model": config["model"], "topics": [], "error": error}
+
+    if len(sources) == 1 and len(sources[0].get("evidence", [])) > 4:
+        source_groups = [
+            [
+                {
+                    **sources[0],
+                    "evidence": sources[0].get("evidence", [])[i : i + 4],
+                }
+            ]
+            for i in range(0, len(sources[0].get("evidence", [])), 4)
+        ]
+    else:
+        source_groups = [sources[i : i + 4] for i in range(0, len(sources), 4)]
     partial_topics: list[dict[str, Any]] = []
     try:
         for group in source_groups:
@@ -332,8 +431,11 @@ def synthesize_video_topics(sources: list[dict[str, Any]], client: Any | None = 
                     + "\n".join(evidence_lines)
                 )
             prompt = (
-                "为知识库制作主题索引，不要按视频分别写文档。把不同视频中讲同一对象/机制/流程的内容归入同主题。"
+                "为知识库制作主题干货，不要按视频或窗口分别写文档。把内容按对象、角色、球员、机制和流程归并。"
+                "如果是游戏攻略/评测，优先按每个球员或对象输出：进阶价值、是否值得投入、推荐徽章/技能、机制变化、适用场景、明确的不推荐项。"
+                "不要输出原始转写、窗口编号、时间轴或模型过程；只保留用户可以直接使用的结论、步骤、清单和表格信息。"
                 "仅总结下面提供的证据，不推测、不补充常识。返回严格 JSON："
+                f"{topic_hint_text}"
                 "{\"topics\":[{\"title\":\"主题名\",\"summary\":\"不超过三句的主题摘要\","
                 "\"points\":[{\"text\":\"具体知识点\",\"evidence_ids\":[\"输入中原样的 evidence_id\"]}]}]}。"
                 "每个 point 必须带至少一个有效 evidence_id，无法归属则不要输出。\n\n"
@@ -407,6 +509,22 @@ def understand_window(
         f"前一窗口状态（用于连续理解）：{context.strip()[:2500] or '无'}\n\n"
         f"口播片段：{transcript.strip()[:12000]}"
     ).strip()
+    def build_chat_payload(paths: list[str], reasoning_effort: str) -> dict[str, Any]:
+        image_urls = [_image_data_url(path) for path in paths]
+        return {
+            "model": config["model"],
+            "temperature": 0.1,
+            "max_tokens": 3000,
+            "reasoning_effort": reasoning_effort,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
+                ],
+            }],
+        }
+
     image_urls = [_image_data_url(path) for path in selected_frames]
     http_client = client or httpx
     headers = _headers(config)
@@ -435,25 +553,42 @@ def understand_window(
         }
     else:
         endpoint = _endpoint(config["base_url"], "chat/completions")
-        payload = {
-            "model": config["model"],
-            "temperature": 0.1,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
-                ],
-            }],
-        }
+        payload = build_chat_payload(selected_frames, "low")
 
     try:
-        response = http_client.post(endpoint, headers=headers, json=payload, timeout=config["timeout_sec"])
-        response.raise_for_status()
-        data = response.json()
-        text = _extract_text(data, config["protocol"])
+        attempts = [payload]
+        if config["protocol"] == "chat":
+            fallback_payload = dict(payload)
+            fallback_payload["reasoning_effort"] = "minimal"
+            attempts.append(fallback_payload)
+            if len(selected_frames) > 2:
+                attempts.append(build_chat_payload(selected_frames[:2], "minimal"))
+            if len(selected_frames) > 1:
+                representative_frame = selected_frames[len(selected_frames) // 2]
+                concise_prompt = (
+                    "结合这张视频截图和口播，提取确定的信息、可执行步骤、界面文字或表格条目。"
+                    "简洁回答；看不清的内容标注 unknown，不要猜。"
+                    f"\n窗口：{window_label or '未标注'}"
+                    f"\n口播：{transcript.strip()[:1200]}"
+                    f"\n前序上下文：{context.strip()[:300] or '无'}"
+                )
+                single_payload = build_chat_payload([representative_frame], "minimal")
+                single_payload["messages"][0]["content"][0]["text"] = concise_prompt
+                attempts.append(single_payload)
+        text = ""
+        for attempt in attempts:
+            response = http_client.post(
+                endpoint,
+                headers=headers,
+                json=attempt,
+                timeout=config["timeout_sec"],
+            )
+            response.raise_for_status()
+            text = _extract_text(response.json(), config["protocol"])
+            if text:
+                break
         if not text:
-            return {"status": "failed", "text": "", "error": "vision provider returned empty response", "model": config["model"]}
+            return {"status": "failed", "text": "", "error": "vision provider returned empty response after fallback", "model": config["model"]}
         return {
             "status": "success",
             "text": text,
@@ -462,5 +597,14 @@ def understand_window(
             "frame_count": len(selected_frames),
         }
     except Exception as exc:
-        error = str(exc).replace(config["token"], "[redacted]")
+        error = str(exc)
+        response = getattr(exc, "response", None)
+        if response is not None:
+            try:
+                body = response.text.strip()
+            except Exception:
+                body = ""
+            if body:
+                error = f"{error}: {body[:1000]}"
+        error = error.replace(config["token"], "[redacted]")
         return {"status": "failed", "text": "", "error": error, "model": config["model"]}

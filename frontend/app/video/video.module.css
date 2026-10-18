@@ -1,0 +1,785 @@
+.app {
+  min-height: 100dvh;
+  color: #17211f;
+  background: #f7f9f8;
+}
+
+.topbar {
+  width: min(960px, calc(100% - 40px));
+  min-height: 72px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e0e7e4;
+}
+
+.brand {
+  color: #155f4d;
+  font-size: 14px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.tasksLink {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  color: #175f49;
+  background: #ffffff;
+  border: 1px solid #b9cfc4;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.tasksLink:hover {
+  background: #f0f6f3;
+  border-color: #94b2a5;
+}
+
+.settingsAnchor,
+.workspaceAnchor {
+  position: relative;
+}
+
+.iconButton {
+  width: 42px;
+  height: 42px;
+  display: inline-grid;
+  place-items: center;
+  color: #31433d;
+  background: #ffffff;
+  border: 1px solid #d5dfdb;
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+}
+
+.iconButton:hover {
+  background: #eff5f2;
+}
+
+.iconButton:focus-visible,
+.primaryButton:focus-visible,
+.modeButton:focus-visible,
+.workspaceButton:focus-visible,
+.menuItem:focus-visible,
+.secondaryButton:focus-visible,
+.textButton:focus-visible,
+.input:focus-visible,
+.fileInput:focus-visible {
+  outline: 3px solid #7db8a5;
+  outline-offset: 2px;
+}
+
+.configWarning,
+.configReady {
+  position: absolute;
+  inset-block-start: -4px;
+  inset-inline-end: -4px;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #f7f9f8;
+  border-radius: 50%;
+  color: #ffffff;
+}
+
+.configWarning {
+  background: #bd6b20;
+}
+
+.configReady {
+  background: #18745c;
+}
+
+.settingsPanel,
+.workspaceMenu {
+  position: absolute;
+  z-index: 20;
+  inset-block-start: calc(100% + 10px);
+  inset-inline-end: 0;
+  width: min(430px, calc(100vw - 28px));
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #d9e2de;
+  border-radius: 8px;
+  box-shadow: 0 14px 38px rgb(23 43 35 / 14%);
+}
+
+.workspaceMenu {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  width: min(320px, calc(100vw - 40px));
+  padding: 8px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-block-end: 16px;
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.panelNote {
+  margin: 4px 0 0;
+  color: #62716b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.panelClose {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: #52635d;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.panelClose:hover {
+  background: #eff5f2;
+}
+
+.settingsFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #42534c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fieldFull {
+  grid-column: 1 / -1;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 11px;
+  color: #17211f;
+  background: #ffffff;
+  border: 1px solid #b9c8c1;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.input::placeholder {
+  color: #73817b;
+}
+
+.panelActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block-start: 14px;
+}
+
+.primaryButton,
+.secondaryButton,
+.textButton {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 15px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primaryButton {
+  color: #ffffff;
+  background: #17694f;
+  border: 1px solid #17694f;
+}
+
+.primaryButton:hover {
+  background: #10563f;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
+
+.secondaryButton {
+  color: #175f49;
+  background: #ffffff;
+  border: 1px solid #94b2a5;
+}
+
+.secondaryButton:hover {
+  background: #f0f6f3;
+}
+
+.textButton {
+  min-height: 36px;
+  color: #52635d;
+  background: transparent;
+  border: 0;
+}
+
+.status {
+  flex-basis: 100%;
+  min-height: 18px;
+  color: #6b7872;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.statusSuccess {
+  color: #17694f;
+}
+
+.statusError {
+  color: #a43a30;
+}
+
+.workspace {
+  width: min(740px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 76px 0 96px;
+}
+
+.heading {
+  margin: 0 0 26px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.modeSwitch {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 4px;
+  margin-block-end: 20px;
+  background: #edf2ef;
+  border: 1px solid #e1e8e4;
+  border-radius: 8px;
+}
+
+.modeButton {
+  min-height: 38px;
+  padding: 4px 7px;
+  color: #5e6d67;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.modeButtonActive {
+  color: #174f3e;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(28 54 43 / 12%);
+}
+
+.sourceForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.inputWithIcon {
+  position: relative;
+  min-width: 0;
+}
+
+.inputIcon {
+  position: absolute;
+  inset-inline-start: 13px;
+  inset-block-start: 50%;
+  color: #71817a;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.sourceInput {
+  height: 50px;
+  padding-inline-start: 42px;
+  font-size: 16px;
+}
+
+.sourceForm .primaryButton {
+  min-width: 142px;
+  min-height: 50px;
+}
+
+.outputSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 0 12px;
+  color: #52635d;
+  background: #f6f8f7;
+  border: 1px solid #dce5e0;
+  border-radius: 5px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.outputSelect select {
+  border: 0;
+  outline: 0;
+  color: #263a32;
+  background: transparent;
+  font: inherit;
+}
+
+.fileInput {
+  width: 100%;
+  min-height: 50px;
+  padding: 7px;
+  color: #4d5b55;
+  background: #ffffff;
+  border: 1px solid #b9c8c1;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.fileInputHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.dropZone {
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  color: #52635d;
+  background: #ffffff;
+  border: 1px dashed #9db8aa;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.dropZone:hover,
+.dropZoneActive {
+  color: #175f49;
+  background: #eef7f2;
+  border-color: #18745c;
+}
+
+.dropZone strong {
+  color: #24463a;
+  font-size: 14px;
+}
+
+.dropZone span,
+.dropZone em {
+  color: #687871;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.dropZone em {
+  flex-basis: 100%;
+  color: #17694f;
+}
+
+.belowForm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-block-start: 13px;
+}
+
+.workspaceButton {
+  min-height: 36px;
+  max-width: min(440px, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  color: #52635d;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.workspaceButton:hover {
+  background: #edf2ef;
+}
+
+.workspaceName {
+  max-width: 260px;
+  color: #263a32;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuHeading {
+  padding: 8px 10px;
+  color: #65756e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.menuItem {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  color: #24342e;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItemSelected {
+  background: #edf5f1;
+}
+
+.fileCount,
+.modeHint {
+  color: #64736d;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.message {
+  margin-block-start: 20px;
+  padding-block-start: 14px;
+  color: #a43a30;
+  border-top: 1px solid #e1e8e4;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.messageSuccess {
+  color: #17694f;
+}
+
+.recovery {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding-block: 15px;
+  border-bottom: 1px solid #dce5e0;
+}
+
+.recoveryText {
+  flex: 1 1 100%;
+  margin: 0 0 2px;
+  color: #72501b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.candidateSection,
+.taskSection {
+  margin-block-start: 30px;
+  padding-block-start: 20px;
+  border-top: 1px solid #dce5e0;
+}
+
+.sectionHeading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.sectionMeta {
+  margin: 5px 0 12px;
+  color: #65736d;
+  font-size: 13px;
+}
+
+.candidateList {
+  max-height: 360px;
+  overflow: auto;
+  border-top: 1px solid #e2e9e6;
+}
+
+.candidateRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 11px 3px;
+  border-bottom: 1px solid #e2e9e6;
+}
+
+.candidateTitle {
+  display: block;
+  color: #263a32;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.candidateUrl {
+  display: block;
+  margin-block-start: 4px;
+  color: #6a7872;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.taskHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.taskStatus {
+  color: #52635d;
+  font-size: 13px;
+}
+
+.taskStatusSuccess {
+  color: #17694f;
+}
+
+.taskStatusFailed {
+  color: #a43a30;
+}
+
+.progressTrack {
+  height: 5px;
+  margin-block-start: 14px;
+  overflow: hidden;
+  background: #e1e8e4;
+  border-radius: 3px;
+}
+
+.progressBar {
+  height: 100%;
+  background: #18745c;
+  transition: width 240ms ease;
+}
+
+.taskSummary {
+  margin: 8px 0 0;
+  color: #5c6a64;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.taskActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block-start: 15px;
+}
+
+.taskError {
+  margin-block-start: 14px;
+  padding: 12px;
+  color: #81271f;
+  background: #fff1ef;
+  border-radius: 5px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.recentTasks {
+  margin-block-start: 28px;
+  padding-block-start: 20px;
+  border-top: 1px solid #dfe8e3;
+}
+
+.recentTasksHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.recentTaskList {
+  margin-block-start: 14px;
+  border-top: 1px solid #e2e9e6;
+}
+
+.recentTaskRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 4px;
+  color: inherit;
+  border-bottom: 1px solid #e2e9e6;
+  text-decoration: none;
+}
+
+.recentTaskRow:hover {
+  background: #f1f6f3;
+}
+
+.recentTaskMain {
+  min-width: 0;
+  flex: 1;
+}
+
+.recentTaskTitle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.recentTaskStatus {
+  color: #6a7872;
+  font-size: 12px;
+}
+
+.recentTaskStatusSuccess {
+  color: #17694f;
+}
+
+.recentTaskStatusFailed {
+  color: #a43a30;
+}
+
+.recentTaskProgress {
+  height: 4px;
+  margin-block-start: 9px;
+  overflow: hidden;
+  background: #e0e8e4;
+  border-radius: 2px;
+}
+
+.recentTaskProgress span {
+  display: block;
+  height: 100%;
+  background: #18745c;
+}
+
+.recentTaskSummary {
+  display: block;
+  margin-block-start: 7px;
+  color: #65736d;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentTaskMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  color: #6a7872;
+  font-size: 12px;
+}
+
+.recentTasksEmpty {
+  padding: 18px 0;
+  color: #6a7872;
+  font-size: 13px;
+}
+
+@media (max-width: 560px) {
+  .topbar,
+  .workspace {
+    width: calc(100% - 28px);
+  }
+
+  .workspace {
+    padding-block-start: 44px;
+  }
+
+  .heading {
+    margin-block-end: 20px;
+    font-size: 26px;
+  }
+
+  .modeButton {
+    min-height: 42px;
+    font-size: 12px;
+  }
+
+  .sourceForm {
+    grid-template-columns: 1fr;
+  }
+
+  .sourceForm .primaryButton {
+    width: 100%;
+  }
+
+  .recentTaskRow {
+    align-items: flex-start;
+  }
+
+  .recentTaskMeta {
+    padding-block-start: 2px;
+  }
+
+  .settingsFields {
+    grid-template-columns: 1fr;
+  }
+
+  .fieldFull {
+    grid-column: auto;
+  }
+}

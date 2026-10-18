@@ -250,13 +250,13 @@ export default function UploadPage() {
             <div>
               <h2 style={{ margin: 0, fontSize: 18 }}>当前任务上下文</h2>
               <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
-                {selectedProject ? `任务：${selectedProject.name}` : '还没有选择任务。请从下方选择已有任务，或返回首页创建转换任务。'}
+                {selectedProject ? `工作区：${selectedProject.name}` : '还没有选择工作区。请回到视频工具开始整理素材。'}
               </p>
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13, lineHeight: 1.7 }}>
                 生成目标：{outputContext}
               </p>
             </div>
-            <Link href="/" style={{ color: '#0066cc', fontWeight: 400, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回首页创建转换任务</Link>
+            <Link href="/video" style={{ color: '#0066cc', fontWeight: 400, textDecoration: 'none', whiteSpace: 'nowrap' }}>返回视频工具</Link>
           </div>
         </section>
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import shutil
+from html import escape
 from uuid import uuid4
 
 from app.core.config import EXPORT_DIR, MARKDOWN_CHUNK_MAX_CHARS, MARKDOWN_CHUNK_TARGET_CHARS
@@ -1492,14 +1494,42 @@ def export_video_library(
     topic_result: dict | None = None,
     failed_videos: list[dict] | None = None,
     db=None,
+    output_formats: list[str] | None = None,
 ) -> dict:
     """Write a theme-first, progressively disclosed wiki source package."""
-    root = Path(out_dir).resolve() / "video-libraries" / _video_library_slug(library_id)
+    library_root = Path(out_dir).resolve() / "video-libraries" / _video_library_slug(library_id)
+    previous_manifest_path = library_root / "manifest.json"
+    previous_manifest = {}
+    if previous_manifest_path.is_file():
+        try:
+            loaded_manifest = json.loads(previous_manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_manifest, dict):
+                previous_manifest = loaded_manifest
+        except (OSError, json.JSONDecodeError):
+            previous_manifest = {}
+    previous_version = int(previous_manifest.get("library_version") or 0)
+    library_version = previous_version + 1
+    parent_version = previous_version or None
+    if library_version > 1:
+        first_version_root = library_root / "versions" / "v001"
+        if not first_version_root.exists():
+            first_version_root.mkdir(parents=True, exist_ok=True)
+            for name in ("index.md", "videos.md", "evidence.jsonl", "manifest.json"):
+                source = library_root / name
+                if source.is_file():
+                    shutil.copy2(source, first_version_root / name)
+            for directory_name in ("themes", "evidence"):
+                source_dir = library_root / directory_name
+                if source_dir.is_dir():
+                    shutil.copytree(source_dir, first_version_root / directory_name)
+    root = library_root if library_version == 1 else library_root / "versions" / f"v{library_version:03d}"
     themes_dir = root / "themes"
     evidence_dir = root / "evidence"
+    frames_dir = root / "assets" / "frames"
     root.mkdir(parents=True, exist_ok=True)
     themes_dir.mkdir(parents=True, exist_ok=True)
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir.mkdir(parents=True, exist_ok=True)
     index_path = root / "index.md"
     video_index_path = root / "videos.md"
     evidence_jsonl_path = root / "evidence.jsonl"
@@ -1511,7 +1541,7 @@ def export_video_library(
     for row in evidence_rows:
         evidence_id = str(row.get("id") or "")
         content = _semantic_unit_export_content(row)
-        if not evidence_id or not content:
+        if not evidence_id or not content or evidence_id in evidence_by_id:
             continue
         labels = _row_labels(row)
         video_id = str(labels.get("video_id") or labels.get("source_task_id") or row.get("asset_id") or "unknown-video")
@@ -1523,42 +1553,113 @@ def export_video_library(
             "title": _row_title(row, len(normalized_evidence) + 1),
             "source": str(labels.get("source") or "video"),
             "content": content,
+            "frame_paths": [
+                str(path)
+                for path in (labels.get("frame_paths") or [])
+                if str(path).strip()
+            ],
         }
+        frame_rel_paths = []
+        for frame_index, frame_path in enumerate(record["frame_paths"]):
+            source_frame = Path(frame_path)
+            if not source_frame.is_file():
+                continue
+            target_name = f"{_video_library_slug(record['video_title'])}-{_video_library_slug(evidence_id)}-{frame_index + 1:02d}{source_frame.suffix.lower() or '.jpg'}"
+            target_frame = frames_dir / target_name
+            try:
+                shutil.copy2(source_frame, target_frame)
+            except OSError:
+                continue
+            frame_rel_paths.append(str(Path("assets") / "frames" / target_name))
+        record["frame_rel_paths"] = frame_rel_paths
         normalized_evidence.append(record)
         evidence_by_id[evidence_id] = record
 
     generated_topics = (topic_result or {}).get("topics") or []
+    previous_topic_titles = {
+        str(item.get("title") or "").strip()
+        for item in previous_manifest.get("topics", [])
+        if isinstance(item, dict) and str(item.get("title") or "").strip()
+    }
     topics = []
+    generated_topic_titles = {
+        str(topic.get("title") or "").strip()
+        for topic in generated_topics
+        if isinstance(topic, dict) and str(topic.get("title") or "").strip()
+    }
+    if library_version > 1:
+        for previous_topic in previous_manifest.get("topics", []):
+            if not isinstance(previous_topic, dict):
+                continue
+            previous_title = str(previous_topic.get("title") or "").strip()
+            previous_points = previous_topic.get("points")
+            if previous_title and previous_title not in generated_topic_titles and isinstance(previous_points, list):
+                topics.append({
+                    "title": previous_title,
+                    "summary": str(previous_topic.get("summary") or "").strip(),
+                    "points": [
+                        point for point in previous_points
+                        if isinstance(point, dict)
+                    ],
+                })
     used_evidence = set()
     for topic in generated_topics:
         if not isinstance(topic, dict):
             continue
-        points = []
+        previous_topic = next(
+            (
+                item for item in previous_manifest.get("topics", [])
+                if isinstance(item, dict)
+                and str(item.get("title") or "").strip() == str(topic.get("title") or "").strip()
+            ),
+            None,
+        )
+        points = [
+            point for point in (previous_topic or {}).get("points", [])
+            if isinstance(point, dict)
+            and str(point.get("text") or "").strip()
+            and any(str(ref) in evidence_by_id for ref in point.get("evidence_ids", []))
+        ]
         for point in topic.get("points", []):
             if not isinstance(point, dict):
                 continue
             refs = [str(ref) for ref in point.get("evidence_ids", []) if str(ref) in evidence_by_id]
             body = str(point.get("text") or "").strip()
             if body and refs:
+                point_key = (body, tuple(refs))
+                if point_key in {(item["text"], tuple(item["evidence_ids"])) for item in points}:
+                    continue
                 points.append({"text": body, "evidence_ids": refs})
                 used_evidence.update(refs)
         topic_title = str(topic.get("title") or "").strip()
         if topic_title and points:
-            topics.append({
+            merged_topic = {
                 "title": topic_title,
-                "summary": str(topic.get("summary") or "").strip(),
+                "summary": str(topic.get("summary") or (previous_topic or {}).get("summary") or "").strip(),
                 "points": points,
-            })
+            }
+            topics = [
+                item for item in topics
+                if item.get("title") != topic_title
+            ]
+            topics.append(merged_topic)
 
     topic_status = (topic_result or {}).get("status") or "skipped"
     if not topics and normalized_evidence:
         by_type: dict[str, list[dict]] = {}
         for evidence in normalized_evidence:
             by_type.setdefault(evidence["unit_type"], []).append(evidence)
+        if len(by_type) > 1:
+            by_type.pop("transcript", None)
         topics = [
             {
                 "title": _unit_type_label(unit_type),
-                "summary": f"按内容类型自动归档，共 {len(items)} 条原始证据；尚未生成 AI 跨视频归纳。",
+                "summary": (
+                    f"按内容类型自动归档，共 {len(items)} 条证据；尚未生成 AI 跨视频归纳。"
+                    f" {_compact_text(_semantic_unit_export_content(items[0]), 600)}"
+                    if items else
+                    f"按内容类型自动归档，共 {len(items)} 条证据；尚未生成 AI 跨视频归纳。"
+                ),
                 "points": [
                     {
                         "text": item["title"],
@@ -1590,6 +1691,8 @@ def export_video_library(
                     f"- [{evidence['video_title']} · {evidence['title']}]({evidence_rel.as_posix()}) "
                     f"(evidence_id: `{evidence_id}`)"
                 )
+                for frame_rel_path in evidence.get("frame_rel_paths", []):
+                    lines.append(f"![关键帧](../{frame_rel_path})")
                 referenced_videos[evidence["video_id"]] = video_by_id.get(
                     evidence["video_id"],
                     {"video_id": evidence["video_id"], "title": evidence["video_title"], "source_url": ""},
@@ -1600,9 +1703,18 @@ def export_video_library(
             lines.append(f"- [{video.get('title') or video.get('video_id')}]({video.get('source_url') or '#'})")
         _write_utf8_text(topic_path, "\n".join(lines))
         topic_files.append(topic_path)
+        topic_summary = topic.get("summary", "")
+        topic_evidence = [
+            evidence_by_id[evidence_id]
+            for point in topic["points"]
+            for evidence_id in point["evidence_ids"]
+            if evidence_id in evidence_by_id
+        ]
+        if topic_evidence and all(item["unit_type"] == "transcript" for item in topic_evidence):
+            topic_summary = f"{topic_summary} {_compact_text(topic_evidence[0]['content'], 600)}".strip()
         topic_manifest.append({
             "title": topic["title"],
-            "summary": topic.get("summary", ""),
+            "summary": topic_summary,
             "path": str(topic_path),
             "relative_path": topic_path.relative_to(root).as_posix(),
             "video_ids": list(referenced_videos.keys()),
@@ -1611,6 +1723,7 @@ def export_video_library(
                 for point in topic["points"]
                 for evidence_id in point["evidence_ids"]
             }),
+            "points": topic["points"],
         })
 
     evidence_files: list[Path] = []
@@ -1631,6 +1744,11 @@ def export_video_library(
             "## 内容",
             "",
             evidence["content"],
+            "",
+            *[
+                f"![关键帧](../{frame_rel_path})"
+                for frame_rel_path in evidence.get("frame_rel_paths", [])
+            ],
             "",
         ]))
         evidence_files.append(evidence_path)
@@ -1689,9 +1807,52 @@ def export_video_library(
     ])
     _write_utf8_text(index_path, "\n".join(index_lines))
 
+    formats = {
+        str(value).strip().lower()
+        for value in (output_formats or ["markdown"])
+        if str(value).strip()
+    }
+    html_path = None
+    if "html" in formats or "both" in formats:
+        html_sections = []
+        for topic in topics:
+            html_sections.extend([
+                f"<section><h2>{escape(topic['title'])}</h2>",
+                f"<p class=\"summary\">{escape(topic.get('summary') or '')}</p>",
+            ])
+            for point in topic["points"]:
+                html_sections.append(f"<article><h3>{escape(point['text'])}</h3>")
+                for evidence_id in point["evidence_ids"]:
+                    evidence = evidence_by_id[evidence_id]
+                    html_sections.append(
+                        f"<p class=\"source\">{escape(evidence['video_title'])} · "
+                        f"{escape(evidence['title'])}</p>"
+                    )
+                    for frame_rel_path in evidence.get("frame_rel_paths", []):
+                        html_sections.append(
+                            f'<img src="{escape(frame_rel_path)}" alt="关键帧" loading="lazy">'
+                        )
+                html_sections.append("</article>")
+            html_sections.append("</section>")
+        html_path = root / "index.html"
+        _write_utf8_text(html_path, "\n".join([
+            "<!doctype html>",
+            '<html lang="zh-CN"><head><meta charset="utf-8">',
+            f"<title>{escape(title)}</title>",
+            "<style>body{margin:0;color:#202124;background:#fff;font:15px/1.8 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}main{max-width:920px;margin:0 auto;padding:48px 28px}h1{font-size:30px;margin:0 0 8px}h2{margin-top:42px;border-bottom:1px solid #e5e7eb;padding-bottom:8px}h3{font-size:18px;margin-bottom:4px}.summary,.source{color:#667085}article{margin:22px 0 30px}img{display:block;max-width:100%;max-height:420px;margin:12px 0;border:1px solid #e5e7eb;border-radius:6px}</style>",
+            "</head><body><main>",
+            f"<h1>{escape(title)}</h1>",
+            "<p class=\"summary\">主题优先的视觉知识库预览</p>",
+            *html_sections,
+            "</main></body></html>",
+        ]))
+
     manifest = {
         "schema_version": "envoy.video.library.v1",
         "library_id": library_id,
+        "library_version": library_version,
+        "parent_version": parent_version,
+        "append_mode": "incremental" if parent_version else "initial",
         "title": title,
         "project_id": project_id,
         "source_task_id": task_id,
@@ -1699,22 +1860,126 @@ def export_video_library(
         "failed_video_count": len(failed_videos or []),
         "evidence_count": len(normalized_evidence),
         "topic_status": topic_status,
+        "changed_topics": [
+            topic["title"] for topic in topics
+            if topic["title"] not in previous_topic_titles
+            or any(
+                evidence_id not in {
+                    old_id
+                    for old_topic in previous_manifest.get("topics", [])
+                    if isinstance(old_topic, dict)
+                    for old_id in (old_topic.get("evidence_ids") or [])
+                }
+                for point in topic.get("points", [])
+                for evidence_id in point.get("evidence_ids", [])
+            )
+        ],
+        "new_evidence_ids": [
+            evidence["id"]
+            for evidence in normalized_evidence
+            if evidence["id"] not in {
+                old_evidence.get("id")
+                for old_evidence in previous_manifest.get("evidence", [])
+                if isinstance(old_evidence, dict)
+            }
+        ],
+        "conflicts": [],
         "topics": topic_manifest,
         "videos": video_rows,
         "failed_videos": failed_videos or [],
         "evidence": normalized_evidence,
+        "output_formats": sorted(formats),
         "files": {
             "index": str(index_path),
             "videos": str(video_index_path),
             "evidence_jsonl": str(evidence_jsonl_path),
             "themes": [str(path) for path in topic_files],
             "evidence_pages": [str(path) for path in evidence_files],
+            "html": str(html_path) if html_path else None,
+            "frames": [str(path) for path in frames_dir.glob("*") if path.is_file()],
         },
     }
     _write_utf8_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
     files = [index_path, video_index_path, evidence_jsonl_path, manifest_path, *topic_files, *evidence_files]
-    _finalize_export(db, project_id, task_id, "video_library", f"video-library-{library_id}", root, files, normalized_evidence)
-    return {"root": str(root), "path": str(index_path), "manifest_path": str(manifest_path), "files": [str(path) for path in files]}
+    if html_path:
+        files.append(html_path)
+    files.extend(path for path in frames_dir.glob("*") if path.is_file())
+
+    latest_index_path = library_root / "index.md"
+    latest_manifest_path = library_root / "manifest.json"
+    latest_evidence_jsonl_path = library_root / "evidence.jsonl"
+    latest_video_index_path = library_root / "videos.md"
+    if library_version > 1:
+        version_relative_index = index_path.relative_to(library_root).as_posix()
+        history_lines = [
+            f"# {title}",
+            "",
+            "> 这是知识库最新版本入口。追加视频、图片或文件后，旧版本仍保留在 `versions/`。",
+            "",
+            f"- 当前版本：v{library_version:03d}",
+            f"- [打开当前版本]({version_relative_index})",
+            "",
+            "## 版本历史",
+            "",
+        ]
+        for version in range(library_version, 0, -1):
+            version_path = (
+                library_root / "index.md"
+                if version == 1
+                else library_root / "versions" / f"v{version:03d}" / "index.md"
+            )
+            if version_path.is_file():
+                history_lines.append(
+                    f"- [v{version:03d}]({version_path.relative_to(library_root).as_posix()})"
+                )
+        _write_utf8_text(latest_index_path, "\n".join(history_lines))
+        latest_manifest = dict(manifest)
+        latest_manifest["latest_version"] = library_version
+        latest_manifest["latest_version_path"] = version_relative_index
+        latest_manifest["version_history"] = [
+            f"v{version:03d}" for version in range(1, library_version + 1)
+        ]
+        _write_utf8_text(latest_manifest_path, json.dumps(latest_manifest, ensure_ascii=False, indent=2))
+        _write_utf8_text(latest_evidence_jsonl_path, evidence_jsonl_path.read_text(encoding="utf-8"))
+        _write_utf8_text(latest_video_index_path, video_index_path.read_text(encoding="utf-8"))
+        export_root = library_root
+        export_paths = [
+            latest_index_path,
+            latest_manifest_path,
+            latest_evidence_jsonl_path,
+            latest_video_index_path,
+            *files,
+        ]
+    else:
+        export_root = root
+        export_paths = files
+
+    _finalize_export(
+        db,
+        project_id,
+        task_id,
+        "video_library",
+        f"video-library-{library_id}",
+        export_root,
+        export_paths,
+        normalized_evidence,
+    )
+    archive_path = Path(
+        shutil.make_archive(
+            str(library_root),
+            "zip",
+            root_dir=str(library_root),
+        )
+    )
+    return {
+        "root": str(library_root),
+        "path": str(latest_index_path),
+        "manifest_path": str(latest_manifest_path),
+        "library_version": library_version,
+        "files": [str(path) for path in export_paths],
+        "html_path": str(html_path) if html_path else None,
+        "archive_path": str(archive_path),
+    }
 
 
 def _relative_file(path: Path, root: Path):

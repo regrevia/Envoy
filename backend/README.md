@@ -24,7 +24,7 @@ python3 scripts/audit_delivery_readiness.py --media-dir <media-folder>
 
 ## URL 转 Markdown 验收
 
-启动后端和前端后，打开前端的 `/video` 页面，粘贴一个视频 URL。默认“自动读取公开或本机登录态”会先尝试公开访问，再尝试 Chrome、Edge、Firefox、Safari 等本机浏览器的登录态；用户不需要手工复制 Cookie。后端必须和已登录浏览器运行在同一台机器、同一用户下。
+启动后端和前端后，打开前端的 `/video` 页面，粘贴一个视频 URL。默认认证策略先尝试公开访问，再只尝试本机确实存在 Cookie 数据库的 Chrome、Edge、Firefox、Brave、Chromium、Vivaldi、Opera 或 Whale profile；Safari 受保护 Cookie 默认跳过。没有浏览器 profile 时只尝试公开访问，不再因缺失的 Cookie 库产生误导性错误。后端必须和已登录浏览器运行在同一台机器、同一用户下。
 
 当前 URL 下载和主页/播放列表发现由统一来源层负责，底层使用 `yt-dlp`。已针对 YouTube、B 站、抖音、Vimeo、Twitch、Instagram、Facebook、X、快手、西瓜视频、优酷、腾讯视频、爱奇艺和小红书做来源分类，并将单视频、分享链接、创作者主页和集合统一转换为候选视频结构。具体可用能力仍以平台当前页面和 yt-dlp 版本为准。
 

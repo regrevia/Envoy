@@ -63,6 +63,60 @@ def test_video_checkpoint_round_trip_is_json_safe():
     assert "video_to_markdown" in RETRYABLE_TASKS
 
 
+def test_local_task_recovery_requeues_interrupted_video_tasks(tmp_path, monkeypatch):
+    import os
+
+    os.environ["DATABASE_URL"] = f"sqlite:///{tmp_path / 'envoy-recovery.db'}"
+    os.environ["ENVOY_TASK_EXECUTION_MODE"] = "local"
+    for name in list(sys.modules):
+        if name.startswith("app."):
+            sys.modules.pop(name, None)
+
+    from app.db.base import Base
+    from app.db.session import SessionLocal, engine
+    import app.models  # noqa: F401
+    from app.schemas.project import ProjectCreate
+    from app.schemas.task import TaskCreate
+    from app.services.crud_service import create_project, create_task
+    from app.services.task_dispatcher import recover_interrupted_local_tasks
+
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        project = create_project(db, ProjectCreate(name="recovery", description="", domain_type="video", status="active"))
+        task = create_task(db, TaskCreate(
+            project_id=project.id,
+            task_type="video_to_markdown",
+            input_config={
+                "source_url": "https://example.com/interrupted",
+                "checkpoints": {"download": {"status": "success", "path": "/tmp/cached.mp4"}},
+            },
+        ))
+        task.status = "running"
+        task.progress = 68
+        db.commit()
+
+        dispatched = []
+        monkeypatch.setattr(
+            "app.services.task_dispatcher.dispatch_task",
+            lambda db, task, worker, payload: dispatched.append((task.id, worker, payload)) or {"id": task.id},
+        )
+
+        recovered = recover_interrupted_local_tasks(db)
+
+        assert recovered == 1
+        assert len(dispatched) == 1
+        assert dispatched[0][0] == task.id
+        assert dispatched[0][2]["source_url"] == "https://example.com/interrupted"
+        db.refresh(task)
+        assert task.status == "pending"
+        assert task.progress == 68
+        assert "服务重启" in (task.result_summary or "")
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_video_batch_and_append_api_create_independent_library_tasks(tmp_path):
     import os
 
@@ -240,6 +294,49 @@ def test_video_export_rows_drop_redundant_media_summary_when_transcript_exists()
     ])
 
     assert [row["id"] for row in rows] == ["transcript"]
+
+
+def test_video_export_rows_keeps_successful_vision_unit_and_drops_failed_retry_duplicates():
+    from types import SimpleNamespace
+    from app.workers.jobs import _video_export_rows
+
+    rows = _video_export_rows([
+        SimpleNamespace(
+            id="vision-failed-old",
+            project_id="p",
+            asset_id="a",
+            segment_id=None,
+            unit_type="scene",
+            title="连续窗口 1",
+            content='{"summary":"","error":"provider error","status":"failed"}',
+            labels={"stage": "understand", "source": "video_understanding", "window_index": 0, "status": "failed"},
+            confidence=0.35,
+        ),
+        SimpleNamespace(
+            id="vision-success-retry-old",
+            project_id="p",
+            asset_id="a",
+            segment_id=None,
+            unit_type="scene",
+            title="连续窗口 1",
+            content='{"summary":"旧版画面结果","status":"success"}',
+            labels={"stage": "understand", "source": "video_understanding", "window_index": 0, "status": "success"},
+            confidence=0.78,
+        ),
+        SimpleNamespace(
+            id="vision-success-retry-latest",
+            project_id="p",
+            asset_id="a",
+            segment_id=None,
+            unit_type="scene",
+            title="连续窗口 1",
+            content='{"summary":"最新画面结果","status":"success"}',
+            labels={"stage": "understand", "source": "video_understanding", "window_index": 0, "status": "success"},
+            confidence=0.78,
+        ),
+    ])
+
+    assert [row["id"] for row in rows] == ["vision-success-retry-latest"]
 
 
 def test_long_video_frame_windows_cover_every_frame_with_overlap_and_asr_alignment():
