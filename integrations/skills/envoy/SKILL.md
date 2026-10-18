@@ -36,9 +36,10 @@ The request must include:
 - a unique `request_id`
 - `source.url`
 - the user's actual reading goal in `goal`
-- optionally set `budget.max_response_tokens` when the host needs a hard
-  response-token ceiling; Envoy enforces the stricter of the character and
-  token budgets
+- optionally set `budget.max_response_tokens` and
+  `budget.max_total_response_tokens` for per-response and whole-task token
+  ceilings; Envoy enforces the stricter character/token budgets across reads
+  and expansions
 - for MCP hosts, set `host_capabilities.image_input: "uri"` only when the host
   can actually inspect a source-linked image URI
 - optionally `ocr_profile: "fast" | "balanced" | "quality" | "pro"` when
@@ -66,7 +67,8 @@ must remain usable without host hooks.
 
 Prefer text blocks for normal answers. Call `envoy_expand` only when coverage
 reports `continuation_available: true`, using the returned offset and only if
-the remaining material matters to the user's goal. Use a visual resource only
+the remaining material matters to the user's goal. Check remaining token
+budget before expanding. Use a visual resource only
 when the task depends on pixels, layout, a chart, a table, or interface state
 and the catalog/response says the host can inspect it. Keep source URLs, block
 IDs, and resource IDs available for citations or follow-up reads.

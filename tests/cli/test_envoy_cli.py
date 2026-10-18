@@ -890,6 +890,42 @@ def test_response_token_budget_hard_limits_first_read(monkeypatch):
     assert response.coverage.modalities["text"].details["token_budget"] == 64
 
 
+def test_total_response_token_budget_is_shared_by_expansions(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        "<html><body><p>" + ("Useful deployment sentence. " * 100) + "</p></body></html>",
+    ))
+    initial = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-total-token",
+        "source": {"url": "https://example.org/guide"},
+        "budget": {
+            "max_response_chars": 2000,
+            "max_response_tokens": 64,
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 256,
+        },
+    }))
+    details = initial.coverage.modalities["text"].details
+    assert details["total_token_budget"] == 256
+    expanded = reader.expand_material(ExpandRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-total-token-expand",
+        "material_id": initial.material_id,
+        "offset": details["next_offset"],
+        "max_chars": 400,
+        "max_response_tokens": 64,
+        "max_total_response_tokens": 256,
+    }))
+    assert expanded.coverage.modalities["text"].details["remaining_tokens"] >= 0
+    assert expanded.coverage.modalities["text"].details["total_token_budget"] == 256
+
+
 def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ReadRequest
