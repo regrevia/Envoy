@@ -80,7 +80,7 @@
 - 本轮 goal 证据选择回归：新增文本候选 offset 与图片排序测试；不改变原文坐标或续读账本。
 - 本轮目标选择定向回归：`backend/.venv/bin/python -m pytest -q tests/cli/test_envoy_cli.py tests/cli/test_mcp_bridge.py tests/core_protocol/test_read_protocol.py`，`51 passed`；无 `goal` 时相关扩展字段省略，保持 MCP 精简结果体积。
 - 本轮视觉观察定向回归：`backend/.venv/bin/python -m pytest -q tests/cli/test_envoy_cli.py tests/cli/test_mcp_bridge.py tests/core_protocol/test_read_protocol.py`，`52 passed`；`envoy_observe_visual` 接收原响应的 `material_id` 时，将最多 32 条去重后的观察写入本地材料快照；不保存图片字节，观察 URL 继续脱敏。
-- Skill 产品化：`scripts/package_envoy_skill.py` 生成可重复的 `envoy-skill.zip`，仅含 `envoy-skill.json`、`SKILL.md` 和协议参考；包内不含凭据、本地配置、浏览器状态或素材，Skill bundle 测试通过。
+- Skill 产品化：`scripts/package_envoy_skill.py` 生成可重复的 `envoy-skill.zip`，含 `envoy-skill.json`、`SKILL.md`、协议参考和通用 `hosts/mcp.json` 配置；包内不含凭据、本地配置、浏览器状态或素材，Skill bundle 测试通过。
 - 独立 CLI 发行包验证：使用本机虚拟环境普通 wheel 安装成功；`envoy doctor --json` 正常，实际读取 `https://example.org/` 返回 `ready`。
 - MCP 发行进程 smoke：已安装 wheel 通过 `envoy mcp` stdin/stdout 完成新版发现、工具列表和 `2025-11-25` 旧版初始化；独立网页读取工具 schema 从约 4.7 KB 缩至约 1.2 KB；新版工具调用只返回短状态文本，完整材料仅放在结构化字段中。
 - 图片视觉协作专项：直接图片 URL 在宿主具备 URI 图片输入时返回 `waiting_for_host/needs_host`、资源 URI 和 `inspect_visual` 动作；无图片能力时结构化返回 `missing_capability`，不内联 base64。
