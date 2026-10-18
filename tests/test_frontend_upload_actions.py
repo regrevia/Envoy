@@ -341,7 +341,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
         self.assertIn('redirect("/video")', text)
         video_page = (ROOT_DIR / "frontend" / "app" / "video" / "page.tsx").read_text(encoding="utf-8")
-        self.assertIn("视频转知识库", video_page)
+        self.assertIn("链接转 Markdown", video_page)
         self.assertIn("最近任务", video_page)
 
     def test_video_page_restores_last_task_after_refresh(self):
@@ -371,7 +371,7 @@ class FrontendUploadActionsTests(unittest.TestCase):
             "setLocale(locale === 'zh' ? 'en' : 'zh')",
             "中文",
             "English",
-            "粘贴链接，剩下的交给 Envoy",
+            "粘贴链接，Envoy 自动识别内容",
             "最近任务",
             "任务中心",
             "视觉模型设置",

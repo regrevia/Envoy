@@ -2,7 +2,7 @@
 
 **Let AI watch everything.**
 
-Envoy 专注视频，把公开视频和本地视频整理成主题化 Markdown / HTML 知识库，适合 Wiki、RAG 和 Agent。
+Envoy 正在演进为面向 AI Agent 的通用链接读取与材料处理引擎。当前 `dev` 可处理视频及部分公开文章/图文页面，并生成带来源和资源的 Markdown / HTML 交付物。
 
 [English](#english)
 
@@ -67,12 +67,12 @@ npm run dev
 
 ## 使用方式
 
-1. 打开首页，粘贴一个视频链接、B 站 BV 号或分享链接。
-2. 也可以切换到主页作品，选择多个视频；或拖入本地视频。
+1. 打开首页，粘贴一个视频或公开网页链接。
+2. Envoy 自动识别已适配的来源类型；主页作品可批量选择，也可拖入本地视频。
 3. 选择 Markdown、HTML 或两者。
 4. 点击开始，任务会在后台运行，刷新页面后可从最近任务继续查看。
 
-任务详情页支持查看进度、错误、断点、重试和浏览器接管。真正需要登录、验证码、地区限制或 DRM 的视频，仍取决于来源网站的访问权限。
+任务详情页支持查看进度、错误、断点、重试和浏览器接管。公开页面能力仍在扩展；登录、验证码、地区限制或 DRM 来源不会被承诺绕过。
 
 ## 模型配置
 
@@ -91,6 +91,7 @@ Envoy 默认不带模型和 API Key。打开 `/video` 右上角齿轮，填写�
 
 - `index.md`：适合 Wiki、Agent 和 RAG 的文字入口
 - `index.html`：带关键帧图片的可视化阅读页
+- `materials.json`：`envoy.read/1` 材料协议，供 Agent 按需读取正文、资源和覆盖信息
 - `themes/`：按主题组织的页面
 - `assets/frames/`：精选关键帧
 - `manifest.json`：机器可读索引
@@ -128,9 +129,13 @@ cd frontend && npm run build
 
 开发分支为 `dev`，验收通过后合并到 `main`。用户从 `main` 获取稳定版本。
 
-## 当前范围
+## 当前状态
 
-当前版本专注于视频：公开视频链接、创作者主页、本地视频、批量整理、增量追加、浏览器辅助恢复和渐进式 Wiki 产物。图片、PDF、音频等格式会在同一界面上继续扩展。
+当前开发版已通过一条抖音公开图文的真实链路验收：提取正文与 4 张配图，生成 OCR 语义、Markdown/HTML 和 ZIP 产物。单个样本不代表所有网站均已适配。
+
+Envoy Skill、自包含安装包、通用版本化材料协议、微信公众号专项验收以及多用户 Worker 隔离仍在开发中，尚未发布。实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
+
+来源访问取决于网站权限和网络条件；遇到登录、验证码、失效内容或 DRM 时应明确报告实际状态。
 
 ---
 
@@ -140,7 +145,7 @@ cd frontend && npm run build
 
 **Let AI watch everything.**
 
-Envoy turns public and local videos into theme-first Markdown / HTML knowledge-base packages for Wiki, RAG, and agents.
+Envoy is evolving into a general link-reading and material-processing engine for AI agents. The current `dev` branch handles videos and some public articles/image posts, producing source-linked Markdown / HTML packages.
 
 [中文](#envoy)
 
@@ -203,8 +208,8 @@ Local concurrency defaults to two tasks. Set `ENVOY_LOCAL_TASK_MAX_CONCURRENCY` 
 
 ## Usage
 
-1. Paste a video URL, Bilibili BV ID, or share link.
-2. Or choose a creator page, playlist, or local video files.
+1. Paste a video or public web page URL.
+2. Envoy automatically routes supported sources. Creator pages and playlists can be selected in batches; local videos can be dropped in.
 3. Select Markdown, HTML, or both.
 4. Start the task. It continues in the background and remains available after refresh.
 
@@ -237,4 +242,6 @@ Markdown is best for downstream Wiki generation. HTML is best for reviewing visu
 
 ## Scope
 
-The current release is video-first: public video URLs, creator pages, local videos, batch processing, incremental append, browser-assisted recovery, and progressively disclosed Wiki packages. More formats will be added on the same interface.
+The current development branch has passed one real public Douyin image-post flow: article text and four images were processed into Markdown/HTML and a ZIP package. This single sample does not imply universal site support.
+
+The Envoy Skill, self-contained installer, versioned shared material protocol, dedicated WeChat validation, and multi-user worker isolation are still in development and have not been released. See the [product architecture](docs/product/agent-link-reader-v1.md) and [implementation status](docs/architecture/agent-link-reader-status.md). Source access remains subject to site permissions and network conditions.
