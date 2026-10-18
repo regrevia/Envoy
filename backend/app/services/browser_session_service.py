@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +20,31 @@ from app.services.browser_discovery_service import (
 
 class BrowserSessionError(RuntimeError):
     pass
+
+
+def _netscape_cookie_line(cookie: dict) -> str:
+    domain = str(cookie.get("domain") or "")
+    path = str(cookie.get("path") or "/")
+    name = str(cookie.get("name") or "")
+    value = str(cookie.get("value") or "")
+    include_subdomains = "TRUE" if domain.startswith(".") else "FALSE"
+    secure = "TRUE" if cookie.get("secure") else "FALSE"
+    raw_expires = cookie.get("expires")
+    try:
+        expires = int(raw_expires or 0)
+    except (TypeError, ValueError):
+        expires = 0
+    if expires < 0:
+        expires = 0
+    return "\t".join([
+        domain,
+        include_subdomains,
+        path,
+        secure,
+        str(expires),
+        name,
+        value,
+    ]) + "\n"
 
 
 class _BrowserSession:
@@ -86,7 +112,13 @@ class BrowserSessionManager:
             "source_kind": metadata["source_kind"],
             "status": "waiting_for_user",
             "requires_user_action": True,
-            "message": "Browser page opened. Complete any login or verification, then request discovery.",
+            "navigation_error": ready.get("navigation_error"),
+            "message": (
+                "浏览器窗口已保留。若页面未加载，请在窗口中刷新或手动打开来源链接，"
+                "完成登录/验证后再继续。"
+                if ready.get("navigation_error")
+                else "浏览器页面已打开，请完成登录或验证后继续。"
+            ),
         }
 
     @staticmethod
@@ -104,7 +136,7 @@ class BrowserSessionManager:
             raise BrowserSessionError("Browser worker returned an invalid response")
         return payload
 
-    def _request(self, session_id: str, command: str) -> dict:
+    def _request(self, session_id: str, command: str, payload: dict | None = None) -> dict:
         with self._lock:
             session = self._sessions.get(session_id)
         if session is None:
@@ -114,7 +146,8 @@ class BrowserSessionManager:
                 raise BrowserSessionError("Browser session has exited; start a new session")
             if session.process.stdin is None:
                 raise BrowserSessionError("Browser worker stdin is unavailable")
-            session.process.stdin.write(json.dumps({"command": command}) + "\n")
+            message = {"command": command, **(payload or {})}
+            session.process.stdin.write(json.dumps(message) + "\n")
             session.process.stdin.flush()
             return self._read_response(session)
 
@@ -138,6 +171,56 @@ class BrowserSessionManager:
             "discovery_method": "browser_visible",
             "items": items,
             "item_count": len(items),
+        }
+
+    def export_cookies(self, session_id: str) -> str:
+        with self._lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            raise BrowserSessionError("Browser session not found or expired")
+        result = self._request(session_id, "cookies")
+        cookies = result.get("cookies") if isinstance(result.get("cookies"), list) else []
+        if not cookies:
+            raise BrowserSessionError("Browser session has no cookies; complete the page login or verification first")
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="envoy-browser-",
+            suffix=".cookies.txt",
+            delete=False,
+        )
+        try:
+            handle.write("# Netscape HTTP Cookie File\n")
+            for cookie in cookies:
+                domain = str(cookie.get("domain") or "")
+                name = str(cookie.get("name") or "")
+                if not domain or not name:
+                    continue
+                handle.write(_netscape_cookie_line(cookie))
+            return handle.name
+        finally:
+            handle.close()
+
+    def download_media(self, session_id: str, source_url: str, output_dir: str) -> dict:
+        with self._lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            raise BrowserSessionError("Browser session not found or expired")
+        output_path = Path(output_dir) / "browser-session.mp4"
+        result = self._request(
+            session_id,
+            "download_media",
+            {"output_path": str(output_path)},
+        )
+        if result.get("status") != "downloaded":
+            raise BrowserSessionError(str(result.get("error") or "Browser session could not download media"))
+        return {
+            "path": str(result["path"]),
+            "video_id": Path(source_url.rstrip("/")).name or "browser-video",
+            "title": str(result.get("title") or "Browser video"),
+            "duration_sec": None,
+            "extractor": "browser_session",
+            "webpage_url": source_url,
         }
 
     @staticmethod

@@ -138,6 +138,7 @@ def test_mixed_library_append_requires_completed_mixed_parent(tmp_path):
         assert body["input_config"]["library_id"] == "mixed-library-1"
         assert body["input_config"]["asset_ids"] == [second.id]
         assert body["input_config"]["seed_task_ids"] == [parent.id]
+        assert body["input_config"]["append_mode"] == "incremental"
         delay.assert_called_once()
     finally:
         db.close()

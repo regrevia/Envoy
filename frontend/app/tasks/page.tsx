@@ -22,13 +22,13 @@ type Task = {
 };
 
 const buttonStyle = {
-  minHeight: 36,
-  padding: '0 12px',
-  borderRadius: 999,
-  border: '1px solid #0066cc',
+  minHeight: 42,
+  padding: '0 15px',
+  borderRadius: 6,
+  border: '1px solid #17694f',
   background: '#ffffff',
-  color: '#0066cc',
-  fontWeight: 400,
+  color: '#17694f',
+  fontWeight: 650,
   cursor: 'pointer',
 } as const;
 
@@ -62,7 +62,7 @@ function staleLabel(task: Task) {
   if (!task.is_stale) return '';
   const seconds = Math.max(Number(task.stale_seconds ?? 0), 0);
   const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `疑似卡住：${minutes} 分钟未更新` : '疑似卡住：长时间未更新';
+  return minutes > 0 ? `可能无响应：${minutes} 分钟未更新` : '可能无响应：长时间未更新';
 }
 
 function formatDurationSeconds(value?: number | null) {
@@ -156,17 +156,16 @@ export default function TasksPage() {
         <header style={{ paddingBottom: 22, borderBottom: '1px solid #e5e7eb' }}>
           <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.1, letterSpacing: '-0.28px', fontWeight: 600 }}>处理进度</h1>
           <p style={{ margin: '10px 0 0', maxWidth: 720, color: '#333333', fontSize: 17, lineHeight: 1.47 }}>
-            查看预处理、语义分析、样本生成和导出任务的执行状态。列表会自动刷新，便于发现长任务是否卡住或失败。
+            查看每个任务的进度、错误和下一步操作。点击详情可重试、取消或接管浏览器登录。
           </p>
         </header>
 
         <section style={{ padding: '14px 0', borderBottom: '1px solid #e5e7eb' }}>
-          <h2 style={{ margin: 0, fontSize: 18 }}>长任务诊断</h2>
+          <h2 style={{ margin: 0, fontSize: 18 }}>运行提示</h2>
           <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', color: '#4b5563', fontSize: 13 }}>
             <span>自动刷新: 4 秒</span>
-            <span>卡住阈值: 使用任务 stale_after_seconds</span>
-            <span>未更新时间: 使用任务 stale_seconds</span>
-            <span>疑似卡住后可先取消任务，再重试任务</span>
+            <span>无响应判定: 30 分钟无更新</span>
+            <span>异常任务请打开详情处理</span>
           </div>
         </section>
 
@@ -203,8 +202,8 @@ export default function TasksPage() {
                       <span>最后更新: {formatTime(task.updated_at)}</span>
                     </div>
                     <div style={{ marginTop: 8, display: 'flex', gap: 10, flexWrap: 'wrap', color: '#6b7280', fontSize: 13 }}>
-                      <span>卡住阈值: {formatDurationSeconds(task.stale_after_seconds)}</span>
-                      <span>未更新时间: {formatDurationSeconds(task.stale_seconds)}</span>
+                      <span>无响应判定: {formatDurationSeconds(task.stale_after_seconds)} 无更新</span>
+                      <span>最近更新: {formatDurationSeconds(task.stale_seconds)} 前</span>
                     </div>
                     {task.is_stale ? <div style={{ marginTop: 8, color: '#b91c1c', fontWeight: 600 }}>{staleLabel(task)}</div> : null}
                     {task.error_message ? <div style={{ marginTop: 8, color: '#b91c1c', wordBreak: 'break-word' }}>{task.error_message}</div> : null}

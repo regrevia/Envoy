@@ -439,8 +439,10 @@ def append_videos_to_library(task_id: str, payload: VideoBatchAppend, db: Sessio
             payload.items,
             library_id=library_id,
             input_config={
+                **payload.input_config,
                 "append_to_task_id": source_task.id,
                 "seed_task_ids": list(dict.fromkeys(seed_task_ids)),
+                "append_mode": "incremental",
             },
         )
     except VideoSourceError as exc:
@@ -514,10 +516,12 @@ def append_assets_to_mixed_library(task_id: str, payload: MixedLibraryAppend, db
         payload.asset_ids,
         library_id=str(source_config.get("library_id") or uuid4()),
         input_config={
+            **payload.input_config,
             "append_to_task_id": source_task.id,
             "seed_task_ids": list(dict.fromkeys(seed_task_ids)),
             "max_parallel": payload.max_parallel,
             "markdown_enhance_with_ollama": payload.markdown_enhance_with_ollama,
+            "append_mode": "incremental",
         },
     )
 

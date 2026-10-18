@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import TASK_EXECUTION_MODE
 from app.db.session import SessionLocal
+from app.models.processing_task import ProcessingTask
 from app.services.crud_service import update_task_status
 
 
@@ -55,3 +56,55 @@ def dispatch_task(db: Session, task, celery_task: Any, payload: dict):
     worker = Thread(target=_run_local_task, args=(celery_task, job_payload), daemon=True)
     worker.start()
     return _task_payload(task)
+
+
+def recover_interrupted_local_tasks(db: Session) -> int:
+    """Requeue local tasks left active when the API process was restarted."""
+    if TASK_EXECUTION_MODE != "local":
+        return 0
+
+    # Import lazily to keep the dispatcher usable during app startup and tests.
+    from app.workers.jobs import (
+        analyze_job,
+        export_job,
+        export_markdown_job,
+        export_skill_job,
+        mixed_assets_to_markdown_job,
+        ping_job,
+        preprocess_job,
+        sample_job,
+        video_batch_to_markdown_job,
+        video_to_markdown_job,
+    )
+
+    workers = {
+        "ping": ping_job,
+        "preprocess": preprocess_job,
+        "analyze": analyze_job,
+        "generate_samples": sample_job,
+        "sample": sample_job,
+        "export": export_job,
+        "export_skill": export_skill_job,
+        "export_markdown": export_markdown_job,
+        "video_to_markdown": video_to_markdown_job,
+        "video_batch_to_markdown": video_batch_to_markdown_job,
+        "mixed_assets_to_markdown": mixed_assets_to_markdown_job,
+    }
+    tasks = (
+        db.query(ProcessingTask)
+        .filter(ProcessingTask.status.in_(["pending", "running"]))
+        .order_by(ProcessingTask.created_at.asc())
+        .all()
+    )
+    recovered = 0
+    for task in tasks:
+        worker = workers.get(task.task_type)
+        if worker is None:
+            continue
+        task.status = "pending"
+        task.result_summary = "服务重启后从检查点恢复，等待重新执行"
+        task.error_message = None
+        db.commit()
+        dispatch_task(db, task, worker, dict(task.input_config or {}))
+        recovered += 1
+    return recovered

@@ -10,6 +10,7 @@ venv/
 # Node / Next.js
 node_modules/
 .next/
+.next-dev/
 out/
 npm-debug.log*
 yarn-debug.log*
@@ -17,6 +18,10 @@ yarn-error.log*
 
 # Local runtime state
 .env
+.env.*
+!.env.example
+frontend/.env.*
+!frontend/.env.local.example
 logs/
 tmp/
 Check/

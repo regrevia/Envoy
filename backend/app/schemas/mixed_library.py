@@ -20,3 +20,4 @@ class MixedLibraryAppend(BaseModel):
     title: Optional[str] = None
     max_parallel: int = Field(default=2, ge=1, le=8)
     markdown_enhance_with_ollama: bool = False
+    input_config: dict[str, Any] = Field(default_factory=dict)

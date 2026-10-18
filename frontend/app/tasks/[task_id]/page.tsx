@@ -82,10 +82,10 @@ function statusLabel(status?: string | null) {
 }
 
 function staleLabel(task?: Task | null) {
-  if (!task?.is_stale) return '未检测到卡住';
+  if (!task?.is_stale) return '运行正常';
   const seconds = Math.max(Number(task.stale_seconds ?? 0), 0);
   const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `疑似卡住：${minutes} 分钟未更新` : '疑似卡住：长时间未更新';
+  return minutes > 0 ? `可能无响应：${minutes} 分钟未更新` : '可能无响应：长时间未更新';
 }
 
 function actionLabel(action?: string | null) {
@@ -153,6 +153,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
   const [taskId, setTaskId] = useState('');
   const [canceling, setCanceling] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [browserSessionId, setBrowserSessionId] = useState('');
+  const [browserBusy, setBrowserBusy] = useState(false);
+  const [browserMessage, setBrowserMessage] = useState('');
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -223,6 +226,62 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
     }
   };
 
+  const openBrowserForTask = async () => {
+    const sourceUrl = typeof task?.input_config?.source_url === 'string'
+      ? task.input_config.source_url
+      : '';
+    if (!sourceUrl) {
+      setBrowserMessage('当前任务没有可打开的来源链接。');
+      return;
+    }
+    setBrowserBusy(true);
+    setBrowserMessage('');
+    try {
+      const result = await apiJson<{ session_id: string; message?: string }>('/api/v1/video-playlists/browser-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_url: sourceUrl, limit: 1 }),
+        timeoutMs: 120000,
+      });
+      setBrowserSessionId(result.session_id);
+      setBrowserMessage(result.message || '浏览器已打开，请完成登录或验证。');
+    } catch (error) {
+      setBrowserMessage(error instanceof Error ? error.message : '浏览器接管失败');
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
+  const retryWithBrowserSession = async () => {
+    if (!task || !browserSessionId || task.task_type !== 'video_to_markdown') {
+      setBrowserMessage('当前任务类型暂不支持直接复用浏览器会话，请使用普通重试。');
+      return;
+    }
+    const sourceUrl = typeof task.input_config?.source_url === 'string'
+      ? task.input_config.source_url
+      : '';
+    setBrowserBusy(true);
+    setBrowserMessage('');
+    try {
+      await apiJson('/api/v1/tasks/video-to-markdown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: task.project_id,
+          source_url: sourceUrl,
+          title: typeof task.input_config?.title === 'string' ? task.input_config.title : '',
+          auth: { mode: 'browser_session', session_id: browserSessionId },
+          input_config: task.input_config || {},
+        }),
+      });
+      setBrowserMessage('已使用当前浏览器会话创建重试任务。');
+    } catch (error) {
+      setBrowserMessage(error instanceof Error ? error.message : '浏览器会话重试失败');
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
   const progress = Math.max(0, Math.min(Number(task?.progress ?? 0), 100));
   const inputSummary = taskInputSummary(task?.input_config);
 
@@ -238,10 +297,10 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
           <h2 style={{ margin: 0, fontSize: 18 }}>长任务诊断</h2>
           <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', color: '#4b5563', fontSize: 13 }}>
             <span>自动刷新: 3 秒</span>
-            <span>卡住阈值: {formatDurationSeconds(diagnostics?.stale_after_seconds ?? task?.stale_after_seconds)}</span>
-            <span>未更新时间: {formatDurationSeconds(diagnostics?.stale_seconds ?? task?.stale_seconds)}</span>
+            <span>无响应判定: {formatDurationSeconds(diagnostics?.stale_after_seconds ?? task?.stale_after_seconds)} 无更新</span>
+            <span>最近更新: {formatDurationSeconds(diagnostics?.stale_seconds ?? task?.stale_seconds)} 前</span>
             <span>{staleLabel(task)}</span>
-            <span>疑似卡住后可先取消任务，再重试任务</span>
+            <span>超过无响应判定后，可取消并重试</span>
           </div>
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb', color: '#374151', display: 'grid', gap: 8 }}>
             <div><strong>后端诊断</strong>: {diagnostics?.summary || '等待诊断结果'}</div>
@@ -271,9 +330,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
               <DetailRow label="错误信息" value={task.error_message} />
               <DetailRow label="创建时间" value={formatTime(task.created_at)} />
               <DetailRow label="更新时间" value={formatTime(task.updated_at)} />
-              <DetailRow label="卡住阈值" value={formatDurationSeconds(task.stale_after_seconds)} />
-              <DetailRow label="未更新时间" value={formatDurationSeconds(task.stale_seconds)} />
-              <DetailRow label="疑似卡住" value={staleLabel(task)} />
+              <DetailRow label="无响应判定" value={`${formatDurationSeconds(task.stale_after_seconds)} 无更新`} />
+              <DetailRow label="最近更新" value={`${formatDurationSeconds(task.stale_seconds)} 前`} />
+              <DetailRow label="运行状态" value={staleLabel(task)} />
               <DetailRow label="后端诊断" value={diagnostics?.summary} />
               <DetailRow label="建议动作" value={actionLabel(diagnostics?.recommended_action)} />
               <DetailRow label="诊断结论" value={(diagnostics?.next_actions || []).join(' / ')} />
@@ -319,10 +378,33 @@ export default function TaskDetailPage({ params }: { params: Promise<{ task_id: 
                     {retrying ? '正在重试...' : '重试任务'}
                   </button>
                 ) : null}
+                {task.status === 'failed' && typeof task.input_config?.source_url === 'string' ? (
+                  <button
+                    onClick={() => void openBrowserForTask()}
+                    disabled={browserBusy}
+                    style={{ ...buttonStyle, borderColor: '#17694f', color: '#17694f', opacity: browserBusy ? 0.7 : 1 }}
+                  >
+                    {browserBusy && !browserSessionId ? '正在打开浏览器...' : '打开浏览器处理'}
+                  </button>
+                ) : null}
+                {browserSessionId ? (
+                  <button
+                    onClick={() => void retryWithBrowserSession()}
+                    disabled={browserBusy}
+                    style={{ ...buttonStyle, background: '#17694f', borderColor: '#17694f', color: '#ffffff', opacity: browserBusy ? 0.7 : 1 }}
+                  >
+                    {browserBusy ? '正在创建重试...' : '使用当前会话重试'}
+                  </button>
+                ) : null}
                 <Link href="/tasks" style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
                   返回列表
                 </Link>
               </div>
+              {browserMessage ? (
+                <div style={{ marginTop: 12, color: browserMessage.includes('失败') ? '#b91c1c' : '#17694f' }}>
+                  {browserMessage}
+                </div>
+              ) : null}
             </>
           ) : null}
         </section>

@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from queue import Empty
 from pathlib import Path
-from app.core.config import FFMPEG_BIN, MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC, MEDIA_WHISPER_MODEL
+from app.core.config import FFMPEG_BIN, MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, MEDIA_TRANSCRIPTION_TIMEOUT_SEC, MEDIA_WHISPER_INITIAL_PROMPT, MEDIA_WHISPER_LANGUAGE, MEDIA_WHISPER_MODEL
 
 _WHISPER_MODELS = {}
 
@@ -225,7 +225,14 @@ def _run_whisper_transcription(audio_path: str):
     if model is None:
         model = whisper.load_model(model_name)
         _WHISPER_MODELS[model_name] = model
-    result = model.transcribe(audio_path)
+    result = model.transcribe(
+        audio_path,
+        language=MEDIA_WHISPER_LANGUAGE,
+        task="transcribe",
+        initial_prompt=MEDIA_WHISPER_INITIAL_PROMPT,
+        temperature=0,
+        fp16=False,
+    )
     return {"status": "success", "text": result.get("text", ""), "segments": result.get("segments", []), "error": None}
 
 

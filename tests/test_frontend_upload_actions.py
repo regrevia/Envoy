@@ -382,6 +382,26 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertNotIn("已有任务</div>", text)
         self.assertNotIn("已选择生成</div>", text)
 
+    def test_video_page_restores_last_task_after_refresh(self):
+        page = (ROOT_DIR / "frontend" / "app" / "video" / "page.tsx").read_text(encoding="utf-8")
+        self.assertIn("localStorage.getItem", page)
+        self.assertIn("/api/v1/tasks/${savedTaskId}", page)
+        self.assertIn("localStorage.setItem", page)
+
+    def test_video_page_supports_drag_and_drop_for_local_materials(self):
+        page = (ROOT_DIR / "frontend" / "app" / "video" / "page.tsx").read_text(encoding="utf-8")
+        styles = (ROOT_DIR / "frontend" / "app" / "video" / "video.module.css").read_text(encoding="utf-8")
+        for copy in [
+            "onDragEnter",
+            "onDragOver",
+            "onDragLeave",
+            "onDrop",
+            "拖动视频到这里",
+            "拖动文件到这里",
+            "dropZoneActive",
+        ]:
+            self.assertIn(copy, page if copy != "dropZoneActive" else styles)
+
     def test_home_page_requires_project_before_upload_or_export(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
@@ -443,9 +463,10 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         self.assertIn("task.status === 'failed' || task.status === 'dispatch_failed' || task.status === 'canceled'", list_page)
         self.assertIn("task?.status === 'failed' || task?.status === 'dispatch_failed' || task?.status === 'canceled'", detail_page)
-        for text in [list_page, detail_page]:
-            self.assertIn("疑似卡住后可先取消任务，再重试任务", text)
-            self.assertIn("重试任务", text)
+        self.assertIn("无响应判定", list_page)
+        self.assertIn("超过无响应判定后，可取消并重试", detail_page)
+        self.assertIn("重试任务", list_page)
+        self.assertIn("重试任务", detail_page)
 
     def test_home_page_uses_vertical_divider_flow_not_card_grid(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
@@ -663,11 +684,11 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         for text in [task_list, task_detail]:
             for copy in [
-                "长任务诊断",
+                "运行提示" if text is task_list else "长任务诊断",
                 "自动刷新",
-                "卡住阈值",
-                "未更新时间",
-                "疑似卡住",
+                "无响应判定",
+                "最近更新",
+                "可能无响应" if text is task_list else "运行状态",
                 "取消任务",
                 "重试任务",
                 "stale_after_seconds",

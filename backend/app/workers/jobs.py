@@ -20,7 +20,7 @@ from app.services.crud_service import update_task_status, create_artifact, creat
 from app.core.storage import storage_client
 from app.services.media_service import MediaProcessingError, split_video, split_audio, extract_frames, transcribe_audio, run_ocr_on_frames, compress_consecutive_ocr_results
 from app.services.export_service import build_dataset_jsonl, build_rich_export_report
-from app.services.train_export_service import export_skill_markdown, export_markdown_bundle, export_markdown_from_video_summary, export_video_library
+from app.services.train_export_service import export_skill_markdown, export_markdown_bundle, export_markdown_from_video_summary, export_video_library, _video_library_slug
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR, VIDEO_DOWNLOAD_DIR
@@ -410,6 +410,7 @@ def _video_understanding_unit(
     window_index: int,
     window_start_sec: int,
     window_end_sec: int,
+    frame_paths: list[str] | None = None,
 ):
     content = json.dumps({
         "summary": result.get("text") or "",
@@ -420,6 +421,7 @@ def _video_understanding_unit(
         "status": result.get("status"),
         "window_start_sec": window_start_sec,
         "window_end_sec": window_end_sec,
+        "frame_paths": list(frame_paths or []),
     }, ensure_ascii=False)
     labels = {
         "stage": "understand",
@@ -431,6 +433,7 @@ def _video_understanding_unit(
         "window_end_sec": window_end_sec,
         "model": result.get("model"),
         "status": result.get("status"),
+        "frame_paths": list(frame_paths or []),
     }
     unit = (
         db.query(SemanticUnit)
@@ -1464,6 +1467,31 @@ def _trace_link_export_row(link: TraceLink):
 def _video_export_rows(units):
     """Keep the final video document knowledge-first without duplicating its summary."""
     rows = [_semantic_unit_export_row(unit) for unit in units]
+    vision_rows = [
+        row for row in rows
+        if isinstance(row.get("labels"), dict)
+        and row["labels"].get("source") == "video_understanding"
+    ]
+    latest_successful_windows = {}
+    for row in vision_rows:
+        labels = row["labels"]
+        if labels.get("status") == "success":
+            latest_successful_windows[
+                (row.get("asset_id"), labels.get("window_index"))
+            ] = row.get("id")
+    rows = [
+        row for row in rows
+        if not (
+            isinstance(row.get("labels"), dict)
+            and row["labels"].get("source") == "video_understanding"
+            and latest_successful_windows.get(
+                (row.get("asset_id"), row["labels"].get("window_index"))
+            ) is not None
+            and row.get("id") != latest_successful_windows.get(
+                (row.get("asset_id"), row["labels"].get("window_index"))
+            )
+        )
+    ]
     transcript_assets = {
         row.get("asset_id")
         for row in rows
@@ -1732,6 +1760,7 @@ def video_to_markdown_job(self, payload: dict):
                         window_index,
                         window_start_sec,
                         window_end_sec,
+                        frame_paths=[str(frame["path"]) for frame in window],
                     )
                     updated_understanding = True
                     window_checkpoints[window_key] = {
@@ -1797,24 +1826,57 @@ def video_to_markdown_job(self, payload: dict):
             if not rows:
                 raise RuntimeError("video preprocessing produced no exportable semantic units")
             title = str(config.get("title") or download_info.get("title") or "Video Markdown Report")
-            export_result = export_markdown_from_video_summary(
-                rows,
-                str(EXPORT_DIR),
-                task_id,
-                title,
-                task_name=f"video-{task_id}",
-                db=db,
+            source_url_for_export = str(
+                config.get("source_url")
+                or download_info.get("webpage_url")
+                or ""
+            )
+            evidence_rows = []
+            video_evidence = []
+            for row in rows:
+                labels = dict(row.get("labels") or {})
+                labels.update({
+                    "video_id": task_id,
+                    "video_title": title,
+                    "video_url": source_url_for_export,
+                })
+                row["labels"] = labels
+                evidence_rows.append(row)
+                video_evidence.append({
+                    "id": row.get("id"),
+                    "kind": row.get("unit_type") or "knowledge",
+                    "content": row.get("content") or "",
+                })
+            video_row = {
+                "video_id": task_id,
+                "title": title,
+                "source_url": source_url_for_export,
+                "status": "success",
+                "evidence_count": len(video_evidence),
+                "evidence": video_evidence,
+            }
+            topic_result = synthesize_video_topics([video_row])
+            export_result = export_video_library(
+                evidence_rows=evidence_rows,
+                video_rows=[video_row],
+                out_dir=str(EXPORT_DIR),
+                library_id=f"single-{task_id}",
+                title=title,
+                task_id=task_id,
                 project_id=project_id,
-                include_video_timeline=False,
+                topic_result=topic_result,
+                failed_videos=[],
+                db=db,
+                output_formats=config.get("output_formats"),
             )
             export_path = str(export_result["path"])
             artifact = create_artifact(
                 db,
                 ArtifactCreate(
                     project_id=project_id,
-                    artifact_type="report",
-                    name=Path(export_path).name,
-                    file_path=export_path,
+                    artifact_type="video_library",
+                    name=Path(export_result.get("archive_path") or export_path).name,
+                    file_path=export_result.get("archive_path") or export_path,
                     version="v1",
                 ),
             )
@@ -1823,6 +1885,8 @@ def video_to_markdown_job(self, payload: dict):
                 "status": "success",
                 "path": export_path,
                 "artifact_id": artifact.id,
+                "manifest_path": export_result.get("manifest_path"),
+                "topic_status": topic_result.get("status"),
             })
             task.input_config = config
             db.commit()
@@ -2277,7 +2341,48 @@ def video_batch_to_markdown_job(self, payload: dict):
             })
 
         _safe_update(db, task_id, "running", 92, result_summary="building theme-first wiki index")
-        topic_result = synthesize_video_topics(videos)
+        previous_manifest = {}
+        previous_manifest_path = (
+            Path(EXPORT_DIR)
+            / "video-libraries"
+            / _video_library_slug(library_id)
+            / "manifest.json"
+        )
+        if previous_manifest_path.is_file():
+            try:
+                loaded_manifest = json.loads(previous_manifest_path.read_text(encoding="utf-8"))
+                if isinstance(loaded_manifest, dict):
+                    previous_manifest = loaded_manifest
+            except (OSError, json.JSONDecodeError):
+                previous_manifest = {}
+        previous_evidence_ids = {
+            str(item.get("id"))
+            for item in previous_manifest.get("evidence", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        new_videos = [
+            {
+                **video,
+                "evidence": [
+                    evidence for evidence in video.get("evidence", [])
+                    if str(evidence.get("id") or "") not in previous_evidence_ids
+                ],
+            }
+            for video in videos
+        ]
+        new_videos = [video for video in new_videos if video.get("evidence")]
+        topic_sources = new_videos if previous_manifest and new_videos else videos
+        topic_result = synthesize_video_topics(
+            topic_sources,
+            topic_hints=[
+                str(topic.get("title") or "")
+                for topic in previous_manifest.get("topics", [])
+                if isinstance(topic, dict) and topic.get("title")
+            ],
+        )
+        if previous_manifest and new_videos:
+            topic_result["incremental"] = True
+            topic_result["new_video_ids"] = [str(video.get("video_id")) for video in new_videos]
         library_result = export_video_library(
             evidence_rows=evidence_rows,
             video_rows=videos,
@@ -2289,14 +2394,15 @@ def video_batch_to_markdown_job(self, payload: dict):
             topic_result=topic_result,
             failed_videos=failed_videos,
             db=db,
+            output_formats=config.get("output_formats"),
         )
         artifact = create_artifact(
             db,
             ArtifactCreate(
                 project_id=project_id,
                 artifact_type="video_library",
-                name=Path(library_result["path"]).name,
-                file_path=library_result["path"],
+                name=Path(library_result.get("archive_path") or library_result["path"]).name,
+                file_path=library_result.get("archive_path") or library_result["path"],
                 version="v1",
             ),
         )
