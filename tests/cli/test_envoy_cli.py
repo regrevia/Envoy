@@ -801,6 +801,69 @@ def test_extensionless_pdf_is_auto_routed_by_response_content_type(monkeypatch):
     assert any("Detected from the PDF response header." in block.content.text for block in response.blocks if block.kind.value == "paragraph")
 
 
+def test_extensionless_image_is_auto_routed_by_response_content_type(monkeypatch):
+    from contextlib import contextmanager
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+
+    class Response:
+        status_code = 200
+        headers = {"content-type": "image/png", "content-length": "4"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"PNG!"
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @contextmanager
+        def stream(self, *_args, **_kwargs):
+            yield Response()
+
+    monkeypatch.setattr(reader.httpx, "Client", Client)
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-image-mime",
+        "source": {"url": "https://example.org/download?id=image"},
+        "host_capabilities": {"image_input": "uri"},
+    }))
+
+    assert response.result.value == "needs_host"
+    assert response.resources[0].mime_type == "image/png"
+
+
+def test_text_coverage_reports_token_estimate(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        "<html><body><p>Useful deployment steps for the worker.</p></body></html>",
+    ))
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-token-estimate",
+        "source": {"url": "https://example.org/guide"},
+    }))
+
+    details = response.coverage.modalities["text"].details
+    assert details["estimated_returned_tokens"] >= 1
+    assert details["estimated_token_basis"] == "chars_div_4"
+
+
 def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ReadRequest

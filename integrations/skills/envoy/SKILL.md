@@ -45,6 +45,10 @@ The request must include:
 Do not put API keys, cookies, browser profile paths, or full chat history in
 the request. Envoy does not read credentials for the independent Skill.
 
+Hooks are optional, not required for normal use. A host may wrap tool calls for
+logging, caching, or usage accounting, but the Envoy request/response contract
+must remain usable without host hooks.
+
 ## Interpret the response
 
 - `ready`: use the returned blocks and resources for the user's task.
@@ -63,6 +67,9 @@ the remaining material matters to the user's goal. Use a visual resource only
 when the task depends on pixels, layout, a chart, a table, or interface state
 and the catalog/response says the host can inspect it. Keep source URLs, block
 IDs, and resource IDs available for citations or follow-up reads.
+
+Coverage details may include an estimated token count based on extracted
+characters. Treat it as a scheduling estimate, not provider billing.
 
 When text coverage includes `goal_candidates`, prefer a candidate offset that
 matches the user's goal and is outside an already returned range. Do not treat

@@ -108,6 +108,18 @@ class DetectedText(PublicPageError):
         self.source = source
 
 
+class DetectedImage(PublicPageError):
+    def __init__(self, source: dict):
+        super().__init__("The URL resolved to an image document", ErrorCode.UNSUPPORTED_SOURCE)
+        self.source = source
+
+
+class DetectedMedia(PublicPageError):
+    def __init__(self, source: dict):
+        super().__init__("The URL resolved to a media document", ErrorCode.UNSUPPORTED_SOURCE)
+        self.source = source
+
+
 class _PageParser(HTMLParser):
     _ignored_tags = {"script", "style", "noscript", "template", "svg", "nav", "footer", "aside", "header"}
 
@@ -258,6 +270,10 @@ def _goal_candidates(text: str, terms: list[str], limit: int = 5) -> list[dict]:
             })
         cursor = offset + len(paragraph)
     return sorted(candidates, key=lambda item: (-item["score"], item["offset"]))[:limit]
+
+
+def _estimated_tokens(chars: int) -> int:
+    return max(0, (max(0, int(chars)) + 3) // 4)
 
 
 def _source_text_was_truncated(values: list[str]) -> bool:
@@ -680,6 +696,16 @@ def _fetch_html(
                                 "url": _redact_url(current_url),
                                 "data": pdf_data,
                                 "mime_type": "application/pdf",
+                            })
+                        if content_type.startswith("image/"):
+                            raise DetectedImage({
+                                "url": _redact_url(current_url),
+                                "mime_type": content_type,
+                            })
+                        if content_type.startswith(("video/", "audio/")):
+                            raise DetectedMedia({
+                                "url": _redact_url(current_url),
+                                "mime_type": content_type,
                             })
                         text_path = urlparse(current_url).path.lower()
                         is_text_content = (
@@ -1234,6 +1260,21 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             return _parse_pdf_source(request, detected_pdf.source)
         except DetectedText as detected_text:
             return _parse_text_source(request, detected_text.source)
+        except DetectedImage as detected_image:
+            if request.host_capabilities.image_input.value != "uri":
+                return _blocked(
+                    request,
+                    ErrorCode.MISSING_CAPABILITY,
+                    "The host must support URI image input to inspect this image source",
+                    action_required=True,
+                )
+            return _read_image_source(request, source_url, dns_cache)
+        except DetectedMedia as detected_media:
+            return _blocked(
+                request,
+                ErrorCode.MISSING_CAPABILITY,
+                f"Standalone media extraction is unavailable for {detected_media.source['mime_type']}",
+            )
         parser = _PageParser()
         parser.feed(html)
         title = _clean_text(parser.title_parts) or final_url
@@ -1425,6 +1466,9 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             "continuation_available": can_continue,
                             "next_offset": len(returned_text) if can_continue else None,
                             "remaining_chars": max(0, len(text) - returned_end),
+                            "estimated_returned_tokens": _estimated_tokens(len(returned_text)),
+                            "estimated_remaining_tokens": _estimated_tokens(max(0, len(text) - returned_end)),
+                            "estimated_token_basis": "chars_div_4",
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
                             **(

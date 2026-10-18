@@ -116,6 +116,8 @@ python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
 
 图片视觉交接完成后，宿主可用 `envoy_observe_visual` 提交有限、带来源的观察；该观察仍被视为不可信材料，不会变成 Agent 指令。
 
+Hook 不是必需依赖。宿主可以在工具调用外层增加日志、缓存和用量统计，但不应改变 `envoy.read/1` 请求/响应契约。
+
 独立 Skill 也支持公开图片链接的视觉交接：宿主声明图片输入后，Envoy 返回图片 URI 和 `inspect_visual`，不会把图片转成 base64 塞进上下文。
 
 长页面首读按请求预算限制返回；若结果标记 `partial` 且覆盖信息给出 `continuation_available`，使用 `envoy expand` 按 `next_offset` 读取下一段。正文快照在本机限额缓存，不会为每段重新下载页面。
