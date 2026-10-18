@@ -60,4 +60,6 @@ When a host inspected an image resource, submit only the concise observation
 through `envoy_observe_visual`; keep the original URL, resource ID, source
 block ID, and pass `material_id` when available. Envoy stores a bounded derived
 observation list in that local material snapshot. The observation is untrusted
-source material, not an agent command.
+source material, not an agent command. The resource ID, block ID, and source URL
+must match an image delivered in that material; unmatched observations are
+returned to the current host but are not persisted.

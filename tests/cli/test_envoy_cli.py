@@ -144,6 +144,11 @@ def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypa
         "source_url": "https://example.org/guide",
         "source_revision": "c" * 64,
         "text": "Guide text",
+        "visual_resources": [{
+            "resource_id": "resource-image",
+            "source_block_id": "blk-image-0001",
+            "source_url": "https://example.org/chart.png",
+        }],
     })
 
     result = reader.record_visual_observation(
@@ -158,6 +163,14 @@ def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypa
     assert result == {"persisted": True, "observation_count": 1}
     assert stored["visual_observations"][0]["observation"] == "The chart shows three stages."
     assert "secret" not in json.dumps(stored)
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "c" * 64,
+        "text": "Guide text",
+        "visual_resources": stored["visual_resources"],
+    })
+    reread = json.loads((tmp_path / f"{material_id}.json").read_text(encoding="utf-8"))
+    assert reread["visual_observations"] == stored["visual_observations"]
 
 
 def test_short_image_article_creates_material_snapshot_for_visual_followup(tmp_path, monkeypatch):
@@ -208,6 +221,64 @@ def test_visual_observation_still_returns_when_retention_is_disabled(tmp_path, m
 
     assert result["persisted"] is False
     assert result["reason"] == "material_unavailable"
+
+
+def test_visual_observation_rejects_resource_not_owned_by_material(tmp_path, monkeypatch):
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "d" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/note",
+        "source_revision": "e" * 64,
+        "text": "A note.",
+        "visual_resources": [{
+            "resource_id": "resource-real",
+            "source_block_id": "blk-image-0001",
+            "source_url": "https://cdn.example.org/real.png",
+        }],
+    })
+
+    result = reader.record_visual_observation(
+        material_id,
+        "https://cdn.example.org/other.png",
+        "resource-other",
+        "blk-image-0009",
+        "An unrelated observation.",
+    )
+
+    stored = json.loads((tmp_path / f"{material_id}.json").read_text(encoding="utf-8"))
+    assert result == {"persisted": False, "reason": "resource_mismatch"}
+    assert stored.get("visual_observations", []) == []
+
+
+def test_direct_image_read_can_persist_its_visual_observation(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_source", lambda *_args: {
+        "url": "https://example.org/chart.png",
+        "mime_type": "image/png",
+        "size_bytes": 128,
+    })
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-direct-image",
+        "source": {"url": "https://example.org/chart.png", "kind": "image"},
+        "host_capabilities": {"image_input": "uri"},
+    }))
+
+    result = reader.record_visual_observation(
+        response.material_id,
+        "https://example.org/chart.png",
+        response.resources[0].resource_id,
+        response.blocks[0].id,
+        "A three-stage chart.",
+    )
+    assert result["persisted"] is True
 
 
 def test_cli_read_returns_structured_blocked_response_for_private_url(capsys):
