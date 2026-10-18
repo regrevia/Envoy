@@ -11,7 +11,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements-media.txt requirements-media.txt
 RUN pip install --upgrade pip \
-    && pip install -r requirements-media.txt
+    && pip install -r requirements-media.txt \
+    && python -m playwright install --with-deps chromium
 
 COPY app app
 COPY trainers trainers

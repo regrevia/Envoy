@@ -30,6 +30,7 @@ jobs:
           python -m pip install -r backend/requirements.txt
           python -m pip install "setuptools<81" wheel
           python -m pip install --no-build-isolation -r backend/requirements-media.txt
+          python -m pip install -e packages/envoy-core
       - name: Run video and export tests
         run: >
           pytest -q
@@ -39,6 +40,8 @@ jobs:
           tests/test_video_library_export.py
           tests/test_video_to_markdown_flow.py
           tests/test_vision_service.py
+          tests/core_protocol
+          tests/test_public_page_ingestion.py
         working-directory: .
 
   frontend:
