@@ -88,6 +88,12 @@ TOOLS = [
                             "maximum": 250_000,
                             "default": None,
                         },
+                        "max_total_response_tokens": {
+                            "type": ["integer", "null"],
+                            "minimum": 64,
+                            "maximum": 1_000_000,
+                            "default": None,
+                        },
                         "max_visual_inputs": {
                             "type": "integer",
                             "minimum": 0,

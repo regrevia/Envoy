@@ -51,7 +51,8 @@ the absolute returned range, and repeated or overlapping ranges are rejected.
 Text coverage may include goal-ranked candidate offsets; these are hints for
 targeted expansion, not completed evidence.
 `max_response_tokens` is an optional hard ceiling for each read/expand response;
-the character and token ceilings are both enforced.
+`max_total_response_tokens` caps cumulative material returned across the initial
+read and expansions. Character and token ceilings are both enforced.
 
 When a host inspected an image resource, submit only the concise observation
 through `envoy_observe_visual`; keep the original URL, resource ID, source

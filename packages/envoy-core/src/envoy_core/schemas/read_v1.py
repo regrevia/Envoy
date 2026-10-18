@@ -111,6 +111,7 @@ class SourceRef(ContractModel):
 class Budget(ContractModel):
     max_response_chars: int = Field(default=12_000, ge=256, le=1_000_000)
     max_response_tokens: Optional[int] = Field(default=None, ge=64, le=250_000)
+    max_total_response_tokens: Optional[int] = Field(default=None, ge=64, le=1_000_000)
     max_total_response_chars: int = Field(default=48_000, ge=256, le=5_000_000)
     max_visual_inputs: int = Field(default=12, ge=0, le=10_000)
     max_visual_pixels_per_input: int = Field(default=2_097_152, ge=0, le=100_000_000)
@@ -130,6 +131,12 @@ class Budget(ContractModel):
             raise ValueError("max_total_visual_pixels must be >= max_visual_pixels_per_input")
         if self.max_total_visual_clip_seconds < self.max_visual_clip_seconds:
             raise ValueError("max_total_visual_clip_seconds must be >= max_visual_clip_seconds")
+        if (
+            self.max_total_response_tokens is not None
+            and self.max_response_tokens is not None
+            and self.max_total_response_tokens < self.max_response_tokens
+        ):
+            raise ValueError("max_total_response_tokens must be >= max_response_tokens")
         return self
 
 
@@ -167,6 +174,7 @@ class ExpandRequest(ContractModel):
     offset: int = Field(default=0, ge=0)
     max_chars: int = Field(default=4000, ge=128, le=100_000)
     max_response_tokens: Optional[int] = Field(default=None, ge=64, le=25_000)
+    max_total_response_tokens: Optional[int] = Field(default=None, ge=64, le=1_000_000)
     max_total_response_chars: int = Field(default=48_000, ge=256, le=5_000_000)
     max_expansion_rounds: Optional[int] = Field(default=None, ge=0, le=100)
 

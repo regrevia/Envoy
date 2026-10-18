@@ -417,6 +417,17 @@ def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
             int(state.get("max_total_response_chars") or request.max_total_response_chars),
             request.max_total_response_chars,
         ),
+        "max_total_response_tokens": (
+            min(
+                int(state["max_total_response_tokens"]),
+                int(request.max_total_response_tokens),
+            )
+            if state.get("max_total_response_tokens") is not None
+            and request.max_total_response_tokens is not None
+            else int(state["max_total_response_tokens"])
+            if state.get("max_total_response_tokens") is not None
+            else request.max_total_response_tokens
+        ),
         "max_expansion_rounds": (
             int(state["max_expansion_rounds"])
             if state.get("max_expansion_rounds") is not None
@@ -507,6 +518,11 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         return _expand_blocked(request, "The material expansion round budget has been exhausted")
     if budget_state["returned_chars"] >= budget_state["max_total_response_chars"]:
         return _expand_blocked(request, "The cumulative response character budget has been exhausted")
+    if (
+        budget_state["max_total_response_tokens"] is not None
+        and _estimated_tokens(budget_state["returned_chars"]) >= budget_state["max_total_response_tokens"]
+    ):
+        return _expand_blocked(request, "The cumulative response token budget has been exhausted")
     total_text = str(stored.get("text") or "")
     offset = request.offset
     max_chars = min(
@@ -524,6 +540,12 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         offset + max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
         max_total_chars,
     )
+    if budget_state["max_total_response_tokens"] is not None:
+        token_remaining_chars = max(
+            0,
+            (budget_state["max_total_response_tokens"] - _estimated_tokens(budget_state["returned_chars"])) * 4,
+        )
+        end = min(end, offset + token_remaining_chars)
     if any(
         (start <= offset < finish and offset < finish - 8)
         or offset < start < end
@@ -596,6 +618,12 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                         "continuation_available": has_more,
                         "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
                         "expansion_rounds": budget_state["expansion_rounds"],
+                        "remaining_tokens": (
+                            max(0, budget_state["max_total_response_tokens"] - _estimated_tokens(budget_state["returned_chars"]))
+                            if budget_state["max_total_response_tokens"] is not None
+                            else None
+                        ),
+                        "total_token_budget": budget_state["max_total_response_tokens"],
                     },
                 )
             }),
@@ -650,6 +678,12 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                         "continuation_available": has_more,
                         "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
                         "expansion_rounds": budget_state["expansion_rounds"],
+                        "remaining_tokens": (
+                            max(0, budget_state["max_total_response_tokens"] - _estimated_tokens(budget_state["returned_chars"]))
+                            if budget_state["max_total_response_tokens"] is not None
+                            else None
+                        ),
+                        "total_token_budget": budget_state["max_total_response_tokens"],
                     },
                 )
             }
@@ -980,6 +1014,7 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
                 "page_spans": page_spans,
                 "budget_state": {
                     "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_total_response_tokens": request.budget.max_total_response_tokens,
                     "max_expansion_rounds": request.budget.max_expansion_rounds,
                     "returned_chars": returned_chars,
                     "expansion_rounds": 0,
@@ -1082,6 +1117,7 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
                 "text": text,
                 "budget_state": {
                     "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_total_response_tokens": request.budget.max_total_response_tokens,
                     "max_expansion_rounds": request.budget.max_expansion_rounds,
                     "returned_chars": len(returned_text),
                     "expansion_rounds": 0,
@@ -1363,6 +1399,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     "text": text,
                     "budget_state": {
                         "max_total_response_chars": request.budget.max_total_response_chars,
+                        "max_total_response_tokens": request.budget.max_total_response_tokens,
                         "max_expansion_rounds": request.budget.max_expansion_rounds,
                         "returned_chars": len(returned_text),
                         "expansion_rounds": 0,
@@ -1485,6 +1522,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                                     "estimated_remaining_tokens": _estimated_tokens(max(0, len(text) - returned_end)),
                                     "estimated_token_basis": "chars_div_4",
                                     "token_budget": request.budget.max_response_tokens,
+                                    "total_token_budget": request.budget.max_total_response_tokens,
                                 }
                                 if request.budget.max_response_tokens is not None
                                 else {}
