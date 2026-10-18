@@ -226,6 +226,23 @@ def _redact_url(value: str) -> str:
     ))
 
 
+def _visual_source_identity(value: str) -> str:
+    parsed = urlparse(value)
+    safe_query = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if not _is_sensitive_query_key(key)
+    ]
+    return urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        urlencode(safe_query),
+        "",
+    ))
+
+
 def _clean_text(values: list[str]) -> str:
     text = "\n".join(values)
     text = re.sub(r"[ \t]+", " ", text)
@@ -245,6 +262,37 @@ def _goal_terms(goal: str) -> list[str]:
 def _goal_score(value: str, terms: list[str]) -> int:
     haystack = str(value or "").lower()
     return sum(haystack.count(term) for term in terms)
+
+
+def _safe_visual_candidates(
+    images: list[dict],
+    page_url: str,
+    dns_cache: dict[str, bool],
+) -> tuple[list[dict], int]:
+    selected = []
+    seen_urls = set()
+    skipped_sensitive = 0
+    for rank, image in enumerate(images, start=1):
+        image_url = urljoin(page_url, str(image.get("url") or ""))
+        if any(
+            _is_sensitive_query_key(key)
+            for key, _value in parse_qsl(urlparse(image_url).query, keep_blank_values=True)
+        ):
+            skipped_sensitive += 1
+            continue
+        if image_url in seen_urls or not _is_public_http_url(image_url, dns_cache):
+            continue
+        seen_urls.add(image_url)
+        block_id = f"blk-image-{rank:04d}"
+        resource_id = f"resource-{hashlib.sha256(image_url.encode()).hexdigest()[:16]}"
+        selected.append({
+            "image": image,
+            "image_url": image_url,
+            "block_id": block_id,
+            "resource_id": resource_id,
+            "source_index": int(image.get("source_index", rank - 1)),
+        })
+    return selected, skipped_sensitive
 
 
 def _goal_candidates(text: str, terms: list[str], limit: int = 5) -> list[dict]:
@@ -409,6 +457,44 @@ def _store_material(material_id: str, data: dict) -> None:
         **data,
         "expires_at": float(data.get("expires_at") or time.time() + MATERIAL_TTL_SECONDS),
     }
+    if target.is_file() and not target.is_symlink():
+        try:
+            previous = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+        if (
+            isinstance(previous, dict)
+            and previous.get("source_revision") == data.get("source_revision")
+            and isinstance(previous.get("visual_observations"), list)
+        ):
+            allowed = {
+                (
+                    str(item.get("resource_id") or ""),
+                    str(item.get("source_block_id") or ""),
+                    _visual_source_identity(str(item.get("source_url") or "")),
+                )
+                for item in data.get("visual_resources", [])
+                if isinstance(item, dict)
+            }
+            candidates = [
+                item
+                for item in previous["visual_observations"]
+                if isinstance(item, dict)
+                and (
+                    str(item.get("resource_id") or ""),
+                    str(item.get("source_block_id") or ""),
+                    _visual_source_identity(str(item.get("source_url") or "")),
+                ) in allowed
+            ]
+            candidates.extend(
+                item for item in data.get("visual_observations", [])
+                if isinstance(item, dict)
+            )
+            merged = {}
+            for item in candidates:
+                merged[(item.get("resource_id"), item.get("source_block_id"))] = item
+            if merged:
+                data["visual_observations"] = list(merged.values())[-32:]
     descriptor, temporary_path = tempfile.mkstemp(prefix=".material-", dir=str(root))
     expiry_descriptor, expiry_temporary_path = tempfile.mkstemp(prefix=".expiry-", dir=str(root))
     try:
@@ -522,11 +608,28 @@ def record_visual_observation(
         return {"persisted": False, "reason": "material_unavailable"}
     if expires_at <= time.time():
         return {"persisted": False, "reason": "material_unavailable"}
+    expected_resources = stored.get("visual_resources")
+    expected = next(
+        (
+            item for item in expected_resources
+            if isinstance(item, dict)
+            and str(item.get("resource_id") or "") == resource_id
+            and str(item.get("source_block_id") or "") == source_block_id
+        ),
+        None,
+    ) if isinstance(expected_resources, list) else None
+    safe_source_url = _redact_url(source_url)
+    if (
+        expected is None
+        or _visual_source_identity(str(expected.get("source_url") or ""))
+        != _visual_source_identity(safe_source_url)
+    ):
+        return {"persisted": False, "reason": "resource_mismatch"}
     observations = stored.get("visual_observations")
     if not isinstance(observations, list):
         observations = []
     record = {
-        "source_url": _redact_url(source_url),
+        "source_url": safe_source_url,
         "resource_id": resource_id,
         "source_block_id": source_block_id,
         "observation": observation,
@@ -1310,11 +1413,44 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
         dns_cache,
     )
     resource_id = "resource-image"
+    material_id = f"mat-{hashlib.sha256(source['url'].encode()).hexdigest()[:24]}"
+    source_revision = hashlib.sha256(source["url"].encode()).hexdigest()
+    if request.retention.derived_ttl_seconds > 0:
+        try:
+            _store_material(material_id, {
+                "source_url": source["url"],
+                "source_revision": source_revision,
+                "session_id": request.session_id,
+                "text": "",
+                "title_text": request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image",
+                "visual_resources": [{
+                    "resource_id": resource_id,
+                    "source_block_id": "blk-image-0001",
+                    "source_url": source["url"],
+                }],
+                "budget_state": {
+                    "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_total_response_tokens": request.budget.max_total_response_tokens,
+                    "max_expansion_rounds": 0,
+                    "returned_chars": 0,
+                    "returned_tokens": _estimated_tokens(
+                        request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image"
+                    ),
+                    "expansion_rounds": 0,
+                    "returned_ranges": [],
+                },
+                "expires_at": time.time() + min(
+                    request.retention.derived_ttl_seconds,
+                    MATERIAL_TTL_SECONDS,
+                ),
+            })
+        except OSError:
+            pass
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
-        material_id=f"mat-{hashlib.sha256(source['url'].encode()).hexdigest()[:24]}",
-        source_revision=hashlib.sha256(source["url"].encode()).hexdigest(),
+        material_id=material_id,
+        source_revision=source_revision,
         execution_state=ExecutionState.WAITING_FOR_HOST,
         result=ReadResult.NEEDS_HOST,
         blocks=[
@@ -1478,15 +1614,20 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         if goal_terms:
             image_candidates.sort(key=lambda item: (-int(item["score"]), int(item["source_index"])))
         selected_images = image_candidates[:visual_budget]
+        safe_images, skipped_sensitive_images = _safe_visual_candidates(
+            selected_images,
+            final_url,
+            dns_cache,
+        )
         available_chars = max(
             0,
             _response_char_budget(request)
             - len(title_block.model_dump_json())
             - sum(
-                len(image.get("alt", ""))
-                + len(urljoin(final_url, image["url"]))
+                len(item["image"].get("alt", ""))
+                + len(item["image_url"])
                 + 256
-                for image in selected_images
+                for item in safe_images
             ),
         )
         initial_token_limit = request.budget.max_response_tokens
@@ -1526,6 +1667,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     "session_id": request.session_id,
                     "text": text,
                     "title_text": title,
+                        "visual_resources": [
+                            {
+                                "resource_id": item["resource_id"],
+                                "source_block_id": item["block_id"],
+                                "source_url": _redact_url(item["image_url"]),
+                            }
+                            for item in safe_images
+                        ],
                     "budget_state": {
                         "max_total_response_chars": request.budget.max_total_response_chars,
                         "max_total_response_tokens": request.budget.max_total_response_tokens,
@@ -1564,18 +1713,11 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             ),
         ]
         resources = []
-        seen_images = set()
-        skipped_sensitive_images = 0
-        for index, image in enumerate(selected_images, start=1):
-            image_url = urljoin(final_url, image["url"])
-            if any(_is_sensitive_query_key(key) for key, _value in parse_qsl(urlparse(image_url).query, keep_blank_values=True)):
-                skipped_sensitive_images += 1
-                continue
-            if image_url in seen_images or not _is_public_http_url(image_url, dns_cache):
-                continue
-            seen_images.add(image_url)
-            block_id = f"blk-image-{index:04d}"
-            resource_id = f"resource-{hashlib.sha256(image_url.encode()).hexdigest()[:16]}"
+        for item in safe_images:
+            image = item["image"]
+            image_url = item["image_url"]
+            block_id = item["block_id"]
+            resource_id = item["resource_id"]
             blocks.append(
                 MaterialBlock(
                     id=block_id,
