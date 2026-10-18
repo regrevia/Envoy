@@ -509,19 +509,19 @@ def record_visual_observation(
 ) -> dict:
     """Persist a bounded host observation without exposing raw image bytes."""
     if not material_id:
-        return {"persisted": False}
+        return {"persisted": False, "reason": "material_id_missing"}
     root = _material_root()
     source_path = root / f"{material_id}.json"
     expiry_path = root / f"{material_id}.expires"
     if source_path.is_symlink() or expiry_path.is_symlink():
-        raise PublicPageError("Material is unavailable", ErrorCode.EXPIRED_RESOURCE)
+        return {"persisted": False, "reason": "material_unavailable"}
     try:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
-    except FileNotFoundError as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+    except (FileNotFoundError, ValueError, OSError):
+        return {"persisted": False, "reason": "material_unavailable"}
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        return {"persisted": False, "reason": "material_unavailable"}
     observations = stored.get("visual_observations")
     if not isinstance(observations, list):
         observations = []
@@ -543,7 +543,10 @@ def record_visual_observation(
     ]
     observations.append(record)
     stored["visual_observations"] = observations[-32:]
-    _store_material(material_id, stored)
+    try:
+        _store_material(material_id, stored)
+    except OSError:
+        return {"persisted": False, "reason": "storage_unavailable"}
     return {"persisted": True, "observation_count": len(stored["visual_observations"])}
 
 
@@ -1513,8 +1516,9 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         material_id = f"mat-{hashlib.sha256((final_url + source_revision).encode()).hexdigest()[:24]}"
         retention_disabled = request.retention.derived_ttl_seconds <= 0
         can_continue = text_is_partial and not source_text_truncated and not retention_disabled
+        should_store_material = can_continue or bool(selected_images and not retention_disabled)
         continuation_storage_failed = False
-        if can_continue:
+        if should_store_material:
             try:
                 _store_material(material_id, {
                     "source_url": safe_source_url,
@@ -1525,7 +1529,11 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     "budget_state": {
                         "max_total_response_chars": request.budget.max_total_response_chars,
                         "max_total_response_tokens": request.budget.max_total_response_tokens,
-                        "max_expansion_rounds": request.budget.max_expansion_rounds,
+                        "max_expansion_rounds": (
+                            request.budget.max_expansion_rounds
+                            if not source_text_truncated
+                            else 0
+                        ),
                         "returned_chars": len(returned_text),
                         "returned_tokens": returned_tokens,
                         "expansion_rounds": 0,
