@@ -82,6 +82,11 @@ matches the user's goal and is outside an already returned range. Do not treat
 the candidate snippet as a final answer until the corresponding range is
 expanded and read.
 
+For a follow-up about an image already inspected in this material, call
+`envoy_visual_history` with the prior `material_id` and relevant `resource_id`
+before requesting another visual inspection. This reuses saved observations
+without re-fetching the image or spending another vision call.
+
 ## Expand long material
 
 If the response is `partial` and text coverage reports
@@ -132,7 +137,8 @@ For hosts that use stdio MCP tools, launch:
 envoy mcp
 ```
 
-The bridge exposes `envoy_read`, `envoy_expand`, and `envoy_doctor`. Discover
+The bridge exposes `envoy_read`, `envoy_expand`, `envoy_doctor`,
+`envoy_observe_visual`, and `envoy_visual_history`. Discover
 the catalog once, choose a tool from the user's goal and returned coverage, and
 do not assume a capability that is absent from the catalog. The bridge supports
 stateless per-request MCP metadata and retains the legacy initialize handshake

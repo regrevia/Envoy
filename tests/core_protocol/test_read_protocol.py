@@ -94,6 +94,22 @@ def test_total_token_budget_may_be_lower_than_per_response_ceiling():
     assert budget.max_total_response_tokens == 128
 
 
+def test_visual_observation_history_request_has_bounded_query_limits():
+    from envoy_core.schemas.read_v1 import VisualObservationHistoryRequest
+
+    request = VisualObservationHistoryRequest.model_validate({
+        "protocol_version": "envoy.observe/1",
+        "request_id": "history-1",
+        "material_id": "mat-" + "f" * 24,
+        "resource_id": "resource-image",
+        "max_items": 4,
+        "max_chars": 1200,
+    })
+
+    assert request.max_items == 4
+    assert request.max_chars == 1200
+
+
 def test_schema_json_is_published_and_does_not_import_web_application():
     script = """
 import json

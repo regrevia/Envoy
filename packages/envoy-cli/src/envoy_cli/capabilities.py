@@ -48,6 +48,10 @@ def capability_catalog() -> dict:
                 "tool": "envoy_observe_visual",
                 "use": "Return a bounded host observation linked to a previously delivered image resource.",
             },
+            {
+                "tool": "envoy_visual_history",
+                "use": "Reuse persisted visual observations on a follow-up for the same material without another image read.",
+            },
         ],
         "outputs": [
             "source_located_text_blocks",

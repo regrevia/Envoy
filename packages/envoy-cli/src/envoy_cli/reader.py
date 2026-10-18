@@ -35,6 +35,7 @@ from envoy_core.schemas.read_v1 import (
     Need,
     PdfLocator,
     TextContent,
+    VisualObservationHistoryRequest,
     WebLocator,
 )
 
@@ -651,6 +652,112 @@ def record_visual_observation(
     except OSError:
         return {"persisted": False, "reason": "storage_unavailable"}
     return {"persisted": True, "observation_count": len(stored["visual_observations"])}
+
+
+def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadResponse:
+    material_id = request.material_id
+    root = _material_root()
+    source_path = root / f"{material_id}.json"
+    expiry_path = root / f"{material_id}.expires"
+    if source_path.is_symlink() or expiry_path.is_symlink():
+        raise PublicPageError("Material is unavailable", ErrorCode.EXPIRED_RESOURCE)
+    try:
+        stored = json.loads(source_path.read_text(encoding="utf-8"))
+        expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+    if expires_at <= time.time():
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+
+    rows = stored.get("visual_observations")
+    if not isinstance(rows, list):
+        rows = []
+    if request.resource_id:
+        rows = [
+            item for item in rows
+            if isinstance(item, dict) and item.get("resource_id") == request.resource_id
+        ]
+    def observation_timestamp(item: dict) -> int:
+        try:
+            return int(item.get("created_at") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    rows = sorted(
+        (item for item in rows if isinstance(item, dict)),
+        key=observation_timestamp,
+        reverse=True,
+    )
+    blocks = []
+    consumed_chars = 0
+    truncated = False
+    for index, item in enumerate(rows[:request.max_items], start=1):
+        remaining = request.max_chars - consumed_chars
+        if remaining <= 0:
+            truncated = True
+            break
+        content = str(item.get("observation") or "")
+        if len(content) > remaining:
+            content = content[:remaining]
+            truncated = True
+        if not content:
+            continue
+        resource_id = str(item.get("resource_id") or "")
+        source_block_id = str(item.get("source_block_id") or "")
+        source_url = _redact_url(str(item.get("source_url") or ""))
+        blocks.append(MaterialBlock(
+            id=f"{source_block_id}-observation-{index}",
+            kind=MaterialKind.PARAGRAPH,
+            content=TextContent(type="text", text=content),
+            origin=MaterialOrigin.HOST_VISUAL,
+            locator=WebLocator(
+                type="web",
+                source_url=source_url,
+                block_id=source_block_id,
+                quote=str(item.get("quote") or content[:MAX_LOCATOR_QUOTE_CHARS]),
+            ),
+            parent_id=source_block_id,
+            order=index - 1,
+            relations=[{
+                "type": "derived_from",
+                "target_id": source_block_id,
+                "basis": "host_observation",
+            }],
+            quality={
+                "engine": "host_visual_observation",
+                "unresolved": ["Untrusted host-reported visual evidence"],
+            },
+        ))
+        consumed_chars += len(content)
+    if len(rows) > len(blocks):
+        truncated = True
+
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=stored.get("session_id"),
+        material_id=material_id,
+        source_revision=str(stored.get("source_revision") or ""),
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL if truncated else ReadResult.READY,
+        blocks=blocks,
+        coverage=Coverage(modalities={
+            "visual_observations": CoverageItem(
+                discovered=len(rows),
+                extracted=len(rows),
+                returned=len(blocks),
+                observed=len(blocks),
+                extraction="partial" if truncated else "complete",
+                unresolved=["Visual observation history was limited by the request budget"] if truncated else [],
+                details={
+                    "max_items": request.max_items,
+                    "max_chars": request.max_chars,
+                    "returned_chars": consumed_chars,
+                    "resource_id": request.resource_id,
+                    "untrusted": True,
+                },
+            )
+        }),
+    )
 
 
 def expand_material(request: ExpandRequest) -> ReadResponse:

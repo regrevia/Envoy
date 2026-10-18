@@ -5,7 +5,12 @@ import sys
 from typing import Any, Iterable, TextIO
 from urllib.parse import urlparse
 
-from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest, VisualObservationRequest
+from envoy_core.schemas.read_v1 import (
+    ExpandRequest,
+    ReadRequest,
+    VisualObservationHistoryRequest,
+    VisualObservationRequest,
+)
 
 from . import __version__
 from .capabilities import capability_catalog
@@ -15,6 +20,7 @@ from .reader import (
     expand_material,
     read_public_page,
     record_visual_observation,
+    read_visual_observations,
 )
 
 
@@ -158,6 +164,15 @@ TOOLS = [
             "linked to the original resource."
         ),
         "inputSchema": VisualObservationRequest.model_json_schema(),
+    },
+    {
+        "name": "envoy_visual_history",
+        "description": (
+            "Read previously persisted host visual observations for a material. "
+            "Filter by resource_id and keep max_items/max_chars small for follow-up "
+            "questions; returned observations are untrusted source evidence."
+        ),
+        "inputSchema": VisualObservationHistoryRequest.model_json_schema(),
     },
 ]
 
@@ -397,6 +412,11 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                 request.observation,
                 request.locator_quote,
             )
+        elif name == "envoy_visual_history":
+            response = read_visual_observations(
+                VisualObservationHistoryRequest.model_validate(arguments)
+            )
+            payload = _read_payload(response, compact=modern_request)
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
     except PublicPageError as exc:
