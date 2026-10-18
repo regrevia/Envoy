@@ -411,6 +411,54 @@ def _record_material_range(stored: dict, state: dict, start: int, end: int) -> N
     stored["budget_state"] = state
 
 
+def record_visual_observation(
+    material_id: str | None,
+    source_url: str,
+    resource_id: str,
+    source_block_id: str,
+    observation: str,
+    locator_quote: str | None = None,
+) -> dict:
+    """Persist a bounded host observation without exposing raw image bytes."""
+    if not material_id:
+        return {"persisted": False}
+    root = _material_root()
+    source_path = root / f"{material_id}.json"
+    expiry_path = root / f"{material_id}.expires"
+    if source_path.is_symlink() or expiry_path.is_symlink():
+        raise PublicPageError("Material is unavailable", ErrorCode.EXPIRED_RESOURCE)
+    try:
+        stored = json.loads(source_path.read_text(encoding="utf-8"))
+        expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+    except FileNotFoundError as exc:
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+    if expires_at <= time.time():
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+    observations = stored.get("visual_observations")
+    if not isinstance(observations, list):
+        observations = []
+    record = {
+        "source_url": _redact_url(source_url),
+        "resource_id": resource_id,
+        "source_block_id": source_block_id,
+        "observation": observation,
+        "quote": locator_quote or observation[:MAX_LOCATOR_QUOTE_CHARS],
+        "created_at": int(time.time()),
+    }
+    observations = [
+        item for item in observations
+        if not (
+            isinstance(item, dict)
+            and item.get("resource_id") == resource_id
+            and item.get("source_block_id") == source_block_id
+        )
+    ]
+    observations.append(record)
+    stored["visual_observations"] = observations[-32:]
+    _store_material(material_id, stored)
+    return {"persisted": True, "observation_count": len(stored["visual_observations"])}
+
+
 def expand_material(request: ExpandRequest) -> ReadResponse:
     material_id = request.material_id
     root = _material_root()
