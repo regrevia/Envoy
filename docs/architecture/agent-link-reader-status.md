@@ -66,7 +66,7 @@
 
 - 当前基线：`dev`，本轮提交后更新；工作区状态以 Git 为准，本轮未合并 `main`。
 - 协议与公开页面针对性测试：`49 passed, 1 warning`。
-- 仓库根目录全量测试：`414 passed, 143 warnings`。
+- 仓库根目录全量测试：`416 passed, 143 warnings`。
 - 前端生产构建：`npm run build` 成功；仅有 `generated-samples` 和 `semantic-units` 两处既有 Hook 依赖警告。
 - 静态编译检查：`web_content_service.py`、`jobs.py`、`read_v1.py` 通过 `py_compile`。
 - 本轮新增覆盖：`materials.json` 生成、`envoy.read/1` 版本字段、正文/图片/OCR 来源标记和图片资源 URI。
@@ -75,12 +75,13 @@
 - Agent 能力发现：`envoy doctor --json` 与 MCP `envoy_doctor` 共用 `envoy.capabilities/1` 目录；正常读链接直接调用 `envoy_read`，仅在能力不明确时调用 doctor；MCP schema 暴露受限的宿主 `image_input` 声明，Agent 按目标和 coverage 决定是否续读或交接视觉资源；视觉宿主可通过 `envoy_observe_visual` 回传带来源的有限观察。
 - 目标驱动证据提示：网页读取保留原始正文坐标不变，根据 `goal` 返回有限的文本候选 offset 和图片相关性排序；候选只是定向续读提示，不能替代实际展开。
 - 本轮 CLI/MCP 回归：`backend/.venv/bin/python -m pytest -q tests/cli/test_envoy_cli.py tests/cli/test_mcp_bridge.py`，`38 passed`；源码 doctor smoke 输出能力目录，标明独立运行时不支持视频/音频、扫描 PDF OCR 与 Office，并声明不访问凭据。
-- 本轮全仓回归：`PYTHONPATH=backend backend/.venv/bin/python -m pytest -q`，`414 passed, 143 warnings`；警告包括 LibreSSL/urllib3 与既有 FastAPI `on_event` 弃用提示。
+- 本轮全仓回归：`PYTHONPATH=backend backend/.venv/bin/python -m pytest -q`，`416 passed, 143 warnings`；警告包括 LibreSSL/urllib3 与既有 FastAPI `on_event` 弃用提示。
 - 本轮证据闭环定向回归：`63 passed, 1 warning`；覆盖视觉观察工具、来源 URL 脱敏、重复/重叠续读拒绝、零续读轮次、图片纯视觉页面、挑战页、视频未读取覆盖、OCR `pro` 传递和网页材料 OCR 块。
 - 本轮 goal 证据选择回归：新增文本候选 offset 与图片排序测试；不改变原文坐标或续读账本。
 - 本轮目标选择定向回归：`backend/.venv/bin/python -m pytest -q tests/cli/test_envoy_cli.py tests/cli/test_mcp_bridge.py tests/core_protocol/test_read_protocol.py`，`51 passed`；无 `goal` 时相关扩展字段省略，保持 MCP 精简结果体积。
 - 本轮视觉观察定向回归：`backend/.venv/bin/python -m pytest -q tests/cli/test_envoy_cli.py tests/cli/test_mcp_bridge.py tests/core_protocol/test_read_protocol.py`，`52 passed`；`envoy_observe_visual` 接收原响应的 `material_id` 时，将最多 32 条去重后的观察写入本地材料快照；不保存图片字节，观察 URL 继续脱敏。
 - Skill 产品化：`scripts/package_envoy_skill.py` 生成可重复的 `envoy-skill.zip`，含 `envoy-skill.json`、`SKILL.md`、协议参考和通用 `hosts/mcp.json` 配置；包内不含凭据、本地配置、浏览器状态或素材，Skill bundle 测试通过。
+- 普适化与 token 调度：无扩展名图片按响应 `Content-Type` 自动进入视觉交接；视频/音频响应明确返回独立运行时能力缺口；文本覆盖提供 `chars_div_4` 的保守 token 估算；Hook 标记为可选宿主外层能力，不影响核心协议。
 - 独立 CLI 发行包验证：使用本机虚拟环境普通 wheel 安装成功；`envoy doctor --json` 正常，实际读取 `https://example.org/` 返回 `ready`。
 - MCP 发行进程 smoke：已安装 wheel 通过 `envoy mcp` stdin/stdout 完成新版发现、工具列表和 `2025-11-25` 旧版初始化；独立网页读取工具 schema 从约 4.7 KB 缩至约 1.2 KB；新版工具调用只返回短状态文本，完整材料仅放在结构化字段中。
 - 图片视觉协作专项：直接图片 URL 在宿主具备 URI 图片输入时返回 `waiting_for_host/needs_host`、资源 URI 和 `inspect_visual` 动作；无图片能力时结构化返回 `missing_capability`，不内联 base64。
