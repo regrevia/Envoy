@@ -59,6 +59,38 @@ def test_known_platforms_enable_browser_fallback_even_when_ytdlp_is_blocked():
         assert classify_video_source(url)["supports_browser_discovery"] is True
 
 
+def test_dailymotion_video_is_classified():
+    from app.services.video_source_service import classify_video_source
+
+    source = classify_video_source("https://www.dailymotion.com/video/x26m1j4")
+    assert source["platform"] == "dailymotion"
+    assert source["source_kind"] == "video"
+
+
+def test_generic_direct_video_and_stream_urls_are_marked_downloadable():
+    from app.services.video_source_service import classify_video_source
+
+    cases = [
+        ("https://cdn.example.test/lesson.mp4?token=short", "direct_media"),
+        ("https://cdn.example.test/master.m3u8", "direct_media"),
+        ("https://cdn.example.test/manifest.mpd", "direct_media"),
+        ("https://cdn.example.test/lesson.webm", "direct_media"),
+    ]
+    for url, expected_kind in cases:
+        source = classify_video_source(url)
+        assert source["platform"] == "unknown"
+        assert source["source_kind"] == expected_kind
+        assert source["supports_ytdlp"] is True
+
+
+def test_missing_video_is_not_classified_as_login_required():
+    from app.services.video_source_service import classify_discovery_error
+
+    result = classify_discovery_error("ERROR: HTTP Error 404: Not Found")
+    assert result["reason_code"] == "source_not_found"
+    assert result["requires_user_action"] is False
+
+
 def test_youtube_uses_android_client_fallback_args():
     from app.services.video_source_service import _platform_download_args
 
@@ -99,6 +131,28 @@ def test_download_video_uses_ytdlp_and_returns_metadata(tmp_path):
     assert "--no-playlist" in command
     assert "https://example.com/watch?v=abc123" in command
     assert run.call_count == 2
+    download_command = run.call_args_list[1].args[0]
+    assert download_command[download_command.index("--format") + 1] == "bestvideo*+bestaudio/best"
+
+
+def test_download_video_limits_generic_streams_to_720p_and_retries_fragments(tmp_path):
+    from app.services.video_source_service import download_video
+
+    output_file = tmp_path / "stream.mp4"
+    output_file.write_bytes(b"video")
+    metadata = subprocess.CompletedProcess(
+        [], 0, '{"id":"stream","title":"Stream","duration":12.5,"ext":"mp4"}\n', ""
+    )
+    downloaded = subprocess.CompletedProcess([], 0, f"{output_file}\n", "")
+
+    with patch("app.services.video_source_service.subprocess.run", side_effect=[metadata, downloaded]) as run:
+        download_video("https://cdn.example.test/master.m3u8", tmp_path)
+
+    command = run.call_args_list[1].args[0]
+    assert command[command.index("--format") + 1] == "best[height<=720]/best"
+    assert command[command.index("--socket-timeout") + 1] == "20"
+    assert command[command.index("--retries") + 1] == "2"
+    assert command[command.index("--fragment-retries") + 1] == "2"
 
 
 def test_download_video_preserves_raw_ytdlp_error(tmp_path):

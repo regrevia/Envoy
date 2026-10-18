@@ -48,6 +48,7 @@ PLATFORM_HOSTS = {
     "tencent_video": {"v.qq.com"},
     "iqiyi": {"iqiyi.com", "www.iqiyi.com"},
     "xiaohongshu": {"xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com"},
+    "dailymotion": {"dailymotion.com", "www.dailymotion.com", "geo.dailymotion.com"},
 }
 
 
@@ -212,9 +213,27 @@ def _is_browser_recoverable_error(error: Exception | str) -> bool:
     ))
 
 
+def _is_permanent_source_error(error: Exception | str) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "http error 404",
+        "http error 410",
+        "not found",
+        "video does not exist",
+        "no video could be found",
+    ))
+
+
 def classify_discovery_error(error: Exception | str) -> dict:
     message = str(error or "").strip()
     lowered = message.lower()
+    if _is_permanent_source_error(message):
+        return {
+            "reason_code": "source_not_found",
+            "requires_user_action": False,
+            "recommended_action": "check_url",
+            "raw_error": message,
+        }
     if any(marker in lowered for marker in (
         "eof occurred in violation of protocol",
         "connection timed out",
@@ -292,6 +311,18 @@ def _platform_download_args(source_url: str) -> list[str]:
     return []
 
 
+def _download_args(source_url: str) -> list[str]:
+    source = classify_video_source(source_url)
+    if source["source_kind"] == "direct_media":
+        return [
+            "--socket-timeout", "20",
+            "--retries", "2",
+            "--fragment-retries", "2",
+            "--format", "best[height<=720]/best",
+        ]
+    return ["--format", "bestvideo*+bestaudio/best"]
+
+
 def validate_video_url(source_url: str) -> str:
     value = str(source_url or "").strip()
     if re.fullmatch(r"BV[0-9A-Za-z]{8,}", value):
@@ -345,6 +376,23 @@ def _platform_for_host(host: str) -> str:
     return "unknown"
 
 
+def _is_direct_video_media_url(parsed) -> bool:
+    path = str(parsed.path or "").lower()
+    if re.search(r"\.(mp4|m4v|mov|webm|mkv|avi|flv|ogv|m3u8|mpd)(?:$)", path):
+        return True
+    query = parse_qs(parsed.query)
+    media_hints = [
+        value.lower()
+        for values in query.values()
+        for value in values
+    ]
+    return any(
+        value in {"video/mp4", "video/webm", "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml"}
+        or value.endswith((".mp4", ".webm", ".m3u8", ".mpd"))
+        for value in media_hints
+    )
+
+
 def _source_kind_for_path(platform: str, host: str, path: str) -> str:
     normalized_path = path.rstrip("/").lower()
     if platform == "douyin" and (host == "v.douyin.com" or host == "iesdouyin.com"):
@@ -371,6 +419,7 @@ def _source_kind_for_path(platform: str, host: str, path: str) -> str:
         "instagram": ("/reel/", "/reels/", "/p/", "/tv/"),
         "facebook": ("/reel/", "/watch", "/videos/"),
         "x": ("/status/",),
+        "dailymotion": ("/video/",),
         "kuaishou": ("/short-video/", "/video/"),
         "ixigua": ("/video/",),
         "youku": ("/v_show/",),
@@ -414,13 +463,13 @@ def classify_video_source(source_url: str) -> dict:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().rstrip(".")
     platform = _platform_for_host(host)
-    source_kind = _source_kind_for_path(platform, host, parsed.path)
+    source_kind = "direct_media" if _is_direct_video_media_url(parsed) else _source_kind_for_path(platform, host, parsed.path)
     return {
         "source_url": url,
         "platform": platform,
         "source_kind": source_kind,
         "host": host,
-        "supports_ytdlp": platform != "unknown",
+        "supports_ytdlp": platform != "unknown" or source_kind == "direct_media",
         "supports_browser_discovery": platform != "unknown",
     }
 
@@ -475,7 +524,7 @@ def download_video(source_url: str, output_dir: str | Path, auth: dict | None = 
                 *platform_args,
                 "--no-playlist",
                 "--newline",
-                "--format", "bestvideo*+bestaudio/best",
+                *_download_args(url),
                 "--merge-output-format", "mp4",
                 "--output", output_template,
                 "--print", "after_move:filepath",
@@ -506,6 +555,7 @@ def download_video(source_url: str, output_dir: str | Path, auth: dict | None = 
             errors.append(str(exc))
     if (
         normalized_auth.get("mode") == "auto"
+        and not any(_is_permanent_source_error(error) for error in errors)
         and (
             classify_video_source(url).get("supports_browser_discovery")
             or url.startswith(("http://", "https://"))
