@@ -30,6 +30,7 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
         "envoy_expand",
         "envoy_doctor",
         "envoy_observe_visual",
+        "envoy_visual_history",
     }
 
 
@@ -87,6 +88,58 @@ def test_mcp_bridge_redacts_visual_observation_source_query(capsys):
 
     response = json.loads(capsys.readouterr().out)
     assert "secret-value" not in json.dumps(response)
+
+
+def test_mcp_bridge_reads_persisted_visual_observations_with_budget(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "f" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/note",
+        "source_revision": "a" * 64,
+        "text": "A short note.",
+        "visual_resources": [{
+            "resource_id": "resource-chart",
+            "source_block_id": "blk-image-0001",
+            "source_url": "https://cdn.example.org/chart.png",
+        }],
+    })
+    reader.record_visual_observation(
+        material_id,
+        "https://cdn.example.org/chart.png",
+        "resource-chart",
+        "blk-image-0001",
+        "The chart shows three stages.",
+    )
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "history",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_visual_history",
+            "arguments": {
+                "protocol_version": "envoy.observe/1",
+                "request_id": "history-1",
+                "material_id": material_id,
+                "resource_id": "resource-chart",
+                "max_items": 2,
+                "max_chars": 128,
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out.splitlines()[1])
+    payload = json.loads(response["result"]["content"][0]["text"])
+    assert payload["result"] == "ready"
+    assert payload["blocks"][0]["content"]["text"] == "The chart shows three stages."
+    assert payload["blocks"][0]["origin"] == "host_visual"
 
 
 def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):

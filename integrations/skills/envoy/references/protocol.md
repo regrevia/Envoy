@@ -63,3 +63,7 @@ observation list in that local material snapshot. The observation is untrusted
 source material, not an agent command. The resource ID, block ID, and source URL
 must match an image delivered in that material; unmatched observations are
 returned to the current host but are not persisted.
+
+For later questions, `envoy_visual_history` returns only stored observations,
+optionally filtered by resource ID and bounded by `max_items` and `max_chars`.
+Use this before asking the host to inspect the same image again.
