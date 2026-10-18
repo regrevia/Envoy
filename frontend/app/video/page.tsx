@@ -26,6 +26,7 @@ type Task = {
     checkpoints?: Record<string, { status?: string; path?: string; artifact_id?: string }>;
     library_id?: string;
     library_title?: string;
+    ocr_profile?: "fast" | "balanced" | "quality" | "pro";
   };
   result_summary?: string | null;
   error_message?: string | null;
@@ -115,6 +116,11 @@ const uiCopy = {
     baseUrl: "服务地址",
     modelName: "模型名",
     protocol: "协议",
+    ocrProfile: "OCR 识别",
+    ocrFast: "快速",
+    ocrBalanced: "均衡",
+    ocrQuality: "高精度",
+    ocrPro: "专业（最高精度，较慢）",
     apiKeySaved: "已保存，留空保持不变",
     apiKeyPlaceholder: "输入 API Key",
     apiKeyStored: "已安全保存",
@@ -178,6 +184,11 @@ const uiCopy = {
     baseUrl: "Base URL",
     modelName: "Model",
     protocol: "Protocol",
+    ocrProfile: "OCR profile",
+    ocrFast: "Fast",
+    ocrBalanced: "Balanced",
+    ocrQuality: "Quality",
+    ocrPro: "Pro (highest accuracy, slower)",
     apiKeySaved: "Saved; leave blank to keep",
     apiKeyPlaceholder: "Enter API key",
     apiKeyStored: "Saved securely",
@@ -303,12 +314,14 @@ export default function VideoPage() {
   const visionApiKeyRef = useRef<HTMLInputElement>(null);
   const [visionBusy, setVisionBusy] = useState(false);
   const [visionMessage, setVisionMessage] = useState("");
+  const [ocrProfile, setOcrProfile] = useState<"fast" | "balanced" | "quality" | "pro">("balanced");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   const outputFormats = outputMode === "both" ? ["markdown", "html"] : [outputMode];
+  const processingConfig = { output_formats: outputFormats, ocr_profile: ocrProfile };
   const copy = uiCopy[locale];
 
   const loadRecentTasks = async () => {
@@ -519,7 +532,7 @@ export default function VideoPage() {
           project_id: selectedId,
           source_url: url,
           auth: { mode: "auto" },
-          input_config: { output_formats: outputFormats },
+          input_config: processingConfig,
         }),
       });
       setTask(created);
@@ -576,7 +589,7 @@ export default function VideoPage() {
           project_id: selectedId,
           title: "本地视频知识库",
           items,
-          input_config: { output_formats: outputFormats },
+          input_config: processingConfig,
         }),
       });
       setTask(created);
@@ -643,12 +656,12 @@ export default function VideoPage() {
         ? `/api/v1/tasks/${task.id}/append-assets`
         : "/api/v1/tasks/mixed-library-to-markdown";
       const body = append
-        ? { asset_ids: assetIds, title: task?.input_config?.library_title }
+        ? { asset_ids: assetIds, title: task?.input_config?.library_title, input_config: { ocr_profile: ocrProfile } }
         : {
             project_id: selectedId,
             title: "混合素材知识库",
             asset_ids: assetIds,
-            input_config: { output_formats: outputFormats },
+            input_config: processingConfig,
           };
       const created = await apiJson<Task>(endpoint, {
         method: "POST",
@@ -808,12 +821,12 @@ export default function VideoPage() {
         ? `/api/v1/tasks/${task.id}/append-videos`
         : "/api/v1/tasks/video-batch-to-markdown";
       const body = append
-        ? { items, title: task?.input_config?.library_title, input_config: { output_formats: outputFormats } }
+        ? { items, title: task?.input_config?.library_title, input_config: processingConfig }
         : {
             project_id: selectedId,
             title: "视频知识库",
             items,
-            input_config: { output_formats: outputFormats },
+            input_config: processingConfig,
           };
       const created = await apiJson<Task>(endpoint, {
         method: "POST",
@@ -924,6 +937,19 @@ export default function VideoPage() {
                     >
                       <option value="chat">Chat Completions</option>
                       <option value="messages">Anthropic Messages</option>
+                    </select>
+                  </label>
+                  <label className={`${styles.field} ${styles.fieldFull}`}>
+                    {copy.ocrProfile}
+                    <select
+                      value={ocrProfile}
+                      onChange={(event) => setOcrProfile(event.target.value as "fast" | "balanced" | "quality" | "pro")}
+                      className={styles.input}
+                    >
+                      <option value="fast">{copy.ocrFast}</option>
+                      <option value="balanced">{copy.ocrBalanced}</option>
+                      <option value="quality">{copy.ocrQuality}</option>
+                      <option value="pro">{copy.ocrPro}</option>
                     </select>
                   </label>
                   <label className={`${styles.field} ${styles.fieldFull}`}>

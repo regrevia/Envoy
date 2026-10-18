@@ -182,8 +182,22 @@ def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_d
 
 
 def _run_ocr_for_task(db, task_id: str | None, frame_paths: list[str]):
+    profile = None
+    task = (
+        db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task_id and hasattr(db, "query")
+        else None
+    )
+    if task is not None and isinstance(task.input_config, dict):
+        profile = task.input_config.get("ocr_profile")
+    profile_kwargs = {"profile": profile} if profile in {"fast", "balanced", "quality"} else {}
+    supports_profile = _supports_named_parameter(run_ocr_on_frames, "profile")
     if _supports_should_cancel(run_ocr_on_frames):
+        if supports_profile:
+            return run_ocr_on_frames(frame_paths, should_cancel=lambda: _task_is_canceled(db, task_id), **profile_kwargs)
         return run_ocr_on_frames(frame_paths, should_cancel=lambda: _task_is_canceled(db, task_id))
+    if supports_profile:
+        return run_ocr_on_frames(frame_paths, **profile_kwargs)
     return run_ocr_on_frames(frame_paths)
 
 

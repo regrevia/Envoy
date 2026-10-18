@@ -538,7 +538,7 @@ def _run_tesseract_ocr_logic(frame_paths: list[str]):
     return compress_consecutive_ocr_results(results)
 
 
-def _run_ocr_worker_logic(frame_paths: list[str]):
+def _run_ocr_worker_logic(frame_paths: list[str], profile: str | None = None):
     results = []
     try:
         from paddleocr import PaddleOCR
@@ -546,8 +546,10 @@ def _run_ocr_worker_logic(frame_paths: list[str]):
             "fast": ("PP-OCRv6_tiny_det", "PP-OCRv6_tiny_rec"),
             "balanced": ("PP-OCRv6_small_det", "PP-OCRv6_small_rec"),
             "quality": ("PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
+            "pro": ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
         }
-        detection_model, recognition_model = profile_models[MEDIA_OCR_PROFILE]
+        selected_profile = profile if profile in profile_models else MEDIA_OCR_PROFILE
+        detection_model, recognition_model = profile_models[selected_profile]
         try:
             ocr = PaddleOCR(
                 text_detection_model_name=detection_model,
@@ -584,16 +586,20 @@ def _run_ocr_worker_logic(frame_paths: list[str]):
     return compress_consecutive_ocr_results(results)
 
 
-def _ocr_worker(frame_paths: list[str], result_queue):
+def _ocr_worker(frame_paths: list[str], result_queue, profile: str | None = None):
     try:
-        result_queue.put(_run_ocr_worker_logic(frame_paths))
+        result_queue.put(_run_ocr_worker_logic(frame_paths, profile=profile))
     except Exception:
         result_queue.put(_empty_ocr_results(frame_paths))
 
 
-def run_ocr_on_frames(frame_paths: list[str], should_cancel: Callable[[], bool] | None = None):
+def run_ocr_on_frames(
+    frame_paths: list[str],
+    should_cancel: Callable[[], bool] | None = None,
+    profile: str | None = None,
+):
     result_queue = multiprocessing.Queue()
-    process = multiprocessing.Process(target=_ocr_worker, args=(frame_paths, result_queue), daemon=True)
+    process = multiprocessing.Process(target=_ocr_worker, args=(frame_paths, result_queue, profile), daemon=True)
     timeout_sec = max(int(MEDIA_OCR_TIMEOUT_SEC or 1), 1)
     process.start()
     waited = 0

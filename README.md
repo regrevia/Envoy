@@ -167,7 +167,7 @@ cd frontend && npm run build
 
 Envoy Skill、自包含安装包、通用版本化材料协议、微信公众号专项验收以及多用户 Worker 隔离仍在开发中，尚未发布。实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
 
-OCR 默认使用 `balanced` 档位，部署者可以通过 `MEDIA_OCR_PROFILE=fast|balanced|quality` 在速度、资源占用和识别精度之间选择。OCR 属于 Envoy 的派生材料，网站产物可以记录 OCR 文本及来源关系；Skill/MCP 默认不把所有 OCR 原文一次性塞进 Agent 上下文，而是按目标和材料范围逐步读取。
+OCR 默认使用 `balanced` 档位，用户可在高级设置中选择 `fast / balanced / quality / pro`；其中 `pro` 是当前 Envoy 的最高精度档，代价是更慢、更占资源。Skill/MCP 请求也可以传入 `ocr_profile`。切换档位时按需下载对应模型，不把全部模型预装进镜像。OCR 属于 Envoy 的派生材料，网站产物可以记录 OCR 文本及来源关系；Skill/MCP 默认不把所有 OCR 原文一次性塞进 Agent 上下文，而是按目标和材料范围逐步读取。
 
 来源访问取决于网站权限和网络条件；遇到登录、验证码、失效内容或 DRM 时应明确报告实际状态。
 
