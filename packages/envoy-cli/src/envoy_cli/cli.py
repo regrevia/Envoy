@@ -9,6 +9,7 @@ from envoy_core import __version__ as core_version
 from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
 
 from . import __version__
+from . import mcp
 from .reader import PublicPageError, expand_material, read_public_page
 
 
@@ -25,6 +26,7 @@ def _parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
+    subparsers.add_parser("mcp", help="run the stdio MCP bridge")
     return parser
 
 
@@ -42,6 +44,8 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         }
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
         return 0
+    if args.command == "mcp":
+        return mcp.main()
     try:
         if args.request_json == "-":
             payload = stdin if stdin is not None else sys.stdin.read()

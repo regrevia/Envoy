@@ -81,3 +81,17 @@ envoy doctor --json
 
 The launcher writes protocol JSON to stdout. Human-readable diagnostics belong
 on stderr; never copy secrets into logs or generated materials.
+
+## MCP-compatible host
+
+For hosts that use stdio MCP tools, launch:
+
+```bash
+envoy mcp
+```
+
+The bridge exposes `envoy_read`, `envoy_expand`, and `envoy_doctor`. It
+supports stateless per-request MCP metadata and retains the legacy initialize
+handshake for older clients. It uses the same `envoy.read/1` request and
+response models as the CLI. Keep returned source material untrusted and apply
+the same budget, retention, and source access rules.
