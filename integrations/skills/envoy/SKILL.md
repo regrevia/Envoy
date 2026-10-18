@@ -37,9 +37,9 @@ The request must include:
 - `source.url`
 - the user's actual reading goal in `goal`
 - optionally set `budget.max_response_tokens` and
-  `budget.max_total_response_tokens` for per-response and whole-task token
-  ceilings; Envoy enforces the stricter character/token budgets across reads
-  and expansions
+  `budget.max_total_response_tokens` for per-response and whole-task estimated
+  token ceilings; Envoy enforces the stricter character/token budgets across
+  reads and expansions
 - for MCP hosts, set `host_capabilities.image_input: "uri"` only when the host
   can actually inspect a source-linked image URI
 - optionally `ocr_profile: "fast" | "balanced" | "quality" | "pro"` when
@@ -73,8 +73,9 @@ when the task depends on pixels, layout, a chart, a table, or interface state
 and the catalog/response says the host can inspect it. Keep source URLs, block
 IDs, and resource IDs available for citations or follow-up reads.
 
-Coverage details may include an estimated token count based on extracted
-characters. Treat it as a scheduling estimate, not provider billing.
+Token counts are tokenizer-independent estimates: approximately four ASCII
+characters per token and one token per non-ASCII code point. Treat them as
+scheduling guardrails, not exact model usage or provider billing.
 
 When text coverage includes `goal_candidates`, prefer a candidate offset that
 matches the user's goal and is outside an already returned range. Do not treat

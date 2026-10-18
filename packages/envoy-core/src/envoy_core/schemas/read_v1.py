@@ -131,12 +131,6 @@ class Budget(ContractModel):
             raise ValueError("max_total_visual_pixels must be >= max_visual_pixels_per_input")
         if self.max_total_visual_clip_seconds < self.max_visual_clip_seconds:
             raise ValueError("max_total_visual_clip_seconds must be >= max_visual_clip_seconds")
-        if (
-            self.max_total_response_tokens is not None
-            and self.max_response_tokens is not None
-            and self.max_total_response_tokens < self.max_response_tokens
-        ):
-            raise ValueError("max_total_response_tokens must be >= max_response_tokens")
         return self
 
 

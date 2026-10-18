@@ -272,16 +272,58 @@ def _goal_candidates(text: str, terms: list[str], limit: int = 5) -> list[dict]:
     return sorted(candidates, key=lambda item: (-item["score"], item["offset"]))[:limit]
 
 
-def _estimated_tokens(chars: int) -> int:
-    return max(0, (max(0, int(chars)) + 3) // 4)
+def _estimated_tokens(value: str | int) -> int:
+    if isinstance(value, int):
+        return max(0, (value + 3) // 4)
+    non_ascii_count = sum(1 for character in value if ord(character) > 0x7F)
+    ascii_count = len(value) - non_ascii_count
+    return non_ascii_count + (ascii_count + 3) // 4
+
+
+def _token_budget_details(request, returned_tokens: int, remaining_text: str) -> dict:
+    response_limit = request.budget.max_response_tokens
+    total_limit = request.budget.max_total_response_tokens
+    if response_limit is None and total_limit is None:
+        return {}
+    limits = [int(value) for value in (response_limit, total_limit) if value is not None]
+    return {
+        "estimated_returned_tokens": returned_tokens,
+        "estimated_remaining_tokens": _estimated_tokens(remaining_text),
+        "estimated_token_basis": "ascii4_nonascii1_v1",
+        "token_budget": response_limit,
+        "total_token_budget": total_limit,
+        "remaining_tokens": max(0, min(limits) - returned_tokens),
+        "returned_tokens": returned_tokens,
+    }
+
+
+def _take_text_budgeted(
+    text: str,
+    offset: int,
+    max_chars: int,
+    max_tokens: int | None,
+) -> tuple[str, int]:
+    if max_tokens is None:
+        return _take_text_range(text, offset, max_chars)
+    if max_tokens <= 0 or max_chars <= 0:
+        return "", offset
+    high = min(len(text), offset + max_chars)
+    low = offset
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _estimated_tokens(text[offset:middle]) <= max_tokens:
+            low = middle
+        else:
+            high = middle - 1
+    content, end = _take_text_range(text, offset, low - offset)
+    while content and _estimated_tokens(content) > max_tokens:
+        content = content[:-1]
+        end -= 1
+    return content, end
 
 
 def _response_char_budget(request) -> int:
-    char_budget = int(request.budget.max_response_chars)
-    token_budget = getattr(request.budget, "max_response_tokens", None)
-    if token_budget is not None:
-        char_budget = min(char_budget, int(token_budget) * 4)
-    return char_budget
+    return int(request.budget.max_response_chars)
 
 
 def _source_text_was_truncated(values: list[str]) -> bool:
@@ -412,6 +454,15 @@ def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
                 continue
             if 0 <= start < end:
                 ranges.append([start, end])
+    if state.get("returned_tokens") is not None:
+        returned_tokens = int(state["returned_tokens"])
+    else:
+        source_text = str(stored.get("text") or "")
+        returned_tokens = _estimated_tokens(str(stored.get("title_text") or ""))
+        returned_tokens += sum(
+            _estimated_tokens(source_text[start:min(end, len(source_text))])
+            for start, end in ranges
+        )
     return {
         "max_total_response_chars": min(
             int(state.get("max_total_response_chars") or request.max_total_response_chars),
@@ -434,14 +485,16 @@ def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
             else request.max_expansion_rounds
         ),
         "returned_chars": int(state.get("returned_chars") or 0),
+        "returned_tokens": returned_tokens,
         "expansion_rounds": int(state.get("expansion_rounds") or 0),
         "returned_ranges": ranges,
     }
 
 
-def _record_material_range(stored: dict, state: dict, start: int, end: int) -> None:
+def _record_material_range(stored: dict, state: dict, start: int, end: int, content: str) -> None:
     state["returned_ranges"].append([start, end])
     state["returned_chars"] += end - start
+    state["returned_tokens"] += _estimated_tokens(content)
     state["expansion_rounds"] += 1
     stored["budget_state"] = state
 
@@ -520,7 +573,7 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         return _expand_blocked(request, "The cumulative response character budget has been exhausted")
     if (
         budget_state["max_total_response_tokens"] is not None
-        and _estimated_tokens(budget_state["returned_chars"]) >= budget_state["max_total_response_tokens"]
+        and budget_state["returned_tokens"] >= budget_state["max_total_response_tokens"]
     ):
         return _expand_blocked(request, "The cumulative response token budget has been exhausted")
     total_text = str(stored.get("text") or "")
@@ -543,9 +596,21 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
     if budget_state["max_total_response_tokens"] is not None:
         token_remaining_chars = max(
             0,
-            (budget_state["max_total_response_tokens"] - _estimated_tokens(budget_state["returned_chars"])) * 4,
+            (budget_state["max_total_response_tokens"] - budget_state["returned_tokens"]) * 4,
         )
         end = min(end, offset + token_remaining_chars)
+    response_token_limit = request.max_response_tokens
+    total_token_remaining = (
+        max(0, budget_state["max_total_response_tokens"] - budget_state["returned_tokens"])
+        if budget_state["max_total_response_tokens"] is not None
+        else None
+    )
+    if total_token_remaining is not None:
+        response_token_limit = (
+            min(response_token_limit, total_token_remaining)
+            if response_token_limit is not None
+            else total_token_remaining
+        )
     if any(
         (start <= offset < finish and offset < finish - 8)
         or offset < start < end
@@ -571,12 +636,13 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                 "The cumulative response character budget has been reached",
                 ErrorCode.BUDGET_EXCEEDED,
             )
-        content, page_end = _take_text_range(
+        content, page_end = _take_text_budgeted(
             total_text,
             page_offset,
             min(end, span_end) - page_offset,
+            response_token_limit,
         )
-        _record_material_range(stored, budget_state, page_offset, page_end)
+        _record_material_range(stored, budget_state, page_offset, page_end, content)
         try:
             _store_material(material_id, stored)
         except OSError:
@@ -619,10 +685,11 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                         "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
                         "expansion_rounds": budget_state["expansion_rounds"],
                         "remaining_tokens": (
-                            max(0, budget_state["max_total_response_tokens"] - _estimated_tokens(budget_state["returned_chars"]))
+                            max(0, budget_state["max_total_response_tokens"] - budget_state["returned_tokens"])
                             if budget_state["max_total_response_tokens"] is not None
                             else None
                         ),
+                        "returned_tokens": budget_state["returned_tokens"],
                         "total_token_budget": budget_state["max_total_response_tokens"],
                     },
                 )
@@ -633,8 +700,13 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             "The cumulative response character budget has been reached",
             ErrorCode.BUDGET_EXCEEDED,
         )
-    content, end = _take_text_range(total_text, offset, end - offset)
-    _record_material_range(stored, budget_state, offset, end)
+    content, end = _take_text_budgeted(
+        total_text,
+        offset,
+        end - offset,
+        response_token_limit,
+    )
+    _record_material_range(stored, budget_state, offset, end, content)
     try:
         _store_material(material_id, stored)
     except OSError:
@@ -679,10 +751,11 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                         "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
                         "expansion_rounds": budget_state["expansion_rounds"],
                         "remaining_tokens": (
-                            max(0, budget_state["max_total_response_tokens"] - _estimated_tokens(budget_state["returned_chars"]))
+                            max(0, budget_state["max_total_response_tokens"] - budget_state["returned_tokens"])
                             if budget_state["max_total_response_tokens"] is not None
                             else None
                         ),
+                        "returned_tokens": budget_state["returned_tokens"],
                         "total_token_budget": budget_state["max_total_response_tokens"],
                     },
                 )
@@ -968,6 +1041,19 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
         )
 
     available_chars = max(0, _response_char_budget(request) - len(title_block.model_dump_json()))
+    initial_token_limit = request.budget.max_response_tokens
+    if request.budget.max_total_response_tokens is not None:
+        initial_token_limit = (
+            min(initial_token_limit, request.budget.max_total_response_tokens)
+            if initial_token_limit is not None
+            else request.budget.max_total_response_tokens
+        )
+    returned_tokens = _estimated_tokens(title)
+    token_remaining = (
+        max(0, initial_token_limit - returned_tokens)
+        if initial_token_limit is not None
+        else None
+    )
     blocks = [title_block]
     returned_chars = 0
     returned_end = 0
@@ -980,7 +1066,7 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
         if remaining <= 0:
             response_budget_exhausted = True
             break
-        page_body, page_end = _take_text_range(page_text, 0, remaining)
+        page_body, page_end = _take_text_budgeted(page_text, 0, remaining, token_remaining)
         if page_body:
             blocks.append(MaterialBlock(
                 id=f"blk-pdf-page-{page_number:04d}",
@@ -991,6 +1077,10 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
                 order=page_number,
             ))
             returned_chars += len(page_body)
+            page_tokens = _estimated_tokens(page_body)
+            returned_tokens += page_tokens
+            if token_remaining is not None:
+                token_remaining = max(0, token_remaining - page_tokens)
             returned_end = span["start"] + page_end
         if page_end < len(page_text):
             response_budget_exhausted = True
@@ -1011,12 +1101,14 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
                 "source_revision": source_revision,
                 "session_id": request.session_id,
                 "text": full_text,
+                "title_text": title,
                 "page_spans": page_spans,
                 "budget_state": {
                     "max_total_response_chars": request.budget.max_total_response_chars,
                     "max_total_response_tokens": request.budget.max_total_response_tokens,
                     "max_expansion_rounds": request.budget.max_expansion_rounds,
                     "returned_chars": returned_chars,
+                    "returned_tokens": returned_tokens,
                     "expansion_rounds": 0,
                     "returned_ranges": [[0, returned_end]] if returned_end else [],
                 },
@@ -1062,6 +1154,7 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
                     "total_chars": len(full_text),
                     "continuation_available": can_continue,
                     "next_offset": returned_end if can_continue else None,
+                    **_token_budget_details(request, returned_tokens, full_text[returned_end:]),
                 },
             )
         }),
@@ -1100,7 +1193,21 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
         order=0,
     )
     available_chars = max(0, _response_char_budget(request) - len(title_block.model_dump_json()) - 200)
-    returned_text, returned_end = _take_text_range(text, 0, available_chars)
+    initial_token_limit = request.budget.max_response_tokens
+    if request.budget.max_total_response_tokens is not None:
+        initial_token_limit = (
+            min(initial_token_limit, request.budget.max_total_response_tokens)
+            if initial_token_limit is not None
+            else request.budget.max_total_response_tokens
+        )
+    title_tokens = _estimated_tokens(title)
+    returned_text, returned_end = _take_text_budgeted(
+        text,
+        0,
+        available_chars,
+        max(0, initial_token_limit - title_tokens) if initial_token_limit is not None else None,
+    )
+    returned_tokens = title_tokens + _estimated_tokens(returned_text)
     response_partial = source_truncated or returned_end < len(text)
     source_revision = hashlib.sha256(data).hexdigest()
     material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
@@ -1115,11 +1222,13 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
                 "source_revision": source_revision,
                 "session_id": request.session_id,
                 "text": text,
+                "title_text": title,
                 "budget_state": {
                     "max_total_response_chars": request.budget.max_total_response_chars,
                     "max_total_response_tokens": request.budget.max_total_response_tokens,
                     "max_expansion_rounds": request.budget.max_expansion_rounds,
                     "returned_chars": len(returned_text),
+                    "returned_tokens": returned_tokens,
                     "expansion_rounds": 0,
                     "returned_ranges": [[0, len(returned_text)]] if returned_text else [],
                 },
@@ -1177,6 +1286,7 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
                     "continuation_available": can_continue,
                     "source_truncated": source_truncated,
                     "next_offset": returned_end if can_continue else None,
+                    **_token_budget_details(request, returned_tokens, text[returned_end:]),
                 },
             )
         }),
@@ -1376,7 +1486,21 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 for image in selected_images
             ),
         )
-        returned_text, returned_end = _take_text_range(text, 0, available_chars)
+        initial_token_limit = request.budget.max_response_tokens
+        if request.budget.max_total_response_tokens is not None:
+            initial_token_limit = (
+                min(initial_token_limit, request.budget.max_total_response_tokens)
+                if initial_token_limit is not None
+                else request.budget.max_total_response_tokens
+            )
+        title_tokens = _estimated_tokens(title)
+        returned_text, returned_end = _take_text_budgeted(
+            text,
+            0,
+            available_chars,
+            max(0, initial_token_limit - title_tokens) if initial_token_limit is not None else None,
+        )
+        returned_tokens = title_tokens + _estimated_tokens(returned_text)
         text_is_partial = returned_end < len(text)
         image_only = len(text) < 20 and bool(parser.images)
         video_urls = [
@@ -1397,11 +1521,13 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     "source_revision": source_revision,
                     "session_id": request.session_id,
                     "text": text,
+                    "title_text": title,
                     "budget_state": {
                         "max_total_response_chars": request.budget.max_total_response_chars,
                         "max_total_response_tokens": request.budget.max_total_response_tokens,
                         "max_expansion_rounds": request.budget.max_expansion_rounds,
                         "returned_chars": len(returned_text),
+                        "returned_tokens": returned_tokens,
                         "expansion_rounds": 0,
                         "returned_ranges": [[0, len(returned_text)]] if returned_text else [],
                     },
@@ -1516,17 +1642,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             "continuation_available": can_continue,
                             "next_offset": len(returned_text) if can_continue else None,
                             "remaining_chars": max(0, len(text) - returned_end),
-                            **(
-                                {
-                                    "estimated_returned_tokens": _estimated_tokens(len(returned_text)),
-                                    "estimated_remaining_tokens": _estimated_tokens(max(0, len(text) - returned_end)),
-                                    "estimated_token_basis": "chars_div_4",
-                                    "token_budget": request.budget.max_response_tokens,
-                                    "total_token_budget": request.budget.max_total_response_tokens,
-                                }
-                                if request.budget.max_response_tokens is not None
-                                else {}
-                            ),
+                            **_token_budget_details(request, returned_tokens, text[returned_end:]),
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
                             **(
