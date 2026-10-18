@@ -77,6 +77,64 @@ def test_cli_read_returns_protocol_material_for_public_html(monkeypatch, capsys)
     assert response["resources"][0]["delivery"]["uri"] == "https://example.org/diagram.png"
 
 
+def test_goal_ranks_relevant_images_without_changing_source_coordinates(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        "<html><body><p>Deployment guide text remains in source order.</p>"
+        '<img src="https://cdn.example.org/diagram.png" alt="Architecture diagram">'
+        '<img src="https://cdn.example.org/command.png" alt="Deployment command">'
+        "</body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-goal-ranking",
+        "source": {"url": "https://example.org/guide"},
+        "goal": "Find the deployment command",
+        "budget": {"max_visual_inputs": 1},
+    }))
+
+    assert response.result.value == "partial"
+    assert response.resources[0].delivery.uri.endswith("command.png")
+    details = response.coverage.modalities["images"].details
+    assert "deployment" in details["goal_terms"]
+    assert details["goal_ranked"] is True
+    assert details["selected_candidates"][0]["alt"] == "Deployment command"
+
+
+def test_goal_reports_later_text_evidence_candidates_for_targeted_expansion(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source = (
+        "Introduction and context.\n\n"
+        "General background that is not the requested detail.\n\n"
+        "The deployment command is `envoy read` and must run after setup.\n\n"
+        "Final notes."
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        f"<html><body><p>{source.replace(chr(10), '</p><p>')}</p></body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-goal-text",
+        "source": {"url": "https://example.org/guide"},
+        "goal": "Find the deployment command",
+        "budget": {"max_response_chars": 256},
+    }))
+
+    candidates = response.coverage.modalities["text"].details["goal_candidates"]
+    assert candidates[0]["snippet"].startswith("The deployment command")
+    assert candidates[0]["offset"] > 0
+
+
 def test_cli_read_returns_structured_blocked_response_for_private_url(capsys):
     from envoy_cli import cli
 
