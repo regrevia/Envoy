@@ -857,11 +857,37 @@ def test_text_coverage_reports_token_estimate(monkeypatch):
         "protocol_version": "envoy.read/1",
         "request_id": "req-token-estimate",
         "source": {"url": "https://example.org/guide"},
+        "budget": {"max_response_tokens": 256},
     }))
 
     details = response.coverage.modalities["text"].details
     assert details["estimated_returned_tokens"] >= 1
     assert details["estimated_token_basis"] == "chars_div_4"
+
+
+def test_response_token_budget_hard_limits_first_read(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        "<html><body><p>" + ("Useful deployment sentence. " * 80) + "</p></body></html>",
+    ))
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-token-budget",
+        "source": {"url": "https://example.org/guide"},
+        "budget": {
+            "max_response_chars": 4000,
+            "max_response_tokens": 64,
+            "max_total_response_chars": 4000,
+        },
+    }))
+
+    body = next(block.content.text for block in response.blocks if block.kind.value == "paragraph")
+    assert len(body) <= 256
+    assert response.coverage.modalities["text"].details["token_budget"] == 64
 
 
 def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):

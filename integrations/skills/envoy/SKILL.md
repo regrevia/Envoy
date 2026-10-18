@@ -36,6 +36,9 @@ The request must include:
 - a unique `request_id`
 - `source.url`
 - the user's actual reading goal in `goal`
+- optionally set `budget.max_response_tokens` when the host needs a hard
+  response-token ceiling; Envoy enforces the stricter of the character and
+  token budgets
 - for MCP hosts, set `host_capabilities.image_input: "uri"` only when the host
   can actually inspect a source-linked image URI
 - optionally `ocr_profile: "fast" | "balanced" | "quality" | "pro"` when
