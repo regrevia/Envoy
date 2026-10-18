@@ -793,7 +793,6 @@ export default function VideoPage() {
             ["single", "视频链接"],
             ["creator", "主页作品"],
             ["local", "本地视频"],
-            ["mixed", "混合素材"],
           ] as const).map(([value, label]) => (
             <button
               key={value}

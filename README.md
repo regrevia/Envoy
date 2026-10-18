@@ -2,7 +2,7 @@
 
 **Let AI watch everything.**
 
-Envoy turns videos and mixed materials into clean, theme-first Markdown/HTML knowledge-base packages for Wiki, RAG, and agents.
+Envoy turns videos into clean, theme-first Markdown/HTML knowledge-base packages for Wiki, RAG, and agents.
 
 ## Quick Start
 
@@ -122,4 +122,4 @@ The main API is available at `http://localhost:8140`; frontend development defau
 
 ## Scope
 
-Envoy supports public video URLs, creator pages, local uploads, mixed documents, incremental knowledge libraries, browser-assisted login recovery, and progressively disclosed Wiki packages. Platform behavior still depends on the source site's access controls, DRM, regional availability, and network conditions.
+The current public scope is intentionally video-first: public video URLs, creator pages, local video uploads, incremental video libraries, browser-assisted login recovery, and progressively disclosed Wiki packages. Image, PDF, audio, and other formats are planned as later extensions on the same pipeline. Platform behavior still depends on the source site's access controls, DRM, regional availability, and network conditions.
