@@ -140,6 +140,12 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys)
     assert len(json.dumps(read_schema)) < 2500
     assert "max_response_chars" in read_schema["properties"]["budget"]["properties"]
     assert "max_total_visual_pixels" not in read_schema["properties"]["budget"]["properties"]
+    image_capability = read_schema["properties"]["host_capabilities"]["properties"]["image_input"]
+    assert image_capability["enum"] == ["none", "uri"]
+    descriptions = {tool["name"]: tool["description"] for tool in first["result"]["tools"]}
+    assert "stated goal" in descriptions["envoy_read"].lower()
+    assert "coverage" in descriptions["envoy_expand"].lower()
+    assert "capabilit" in descriptions["envoy_doctor"].lower()
 
 
 def test_mcp_bridge_modern_tool_call_returns_complete_structured_result(monkeypatch, capsys):
@@ -203,6 +209,10 @@ def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
     content_text = response["result"]["content"][0]["text"]
     assert len(content_text) < 200
     assert "Use a dedicated worker." not in content_text
+    catalog = response["result"]["structuredContent"]["capabilities"]
+    assert catalog["schema_version"] == "envoy.capabilities/1"
+    assert "static_html" in catalog["inputs"]["supported"]
+    assert "standalone_video" in catalog["inputs"]["unsupported"]
 
 
 def test_legacy_mcp_tool_keeps_text_fallback_for_structured_material(monkeypatch, capsys):

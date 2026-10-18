@@ -1,5 +1,6 @@
 import json
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import httpx
@@ -103,6 +104,11 @@ def test_cli_doctor_is_json_and_does_not_report_secrets(capsys):
     response = json.loads(capsys.readouterr().out)
     assert response["tool"] == "envoy"
     assert response["protocol_version"] == "envoy.read/1"
+    assert response["network_reader"] == "public_static_resources"
+    assert response["capabilities"]["schema_version"] == "envoy.capabilities/1"
+    assert "static_html" in response["capabilities"]["inputs"]["supported"]
+    assert "pdf_text_layer" in response["capabilities"]["inputs"]["supported"]
+    assert "standalone_video" in response["capabilities"]["inputs"]["unsupported"]
     assert "api_key" not in json.dumps(response).lower()
 
 
@@ -447,6 +453,295 @@ def test_direct_image_link_is_blocked_when_host_cannot_view_images(monkeypatch):
 
     assert response.result.value == "blocked"
     assert response.errors[0].code.value == "missing_capability"
+    assert response.errors[0].action_required is True
+
+
+def test_direct_image_link_requires_uri_delivery_from_host(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_source", lambda *_args: (_ for _ in ()).throw(
+        AssertionError("image should not be fetched without URI delivery support")
+    ))
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-image-local-file",
+        "source": {"url": "https://example.org/chart.png", "kind": "image"},
+        "host_capabilities": {"image_input": "local_file"},
+        "goal": "Read the chart",
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "missing_capability"
+    assert response.errors[0].action_required is True
+
+
+def test_pdf_url_extracts_text_with_page_locators(monkeypatch):
+    from reportlab.pdfgen import canvas
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    output = BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.drawString(72, 720, "Install the worker before the API.")
+    pdf.showPage()
+    pdf.drawString(72, 720, "Verify the health endpoint after startup.")
+    pdf.save()
+    pdf_bytes = output.getvalue()
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache: {
+        "url": "https://example.org/guide.pdf",
+        "data": pdf_bytes,
+        "mime_type": "application/pdf",
+    })
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-pdf-1",
+        "source": {"url": "https://example.org/guide.pdf"},
+        "goal": "Find installation steps",
+    }))
+
+    page_blocks = [block for block in response.blocks if block.kind.value == "paragraph"]
+    assert response.result.value == "ready"
+    assert len(page_blocks) == 2
+    assert page_blocks[0].locator.type == "pdf_page"
+    assert page_blocks[0].locator.page_number == 1
+    assert page_blocks[1].locator.page_number == 2
+    assert "Install the worker" in page_blocks[0].content.text
+
+
+def test_extensionless_pdf_is_auto_routed_by_response_content_type(monkeypatch):
+    from reportlab.pdfgen import canvas
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    output = BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.drawString(72, 720, "Detected from the PDF response header.")
+    pdf.save()
+    pdf_data = output.getvalue()
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+
+    class Response:
+        status_code = 200
+        headers = {"content-type": "application/pdf", "content-length": str(len(pdf_data))}
+        encoding = "utf-8"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield pdf_data
+
+    class StreamContext:
+        def __enter__(self):
+            return Response()
+
+        def __exit__(self, *_args):
+            return False
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            return StreamContext()
+
+    monkeypatch.setattr(reader.httpx, "Client", Client)
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-pdf-mime",
+        "source": {"url": "https://example.org/download?id=123"},
+    }))
+
+    assert response.result.value == "ready"
+    assert any("Detected from the PDF response header." in block.content.text for block in response.blocks if block.kind.value == "paragraph")
+
+
+def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedText({
+            "url": "https://example.org/download?id=readme",
+            "data": b"# Setup\n\nInstall the worker first.\n",
+            "mime_type": "text/markdown",
+            "encoding": "utf-8",
+        })
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-text-mime",
+        "source": {"url": "https://example.org/download?id=readme"},
+    }))
+
+    assert response.result.value == "ready"
+    assert any("Install the worker first." in block.content.text for block in response.blocks if block.kind.value == "paragraph")
+    assert response.blocks[1].locator.type == "web"
+
+
+def test_text_suffix_handles_generic_download_content_type():
+    from contextlib import contextmanager
+    from unittest.mock import patch
+    from envoy_cli import reader
+
+    class Response:
+        status_code = 200
+        headers = {"content-type": "application/octet-stream"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"Simple text file with enough content."
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @contextmanager
+        def stream(self, *_args, **_kwargs):
+            yield Response()
+
+    with patch.object(reader, "_is_public_http_url", return_value=True), \
+         patch.object(reader.httpx, "Client", Client):
+        try:
+            reader._fetch_html("https://example.org/readme.txt")
+        except reader.DetectedText as exc:
+            assert exc.source["mime_type"] == "text/plain"
+            assert exc.source["data"] == b"Simple text file with enough content."
+        else:
+            raise AssertionError("Text suffix should route binary content as text")
+
+
+def test_long_plain_text_uses_incremental_material_cache(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    source_text = "\n".join(f"Section {index}: retain this source sentence." for index in range(400))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedText({
+            "url": "https://example.org/archive.txt",
+            "data": source_text.encode(),
+            "mime_type": "text/plain",
+            "encoding": "utf-8",
+        })
+    ))
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-long-text",
+        "source": {"url": "https://example.org/archive.txt"},
+        "budget": {"max_response_chars": 900},
+    }))
+
+    assert response.result.value == "partial"
+    body = next(block.content.text for block in response.blocks if block.id == "blk-body-0001")
+    next_offset = response.coverage.modalities["text"].details["next_offset"]
+    expanded = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-long-text-expand",
+        "material_id": response.material_id,
+        "offset": next_offset,
+        "max_chars": 800,
+        "max_total_response_chars": 5000,
+    }))
+
+    assert response.coverage.modalities["text"].details["continuation_available"] is True
+    assert expanded.blocks[0].content.text
+    assert body != source_text
+    assert expanded.coverage.modalities["text"].details["offset"] == next_offset
+
+
+def test_long_pdf_expands_by_page_without_losing_page_locator(tmp_path, monkeypatch):
+    from reportlab.pdfgen import canvas
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    output = BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.drawString(72, 720, "Install the worker before the API.")
+    pdf.showPage()
+    pdf.drawString(72, 720, "Verify the health endpoint after startup.")
+    pdf.save()
+    pdf_bytes = output.getvalue()
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache: {
+        "url": "https://example.org/guide.pdf",
+        "data": pdf_bytes,
+        "mime_type": "application/pdf",
+    })
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-long-pdf",
+        "source": {"url": "https://example.org/guide.pdf"},
+        "budget": {"max_response_chars": 650},
+    }))
+
+    assert response.result.value == "partial"
+    next_offset = response.coverage.modalities["text"].details["next_offset"]
+    expanded = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-expand-pdf",
+        "material_id": response.material_id,
+        "offset": next_offset,
+        "max_chars": 500,
+        "max_total_response_chars": 1000,
+    }))
+
+    assert expanded.blocks[0].locator.type == "pdf_page"
+    assert expanded.blocks[0].locator.page_number == 2
+    page_two_first = next(
+        block.content.text
+        for block in response.blocks
+        if getattr(block.locator, "page_number", None) == 2
+    )
+    assert "Verify the health endpoint" in page_two_first + expanded.blocks[0].content.text
+
+
+def test_scanned_pdf_reports_ocr_capability_gap(monkeypatch):
+    from reportlab.pdfgen import canvas
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    output = BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.showPage()
+    pdf.save()
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache: {
+        "url": "https://example.org/scanned.pdf",
+        "data": output.getvalue(),
+        "mime_type": "application/pdf",
+    })
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-scanned-pdf",
+        "source": {"url": "https://example.org/scanned.pdf"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "missing_capability"
+    assert response.errors[0].action_required is True
+    assert "OCR" in response.errors[0].message
 
 
 def test_public_dns_validation_reuses_resolution_only_within_one_read(monkeypatch):
