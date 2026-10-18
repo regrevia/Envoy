@@ -363,21 +363,28 @@ class RuntimeSafetyTests(unittest.TestCase):
             sys.modules.pop("app.core.config", None)
 
     def test_whisper_transcription_helper_reuses_loaded_model(self):
+        previous = os.environ.get("MEDIA_WHISPER_MODEL")
         calls = []
 
         class FakeModel:
-            def transcribe(self, audio_path):
+            def transcribe(self, audio_path, **kwargs):
                 return {"text": f"transcribed {audio_path}", "segments": [{"text": audio_path}]}
 
         fake_whisper = types.SimpleNamespace(load_model=lambda model_name: calls.append(model_name) or FakeModel())
         sys.modules["whisper"] = fake_whisper
         try:
+            os.environ["MEDIA_WHISPER_MODEL"] = "base"
             media_service = reload_media_service()
 
             first = media_service._run_whisper_transcription("segment-1.wav")
             second = media_service._run_whisper_transcription("segment-2.wav")
         finally:
             sys.modules.pop("whisper", None)
+            if previous is None:
+                os.environ.pop("MEDIA_WHISPER_MODEL", None)
+            else:
+                os.environ["MEDIA_WHISPER_MODEL"] = previous
+            reload_media_service()
 
         self.assertEqual(calls, ["base"])
         self.assertEqual(first["text"], "transcribed segment-1.wav")
@@ -388,7 +395,7 @@ class RuntimeSafetyTests(unittest.TestCase):
         calls = []
 
         class FakeModel:
-            def transcribe(self, audio_path):
+            def transcribe(self, audio_path, **kwargs):
                 return {"text": f"tiny transcript {audio_path}", "segments": []}
 
         fake_whisper = types.SimpleNamespace(load_model=lambda model_name: calls.append(model_name) or FakeModel())

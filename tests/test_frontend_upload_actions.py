@@ -46,20 +46,6 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
-    def test_home_page_passes_output_preferences_into_upload_flow(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
-        for copy in [
-            "const uploadOutputsParam = selectedOutputs.join(',');",
-            "const uploadHref = canProceed",
-            "asset_type=${encodeURIComponent(selectedAssetType)}",
-            "&outputs=${encodeURIComponent(uploadOutputsParam)}",
-            "素材类型",
-            "setSelectedAssetType",
-        ]:
-            self.assertIn(copy, text)
-
     def test_upload_page_accepts_asset_type_context_from_home(self):
         page = ROOT_DIR / "frontend" / "app" / "upload" / "page.tsx"
         text = page.read_text(encoding="utf-8")
@@ -292,11 +278,8 @@ class FrontendUploadActionsTests(unittest.TestCase):
         for copy in [
             "这是第 3 步",
             "先从首页创建转换任务",
-            "返回首页创建转换任务",
-            "创建转换任务",
             "上传素材",
-            "选择生成内容",
-            "href=\"/\"",
+            'href="/video"',
         ]:
             self.assertIn(copy, text)
 
@@ -353,34 +336,13 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, text)
 
-    def test_home_page_starts_with_single_task_creation_flow(self):
+    def test_home_route_redirects_to_video_creation_flow(self):
         page = ROOT_DIR / "frontend" / "app" / "page.tsx"
         text = page.read_text(encoding="utf-8")
-
-        for copy in [
-            "创建转换任务",
-            "1. 创建任务",
-            "2. 上传素材",
-            "3. 选择生成内容",
-            "视频",
-            "长文本",
-            "文档",
-            "知识库文档",
-            "可复用流程包",
-            "检索语料包",
-            "训练问答",
-            "/api/v1/projects",
-            "project_id=",
-            "params.set('outputs'",
-            "params.set('export_type'",
-        ]:
-            self.assertIn(copy, text)
-        self.assertIn("task-wizard", text)
-        self.assertIn("primary-workflow", text)
-        self.assertNotIn("Workspace areas", text)
-        self.assertNotIn("Envoy Workspace", text)
-        self.assertNotIn("已有任务</div>", text)
-        self.assertNotIn("已选择生成</div>", text)
+        self.assertIn('redirect("/video")', text)
+        video_page = (ROOT_DIR / "frontend" / "app" / "video" / "page.tsx").read_text(encoding="utf-8")
+        self.assertIn("视频转知识库", video_page)
+        self.assertIn("最近任务", video_page)
 
     def test_video_page_restores_last_task_after_refresh(self):
         page = (ROOT_DIR / "frontend" / "app" / "video" / "page.tsx").read_text(encoding="utf-8")
@@ -402,60 +364,33 @@ class FrontendUploadActionsTests(unittest.TestCase):
         ]:
             self.assertIn(copy, page if copy != "dropZoneActive" else styles)
 
-    def test_home_page_requires_project_before_upload_or_export(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
+    def test_video_page_has_chinese_first_language_switch_and_compact_home_actions(self):
+        page = (ROOT_DIR / "frontend" / "app" / "video" / "page.tsx").read_text(encoding="utf-8")
         for copy in [
-            "const canProceed = Boolean(selectedProjectId);",
-            "请先创建或选择任务后继续",
-            "aria-disabled={!canProceed}",
-            "const uploadOutputsParam = selectedOutputs.join(',');",
-            "uploadHref = canProceed",
-            "semanticHref = canProceed ? `/semantic-units?project_id=${selectedProjectId}` : '#'",
-            "samplesHref = canProceed && selectedOutputs.includes('samples') ?",
-            "exportHref = useMemo(() => {",
-            "if (!canProceed || !hasExportableOutput) {",
-            "return '#';",
+            "const [locale, setLocale] = useState<Locale>('zh');",
+            "setLocale(locale === 'zh' ? 'en' : 'zh')",
+            "中文",
+            "English",
+            "粘贴链接，剩下的交给 Envoy",
+            "最近任务",
+            "任务中心",
+            "视觉模型设置",
         ]:
-            self.assertIn(copy, text)
-        self.assertNotIn("const uploadHref = selectedProjectId ? `/upload?project_id=${selectedProjectId}` : '/upload';", text)
-        self.assertNotIn('href="/semantic-units"', text)
-        self.assertNotIn('href="/generated-samples"', text)
+            self.assertIn(copy, page)
 
-    def test_home_page_keeps_samples_and_dataset_separate_from_material_export_params(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
+    def test_video_page_uses_editorial_workspace_layout_without_explanatory_card_copy(self):
+        styles = (ROOT_DIR / "frontend" / "app" / "video" / "video.module.css").read_text(encoding="utf-8")
         for copy in [
-            "const materialOutputs = selectedOutputs.filter((item) => ['delivery', 'markdown', 'skill', 'rag'].includes(item));",
-            "const datasetOutputs = selectedOutputs.includes('dataset') ? ['sft'] : [];",
-            "const exportOutputs = [...materialOutputs, ...datasetOutputs];",
-            "const hasExportableOutput = exportOutputs.length > 0;",
-            "const samplesHref = canProceed && selectedOutputs.includes('samples') ?",
-            "params.set('outputs', exportOutputs.join(','));",
-            "请先勾选知识库文档、流程包、检索语料或数据文件后再进入导出",
+            "max-width: 1040px",
+            "letter-spacing: 0",
+            "border-top: 1px solid",
+            "grid-template-columns: minmax(0, 1fr) auto",
+            "background: #f8fafc",
+            "background: #2563eb",
+            "grid-template-columns: repeat(3, minmax(0, 1fr))",
         ]:
-            self.assertIn(copy, text)
-        self.assertNotIn("params.set('outputs', selectedOutputs.join(','));", text)
-
-    def test_home_page_explains_complete_conversion_chain(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
-        for copy in [
-            "完整转换链路",
-            "上传素材 -> 内容处理 -> 内容片段审查 -> 生成训练问答 -> 自动整理交付物 -> 来源追溯",
-            "内容处理",
-            "长任务诊断",
-            "自动整理交付物",
-            "来源追溯",
-            "查看交付中心",
-            "查看追溯链路",
-            "href=\"/artifacts\"",
-            "href=\"/trace\"",
-        ]:
-            self.assertIn(copy, text)
+            self.assertIn(copy, styles)
+        self.assertNotIn("border-radius: 16px", styles)
 
     def test_task_pages_allow_retry_after_canceling_stuck_tasks(self):
         list_page = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
@@ -467,15 +402,6 @@ class FrontendUploadActionsTests(unittest.TestCase):
         self.assertIn("超过无响应判定后，可取消并重试", detail_page)
         self.assertIn("重试任务", list_page)
         self.assertIn("重试任务", detail_page)
-
-    def test_home_page_uses_vertical_divider_flow_not_card_grid(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
-        self.assertIn("gridTemplateColumns: '1fr'", text)
-        self.assertIn("borderBottom: '1px solid #e5e7eb'", text)
-        self.assertNotIn("repeat(3, minmax(0, 1fr))", text)
-        self.assertNotIn("borderRadius: 12", text)
 
     def test_projects_page_uses_divider_layout_over_cards(self):
         page = ROOT_DIR / "frontend" / "app" / "projects" / "page.tsx"
@@ -586,62 +512,6 @@ class FrontendUploadActionsTests(unittest.TestCase):
 
         self.assertNotIn("panelStyle", text)
         self.assertNotIn("borderRadius: 8", text)
-
-    def test_home_page_exposes_ollama_runtime_status(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
-        for copy in [
-            "/api/v1/health/ollama",
-            "Ollama 本地模型",
-            "模型",
-            "可用",
-            "未配置",
-        ]:
-            self.assertIn(copy, text)
-
-    def test_home_page_can_configure_ollama_runtime(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
-        for copy in [
-            "ollamaConfig",
-            "setOllamaConfig",
-            "saveOllamaConfig",
-            "/api/v1/health/ollama/config",
-            "method: 'PUT'",
-            "Ollama 配置",
-            "模型名称",
-            "服务地址",
-            "超时秒数",
-            "最大提示词长度",
-            "保存配置",
-            "配置会写入本地运行时配置文件，服务重启后继续生效",
-            "setOllamaStatus(status)",
-        ]:
-            self.assertIn(copy, text)
-
-    def test_home_page_exposes_media_runtime_status(self):
-        page = ROOT_DIR / "frontend" / "app" / "page.tsx"
-        text = page.read_text(encoding="utf-8")
-
-        for copy in [
-            "type MediaStatus =",
-            "/api/v1/health/media",
-            "媒体处理模式",
-            "最大处理",
-            "分段",
-            "抽帧",
-            "OCR",
-            "frame_extraction_enabled",
-            "ocr_enabled",
-            "max_input_seconds",
-            "transcription_timeout_sec",
-            "ocr_timeout_sec",
-            "单段转写超时",
-            "OCR 超时",
-        ]:
-            self.assertIn(copy, text)
 
     def test_task_pages_expose_cancel_action_for_long_running_work(self):
         task_list = (ROOT_DIR / "frontend" / "app" / "tasks" / "page.tsx").read_text(encoding="utf-8")
