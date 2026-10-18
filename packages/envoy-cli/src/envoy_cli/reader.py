@@ -276,6 +276,14 @@ def _estimated_tokens(chars: int) -> int:
     return max(0, (max(0, int(chars)) + 3) // 4)
 
 
+def _response_char_budget(request) -> int:
+    char_budget = int(request.budget.max_response_chars)
+    token_budget = getattr(request.budget, "max_response_tokens", None)
+    if token_budget is not None:
+        char_budget = min(char_budget, int(token_budget) * 4)
+    return char_budget
+
+
 def _source_text_was_truncated(values: list[str]) -> bool:
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(values)).strip()
     return len(text) > MAX_TEXT_CHARS
@@ -501,7 +509,12 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         return _expand_blocked(request, "The cumulative response character budget has been exhausted")
     total_text = str(stored.get("text") or "")
     offset = request.offset
-    max_chars = request.max_chars
+    max_chars = min(
+        request.max_chars,
+        int(request.max_response_tokens) * 4
+        if request.max_response_tokens is not None
+        else request.max_chars,
+    )
     max_total_chars = request.max_total_response_chars
     if offset > len(total_text):
         raise ValueError("offset must be between zero and the material length")
@@ -920,7 +933,7 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
             ErrorCode.MISSING_CAPABILITY,
         )
 
-    available_chars = max(0, request.budget.max_response_chars - len(title_block.model_dump_json()))
+    available_chars = max(0, _response_char_budget(request) - len(title_block.model_dump_json()))
     blocks = [title_block]
     returned_chars = 0
     returned_end = 0
@@ -1051,7 +1064,7 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
         ),
         order=0,
     )
-    available_chars = max(0, request.budget.max_response_chars - len(title_block.model_dump_json()) - 200)
+    available_chars = max(0, _response_char_budget(request) - len(title_block.model_dump_json()) - 200)
     returned_text, returned_end = _take_text_range(text, 0, available_chars)
     response_partial = source_truncated or returned_end < len(text)
     source_revision = hashlib.sha256(data).hexdigest()
@@ -1318,7 +1331,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         selected_images = image_candidates[:visual_budget]
         available_chars = max(
             0,
-            request.budget.max_response_chars
+            _response_char_budget(request)
             - len(title_block.model_dump_json())
             - sum(
                 len(image.get("alt", ""))
@@ -1466,9 +1479,16 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             "continuation_available": can_continue,
                             "next_offset": len(returned_text) if can_continue else None,
                             "remaining_chars": max(0, len(text) - returned_end),
-                            "estimated_returned_tokens": _estimated_tokens(len(returned_text)),
-                            "estimated_remaining_tokens": _estimated_tokens(max(0, len(text) - returned_end)),
-                            "estimated_token_basis": "chars_div_4",
+                            **(
+                                {
+                                    "estimated_returned_tokens": _estimated_tokens(len(returned_text)),
+                                    "estimated_remaining_tokens": _estimated_tokens(max(0, len(text) - returned_end)),
+                                    "estimated_token_basis": "chars_div_4",
+                                    "token_budget": request.budget.max_response_tokens,
+                                }
+                                if request.budget.max_response_tokens is not None
+                                else {}
+                            ),
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
                             **(
