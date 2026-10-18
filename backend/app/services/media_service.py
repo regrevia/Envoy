@@ -545,8 +545,8 @@ def _run_ocr_worker_logic(frame_paths: list[str], profile: str | None = None):
         profile_models = {
             "fast": ("PP-OCRv6_tiny_det", "PP-OCRv6_tiny_rec"),
             "balanced": ("PP-OCRv6_small_det", "PP-OCRv6_small_rec"),
-            "quality": ("PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
-            "pro": ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
+            "quality": ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
+            "pro": ("PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
         }
         selected_profile = profile if profile in profile_models else MEDIA_OCR_PROFILE
         detection_model, recognition_model = profile_models[selected_profile]
