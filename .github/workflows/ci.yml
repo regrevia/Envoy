@@ -45,6 +45,10 @@ jobs:
           tests/cli
           tests/test_public_page_ingestion.py
         working-directory: .
+      - name: Build credential-free Skill bundle
+        run: |
+          python scripts/package_envoy_skill.py --output /tmp/envoy-skill.zip --json
+          unzip -l /tmp/envoy-skill.zip
 
   frontend:
     name: Frontend build
