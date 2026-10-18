@@ -135,6 +135,31 @@ def test_goal_reports_later_text_evidence_candidates_for_targeted_expansion(monk
     assert candidates[0]["offset"] > 0
 
 
+def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypatch):
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "b" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "c" * 64,
+        "text": "Guide text",
+    })
+
+    result = reader.record_visual_observation(
+        material_id,
+        "https://example.org/chart.png?token=secret",
+        "resource-image",
+        "blk-image-0001",
+        "The chart shows three stages.",
+    )
+
+    stored = json.loads((tmp_path / f"{material_id}.json").read_text(encoding="utf-8"))
+    assert result == {"persisted": True, "observation_count": 1}
+    assert stored["visual_observations"][0]["observation"] == "The chart shows three stages."
+    assert "secret" not in json.dumps(stored)
+
+
 def test_cli_read_returns_structured_blocked_response_for_private_url(capsys):
     from envoy_cli import cli
 

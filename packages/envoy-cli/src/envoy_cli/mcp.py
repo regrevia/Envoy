@@ -9,7 +9,13 @@ from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest, VisualObserva
 
 from . import __version__
 from .capabilities import capability_catalog
-from .reader import PublicPageError, _redact_url, expand_material, read_public_page
+from .reader import (
+    PublicPageError,
+    _redact_url,
+    expand_material,
+    read_public_page,
+    record_visual_observation,
+)
 
 
 CURRENT_PROTOCOL_VERSION = "2026-07-28"
@@ -335,6 +341,7 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
             payload = {
                 "protocol_version": "envoy.read/1",
                 "request_id": request.request_id,
+                "material_id": request.material_id,
                 "execution_state": "completed",
                 "result": "ready",
                 "blocks": [{
@@ -370,6 +377,14 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                     },
                 },
             }
+            payload["observation_persistence"] = record_visual_observation(
+                request.material_id,
+                source_url,
+                request.resource_id,
+                request.source_block_id,
+                request.observation,
+                request.locator_quote,
+            )
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
     except PublicPageError as exc:

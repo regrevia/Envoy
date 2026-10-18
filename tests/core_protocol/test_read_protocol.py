@@ -71,6 +71,7 @@ def test_visual_observation_request_is_bounded_and_roundtrips():
     request = VisualObservationRequest.model_validate({
         "protocol_version": "envoy.observe/1",
         "request_id": "observe-1",
+        "material_id": "mat-" + "a" * 24,
         "source_url": "https://example.org/chart.png",
         "resource_id": "resource-image",
         "source_block_id": "blk-image-0001",
