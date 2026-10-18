@@ -102,6 +102,8 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{
 
 工具发现只公布静态网页读取实际支持的输入字段，避免把未实现的视频/视觉参数误导 Agent，也减少工具 schema 占用的上下文。
 
+新版 MCP 返回完整结构化材料一次，文本内容仅提供短状态说明；旧版仍保留文本 JSON 兼容输出。
+
 长页面首读按请求预算限制返回；若结果标记 `partial` 且覆盖信息给出 `continuation_available`，使用 `envoy expand` 按 `next_offset` 读取下一段。正文快照在本机限额缓存，不会为每段重新下载页面。
 
 ## 模型配置

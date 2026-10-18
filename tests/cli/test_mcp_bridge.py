@@ -37,8 +37,8 @@ def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):
     from envoy_cli import reader
 
     html = "<html><head><title>Guide</title></head><body><p>Use the worker first.</p></body></html>"
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes: ("https://example.org/", html))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None: ("https://example.org/", html))
 
     exit_code = mcp.run_lines([{
         "jsonrpc": "2.0",
@@ -146,8 +146,8 @@ def test_mcp_bridge_modern_tool_call_returns_complete_structured_result(monkeypa
     from envoy_cli import mcp, reader
 
     html = "<html><head><title>Guide</title></head><body><p>Use a dedicated worker.</p></body></html>"
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes: ("https://example.org/", html))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None: ("https://example.org/", html))
     metadata = {
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -173,7 +173,66 @@ def test_mcp_bridge_modern_tool_call_returns_complete_structured_result(monkeypa
     assert response["result"]["resultType"] == "complete"
     assert response["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "envoy"
     assert response["result"]["isError"] is False
-    assert response["result"]["structuredContent"]["result"] == "ready"
+    structured = response["result"]["structuredContent"]
+    assert structured["result"] == "ready"
+    assert structured["protocol_version"] == "envoy.read/1"
+    assert len(json.dumps(structured)) < 1200
+    paragraph = next(block for block in structured["blocks"] if block["kind"] == "paragraph")
+    assert len(paragraph["locator"]["quote"]) <= 120
+
+
+def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
+    from envoy_cli import mcp
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "doctor",
+        "method": "tools/call",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+            "name": "envoy_doctor",
+            "arguments": {},
+        },
+    }])
+    response = json.loads(capsys.readouterr().out)
+
+    assert response["result"]["content"][0]["text"] == "Envoy doctor ready."
+    content_text = response["result"]["content"][0]["text"]
+    assert len(content_text) < 200
+    assert "Use a dedicated worker." not in content_text
+
+
+def test_legacy_mcp_tool_keeps_text_fallback_for_structured_material(monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    html = "<html><head><title>Guide</title></head><body><p>Use a dedicated worker.</p></body></html>"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _limit, _cache=None: ("https://example.org/", html))
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_read",
+            "arguments": {
+                "protocol_version": "envoy.read/1",
+                "request_id": "legacy-read",
+                "source": {"url": "https://example.org/"},
+            },
+        },
+    }])
+    _initialize, response = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert "structuredContent" in response["result"]
+    assert "Use a dedicated worker." in response["result"]["content"][0]["text"]
 
 
 def test_mcp_bridge_rejects_unsupported_modern_protocol_with_supported_versions():

@@ -113,8 +113,8 @@ def test_read_respects_response_character_budget_and_reports_partial_coverage(mo
     html_text = "<html><head><title>Long guide</title></head><body><main>" + (
         "<p>Detailed operational step and supporting explanation.</p>" * 30
     ) + "</main></body></html>"
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, max_bytes: ("https://example.org/guide", html_text))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, max_bytes, _cache=None: ("https://example.org/guide", html_text))
     request = ReadRequest.model_validate({
         "protocol_version": "envoy.read/1",
         "request_id": "req-budget-1",
@@ -175,7 +175,7 @@ def test_fetch_retries_transient_network_errors_and_enforces_streamed_size_limit
         def __exit__(self, *_args):
             return False
 
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
     monkeypatch.setattr(reader.httpx, "Client", Client)
     monkeypatch.setattr(reader.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(reader, "MAX_HTML_BYTES", 5)
@@ -198,10 +198,10 @@ def test_read_creates_local_material_and_expand_returns_next_non_overlapping_sli
         "<p>Step explains one detailed action and its reason.</p>" * 40
     ) + "</main></body></html>"
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
     calls = []
 
-    def fetch(_url, _max_bytes):
+    def fetch(_url, _max_bytes, _dns_cache=None):
         calls.append(1)
         return "https://example.org/guide", html_text
 
@@ -320,11 +320,11 @@ def test_read_redacts_sensitive_query_values_and_omits_signed_image_resources(mo
     <img src="https://cdn.example.org/image.webp?X-Amz-Signature=hidden-signature&amp;size=large">
     </main></body></html>
     """
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
     monkeypatch.setattr(
         reader,
         "_fetch_html",
-        lambda _url, _max_bytes: (
+        lambda _url, _max_bytes, _dns_cache=None: (
             "https://example.org/article?access_token=hidden-token&amp;page=1",
             html_text,
         ),
@@ -351,9 +351,9 @@ def test_network_error_does_not_echo_secret_query_value(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     secret_url = "https://example.org/article?api_key=do-not-leak"
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
 
-    def fail_fetch(_url, _max_bytes):
+    def fail_fetch(_url, _max_bytes, _dns_cache=None):
         raise httpx.ConnectError(f"failed to connect to {secret_url}")
 
     monkeypatch.setattr(reader, "_fetch_html", fail_fetch)
@@ -372,11 +372,11 @@ def test_source_text_hard_limit_is_reported_as_partial_not_silent_success(monkey
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "MAX_TEXT_CHARS", 100)
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
     monkeypatch.setattr(
         reader,
         "_fetch_html",
-        lambda _url, _max_bytes: (
+        lambda _url, _max_bytes, _dns_cache=None: (
             "https://example.org/long",
             "<html><body><p>" + ("substantial source text " * 20) + "</p></body></html>",
         ),
@@ -393,13 +393,48 @@ def test_source_text_hard_limit_is_reported_as_partial_not_silent_success(monkey
     assert any("extraction limit" in item for item in response.coverage.modalities["text"].unresolved)
 
 
+def test_public_dns_validation_reuses_resolution_only_within_one_read(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    calls = {}
+
+    def resolve(host, port):
+        calls[host] = calls.get(host, 0) + 1
+        return [(None, None, None, None, ("93.184.216.34", port))]
+
+    monkeypatch.setattr(reader.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda _url, _max_bytes, _dns_cache=None: (
+            "https://example.org/page",
+            (
+                "<html><body><p>Article content with enough text to read.</p>"
+                '<img src="https://cdn.example.org/one.webp">'
+                '<img src="https://cdn.example.org/two.webp">'
+                "</body></html>"
+            ),
+        ),
+    )
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-dns-cache",
+        "source": {"url": "https://example.org/page"},
+    }))
+
+    assert response.result.value == "ready"
+    assert len(response.resources) == 2
+    assert calls == {"example.org": 1, "cdn.example.org": 1}
+
+
 def test_zero_retention_does_not_advertise_expandable_content(tmp_path, monkeypatch, capsys):
     from envoy_cli import cli, reader
 
     html_text = "<html><head><title>Guide</title></head><body><p>" + ("Useful sentence. " * 80) + "</p></body></html>"
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes: ("https://example.org/", html_text))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _dns_cache=None: ("https://example.org/", html_text))
     request = {
         "protocol_version": "envoy.read/1",
         "request_id": "req-no-retain",
