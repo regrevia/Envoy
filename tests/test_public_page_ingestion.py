@@ -167,6 +167,43 @@ def test_public_page_bundle_includes_complete_source_text_and_every_image(tmp_pa
     assert materials["resources"][0]["delivery"]["uri"].startswith("assets/images/")
 
 
+def test_public_page_bundle_passes_ocr_blocks_into_materials(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.workers.jobs import _attach_public_page_source_to_bundle
+    from app.core.storage import storage_client
+
+    monkeypatch.setattr(storage_client, "mode", "local")
+    monkeypatch.setattr(storage_client, "read_bytes", lambda name: b"body" if name == "note.md" else b"image")
+    export_root = tmp_path / "library"
+    (export_root / "overview").mkdir(parents=True)
+    (export_root / "index.md").write_text("# Index\n", encoding="utf-8")
+    (export_root / "manifest.json").write_text("{}", encoding="utf-8")
+    text_asset = SimpleNamespace(file_path="note.md", file_name="note.md")
+    image_asset = SimpleNamespace(
+        id="image-1",
+        file_path="image.webp",
+        mime_type="image/webp",
+        extra_metadata={"artifact_filename": "image.webp", "alt": "Screenshot"},
+    )
+
+    result = _attach_public_page_source_to_bundle(
+        db=None,
+        task_id="task-ocr",
+        project_id="project-1",
+        bundle_path=str(export_root / "overview" / "page.md"),
+        source_url="https://example.org/note",
+        page_info={"title": "Note", "text": "Body", "output_formats": ["markdown"]},
+        text_asset=text_asset,
+        image_assets=[image_asset],
+        ocr_blocks=[{"asset_id": "image-1", "content": "Command: envoy read", "engine": "test"}],
+    )
+
+    materials = json.loads((export_root / "materials.json").read_text(encoding="utf-8"))
+    ocr = next(block for block in materials["blocks"] if block["kind"] == "ocr")
+    assert ocr["content"]["text"] == "Command: envoy read"
+    assert ocr["parent_id"] == "blk-image-0001"
+
+
 def test_public_page_material_response_marks_source_and_ocr_origins():
     from app.services.web_content_service import public_page_material_response
 
@@ -187,3 +224,29 @@ def test_public_page_material_response_marks_source_and_ocr_origins():
     assert origins["blk-body-0001"] == "source_text"
     assert origins["blk-image-0001"] == "source_image"
     assert origins["blk-ocr-0001"] == "ocr"
+
+
+def test_public_page_bundle_can_include_ocr_blocks_from_image_assets(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.services.web_content_service import public_page_material_response
+
+    response = public_page_material_response(
+        page={"title": "Note", "text": "Body"},
+        source_url="https://example.org/note",
+        image_assets=[{
+            "id": "asset-1",
+            "file_name": "image-01.webp",
+            "mime_type": "image/webp",
+            "sha256": "0" * 64,
+            "alt": "A",
+        }],
+        ocr_blocks=[{
+            "asset_id": "asset-1",
+            "content": "Command: envoy read",
+            "engine": "PP-OCRv6_medium",
+        }],
+    )
+
+    ocr = next(block for block in response.blocks if block.kind.value == "ocr")
+    assert ocr.parent_id == "blk-image-0001"
+    assert ocr.content.text == "Command: envoy read"

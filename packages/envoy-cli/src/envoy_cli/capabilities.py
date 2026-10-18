@@ -44,6 +44,10 @@ def capability_catalog() -> dict:
                 "tool": "envoy_doctor",
                 "use": "Discover this runtime catalog.",
             },
+            {
+                "tool": "envoy_observe_visual",
+                "use": "Return a bounded host observation linked to a previously delivered image resource.",
+            },
         ],
         "outputs": [
             "source_located_text_blocks",

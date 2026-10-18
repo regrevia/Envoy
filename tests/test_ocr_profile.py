@@ -118,3 +118,30 @@ def test_ocr_pro_profile_uses_current_best_general_models(monkeypatch):
 
     assert captured["text_detection_model_name"] == "PP-OCRv6_medium_det"
     assert captured["text_recognition_model_name"] == "PP-OCRv6_medium_rec"
+
+
+def test_task_ocr_runner_preserves_pro_profile(monkeypatch):
+    from types import SimpleNamespace
+    from app.workers import jobs
+
+    captured = {}
+
+    def fake_ocr(frame_paths, profile=None):
+        captured["profile"] = profile
+        return []
+
+    class Query:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return SimpleNamespace(input_config={"ocr_profile": "pro"})
+
+    class DB:
+        def query(self, *_args, **_kwargs):
+            return Query()
+
+    monkeypatch.setattr(jobs, "run_ocr_on_frames", fake_ocr)
+    jobs._run_ocr_for_task(DB(), "task-pro", ["frame.jpg"])
+
+    assert captured["profile"] == "pro"

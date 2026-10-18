@@ -29,7 +29,64 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
         "envoy_read",
         "envoy_expand",
         "envoy_doctor",
+        "envoy_observe_visual",
     }
+
+
+def test_mcp_bridge_accepts_visual_observation_as_source_material(capsys):
+    from envoy_cli import mcp
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "observe",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_observe_visual",
+            "arguments": {
+                "protocol_version": "envoy.observe/1",
+                "request_id": "observe-1",
+                "source_url": "https://example.org/chart.png",
+                "resource_id": "resource-image",
+                "source_block_id": "blk-image-0001",
+                "observation": "The chart shows three deployment stages.",
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out.splitlines()[1])
+    payload = json.loads(response["result"]["content"][0]["text"])
+    assert payload["result"] == "ready"
+    assert payload["blocks"][0]["origin"] == "host_visual"
+    assert payload["blocks"][0]["locator"]["source_url"] == "https://example.org/chart.png"
+
+
+def test_mcp_bridge_redacts_visual_observation_source_query(capsys):
+    from envoy_cli import mcp
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "observe",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_observe_visual",
+            "arguments": {
+                "protocol_version": "envoy.observe/1",
+                "request_id": "observe-redact",
+                "source_url": "https://example.org/chart.png?token=secret-value",
+                "resource_id": "resource-image",
+                "source_block_id": "blk-image-0001",
+                "observation": "The chart is visible.",
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out)
+    assert "secret-value" not in json.dumps(response)
 
 
 def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):

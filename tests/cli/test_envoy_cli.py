@@ -272,6 +272,157 @@ def test_expand_enforces_cumulative_response_budget(tmp_path, monkeypatch):
     assert response.result.value == "partial"
 
 
+def test_expand_ledger_rejects_repeated_ranges_and_round_limit(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/",
+        "<html><body><p>" + ("Useful sentence. " * 120) + "</p></body></html>",
+    ))
+    initial = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-ledger",
+        "source": {"url": "https://example.org/"},
+        "budget": {
+            "max_response_chars": 600,
+            "max_total_response_chars": 900,
+            "max_expansion_rounds": 1,
+        },
+    }))
+    details = initial.coverage.modalities["text"].details
+    next_offset = details["next_offset"]
+    first = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-ledger-expand-1",
+        "material_id": initial.material_id,
+        "offset": next_offset,
+        "max_chars": 200,
+        "max_total_response_chars": 900,
+    }))
+    assert first.coverage.modalities["text"].details["expansion_rounds"] == 1
+    assert first.coverage.modalities["text"].details["next_offset"] is not None
+
+    repeated = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-ledger-repeat",
+        "material_id": initial.material_id,
+        "offset": next_offset,
+        "max_chars": 200,
+        "max_total_response_chars": 900,
+    }))
+    assert repeated.result.value == "blocked"
+    assert repeated.errors[0].code.value == "budget_exceeded"
+
+    after_round = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-ledger-expand-2",
+        "material_id": initial.material_id,
+        "offset": first.coverage.modalities["text"].details["next_offset"],
+        "max_chars": 200,
+        "max_total_response_chars": 900,
+    }))
+    assert after_round.result.value == "blocked"
+    assert after_round.errors[0].code.value == "budget_exceeded"
+
+
+def test_zero_expansion_round_budget_is_enforced(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/",
+        "<html><body><p>" + ("Useful sentence. " * 120) + "</p></body></html>",
+    ))
+    initial = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-no-expansion",
+        "source": {"url": "https://example.org/"},
+        "budget": {"max_response_chars": 600, "max_expansion_rounds": 0},
+    }))
+    next_offset = initial.coverage.modalities["text"].details["next_offset"]
+    response = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-no-expansion-expand",
+        "material_id": initial.material_id,
+        "offset": next_offset,
+        "max_chars": 200,
+    }))
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "budget_exceeded"
+
+
+def test_image_only_page_is_partial_and_exposes_visual_coverage(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/post",
+        '<html><head><title>Screenshot guide</title></head><body>'
+        '<img src="https://cdn.example.org/guide.png" alt="Guide screenshot">'
+        "</body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-image-only",
+        "source": {"url": "https://example.org/post"},
+        "host_capabilities": {"image_input": "uri"},
+    }))
+
+    assert response.result.value == "partial"
+    assert response.coverage.modalities["text"].extraction == "failed"
+    assert response.coverage.modalities["text"].details["image_only"] is True
+    assert response.coverage.modalities["images"].returned == 1
+
+
+def test_video_page_reports_unread_video_coverage(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/watch",
+        '<html><body><p>Watch the following demonstration.</p>'
+        '<video src="https://cdn.example.org/demo.mp4"></video></body></html>',
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-video-page",
+        "source": {"url": "https://example.org/watch"},
+    }))
+
+    assert response.result.value == "partial"
+    assert response.coverage.modalities["video"].discovered == 1
+    assert response.coverage.modalities["video"].extraction == "failed"
+    assert "standalone video extraction" in response.coverage.modalities["video"].unresolved[0]
+
+
+def test_challenge_page_is_not_reported_as_ready(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/check",
+        "<html><head><title>Security check</title></head><body>"
+        "<p>Checking your browser before accessing the site.</p>"
+        "<p>" + ("Please wait. " * 20) + "</p></body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-challenge",
+        "source": {"url": "https://example.org/check"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "challenge_required"
+    assert response.errors[0].action_required is True
+
+
 def test_local_material_cache_evicts_expired_and_oldest_without_clearing_recent(tmp_path, monkeypatch):
     import os
     import time
