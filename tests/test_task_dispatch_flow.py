@@ -1066,16 +1066,11 @@ class TaskDispatchFlowTests(unittest.TestCase):
 
             started = []
 
-            class FakeThread:
-                def __init__(self, target, args, daemon):
-                    self.target = target
-                    self.args = args
-                    self.daemon = daemon
+            class FakeExecutor:
+                def submit(self, target, *args):
+                    started.append({"target": target, "args": args})
 
-                def start(self):
-                    started.append({"target": self.target, "args": self.args, "daemon": self.daemon})
-
-            with patch("app.services.task_dispatcher.Thread", FakeThread), \
+            with patch("app.services.task_dispatcher._local_executor", FakeExecutor()), \
                 patch("app.api.v1.tasks.analyze_job.delay", side_effect=AssertionError("local mode should not call celery delay")):
                 response = client.post(
                     "/api/v1/tasks/analyze",
@@ -1088,7 +1083,6 @@ class TaskDispatchFlowTests(unittest.TestCase):
             self.assertEqual(body["progress"], 1)
             self.assertIn("Local task started", body["result_summary"])
             self.assertEqual(len(started), 1)
-            self.assertTrue(started[0]["daemon"])
             self.assertEqual(started[0]["args"][1]["task_id"], body["id"])
 
             db = SessionLocal()
