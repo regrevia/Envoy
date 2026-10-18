@@ -160,6 +160,56 @@ def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypa
     assert "secret" not in json.dumps(stored)
 
 
+def test_short_image_article_creates_material_snapshot_for_visual_followup(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/note",
+        '<html><head><title>Chart note</title></head><body>'
+        "<p>A short note that explains the chart.</p>"
+        '<img src="https://cdn.example.org/chart.png" alt="Three-stage chart">'
+        "</body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-short-visual-material",
+        "source": {"url": "https://example.org/note"},
+        "host_capabilities": {"image_input": "uri"},
+    }))
+
+    persisted = reader.record_visual_observation(
+        response.material_id,
+        "https://cdn.example.org/chart.png",
+        response.blocks[2].content.resource_id,
+        response.blocks[2].id,
+        "The chart has three stages.",
+    )
+    stored = json.loads((tmp_path / f"{response.material_id}.json").read_text(encoding="utf-8"))
+
+    assert persisted["persisted"] is True
+    assert stored["visual_observations"][0]["observation"] == "The chart has three stages."
+
+
+def test_visual_observation_still_returns_when_retention_is_disabled(tmp_path, monkeypatch):
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    result = reader.record_visual_observation(
+        "mat-" + "c" * 24,
+        "https://example.org/chart.png",
+        "resource-chart",
+        "blk-image-0001",
+        "A four-stage chart.",
+    )
+
+    assert result["persisted"] is False
+    assert result["reason"] == "material_unavailable"
+
+
 def test_cli_read_returns_structured_blocked_response_for_private_url(capsys):
     from envoy_cli import cli
 
