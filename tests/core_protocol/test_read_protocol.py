@@ -82,6 +82,18 @@ def test_visual_observation_request_is_bounded_and_roundtrips():
     assert VisualObservationRequest.model_validate_json(request.model_dump_json()).protocol_version == "envoy.observe/1"
 
 
+def test_total_token_budget_may_be_lower_than_per_response_ceiling():
+    from envoy_core.schemas.read_v1 import Budget
+
+    budget = Budget.model_validate({
+        "max_response_tokens": 512,
+        "max_total_response_tokens": 128,
+    })
+
+    assert budget.max_response_tokens == 512
+    assert budget.max_total_response_tokens == 128
+
+
 def test_schema_json_is_published_and_does_not_import_web_application():
     script = """
 import json

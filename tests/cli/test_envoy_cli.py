@@ -862,7 +862,7 @@ def test_text_coverage_reports_token_estimate(monkeypatch):
 
     details = response.coverage.modalities["text"].details
     assert details["estimated_returned_tokens"] >= 1
-    assert details["estimated_token_basis"] == "chars_div_4"
+    assert details["estimated_token_basis"] == "ascii4_nonascii1_v1"
 
 
 def test_response_token_budget_hard_limits_first_read(monkeypatch):
@@ -924,6 +924,89 @@ def test_total_response_token_budget_is_shared_by_expansions(tmp_path, monkeypat
     }))
     assert expanded.coverage.modalities["text"].details["remaining_tokens"] >= 0
     assert expanded.coverage.modalities["text"].details["total_token_budget"] == 256
+
+
+def test_token_estimate_counts_cjk_characters_more_conservatively():
+    from envoy_cli.reader import _estimated_tokens
+
+    assert _estimated_tokens("中文链接处理") == 6
+    assert _estimated_tokens("مرحبا") == 5
+    assert _estimated_tokens("Hello") == 2
+
+
+def test_response_token_budget_limits_cjk_text_by_estimated_tokens(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_text = "部署命令和配置说明。" * 40
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        f"<html><body><p>{source_text}</p></body></html>",
+    ))
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-cjk-token",
+        "source": {"url": "https://example.org/guide"},
+        "budget": {"max_response_tokens": 64},
+    }))
+    body = next(block.content.text for block in response.blocks if block.kind.value == "paragraph")
+
+    assert reader._estimated_tokens(body) <= 64
+
+
+def test_total_token_budget_alone_limits_initial_read_and_stops_expansion(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/guide",
+        "<html><body><p>" + ("Deployment instructions with enough details. " * 100) + "</p></body></html>",
+    ))
+    initial = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-total-token-only",
+        "source": {"url": "https://example.org/guide"},
+        "budget": {
+            "max_response_chars": 4000,
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 64,
+            "max_expansion_rounds": 8,
+        },
+    }))
+    body = next(block.content.text for block in initial.blocks if block.kind.value == "paragraph")
+    assert len(body) <= 256
+    details = initial.coverage.modalities["text"].details
+    assert details["total_token_budget"] == 64
+    assert details["remaining_tokens"] == 64 - details["returned_tokens"]
+
+    consumed_chars = len(body)
+    consumed_tokens = details["returned_tokens"]
+    offset = details["next_offset"]
+    for round_index in range(8):
+        expanded = reader.expand_material(ExpandRequest.model_validate({
+            "request_id": f"req-total-token-only-expand-{round_index}",
+            "material_id": initial.material_id,
+            "offset": offset,
+            "max_chars": 4000,
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 64,
+            "max_expansion_rounds": 8,
+        }))
+        if expanded.result.value == "blocked":
+            assert expanded.errors[0].code.value == "budget_exceeded"
+            break
+        chunk = expanded.blocks[0].content.text
+        consumed_chars += len(chunk)
+        expansion_details = expanded.coverage.modalities["text"].details
+        consumed_tokens = expansion_details["returned_tokens"]
+        offset = expansion_details["next_offset"]
+    else:
+        raise AssertionError("Cumulative token budget should eventually block expansion")
+    assert consumed_chars <= 64 * 4
+    assert consumed_tokens <= 64
 
 
 def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):
