@@ -59,6 +59,22 @@ def test_known_platforms_enable_browser_fallback_even_when_ytdlp_is_blocked():
         assert classify_video_source(url)["supports_browser_discovery"] is True
 
 
+def test_dailymotion_video_is_classified():
+    from app.services.video_source_service import classify_video_source
+
+    source = classify_video_source("https://www.dailymotion.com/video/x26m1j4")
+    assert source["platform"] == "dailymotion"
+    assert source["source_kind"] == "video"
+
+
+def test_missing_video_is_not_classified_as_login_required():
+    from app.services.video_source_service import classify_discovery_error
+
+    result = classify_discovery_error("ERROR: HTTP Error 404: Not Found")
+    assert result["reason_code"] == "source_not_found"
+    assert result["requires_user_action"] is False
+
+
 def test_youtube_uses_android_client_fallback_args():
     from app.services.video_source_service import _platform_download_args
 
