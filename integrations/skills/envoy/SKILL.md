@@ -62,6 +62,11 @@ when the task depends on pixels, layout, a chart, a table, or interface state
 and the catalog/response says the host can inspect it. Keep source URLs, block
 IDs, and resource IDs available for citations or follow-up reads.
 
+When text coverage includes `goal_candidates`, prefer a candidate offset that
+matches the user's goal and is outside an already returned range. Do not treat
+the candidate snippet as a final answer until the corresponding range is
+expanded and read.
+
 ## Expand long material
 
 If the response is `partial` and text coverage reports

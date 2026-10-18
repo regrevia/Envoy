@@ -221,6 +221,45 @@ def _clean_text(values: list[str]) -> str:
     return text.strip()[:MAX_TEXT_CHARS]
 
 
+def _goal_terms(goal: str) -> list[str]:
+    terms = []
+    for item in re.split(r"[\s,，。.!！?？:：;；/、()\[\]{}]+", str(goal or "").lower()):
+        value = item.strip()
+        if len(value) >= 2 and value not in terms:
+            terms.append(value)
+    return terms[:24]
+
+
+def _goal_score(value: str, terms: list[str]) -> int:
+    haystack = str(value or "").lower()
+    return sum(haystack.count(term) for term in terms)
+
+
+def _goal_candidates(text: str, terms: list[str], limit: int = 5) -> list[dict]:
+    if not terms:
+        return []
+    candidates = []
+    cursor = 0
+    for paragraph in re.split(r"\n{2,}", text):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            cursor += 2
+            continue
+        offset = text.find(paragraph, cursor)
+        if offset < 0:
+            offset = cursor
+        score = _goal_score(paragraph, terms)
+        if score:
+            candidates.append({
+                "offset": offset,
+                "end_offset": offset + len(paragraph),
+                "score": score,
+                "snippet": paragraph[:MAX_LOCATOR_QUOTE_CHARS],
+            })
+        cursor = offset + len(paragraph)
+    return sorted(candidates, key=lambda item: (-item["score"], item["offset"]))[:limit]
+
+
 def _source_text_was_truncated(values: list[str]) -> bool:
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(values)).strip()
     return len(text) > MAX_TEXT_CHARS
@@ -1176,7 +1215,18 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             order=0,
         )
         visual_budget = max(0, request.budget.max_visual_inputs)
-        selected_images = parser.images[:visual_budget]
+        goal_terms = _goal_terms(request.goal)
+        image_candidates = [
+            {
+                **image,
+                "score": _goal_score(f"{image.get('alt', '')} {image.get('url', '')}", goal_terms),
+                "source_index": index,
+            }
+            for index, image in enumerate(parser.images)
+        ]
+        if goal_terms:
+            image_candidates.sort(key=lambda item: (-int(item["score"]), int(item["source_index"])))
+        selected_images = image_candidates[:visual_budget]
         available_chars = max(
             0,
             request.budget.max_response_chars
@@ -1196,6 +1246,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             for item in parser.video_urls
             if _is_public_http_url(urljoin(final_url, item), dns_cache)
         ]
+        text_goal_candidates = _goal_candidates(text, goal_terms)
         source_revision = hashlib.sha256(html.encode("utf-8", errors="replace")).hexdigest()
         material_id = f"mat-{hashlib.sha256((final_url + source_revision).encode()).hexdigest()[:24]}"
         retention_disabled = request.retention.derived_ttl_seconds <= 0
@@ -1328,6 +1379,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             "remaining_chars": max(0, len(text) - returned_end),
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
+                            **(
+                                {
+                                    "goal_terms": goal_terms,
+                                    "goal_candidates": text_goal_candidates,
+                                }
+                                if goal_terms
+                                else {}
+                            ),
                         },
                     ),
                     "images": CoverageItem(
@@ -1355,6 +1414,22 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                                 else []
                             ),
                         ],
+                        details=(
+                            {
+                                "goal_terms": goal_terms,
+                                "goal_ranked": True,
+                                "selected_candidates": [
+                                    {
+                                        "source_index": image["source_index"],
+                                        "alt": image.get("alt", ""),
+                                        "score": image["score"],
+                                    }
+                                    for image in selected_images
+                                ],
+                            }
+                            if goal_terms
+                            else {}
+                        ),
                     ),
                     **({"video": CoverageItem(
                         discovered=len(video_urls),
