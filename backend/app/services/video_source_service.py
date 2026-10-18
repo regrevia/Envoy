@@ -311,6 +311,18 @@ def _platform_download_args(source_url: str) -> list[str]:
     return []
 
 
+def _download_args(source_url: str) -> list[str]:
+    source = classify_video_source(source_url)
+    if source["source_kind"] == "direct_media":
+        return [
+            "--socket-timeout", "20",
+            "--retries", "2",
+            "--fragment-retries", "2",
+            "--format", "best[height<=720]/best",
+        ]
+    return ["--format", "bestvideo*+bestaudio/best"]
+
+
 def validate_video_url(source_url: str) -> str:
     value = str(source_url or "").strip()
     if re.fullmatch(r"BV[0-9A-Za-z]{8,}", value):
@@ -362,6 +374,23 @@ def _platform_for_host(host: str) -> str:
         if any(_host_matches(host, candidate) for candidate in hosts):
             return platform
     return "unknown"
+
+
+def _is_direct_video_media_url(parsed) -> bool:
+    path = str(parsed.path or "").lower()
+    if re.search(r"\.(mp4|m4v|mov|webm|mkv|avi|flv|ogv|m3u8|mpd)(?:$)", path):
+        return True
+    query = parse_qs(parsed.query)
+    media_hints = [
+        value.lower()
+        for values in query.values()
+        for value in values
+    ]
+    return any(
+        value in {"video/mp4", "video/webm", "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/dash+xml"}
+        or value.endswith((".mp4", ".webm", ".m3u8", ".mpd"))
+        for value in media_hints
+    )
 
 
 def _source_kind_for_path(platform: str, host: str, path: str) -> str:
@@ -434,13 +463,13 @@ def classify_video_source(source_url: str) -> dict:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().rstrip(".")
     platform = _platform_for_host(host)
-    source_kind = _source_kind_for_path(platform, host, parsed.path)
+    source_kind = "direct_media" if _is_direct_video_media_url(parsed) else _source_kind_for_path(platform, host, parsed.path)
     return {
         "source_url": url,
         "platform": platform,
         "source_kind": source_kind,
         "host": host,
-        "supports_ytdlp": platform != "unknown",
+        "supports_ytdlp": platform != "unknown" or source_kind == "direct_media",
         "supports_browser_discovery": platform != "unknown",
     }
 
@@ -495,7 +524,7 @@ def download_video(source_url: str, output_dir: str | Path, auth: dict | None = 
                 *platform_args,
                 "--no-playlist",
                 "--newline",
-                "--format", "bestvideo*+bestaudio/best",
+                *_download_args(url),
                 "--merge-output-format", "mp4",
                 "--output", output_template,
                 "--print", "after_move:filepath",
