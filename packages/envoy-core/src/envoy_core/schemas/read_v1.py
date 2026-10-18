@@ -158,6 +158,15 @@ class ReadRequest(ContractModel):
     host_capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
 
 
+class ExpandRequest(ContractModel):
+    protocol_version: Literal["envoy.read/1"] = PROTOCOL_VERSION
+    request_id: str = Field(min_length=1, max_length=128)
+    material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    offset: int = Field(default=0, ge=0)
+    max_chars: int = Field(default=4000, ge=128, le=100_000)
+    max_total_response_chars: int = Field(default=48_000, ge=256, le=5_000_000)
+
+
 class TextContent(ContractModel):
     type: Literal["text"] = "text"
     text: str

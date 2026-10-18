@@ -79,12 +79,15 @@ npm run dev
 当前 `dev` 已包含一个不依赖网站数据库的最小 Skill 运行包，支持公开静态 HTML：
 
 ```bash
+python -m pip install --upgrade pip
 python -m pip install -e packages/envoy-core -e packages/envoy-cli
 envoy doctor --json
 printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{"url":"https://example.org/"}}' | envoy read --request-json -
 ```
 
 宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、视频、OCR、ASR、浏览器恢复和长任务目前仍使用网站入口，独立 Skill 尚未宣称覆盖这些能力。
+
+长页面首读按请求预算限制返回；若结果标记 `partial` 且覆盖信息给出 `continuation_available`，使用 `envoy expand` 按 `next_offset` 读取下一段。正文快照在本机限额缓存，不会为每段重新下载页面。
 
 ## 模型配置
 
