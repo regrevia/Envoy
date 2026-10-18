@@ -2,6 +2,11 @@
 
 The independent Skill uses `envoy.read/1`.
 
+If the requested operation or runtime support is unclear, inspect
+`envoy_doctor`'s `capabilities` object before choosing a follow-up. It is
+versioned as `envoy.capabilities/1` and describes the standalone runtime; it
+does not imply capabilities available only in the Envoy website.
+
 ## Minimal request
 
 ```json

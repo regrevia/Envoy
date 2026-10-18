@@ -8,6 +8,7 @@ from typing import Optional
 from envoy_core import __version__ as core_version
 from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
 
+from .capabilities import capability_catalog
 from . import __version__
 from . import mcp
 from .reader import PublicPageError, expand_material, read_public_page
@@ -38,9 +39,10 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "cli_version": __version__,
             "core_version": core_version,
             "protocol_version": "envoy.read/1",
-            "network_reader": "public_html",
+            "network_reader": "public_static_resources",
             "credential_access": "disabled",
             "website_backend_required": False,
+            "capabilities": capability_catalog(),
         }
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
         return 0

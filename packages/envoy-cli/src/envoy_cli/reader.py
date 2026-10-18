@@ -8,11 +8,13 @@ import re
 import socket
 import tempfile
 import time
+from io import BytesIO
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
+from pypdf import PdfReader
 from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
@@ -31,13 +33,17 @@ from envoy_core.schemas.read_v1 import (
     ReadResult,
     ResourceRef,
     Need,
+    PdfLocator,
     TextContent,
     WebLocator,
 )
 
 
 MAX_HTML_BYTES = 20 * 1024 * 1024
-MAX_TEXT_CHARS = 500_000
+MAX_TEXT_SOURCE_BYTES = 20 * 1024 * 1024
+MAX_PDF_BYTES = 64 * 1024 * 1024
+MAX_PDF_PAGES = 500
+MAX_TEXT_CHARS = 2_000_000
 MAX_IMAGES = 40
 MAX_FETCH_ATTEMPTS = 3
 MIN_EXPANSION_CHARS = 128
@@ -45,6 +51,18 @@ MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif")
+TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst")
+TEXT_CONTENT_TYPES = {
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+    "application/xml",
+    "text/xml",
+    "application/yaml",
+    "text/yaml",
+    "application/x-yaml",
+}
 SENSITIVE_QUERY_KEYS = {
     "access_token",
     "api_key",
@@ -67,6 +85,18 @@ class PublicPageError(RuntimeError):
     def __init__(self, message: str, code: ErrorCode = ErrorCode.SOURCE_UNAVAILABLE):
         super().__init__(message)
         self.code = code
+
+
+class DetectedPDF(PublicPageError):
+    def __init__(self, source: dict):
+        super().__init__("The URL resolved to a PDF document", ErrorCode.UNSUPPORTED_SOURCE)
+        self.source = source
+
+
+class DetectedText(PublicPageError):
+    def __init__(self, source: dict):
+        super().__init__("The URL resolved to a text document", ErrorCode.UNSUPPORTED_SOURCE)
+        self.source = source
 
 
 class _PageParser(HTMLParser):
@@ -300,6 +330,69 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
     if offset > len(total_text):
         raise ValueError("offset must be between zero and the material length")
     end = min(len(total_text), offset + max_chars, max_total_chars)
+    if stored.get("source_kind") == "pdf":
+        spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
+        span = next(
+            (
+                item for item in spans
+                if isinstance(item, dict) and int(item.get("end") or 0) > offset
+            ),
+            None,
+        )
+        if span is None:
+            raise PublicPageError("No more PDF page text is available", ErrorCode.EXPIRED_RESOURCE)
+        span_start = int(span.get("start") or 0)
+        span_end = int(span.get("end") or 0)
+        page_offset = max(offset, span_start)
+        if end <= page_offset:
+            raise PublicPageError(
+                "The cumulative response character budget has been reached",
+                ErrorCode.BUDGET_EXCEEDED,
+            )
+        content, page_end = _take_text_range(
+            total_text,
+            page_offset,
+            min(end, span_end) - page_offset,
+        )
+        has_more = any(
+            isinstance(item, dict) and int(item.get("end") or 0) > page_end
+            for item in spans
+        )
+        page_number = int(span["page_number"])
+        block = MaterialBlock(
+            id=f"blk-pdf-page-{page_number:04d}-range-{page_offset}",
+            kind=MaterialKind.PARAGRAPH,
+            content=TextContent(type="text", text=content),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=PdfLocator(type="pdf_page", page_number=page_number),
+            order=page_offset,
+        )
+        return ReadResponse(
+            request_id=request.request_id,
+            session_id=stored.get("session_id"),
+            material_id=material_id,
+            source_revision=str(stored["source_revision"]),
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL if has_more else ReadResult.READY,
+            blocks=[block],
+            coverage=Coverage(modalities={
+                "text": CoverageItem(
+                    discovered=len(spans),
+                    extracted=len(spans),
+                    returned=1,
+                    extraction="partial" if has_more else "complete",
+                    unresolved=["More PDF text is available"] if has_more else [],
+                    details={
+                        "offset": page_offset,
+                        "returned_chars": len(content),
+                        "total_chars": len(total_text),
+                        "next_offset": page_end if has_more else None,
+                        "page_number": page_number,
+                        "continuation_available": has_more,
+                    },
+                )
+            }),
+        )
     if end <= offset:
         raise PublicPageError(
             "The cumulative response character budget has been reached",
@@ -382,6 +475,55 @@ def _fetch_html(
                                 continue
                         response.raise_for_status()
                         content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                        if content_type == "application/pdf":
+                            content_length = response.headers.get("content-length")
+                            if content_length:
+                                try:
+                                    if int(content_length) > max_bytes:
+                                        raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                except ValueError:
+                                    pass
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                body.extend(chunk)
+                                if len(body) > max_bytes:
+                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
+                            pdf_data = bytes(body)
+                            if not pdf_data.startswith(b"%PDF-"):
+                                raise PublicPageError("The server declared PDF content but returned invalid PDF data")
+                            raise DetectedPDF({
+                                "url": _redact_url(current_url),
+                                "data": pdf_data,
+                                "mime_type": "application/pdf",
+                            })
+                        text_path = urlparse(current_url).path.lower()
+                        is_text_content = (
+                            content_type in TEXT_CONTENT_TYPES
+                            or (
+                                content_type == "application/octet-stream"
+                                and text_path.endswith(TEXT_SUFFIXES)
+                            )
+                        )
+                        if is_text_content:
+                            content_length = response.headers.get("content-length")
+                            if content_length:
+                                try:
+                                    if int(content_length) > MAX_TEXT_SOURCE_BYTES:
+                                        raise PublicPageError("The text document exceeds Envoy's size limit")
+                                except ValueError:
+                                    pass
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                body.extend(chunk)
+                                if len(body) > MAX_TEXT_SOURCE_BYTES:
+                                    raise PublicPageError("The text document exceeds Envoy's size limit")
+                            charset = getattr(response, "encoding", None) or "utf-8"
+                            raise DetectedText({
+                                "url": _redact_url(current_url),
+                                "data": bytes(body),
+                                "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
+                                "encoding": charset,
+                            })
                         if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
                             raise PublicPageError(
                                 f"Static reader only accepts HTML pages, received {content_type}",
@@ -449,12 +591,331 @@ def _fetch_source(
     raise PublicPageError("The source exceeded the redirect limit")
 
 
+def _fetch_pdf_source(
+    source_url: str,
+    max_bytes: int,
+    dns_cache: dict[str, bool],
+) -> dict:
+    current_url = source_url
+    headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
+    with httpx.Client(timeout=httpx.Timeout(20, read=60), follow_redirects=False) as client:
+        for _ in range(5):
+            if not _is_public_http_url(current_url, dns_cache):
+                raise PublicPageError("The PDF URL or redirect is not a public HTTP(S) address")
+            redirected = False
+            for attempt in range(MAX_FETCH_ATTEMPTS):
+                try:
+                    with client.stream("GET", current_url, headers=headers) as response:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise PublicPageError("The PDF server returned an invalid redirect")
+                            current_url = urljoin(current_url, location)
+                            redirected = True
+                            break
+                        if response.status_code in {401, 403}:
+                            raise PublicPageError("The PDF source requires authentication", ErrorCode.AUTH_REQUIRED)
+                        if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                            if attempt + 1 < MAX_FETCH_ATTEMPTS:
+                                time.sleep(0.25 * (attempt + 1))
+                                continue
+                        response.raise_for_status()
+                        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                        content_length = response.headers.get("content-length")
+                        if content_length:
+                            try:
+                                if int(content_length) > max_bytes:
+                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
+                            except ValueError:
+                                pass
+                        body = bytearray()
+                        for chunk in response.iter_bytes():
+                            body.extend(chunk)
+                            if len(body) > max_bytes:
+                                raise PublicPageError("The PDF exceeds Envoy's size limit")
+                        data = bytes(body)
+                        if not data.startswith(b"%PDF-"):
+                            raise PublicPageError(
+                                f"Expected a PDF source, received {content_type or 'unknown content'}",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        return {
+                            "url": _redact_url(current_url),
+                            "data": data,
+                            "mime_type": "application/pdf",
+                        }
+                except httpx.TransportError:
+                    if attempt + 1 >= MAX_FETCH_ATTEMPTS:
+                        raise
+                    time.sleep(0.25 * (attempt + 1))
+                else:
+                    break
+            if redirected:
+                continue
+    raise PublicPageError("The PDF source exceeded the redirect limit")
+
+
+def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
+    try:
+        pdf = PdfReader(BytesIO(source["data"]), strict=False)
+    except Exception as exc:
+        raise PublicPageError(f"Could not parse PDF: {type(exc).__name__}", ErrorCode.INVALID_REQUEST) from exc
+    if getattr(pdf, "is_encrypted", False):
+        raise PublicPageError("Encrypted PDFs are not supported by the standalone Skill", ErrorCode.AUTH_REQUIRED)
+    total_page_count = len(pdf.pages)
+    if total_page_count > MAX_PDF_PAGES:
+        raise PublicPageError(f"PDF has {total_page_count} pages; limit is {MAX_PDF_PAGES}")
+
+    title = ""
+    if pdf.metadata:
+        title = str(pdf.metadata.title or "").strip()
+    title = title or Path(urlparse(source["url"]).path).name or "PDF document"
+    title_block = MaterialBlock(
+        id="blk-title",
+        kind=MaterialKind.HEADING,
+        content=TextContent(type="text", text=title),
+        origin=MaterialOrigin.SOURCE_TEXT,
+        locator=WebLocator(
+            type="web",
+            source_url=source["url"],
+            block_id="blk-title",
+            quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+        ),
+        order=0,
+    )
+    page_texts = []
+    page_spans = []
+    cursor = 0
+    scanned_pages = []
+    for page_number, page in enumerate(pdf.pages, start=1):
+        try:
+            page_text = re.sub(r"\n{3,}", "\n\n", str(page.extract_text() or "")).strip()
+        except Exception:
+            page_text = ""
+        if not page_text:
+            scanned_pages.append(page_number)
+            continue
+        if page_texts:
+            cursor += 2
+        start = cursor
+        cursor += len(page_text)
+        page_texts.append(page_text)
+        page_spans.append({"page_number": page_number, "start": start, "end": cursor})
+
+    full_text = "\n\n".join(page_texts)
+    if not full_text:
+        raise PublicPageError(
+            "This PDF has no extractable text layer; OCR capability is required for scanned pages",
+            ErrorCode.MISSING_CAPABILITY,
+        )
+
+    available_chars = max(0, request.budget.max_response_chars - len(title_block.model_dump_json()))
+    blocks = [title_block]
+    returned_chars = 0
+    returned_end = 0
+    response_budget_exhausted = False
+    for span in page_spans:
+        page_number = span["page_number"]
+        page_text = full_text[span["start"]:span["end"]]
+        overhead = 240
+        remaining = available_chars - returned_chars - overhead
+        if remaining <= 0:
+            response_budget_exhausted = True
+            break
+        page_body, page_end = _take_text_range(page_text, 0, remaining)
+        if page_body:
+            blocks.append(MaterialBlock(
+                id=f"blk-pdf-page-{page_number:04d}",
+                kind=MaterialKind.PARAGRAPH,
+                content=TextContent(type="text", text=page_body),
+                origin=MaterialOrigin.SOURCE_TEXT,
+                locator=PdfLocator(type="pdf_page", page_number=page_number),
+                order=page_number,
+            ))
+            returned_chars += len(page_body)
+            returned_end = span["start"] + page_end
+        if page_end < len(page_text):
+            response_budget_exhausted = True
+            break
+    if returned_end < len(full_text):
+        response_budget_exhausted = True
+
+    source_revision = hashlib.sha256(source["data"]).hexdigest()
+    material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
+    retention_disabled = request.retention.derived_ttl_seconds <= 0
+    can_continue = response_budget_exhausted and not retention_disabled
+    continuation_storage_failed = False
+    if can_continue:
+        try:
+            _store_material(material_id, {
+                "source_kind": "pdf",
+                "source_url": source["url"],
+                "source_revision": source_revision,
+                "session_id": request.session_id,
+                "text": full_text,
+                "page_spans": page_spans,
+                "expires_at": time.time() + min(
+                    request.retention.derived_ttl_seconds,
+                    MATERIAL_TTL_SECONDS,
+                ),
+            })
+        except OSError:
+            can_continue = False
+            continuation_storage_failed = True
+
+    unresolved = []
+    if scanned_pages:
+        unresolved.append("Some pages contain no text layer and need OCR")
+    if response_budget_exhausted:
+        unresolved.append("PDF text was limited by the response budget")
+    if retention_disabled and response_budget_exhausted:
+        unresolved.append("Continuation is unavailable because local retention is disabled")
+    if continuation_storage_failed:
+        unresolved.append("Continuation cache could not be written")
+    has_unread_pages = bool(scanned_pages)
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=material_id,
+        source_revision=source_revision,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL if response_budget_exhausted or has_unread_pages else ReadResult.READY,
+        blocks=blocks,
+        coverage=Coverage(modalities={
+            "text": CoverageItem(
+                discovered=total_page_count,
+                extracted=len(page_spans),
+                returned=len(blocks) - 1,
+                extraction="partial" if response_budget_exhausted or has_unread_pages else "complete",
+                unresolved=unresolved,
+                details={
+                    "page_count": total_page_count,
+                    "text_pages": len(page_spans),
+                    "scanned_pages": scanned_pages,
+                    "returned_chars": returned_chars,
+                    "total_chars": len(full_text),
+                    "continuation_available": can_continue,
+                    "next_offset": returned_end if can_continue else None,
+                },
+            )
+        }),
+    )
+
+
+def _read_pdf_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
+    source = _fetch_pdf_source(
+        source_url,
+        min(MAX_PDF_BYTES, request.budget.max_download_bytes or MAX_PDF_BYTES),
+        dns_cache,
+    )
+    return _parse_pdf_source(request, source)
+
+
+def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
+    data = source["data"]
+    text = data.decode(str(source.get("encoding") or "utf-8"), errors="replace")
+    text = re.sub(r"\n{3,}", "\n\n", text.replace("\r\n", "\n").replace("\r", "\n")).strip()
+    if not text:
+        raise PublicPageError("The text document is empty", ErrorCode.EMPTY_CONTENT)
+    source_truncated = len(text) > MAX_TEXT_CHARS
+    text = text[:MAX_TEXT_CHARS]
+    title = Path(urlparse(source["url"]).path).name or "Text document"
+    title_block = MaterialBlock(
+        id="blk-title",
+        kind=MaterialKind.HEADING,
+        content=TextContent(type="text", text=title),
+        origin=MaterialOrigin.SOURCE_TEXT,
+        locator=WebLocator(
+            type="web",
+            source_url=source["url"],
+            block_id="blk-title",
+            quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+        ),
+        order=0,
+    )
+    available_chars = max(0, request.budget.max_response_chars - len(title_block.model_dump_json()) - 200)
+    returned_text, returned_end = _take_text_range(text, 0, available_chars)
+    response_partial = source_truncated or returned_end < len(text)
+    source_revision = hashlib.sha256(data).hexdigest()
+    material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
+    retention_disabled = request.retention.derived_ttl_seconds <= 0
+    can_continue = response_partial and not source_truncated and not retention_disabled
+    continuation_storage_failed = False
+    if can_continue:
+        try:
+            _store_material(material_id, {
+                "source_kind": "text",
+                "source_url": source["url"],
+                "source_revision": source_revision,
+                "session_id": request.session_id,
+                "text": text,
+                "expires_at": time.time() + min(
+                    request.retention.derived_ttl_seconds,
+                    MATERIAL_TTL_SECONDS,
+                ),
+            })
+        except OSError:
+            can_continue = False
+            continuation_storage_failed = True
+    unresolved = []
+    if returned_end < len(text):
+        unresolved.append("Response character budget truncated the text document")
+    if source_truncated:
+        unresolved.append("Text source exceeded the extraction limit")
+    if retention_disabled and response_partial:
+        unresolved.append("Continuation is unavailable because local retention is disabled")
+    if continuation_storage_failed:
+        unresolved.append("Continuation cache could not be written")
+    blocks = [title_block]
+    if returned_text:
+        blocks.append(MaterialBlock(
+            id="blk-body-0001",
+            kind=MaterialKind.PARAGRAPH,
+            content=TextContent(type="text", text=returned_text),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=WebLocator(
+                type="web",
+                source_url=source["url"],
+                block_id="blk-body-0001",
+                quote=returned_text[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
+            order=1,
+        ))
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=material_id,
+        source_revision=source_revision,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL if response_partial else ReadResult.READY,
+        blocks=blocks,
+        coverage=Coverage(modalities={
+            "text": CoverageItem(
+                discovered=1,
+                extracted=1,
+                returned=1 if returned_text else 0,
+                extraction="partial" if response_partial else "complete",
+                unresolved=unresolved,
+                details={
+                    "mime_type": source["mime_type"],
+                    "total_chars": len(text),
+                    "returned_chars": len(returned_text),
+                    "continuation_available": can_continue,
+                    "source_truncated": source_truncated,
+                    "next_offset": returned_end if can_continue else None,
+                },
+            )
+        }),
+    )
+
+
 def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
-    if request.host_capabilities.image_input == ImageInputCapability.NONE:
+    if request.host_capabilities.image_input != ImageInputCapability.URI:
         return _blocked(
             request,
             ErrorCode.MISSING_CAPABILITY,
-            "The host must provide image input to inspect this image source",
+            "The host must support URI image input to inspect this image source",
+            action_required=True,
         )
     source = _fetch_source(
         source_url,
@@ -533,15 +994,47 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         try:
             return _read_image_source(request, source_url, dns_cache)
         except PublicPageError as exc:
-            return _blocked(request, exc.code, str(exc))
+            return _blocked(
+                request,
+                exc.code,
+                str(exc),
+                action_required=exc.code == ErrorCode.MISSING_CAPABILITY,
+            )
+        except httpx.HTTPError as exc:
+            return _blocked(
+                request,
+                ErrorCode.NETWORK_ERROR,
+                f"Image request failed ({type(exc).__name__}) for {_redact_url(source_url)}",
+            )
+    if request.source.kind.value == "document" or source_path.endswith(".pdf"):
+        try:
+            return _read_pdf_source(request, source_url, dns_cache)
+        except PublicPageError as exc:
+            return _blocked(
+                request,
+                exc.code,
+                str(exc),
+                action_required=exc.code == ErrorCode.MISSING_CAPABILITY,
+            )
+        except httpx.HTTPError as exc:
+            return _blocked(
+                request,
+                ErrorCode.NETWORK_ERROR,
+                f"PDF request failed ({type(exc).__name__}) for {_redact_url(source_url)}",
+            )
     if request.source.kind.value not in {"auto", "article"}:
         return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
     try:
-        final_url, html = _fetch_html(
-            source_url,
-            min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
-            dns_cache,
-        )
+        try:
+            final_url, html = _fetch_html(
+                source_url,
+                min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
+                dns_cache,
+            )
+        except DetectedPDF as detected_pdf:
+            return _parse_pdf_source(request, detected_pdf.source)
+        except DetectedText as detected_text:
+            return _parse_text_source(request, detected_text.source)
         parser = _PageParser()
         parser.feed(html)
         title = _clean_text(parser.title_parts) or final_url
@@ -737,11 +1230,23 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         )
 
 
-def _blocked(request: ReadRequest, code: ErrorCode, message: str) -> ReadResponse:
+def _blocked(
+    request: ReadRequest,
+    code: ErrorCode,
+    message: str,
+    action_required: bool = False,
+) -> ReadResponse:
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
         execution_state=ExecutionState.COMPLETED,
         result=ReadResult.BLOCKED,
-        errors=[ReadError(code=code, message=message, retryable=code == ErrorCode.NETWORK_ERROR)],
+        errors=[
+            ReadError(
+                code=code,
+                message=message,
+                retryable=code == ErrorCode.NETWORK_ERROR,
+                action_required=action_required,
+            )
+        ],
     )

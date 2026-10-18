@@ -7,6 +7,7 @@ from typing import Any, Iterable, TextIO
 from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
 
 from . import __version__
+from .capabilities import capability_catalog
 from .reader import PublicPageError, expand_material, read_public_page
 
 
@@ -31,7 +32,11 @@ SERVER_CAPABILITIES = {"tools": {}}
 TOOLS = [
     {
         "name": "envoy_read",
-        "description": "Read a public link into compact, source-located Envoy materials.",
+        "description": (
+            "Read a public URL toward the user's stated goal. The source type is "
+            "auto-detected; use returned coverage and resources to decide whether "
+            "to expand text or request host visual inspection."
+        ),
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
@@ -48,7 +53,7 @@ TOOLS = [
                         "url": {"type": "string", "minLength": 1, "maxLength": 8192},
                         "kind": {
                             "type": "string",
-                            "enum": ["auto", "article"],
+                            "enum": ["auto", "article", "image", "document"],
                             "default": "auto",
                         },
                         "label": {"type": ["string", "null"], "maxLength": 1000},
@@ -84,6 +89,17 @@ TOOLS = [
                         },
                     },
                 },
+                "host_capabilities": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "image_input": {
+                            "type": "string",
+                            "enum": ["none", "uri"],
+                            "default": "none",
+                        },
+                    },
+                },
                 "retention": {
                     "type": "object",
                     "additionalProperties": False,
@@ -101,12 +117,18 @@ TOOLS = [
     },
     {
         "name": "envoy_expand",
-        "description": "Read the next range from a previously returned Envoy material.",
+        "description": (
+            "Continue a previously read material only when its coverage reports "
+            "continuation_available and next_offset; do not repeat returned ranges."
+        ),
         "inputSchema": ExpandRequest.model_json_schema(),
     },
     {
         "name": "envoy_doctor",
-        "description": "Report local Envoy capabilities without reading credentials.",
+        "description": (
+            "Return the versioned standalone capability catalog so the agent can "
+            "select available Envoy operations; never reads credentials."
+        ),
         "inputSchema": {"type": "object", "additionalProperties": False},
     },
 ]
@@ -285,9 +307,10 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                 "tool": "envoy",
                 "cli_version": __version__,
                 "protocol_version": "envoy.read/1",
-                "network_reader": "public_html",
+                "network_reader": "public_static_resources",
                 "credential_access": "disabled",
                 "website_backend_required": False,
+                "capabilities": capability_catalog(),
             }
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
