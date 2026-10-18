@@ -166,6 +166,17 @@ class ExpandRequest(ContractModel):
     offset: int = Field(default=0, ge=0)
     max_chars: int = Field(default=4000, ge=128, le=100_000)
     max_total_response_chars: int = Field(default=48_000, ge=256, le=5_000_000)
+    max_expansion_rounds: Optional[int] = Field(default=None, ge=0, le=100)
+
+
+class VisualObservationRequest(ContractModel):
+    protocol_version: Literal["envoy.observe/1"] = "envoy.observe/1"
+    request_id: str = Field(min_length=1, max_length=128)
+    source_url: str = Field(min_length=1, max_length=8192)
+    resource_id: str = Field(min_length=1, max_length=256)
+    source_block_id: str = Field(min_length=1, max_length=256)
+    observation: str = Field(min_length=1, max_length=20_000)
+    locator_quote: Optional[str] = Field(default=None, max_length=500)
 
 
 class TextContent(ContractModel):

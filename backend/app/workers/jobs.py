@@ -190,7 +190,7 @@ def _run_ocr_for_task(db, task_id: str | None, frame_paths: list[str]):
     )
     if task is not None and isinstance(task.input_config, dict):
         profile = task.input_config.get("ocr_profile")
-    profile_kwargs = {"profile": profile} if profile in {"fast", "balanced", "quality"} else {}
+    profile_kwargs = {"profile": profile} if profile in {"fast", "balanced", "quality", "pro"} else {}
     supports_profile = _supports_named_parameter(run_ocr_on_frames, "profile")
     if _supports_should_cancel(run_ocr_on_frames):
         if supports_profile:
@@ -2214,6 +2214,7 @@ def _attach_public_page_source_to_bundle(
     page_info: dict,
     text_asset: Asset,
     image_assets: list[Asset],
+    ocr_blocks: list[dict] | None = None,
 ):
     from app.services.web_content_service import image_extension, public_page_material_response
 
@@ -2288,6 +2289,7 @@ def _attach_public_page_source_to_bundle(
         },
         source_url=source_url,
         image_assets=image_records,
+        ocr_blocks=ocr_blocks,
         request_id=f"web-page-{task_id}",
     )
     materials_path = root / "materials.json"
@@ -2650,6 +2652,31 @@ def public_page_to_markdown_job(self, payload: dict):
         image_assets = [asset for asset in image_assets if asset is not None]
         if text_asset is None:
             raise RuntimeError("Public page source text asset was not preserved")
+        ocr_by_asset = {}
+        image_asset_ids = [asset.id for asset in image_assets]
+        if image_asset_ids:
+            ocr_units = (
+                db.query(SemanticUnit)
+                .filter(SemanticUnit.asset_id.in_(image_asset_ids))
+                .order_by(SemanticUnit.created_at.asc())
+                .all()
+            )
+            for unit in ocr_units:
+                labels = unit.labels if isinstance(unit.labels, dict) else {}
+                if labels.get("source") != "image_text":
+                    continue
+                asset_id = str(unit.asset_id or "")
+                if not asset_id or not str(unit.content or "").strip():
+                    continue
+                ocr_by_asset.setdefault(asset_id, []).append(str(unit.content).strip())
+        ocr_blocks = [
+            {
+                "asset_id": asset_id,
+                "content": "\n\n".join(contents),
+                "engine": "semantic_unit_ocr",
+            }
+            for asset_id, contents in ocr_by_asset.items()
+        ]
         bundle_info = _attach_public_page_source_to_bundle(
             db,
             task_id,
@@ -2663,6 +2690,7 @@ def public_page_to_markdown_job(self, payload: dict):
             },
             text_asset,
             image_assets,
+            ocr_blocks=ocr_blocks,
         )
         config["library_artifact_id"] = artifact_id
         config["library_index_path"] = bundle_path

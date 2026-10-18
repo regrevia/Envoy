@@ -65,6 +65,22 @@ def test_read_protocol_rejects_unversioned_requests_and_invalid_image_coordinate
         )
 
 
+def test_visual_observation_request_is_bounded_and_roundtrips():
+    from envoy_core.schemas.read_v1 import VisualObservationRequest
+
+    request = VisualObservationRequest.model_validate({
+        "protocol_version": "envoy.observe/1",
+        "request_id": "observe-1",
+        "source_url": "https://example.org/chart.png",
+        "resource_id": "resource-image",
+        "source_block_id": "blk-image-0001",
+        "observation": "The chart shows three deployment stages.",
+    })
+
+    assert request.observation == "The chart shows three deployment stages."
+    assert VisualObservationRequest.model_validate_json(request.model_dump_json()).protocol_version == "envoy.observe/1"
+
+
 def test_schema_json_is_published_and_does_not_import_web_application():
     script = """
 import json

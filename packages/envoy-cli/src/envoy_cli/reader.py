@@ -45,6 +45,15 @@ MAX_PDF_BYTES = 64 * 1024 * 1024
 MAX_PDF_PAGES = 500
 MAX_TEXT_CHARS = 2_000_000
 MAX_IMAGES = 40
+CHALLENGE_MARKERS = (
+    "验证码",
+    "安全验证",
+    "人机验证",
+    "登录后继续",
+    "verify you are human",
+    "checking your browser",
+    "captcha",
+)
 MAX_FETCH_ATTEMPTS = 3
 MIN_EXPANSION_CHARS = 128
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -107,6 +116,7 @@ class _PageParser(HTMLParser):
         self.title_parts: list[str] = []
         self.text_parts: list[str] = []
         self.images: list[dict[str, str]] = []
+        self.video_urls: list[str] = []
         self._ignored_depth = 0
         self._in_title = False
         self._block_depth = 0
@@ -125,6 +135,10 @@ class _PageParser(HTMLParser):
             src = (attrs_map.get("src") or attrs_map.get("data-src") or "").strip()
             if src:
                 self.images.append({"url": src, "alt": (attrs_map.get("alt") or "").strip()})
+        if tag in {"video", "source"} and self._ignored_depth == 0:
+            src = (attrs_map.get("src") or "").strip()
+            if src:
+                self.video_urls.append(src)
 
     def handle_endtag(self, tag: str):
         tag = tag.lower()
@@ -210,6 +224,11 @@ def _clean_text(values: list[str]) -> str:
 def _source_text_was_truncated(values: list[str]) -> bool:
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(values)).strip()
     return len(text) > MAX_TEXT_CHARS
+
+
+def _looks_like_access_challenge(title: str, text: str) -> bool:
+    haystack = f"{title}\n{text}".lower()
+    return any(marker in haystack for marker in CHALLENGE_MARKERS)
 
 
 def _take_text_range(text: str, offset: int, max_chars: int) -> tuple[str, int]:
@@ -307,6 +326,52 @@ def _store_material(material_id: str, data: dict) -> None:
             os.unlink(expiry_temporary_path)
 
 
+def _expand_blocked(request: ExpandRequest, message: str) -> ReadResponse:
+    return ReadResponse(
+        request_id=request.request_id,
+        material_id=request.material_id,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.BLOCKED,
+        errors=[ReadError(code=ErrorCode.BUDGET_EXCEEDED, message=message)],
+    )
+
+
+def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
+    state = stored.get("budget_state")
+    if not isinstance(state, dict):
+        state = {}
+    ranges = []
+    for item in state.get("returned_ranges") or []:
+        if isinstance(item, list) and len(item) == 2:
+            try:
+                start, end = int(item[0]), int(item[1])
+            except (TypeError, ValueError):
+                continue
+            if 0 <= start < end:
+                ranges.append([start, end])
+    return {
+        "max_total_response_chars": min(
+            int(state.get("max_total_response_chars") or request.max_total_response_chars),
+            request.max_total_response_chars,
+        ),
+        "max_expansion_rounds": (
+            int(state["max_expansion_rounds"])
+            if state.get("max_expansion_rounds") is not None
+            else request.max_expansion_rounds
+        ),
+        "returned_chars": int(state.get("returned_chars") or 0),
+        "expansion_rounds": int(state.get("expansion_rounds") or 0),
+        "returned_ranges": ranges,
+    }
+
+
+def _record_material_range(stored: dict, state: dict, start: int, end: int) -> None:
+    state["returned_ranges"].append([start, end])
+    state["returned_chars"] += end - start
+    state["expansion_rounds"] += 1
+    stored["budget_state"] = state
+
+
 def expand_material(request: ExpandRequest) -> ReadResponse:
     material_id = request.material_id
     root = _material_root()
@@ -323,13 +388,32 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         source_path.unlink(missing_ok=True)
         expiry_path.unlink(missing_ok=True)
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+    budget_state = _material_budget_state(stored, request)
+    if (
+        budget_state["max_expansion_rounds"] is not None
+        and budget_state["expansion_rounds"] >= budget_state["max_expansion_rounds"]
+    ):
+        return _expand_blocked(request, "The material expansion round budget has been exhausted")
+    if budget_state["returned_chars"] >= budget_state["max_total_response_chars"]:
+        return _expand_blocked(request, "The cumulative response character budget has been exhausted")
     total_text = str(stored.get("text") or "")
     offset = request.offset
     max_chars = request.max_chars
     max_total_chars = request.max_total_response_chars
     if offset > len(total_text):
         raise ValueError("offset must be between zero and the material length")
-    end = min(len(total_text), offset + max_chars, max_total_chars)
+    end = min(
+        len(total_text),
+        offset + max_chars,
+        offset + max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
+        max_total_chars,
+    )
+    if any(
+        (start <= offset < finish and offset < finish - 8)
+        or offset < start < end
+        for start, finish in budget_state["returned_ranges"]
+    ):
+        return _expand_blocked(request, "The requested material range overlaps an earlier response")
     if stored.get("source_kind") == "pdf":
         spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
         span = next(
@@ -354,6 +438,11 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             page_offset,
             min(end, span_end) - page_offset,
         )
+        _record_material_range(stored, budget_state, page_offset, page_end)
+        try:
+            _store_material(material_id, stored)
+        except OSError:
+            return _expand_blocked(request, "The material budget ledger could not be persisted")
         has_more = any(
             isinstance(item, dict) and int(item.get("end") or 0) > page_end
             for item in spans
@@ -389,6 +478,8 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                         "next_offset": page_end if has_more else None,
                         "page_number": page_number,
                         "continuation_available": has_more,
+                        "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
+                        "expansion_rounds": budget_state["expansion_rounds"],
                     },
                 )
             }),
@@ -399,6 +490,11 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             ErrorCode.BUDGET_EXCEEDED,
         )
     content, end = _take_text_range(total_text, offset, end - offset)
+    _record_material_range(stored, budget_state, offset, end)
+    try:
+        _store_material(material_id, stored)
+    except OSError:
+        return _expand_blocked(request, "The material budget ledger could not be persisted")
     has_more = end < len(total_text)
     block_id = "blk-body-0001"
     block = MaterialBlock(
@@ -436,6 +532,8 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
                         "total_chars": len(total_text),
                         "next_offset": end if has_more else None,
                         "continuation_available": has_more,
+                        "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
+                        "expansion_rounds": budget_state["expansion_rounds"],
                     },
                 )
             }
@@ -754,6 +852,13 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
                 "session_id": request.session_id,
                 "text": full_text,
                 "page_spans": page_spans,
+                "budget_state": {
+                    "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_expansion_rounds": request.budget.max_expansion_rounds,
+                    "returned_chars": returned_chars,
+                    "expansion_rounds": 0,
+                    "returned_ranges": [[0, returned_end]] if returned_end else [],
+                },
                 "expires_at": time.time() + min(
                     request.retention.derived_ttl_seconds,
                     MATERIAL_TTL_SECONDS,
@@ -849,6 +954,13 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
                 "source_revision": source_revision,
                 "session_id": request.session_id,
                 "text": text,
+                "budget_state": {
+                    "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_expansion_rounds": request.budget.max_expansion_rounds,
+                    "returned_chars": len(returned_text),
+                    "expansion_rounds": 0,
+                    "returned_ranges": [[0, len(returned_text)]] if returned_text else [],
+                },
                 "expires_at": time.time() + min(
                     request.retention.derived_ttl_seconds,
                     MATERIAL_TTL_SECONDS,
@@ -1040,7 +1152,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         title = _clean_text(parser.title_parts) or final_url
         source_text_truncated = _source_text_was_truncated(parser.text_parts)
         text = _clean_text(parser.text_parts)
-        if len(text) < 20:
+        if _looks_like_access_challenge(title, text):
+            return _blocked(
+                request,
+                ErrorCode.CHALLENGE_REQUIRED,
+                "The public page appears to be a login, CAPTCHA, or security verification page",
+                action_required=True,
+            )
+        if len(text) < 20 and not parser.images and not parser.video_urls:
             return _blocked(request, ErrorCode.EMPTY_CONTENT, "No readable public HTML text was found")
         safe_source_url = _redact_url(final_url)
         title_block = MaterialBlock(
@@ -1071,6 +1190,12 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         )
         returned_text, returned_end = _take_text_range(text, 0, available_chars)
         text_is_partial = returned_end < len(text)
+        image_only = len(text) < 20 and bool(parser.images)
+        video_urls = [
+            _redact_url(urljoin(final_url, item))
+            for item in parser.video_urls
+            if _is_public_http_url(urljoin(final_url, item), dns_cache)
+        ]
         source_revision = hashlib.sha256(html.encode("utf-8", errors="replace")).hexdigest()
         material_id = f"mat-{hashlib.sha256((final_url + source_revision).encode()).hexdigest()[:24]}"
         retention_disabled = request.retention.derived_ttl_seconds <= 0
@@ -1083,6 +1208,13 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     "source_revision": source_revision,
                     "session_id": request.session_id,
                     "text": text,
+                    "budget_state": {
+                        "max_total_response_chars": request.budget.max_total_response_chars,
+                        "max_expansion_rounds": request.budget.max_expansion_rounds,
+                        "returned_chars": len(returned_text),
+                        "expansion_rounds": 0,
+                        "returned_ranges": [[0, len(returned_text)]] if returned_text else [],
+                    },
                     "expires_at": time.time() + min(
                         request.retention.derived_ttl_seconds,
                         MATERIAL_TTL_SECONDS,
@@ -1148,16 +1280,20 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             material_id=material_id,
             source_revision=source_revision,
             execution_state=ExecutionState.COMPLETED,
-            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial else ReadResult.READY,
+            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls else ReadResult.READY,
             blocks=blocks,
             resources=resources,
             coverage=Coverage(
                 modalities={
                     "text": CoverageItem(
-                        discovered=1,
-                        extracted=1,
-                        returned=1,
-                        extraction="partial" if text_is_partial or source_text_truncated else "complete",
+                        discovered=1 if text else 0,
+                        extracted=1 if text else 0,
+                        returned=1 if returned_text else 0,
+                        extraction=(
+                            "partial" if text_is_partial or source_text_truncated
+                            else "failed" if not text
+                            else "complete"
+                        ),
                         unresolved=(
                             [
                                 *(
@@ -1188,7 +1324,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             "total_chars": len(text),
                             "returned_chars": len(returned_text),
                             "continuation_available": can_continue,
+                            "next_offset": len(returned_text) if can_continue else None,
+                            "remaining_chars": max(0, len(text) - returned_end),
                             "source_truncated": source_text_truncated,
+                            "image_only": image_only,
                         },
                     ),
                     "images": CoverageItem(
@@ -1217,6 +1356,18 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             ),
                         ],
                     ),
+                    **({"video": CoverageItem(
+                        discovered=len(video_urls),
+                        extracted=0,
+                        returned=0,
+                        extraction="failed" if video_urls else "complete",
+                        unresolved=(
+                            ["Embedded video was discovered but standalone video extraction is unavailable"]
+                            if video_urls
+                            else []
+                        ),
+                        details={"urls": video_urls},
+                    )} if video_urls else {}),
                 }
             ),
         )

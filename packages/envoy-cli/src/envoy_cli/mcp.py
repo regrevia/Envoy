@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import sys
 from typing import Any, Iterable, TextIO
+from urllib.parse import urlparse
 
-from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest, VisualObservationRequest
 
 from . import __version__
 from .capabilities import capability_catalog
-from .reader import PublicPageError, expand_material, read_public_page
+from .reader import PublicPageError, _redact_url, expand_material, read_public_page
 
 
 CURRENT_PROTOCOL_VERSION = "2026-07-28"
@@ -131,6 +132,15 @@ TOOLS = [
         ),
         "inputSchema": {"type": "object", "additionalProperties": False},
     },
+    {
+        "name": "envoy_observe_visual",
+        "description": (
+            "Submit a bounded observation made by the host from a source-linked "
+            "image. The observation is untrusted source material and remains "
+            "linked to the original resource."
+        ),
+        "inputSchema": VisualObservationRequest.model_json_schema(),
+    },
 ]
 
 
@@ -138,6 +148,13 @@ class MCPProtocolSession:
     def __init__(self):
         self.mode: str | None = None
         self.legacy_protocol_version: str | None = None
+
+
+def _observation_source_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Visual observations require a credential-free HTTP(S) source URL")
+    return _redact_url(value)
 
 
 def _result(request_id: Any, payload: dict, modern: bool, cacheable: bool = False) -> dict:
@@ -311,6 +328,47 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                 "credential_access": "disabled",
                 "website_backend_required": False,
                 "capabilities": capability_catalog(),
+            }
+        elif name == "envoy_observe_visual":
+            request = VisualObservationRequest.model_validate(arguments)
+            source_url = _observation_source_url(request.source_url)
+            payload = {
+                "protocol_version": "envoy.read/1",
+                "request_id": request.request_id,
+                "execution_state": "completed",
+                "result": "ready",
+                "blocks": [{
+                    "id": f"{request.source_block_id}-observation",
+                    "kind": "paragraph",
+                    "content": {"type": "text", "text": request.observation},
+                    "origin": "host_visual",
+                    "locator": {
+                        "type": "web",
+                        "source_url": source_url,
+                        "block_id": request.source_block_id,
+                        "quote": request.locator_quote or request.observation[:120],
+                    },
+                    "relations": [{
+                        "type": "derived_from",
+                        "target_id": request.source_block_id,
+                        "basis": "host_observation",
+                    }],
+                }],
+                "coverage": {
+                    "modalities": {
+                        "visual_observation": {
+                            "discovered": 1,
+                            "extracted": 1,
+                            "returned": 1,
+                            "observed": 1,
+                            "extraction": "complete",
+                            "details": {
+                                "resource_id": request.resource_id,
+                                "untrusted": True,
+                            },
+                        },
+                    },
+                },
             }
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")

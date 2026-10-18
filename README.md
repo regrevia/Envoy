@@ -106,6 +106,8 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{
 
 新版 MCP 返回完整结构化材料一次，文本内容仅提供短状态说明；旧版仍保留文本 JSON 兼容输出。
 
+图片视觉交接完成后，宿主可用 `envoy_observe_visual` 提交有限、带来源的观察；该观察仍被视为不可信材料，不会变成 Agent 指令。
+
 独立 Skill 也支持公开图片链接的视觉交接：宿主声明图片输入后，Envoy 返回图片 URI 和 `inspect_visual`，不会把图片转成 base64 塞进上下文。
 
 长页面首读按请求预算限制返回；若结果标记 `partial` 且覆盖信息给出 `continuation_available`，使用 `envoy expand` 按 `next_offset` 读取下一段。正文快照在本机限额缓存，不会为每段重新下载页面。
