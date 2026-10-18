@@ -31,6 +31,9 @@ def test_cli_read_returns_protocol_material_for_public_html(monkeypatch, capsys)
         def raise_for_status(self):
             return None
 
+        def iter_bytes(self):
+            yield self.content
+
     class Client:
         def __init__(self, *args, **kwargs):
             pass
@@ -41,8 +44,18 @@ def test_cli_read_returns_protocol_material_for_public_html(monkeypatch, capsys)
         def __exit__(self, *_args):
             return False
 
-        def get(self, *_args, **_kwargs):
-            return Response()
+        def stream(self, *_args, **_kwargs):
+            return StreamContext(Response())
+
+    class StreamContext:
+        def __init__(self, response):
+            self.response = response
+
+        def __enter__(self):
+            return self.response
+
+        def __exit__(self, *_args):
+            return False
 
     monkeypatch.setattr(httpx, "Client", Client)
     request = {
@@ -91,3 +104,317 @@ def test_cli_doctor_is_json_and_does_not_report_secrets(capsys):
     assert response["tool"] == "envoy"
     assert response["protocol_version"] == "envoy.read/1"
     assert "api_key" not in json.dumps(response).lower()
+
+
+def test_read_respects_response_character_budget_and_reports_partial_coverage(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    html_text = "<html><head><title>Long guide</title></head><body><main>" + (
+        "<p>Detailed operational step and supporting explanation.</p>" * 30
+    ) + "</main></body></html>"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, max_bytes: ("https://example.org/guide", html_text))
+    request = ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-budget-1",
+        "source": {"url": "https://example.org/guide"},
+        "budget": {"max_response_chars": 256, "max_total_response_chars": 256},
+    })
+
+    response = reader.read_public_page(request)
+    body = next(block.content.text for block in response.blocks if block.kind.value == "paragraph")
+
+    assert response.result.value == "partial"
+    assert len(body) < len(html_text)
+    assert response.coverage.modalities["text"].extraction == "partial"
+    assert response.coverage.modalities["text"].details["returned_chars"] == len(body)
+    assert response.coverage.modalities["text"].details["total_chars"] > len(body)
+    assert response.coverage.modalities["text"].details["continuation_available"] is True
+
+
+def test_fetch_retries_transient_network_errors_and_enforces_streamed_size_limit(monkeypatch):
+    from envoy_cli import reader
+
+    calls = []
+
+    class Response:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>Small page</body></html>"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"123456"
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise httpx.ReadTimeout("temporary timeout")
+            return StreamContext(Response())
+
+    class StreamContext:
+        def __init__(self, response):
+            self.response = response
+
+        def __enter__(self):
+            return self.response
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader.httpx, "Client", Client)
+    monkeypatch.setattr(reader.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(reader, "MAX_HTML_BYTES", 5)
+
+    try:
+        reader._fetch_html("https://example.org/", 5)
+    except reader.PublicPageError as exc:
+        assert "size limit" in str(exc)
+    else:
+        raise AssertionError("Oversized page should be rejected")
+
+    assert len(calls) == 2
+
+
+def test_read_creates_local_material_and_expand_returns_next_non_overlapping_slice(tmp_path, monkeypatch, capsys):
+    from envoy_cli import cli
+    from envoy_cli import reader
+
+    html_text = "<html><head><title>Guide</title></head><body><main>" + (
+        "<p>Step explains one detailed action and its reason.</p>" * 40
+    ) + "</main></body></html>"
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    calls = []
+
+    def fetch(_url, _max_bytes):
+        calls.append(1)
+        return "https://example.org/guide", html_text
+
+    monkeypatch.setattr(reader, "_fetch_html", fetch)
+    request = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-expand-1",
+        "source": {"url": "https://example.org/guide"},
+        "budget": {"max_response_chars": 600, "max_total_response_chars": 2000},
+    }
+
+    assert cli.main(["read", "--request-json", "-"], stdin=json.dumps(request)) == 0
+    first = json.loads(capsys.readouterr().out)
+    material_id = first["material_id"]
+    first_body = next(block["content"]["text"] for block in first["blocks"] if block["kind"] == "paragraph")
+
+    assert first["result"] == "partial"
+    assert material_id
+    expand_request = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-expand-2",
+        "material_id": material_id,
+        "offset": len(first_body),
+        "max_chars": 400,
+        "max_total_response_chars": 2000,
+    }
+    assert cli.main(["expand", "--request-json", "-"], stdin=json.dumps(expand_request)) == 0
+    expanded = json.loads(capsys.readouterr().out)
+    expanded_text = expanded["blocks"][0]["content"]["text"]
+
+    assert expanded["result"] == "partial"
+    assert expanded["blocks"][0]["locator"]["block_id"] == "blk-body-0001"
+    assert expanded["coverage"]["modalities"]["text"]["details"]["offset"] == len(first_body)
+    assert expanded_text
+    assert not first_body.endswith(expanded_text[:40])
+    assert len(calls) == 1
+
+
+def test_expand_enforces_cumulative_response_budget(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "a" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/",
+        "source_revision": "b" * 64,
+        "session_id": None,
+        "text": "x" * 1000,
+    })
+
+    response = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "req-budget-expand",
+        "material_id": material_id,
+        "offset": 200,
+        "max_chars": 500,
+        "max_total_response_chars": 300,
+    }))
+
+    assert len(response.blocks[0].content.text) == 100
+    assert response.coverage.modalities["text"].details["next_offset"] == 300
+    assert response.result.value == "partial"
+
+
+def test_local_material_cache_evicts_expired_and_oldest_without_clearing_recent(tmp_path, monkeypatch):
+    import os
+    import time
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "MAX_CACHED_MATERIALS", 2)
+    for suffix in ("1", "2", "3"):
+        reader._store_material("mat-" + suffix * 24, {"text": suffix})
+        time.sleep(0.01)
+    old_path = tmp_path / ("mat-" + "1" * 24 + ".json")
+    old_timestamp = time.time() - reader.MATERIAL_TTL_SECONDS - 1
+    os.utime(old_path, (old_timestamp, old_timestamp))
+
+    reader._material_root()
+    remaining = {path.name for path in tmp_path.glob("mat-*.json")}
+
+    assert "mat-" + "1" * 24 + ".json" not in remaining
+    assert len(remaining) <= 2
+    assert "mat-" + "3" * 24 + ".json" in remaining
+
+
+def test_material_expiry_metadata_write_does_not_follow_existing_symlink(tmp_path, monkeypatch):
+    from envoy_cli import reader
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    outside_file = tmp_path / "outside"
+    outside_file.write_text("unchanged", encoding="utf-8")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(cache_dir))
+    material_id = "mat-" + "d" * 24
+    (cache_dir / f"{material_id}.expires").symlink_to(outside_file)
+
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/",
+        "source_revision": "e" * 64,
+        "text": "Local material",
+    })
+
+    assert outside_file.read_text(encoding="utf-8") == "unchanged"
+    assert not (cache_dir / f"{material_id}.expires").is_symlink()
+    assert (cache_dir / f"{material_id}.expires").is_file()
+
+
+def test_read_redacts_sensitive_query_values_and_omits_signed_image_resources(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    html_text = """
+    <html><head><title>Private token page</title></head><body>
+    <main><p>Publicly readable article content with enough words.</p>
+    <img src="https://cdn.example.org/image.webp?X-Amz-Signature=hidden-signature&amp;size=large">
+    </main></body></html>
+    """
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda _url, _max_bytes: (
+            "https://example.org/article?access_token=hidden-token&amp;page=1",
+            html_text,
+        ),
+    )
+    request = ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-redact-1",
+        "source": {"url": "https://example.org/article?access_token=hidden-token&page=1"},
+    })
+
+    response = reader.read_public_page(request)
+    serialized = response.model_dump_json()
+
+    assert response.result.value == "partial"
+    assert "hidden-token" not in serialized
+    assert "hidden-signature" not in serialized
+    assert "access_token=%5BREDACTED%5D" in serialized
+    assert response.resources == []
+    assert any("credential-like" in item for item in response.coverage.modalities["images"].unresolved)
+
+
+def test_network_error_does_not_echo_secret_query_value(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    secret_url = "https://example.org/article?api_key=do-not-leak"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+
+    def fail_fetch(_url, _max_bytes):
+        raise httpx.ConnectError(f"failed to connect to {secret_url}")
+
+    monkeypatch.setattr(reader, "_fetch_html", fail_fetch)
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-network-redact",
+        "source": {"url": secret_url},
+    }))
+
+    assert "do-not-leak" not in response.model_dump_json()
+    assert "api_key=%5BREDACTED%5D" in response.model_dump_json()
+
+
+def test_source_text_hard_limit_is_reported_as_partial_not_silent_success(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "MAX_TEXT_CHARS", 100)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda _url, _max_bytes: (
+            "https://example.org/long",
+            "<html><body><p>" + ("substantial source text " * 20) + "</p></body></html>",
+        ),
+    )
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-hard-limit",
+        "source": {"url": "https://example.org/long"},
+    }))
+
+    assert response.result.value == "partial"
+    assert response.coverage.modalities["text"].details["source_truncated"] is True
+    assert response.coverage.modalities["text"].details["continuation_available"] is False
+    assert any("extraction limit" in item for item in response.coverage.modalities["text"].unresolved)
+
+
+def test_zero_retention_does_not_advertise_expandable_content(tmp_path, monkeypatch, capsys):
+    from envoy_cli import cli, reader
+
+    html_text = "<html><head><title>Guide</title></head><body><p>" + ("Useful sentence. " * 80) + "</p></body></html>"
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes: ("https://example.org/", html_text))
+    request = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-no-retain",
+        "source": {"url": "https://example.org/"},
+        "budget": {"max_response_chars": 600, "max_total_response_chars": 2000},
+        "retention": {"raw_media": "ephemeral", "derived_ttl_seconds": 0},
+    }
+
+    assert cli.main(["read", "--request-json", "-"], stdin=json.dumps(request)) == 0
+    response = json.loads(capsys.readouterr().out)
+
+    assert response["result"] == "partial"
+    assert response["coverage"]["modalities"]["text"]["details"]["continuation_available"] is False
+    assert any(
+        "retention is disabled" in item
+        for item in response["coverage"]["modalities"]["text"]["unresolved"]
+    )
+    assert list(tmp_path.glob("mat-*.json")) == []
