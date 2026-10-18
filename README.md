@@ -74,6 +74,18 @@ npm run dev
 
 任务详情页支持查看进度、错误、断点、重试和浏览器接管。公开页面能力仍在扩展；登录、验证码、地区限制或 DRM 来源不会被承诺绕过。
 
+### 独立 Skill（开发版）
+
+当前 `dev` 已包含一个不依赖网站数据库的最小 Skill 运行包，支持公开静态 HTML：
+
+```bash
+python -m pip install -e packages/envoy-core -e packages/envoy-cli
+envoy doctor --json
+printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{"url":"https://example.org/"}}' | envoy read --request-json -
+```
+
+宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、视频、OCR、ASR、浏览器恢复和长任务目前仍使用网站入口，独立 Skill 尚未宣称覆盖这些能力。
+
 ## 模型配置
 
 Envoy 默认不带模型和 API Key。打开 `/video` 右上角齿轮，填写：
