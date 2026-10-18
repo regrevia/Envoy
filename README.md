@@ -24,6 +24,8 @@ docker compose up --build
 
 The first build is large because it includes FFmpeg, Whisper, OCR, browser automation, and media dependencies. Later starts reuse Docker volumes.
 
+Local execution defaults to two concurrent tasks to protect CPU, memory, and external model limits. Set `ENVOY_LOCAL_TASK_MAX_CONCURRENCY` in `.env` up to 8 when the machine can handle more work.
+
 ### Windows Native Development
 
 Requirements:

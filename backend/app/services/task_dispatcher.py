@@ -1,9 +1,9 @@
-from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.config import TASK_EXECUTION_MODE
+from app.core.config import LOCAL_TASK_MAX_CONCURRENCY, TASK_EXECUTION_MODE
 from app.db.session import SessionLocal
 from app.models.processing_task import ProcessingTask
 from app.services.crud_service import update_task_status
@@ -21,6 +21,12 @@ def _task_payload(task):
         "result_summary": task.result_summary,
         "error_message": task.error_message,
     }
+
+
+_local_executor = ThreadPoolExecutor(
+    max_workers=LOCAL_TASK_MAX_CONCURRENCY,
+    thread_name_prefix="envoy-local-task",
+)
 
 
 def _run_local_task(celery_task: Any, payload: dict):
@@ -53,8 +59,7 @@ def dispatch_task(db: Session, task, celery_task: Any, payload: dict):
         return _task_payload(task)
 
     task = update_task_status(db, task.id, "running", 1, result_summary="Local task started")
-    worker = Thread(target=_run_local_task, args=(celery_task, job_payload), daemon=True)
-    worker.start()
+    _local_executor.submit(_run_local_task, celery_task, job_payload)
     return _task_payload(task)
 
 
