@@ -21,6 +21,7 @@ from envoy_core.schemas.read_v1 import (
     ExecutionState,
     HostDelivery,
     ImageContent,
+    ImageInputCapability,
     MaterialBlock,
     MaterialKind,
     MaterialOrigin,
@@ -29,6 +30,7 @@ from envoy_core.schemas.read_v1 import (
     ReadResponse,
     ReadResult,
     ResourceRef,
+    Need,
     TextContent,
     WebLocator,
 )
@@ -42,6 +44,7 @@ MIN_EXPANSION_CHARS = 128
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif")
 SENSITIVE_QUERY_KEYS = {
     "access_token",
     "api_key",
@@ -409,13 +412,130 @@ def _fetch_html(
     raise PublicPageError("The source exceeded the redirect limit")
 
 
+def _fetch_source(
+    source_url: str,
+    max_bytes: int,
+    dns_cache: dict[str, bool],
+) -> dict:
+    current_url = source_url
+    headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
+    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False) as client:
+        for _ in range(5):
+            if not _is_public_http_url(current_url, dns_cache):
+                raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
+            with client.stream("GET", current_url, headers=headers) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise PublicPageError("The source returned an invalid redirect")
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                if not content_type.startswith("image/"):
+                    raise PublicPageError(
+                        f"Image source returned unsupported content type: {content_type or 'unknown'}",
+                        ErrorCode.UNSUPPORTED_SOURCE,
+                    )
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > max_bytes:
+                    raise PublicPageError("The image source exceeds Envoy's size limit")
+                return {
+                    "kind": "image",
+                    "url": _redact_url(current_url),
+                    "mime_type": content_type,
+                    "size_bytes": int(content_length) if content_length else None,
+                }
+    raise PublicPageError("The source exceeded the redirect limit")
+
+
+def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
+    if request.host_capabilities.image_input == ImageInputCapability.NONE:
+        return _blocked(
+            request,
+            ErrorCode.MISSING_CAPABILITY,
+            "The host must provide image input to inspect this image source",
+        )
+    source = _fetch_source(
+        source_url,
+        min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
+        dns_cache,
+    )
+    resource_id = "resource-image"
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=f"mat-{hashlib.sha256(source['url'].encode()).hexdigest()[:24]}",
+        source_revision=hashlib.sha256(source["url"].encode()).hexdigest(),
+        execution_state=ExecutionState.WAITING_FOR_HOST,
+        result=ReadResult.NEEDS_HOST,
+        blocks=[
+            MaterialBlock(
+                id="blk-image-0001",
+                kind=MaterialKind.IMAGE,
+                content=ImageContent(
+                    type="image",
+                    resource_id=resource_id,
+                    alt_text=request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image",
+                    mime_type=source["mime_type"],
+                ),
+                origin=MaterialOrigin.SOURCE_IMAGE,
+                locator=WebLocator(
+                    type="web",
+                    source_url=source["url"],
+                    block_id="blk-image-0001",
+                    quote=request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image",
+                ),
+                order=0,
+            )
+        ],
+        resources=[
+            ResourceRef(
+                resource_id=resource_id,
+                mime_type=source["mime_type"],
+                delivery=HostDelivery(type="uri", uri=source["url"]),
+                sha256=None,
+                delivery_evidence="unverified",
+            )
+        ],
+        needs=[
+            Need(
+                action_id="inspect-image-0001",
+                type="inspect_visual",
+                purpose=request.goal or "Inspect the source image",
+                resource_ids=[resource_id],
+                source_block_ids=["blk-image-0001"],
+                reason="The source contains visual information that should be inspected by the host model.",
+                max_resources=1,
+            )
+        ],
+        coverage=Coverage(
+            modalities={
+                "images": CoverageItem(
+                    discovered=1,
+                    extracted=1,
+                    returned=1,
+                    delivered=1,
+                    extraction="complete",
+                )
+            }
+        ),
+    )
+
+
 def read_public_page(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
-    if request.source.kind.value not in {"auto", "article"}:
-        return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
     dns_cache: dict[str, bool] = {}
     if not _is_public_http_url(source_url, dns_cache):
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
+    source_path = urlparse(source_url).path.lower()
+    if request.source.kind.value == "image" or source_path.endswith(IMAGE_SUFFIXES):
+        try:
+            return _read_image_source(request, source_url, dns_cache)
+        except PublicPageError as exc:
+            return _blocked(request, exc.code, str(exc))
+    if request.source.kind.value not in {"auto", "article"}:
+        return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
     try:
         final_url, html = _fetch_html(
             source_url,

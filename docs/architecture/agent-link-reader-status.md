@@ -25,7 +25,7 @@
 | 可供 Agent 消费的 Markdown/HTML/ZIP | 已验证（开发验收） | 公共图文 ZIP 含索引、来源 Markdown、HTML、manifest、`materials.json` 和全部配图；Markdown 适合正文消费，协议 JSON 提供渐进读取和资源定位 |
 | 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；Worker 租约、并发配额、取消贯通仍未达到方案门槛 |
 | 独立无数据库处理核心 | 进行中 | `packages/envoy-core` 已承载第一版 `envoy.read/1` 请求/材料/覆盖/资源 schema；现有 worker 尚未整体迁出 ORM |
-| CLI、宿主 Skill 与 MCP 桥 | 进行中 | 已有开发版 `packages/envoy-cli`、`envoy read/expand/doctor/mcp` 和 `integrations/skills/envoy/SKILL.md`；MCP 支持新版 per-request 版本元数据及多种旧版初始化协商；工具输入 schema 已按独立网页能力裁剪至约 1.2 KB，新版工具结果避免重复传输材料并省略默认字段；静态 HTML 同一读取内复用 DNS 判定，支持预算截断、缓存续读及网络重试；当前独立运行时尚无动态页面、视频或视觉宿主桥 |
+| CLI、宿主 Skill 与 MCP 桥 | 进行中 | 已有开发版 `packages/envoy-cli`、`envoy read/expand/doctor/mcp` 和 `integrations/skills/envoy/SKILL.md`；MCP 支持新版 per-request 版本元数据及多种旧版初始化协商；工具输入 schema 已按独立网页能力裁剪至约 1.2 KB，新版工具结果避免重复传输材料并省略默认字段；静态 HTML 同一读取内复用 DNS 判定，直接图片链接可返回 `needs_host` 视觉动作；当前独立运行时尚无动态页面、视频或视觉宿主桥的完整视频路径 |
 | 跨来源质量/费用基准 | 未开始 | 尚无固定 60 来源/120 任务集，也未测得全链路费用改善数字 |
 
 ## 近期执行顺序
@@ -66,7 +66,7 @@
 
 - 当前基线：`dev`，本轮提交后更新；工作区状态以 Git 为准，本轮未合并 `main`。
 - 协议与公开页面针对性测试：`49 passed, 1 warning`。
-- 仓库根目录全量测试：`388 passed, 143 warnings`。
+- 仓库根目录全量测试：`390 passed, 143 warnings`。
 - 前端生产构建：`npm run build` 成功；仅有 `generated-samples` 和 `semantic-units` 两处既有 Hook 依赖警告。
 - 静态编译检查：`web_content_service.py`、`jobs.py`、`read_v1.py` 通过 `py_compile`。
 - 本轮新增覆盖：`materials.json` 生成、`envoy.read/1` 版本字段、正文/图片/OCR 来源标记和图片资源 URI。
@@ -74,6 +74,7 @@
 - 独立 CLI、MCP 与协议针对性测试：`31 passed`；OCR 档位专项 `5 passed`；MCP bridge 单测 `14 passed`，覆盖新版发现/工具列表/工具调用、短状态文本、旧版初始化协商、坏 JSON 和工具错误；读取器测试覆盖预算续读、同一读取内 DNS 复用、网络重试/字节上限、私网阻断、缓存 TTL/容量及符号链接保护、敏感 URL 脱敏和签名图片省略。
 - 独立 CLI 发行包验证：使用本机虚拟环境普通 wheel 安装成功；`envoy doctor --json` 正常，实际读取 `https://example.org/` 返回 `ready`。
 - MCP 发行进程 smoke：已安装 wheel 通过 `envoy mcp` stdin/stdout 完成新版发现、工具列表和 `2025-11-25` 旧版初始化；独立网页读取工具 schema 从约 4.7 KB 缩至约 1.2 KB；新版工具调用只返回短状态文本，完整材料仅放在结构化字段中。
+- 图片视觉协作专项：直接图片 URL 在宿主具备 URI 图片输入时返回 `waiting_for_host/needs_host`、资源 URI 和 `inspect_visual` 动作；无图片能力时结构化返回 `missing_capability`，不内联 base64。
 - 长材料与稳定性：首读遵循响应字符预算并明确返回 `partial` 覆盖；来源硬上限也会显式报告；`expand` 从本地快照返回非重叠范围，累计返回范围受 `max_total_response_chars` 约束；网络请求有有限重试与流式字节上限；快照权限为用户私有并遵循请求 TTL（最多 7 天）/100 项清理策略；来源 URL 凭据参数脱敏，签名图片不向宿主暴露。网页内容在 Skill 指令中明确作为不可信数据，不能覆盖 Agent 指令。
 - OCR 配置：当前后端支持 `fast/balanced/quality/pro` 四档 OCR 模型选择，默认 `balanced`；`quality` 使用 PP-OCRv5 server，`pro` 使用 PP-OCRv6 medium，作为当前 Envoy 的最高通用精度档，模型按首次使用按需下载；旧版 PaddleOCR 自动兼容回退，Tesseract 仍作为降级路径；Skill/MCP 的 `ReadRequest` 支持 `ocr_profile`。OCR 进入派生材料协议，不作为默认全量 Agent 上下文。当前本机 PaddleX OCR 模型缓存约 177 MB，实际部署大小随档位和运行时版本变化。
 
