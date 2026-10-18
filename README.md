@@ -85,6 +85,14 @@ envoy doctor --json
 printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{"url":"https://example.org/"}}' | envoy read --request-json -
 ```
 
+生成无凭据 Skill 安装包：
+
+```bash
+python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
+```
+
+安装包只包含 `SKILL.md`、协议参考和 `envoy-skill.json`，不包含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。
+
 宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、视频、OCR、ASR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
 
 支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand` 和 `envoy_doctor` 三个工具，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
@@ -171,7 +179,7 @@ cd frontend && npm run build
 
 当前开发版已通过一条抖音公开图文的真实链路验收：提取正文与 4 张配图，生成 OCR 语义、Markdown/HTML 和 ZIP 产物。单个样本不代表所有网站均已适配。
 
-Envoy Skill 自包含安装包、扫描版 PDF OCR、视频/音频独立 Skill 路径、微信公众号专项验收以及多用户 Worker 隔离仍在开发中，尚未发布。实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
+扫描版 PDF OCR、视频/音频独立 Skill 路径、微信公众号专项验收以及多用户 Worker 隔离仍在开发中，尚未发布。Skill ZIP 已可由仓库脚本生成；实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
 
 OCR 默认使用 `balanced` 档位，用户可在高级设置中选择 `fast / balanced / quality / pro`；其中 `pro` 使用 PP-OCRv6 medium，是当前 Envoy 的最高通用精度档，代价是更慢、更占资源。Skill/MCP 请求也可以传入 `ocr_profile`。切换档位时按需下载对应模型，不把全部模型预装进镜像。OCR 属于 Envoy 的派生材料，网站产物可以记录 OCR 文本及来源关系；Skill/MCP 默认不把所有 OCR 原文一次性塞进 Agent 上下文，而是按目标和材料范围逐步读取。
 
