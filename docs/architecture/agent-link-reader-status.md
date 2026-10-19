@@ -5,7 +5,7 @@
 计划所依据的提交：`fb582660072bfe04c86ddb67b1810a61a3dcbd4b`  
 开发分支：`dev`
 
-当前开发基线：`dev@c480c1d`；视频媒体闭环及平台探测记录已推送至 `dev`，`main` 仍为 `f0b2fd6`，尚未合并/发行。GitHub Release 资产仍需由版本 tag 触发发行工作流。
+当前开发基线：`dev@2e1bbf9`；视频媒体闭环及平台探测记录已推送至 `dev`，`main` 仍为 `f0b2fd6`，尚未合并/发行。GitHub Release 资产仍需由版本 tag 触发发行工作流。
 
 ## 状态定义
 
@@ -104,7 +104,7 @@
 - 2026-10-19 独立视频媒体验收（已推送 `dev@a6c7b1b`）：clean Python 3.11 wheel 已安装 `openai-whisper==20250625` 媒体依赖并运行真实本地 Whisper `base`。Project Gutenberg/LibriVox 样本前 50 秒输出英文 8 段，耗时约 2.1 秒，抽查的开头与对应原文吻合；Wikimedia `Tear_down_this_wall.ogv` 最终 wheel 真实端到端：音频下载 94,058,123 bytes、约 163 秒，0–60 秒返回 8 条英文 cue，`video_time` 与范围 coverage 正确；Bilibili 音轨 600–660 秒的重复幻听被 no-speech 概率过滤，状态为 `no_speech`，不产生 transcript。MDN `flower.mp4` 无语音样本约 1.13 MB 下载、FFprobe 补出 5.055 秒，抽取 842x474、399,108 像素的 3.0 秒帧；帧文件在 material TTL lease 内可读，MCP visual observation 持久化并由 history 回读。host/provider token 数未知；这不代表完整视频视觉问答效果。
 - 本轮检索效率基准：`benchmarks/video_evidence_eval.py` 离线两例 100% 定位预期片段，2 次工具调用返回 207 字符/52 估算 token，对照顺序扫描基线 752 字符/204 估算 token；最近一次本地检索延迟中位数约 2.44 ms（单次小样本，会随主机负载变化）。它不调用答案模型；host/provider 实际 token 数为 `unknown`，这些值只量化本地取证材料缩减。
 - 本轮最终回归：全仓 `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q` 为 `524 passed, 143 warnings`；CLI/MCP/protocol/video/OCR/运行时安全子集 `193 passed`；wheel clean-install/console entrypoint/doctor smoke、Skill ZIP 与视频证据 benchmark `5 passed`；最终 wheel 实际安装后的 doctor 与 MCP tools/list smoke 成功。前端生产构建成功，保留两个既有 Hook 依赖警告。告警包括 backend Python 3.9/LibreSSL urllib3 与既有 FastAPI `on_event` 弃用。
-- GitHub Actions：`dev@be855b0` run `39276276218` 首次 Windows standalone job 曾失败于测试依赖/ZIP 顺序；修复后 `dev@64cc907` run `39277166622`、`dev@d8f98a9` run `39278125707`、`dev@ca8d945` run `39283200077`、`dev@2efa0ec` run `39285278677`、`dev@64542df` run `39286119485`、`dev@83543ac` run `39288217750` 和当前 `dev@c480c1d` run `39290541329` 的四个 job 均通过。
+- GitHub Actions：`dev@be855b0` run `39276276218` 首次 Windows standalone job 曾失败于测试依赖/ZIP 顺序；修复后 `dev@64cc907` run `39277166622`、`dev@d8f98a9` run `39278125707`、`dev@ca8d945` run `39283200077`、`dev@2efa0ec` run `39285278677`、`dev@64542df` run `39286119485`、`dev@83543ac` run `39288217750`、`dev@c480c1d` run `39290541329` 和当前 `dev@2e1bbf9` run `39299917956` 的四个 job 均通过。
 - 最新本机回归：全仓 `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q` 为 `524 passed, 143 warnings`；CLI/MCP/protocol/video/OCR/runtime 子集最近一次为 `193 passed`；wheel clean-install/console entrypoint/doctor smoke、Skill ZIP 和视频 evidence benchmark `5 passed`；wheel 已在独立 Python 3.11 runtime 重新安装并通过 `envoy doctor --json`。前端 production build 成功，保留两个 Hook 依赖警告。Backend venv 的 Python 3.9/LibreSSL urllib3 和 FastAPI `on_event` 弃用仍有 warnings。
 - GitHub 安装发行（本地改动，尚未发布）：新增自包含 CLI wheel 构建、Skill 安装说明、Release tag 版本校验及 wheel/Skill ZIP/SHA-256 发布工作流。尚未实际创建 GitHub Release 或验证宿主 MCP 配置自动写入；安装步骤仍需用户明确确认所用宿主。
 
