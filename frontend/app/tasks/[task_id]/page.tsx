@@ -127,6 +127,10 @@ function taskTypeLabel(taskType?: string | null) {
     export: '数据集导出',
     export_skill: 'Skill 导出',
     export_markdown: 'Markdown 导出',
+    public_page_to_markdown: '网页内容整理',
+    video_to_markdown: '视频转 Markdown',
+    video_batch_to_markdown: '批量视频整理',
+    mixed_assets_to_markdown: '多源内容整理',
   };
   return taskType ? labels[taskType] || taskType : '-';
 }

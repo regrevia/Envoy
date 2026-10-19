@@ -49,6 +49,7 @@ PLATFORM_HOSTS = {
     "iqiyi": {"iqiyi.com", "www.iqiyi.com"},
     "xiaohongshu": {"xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com"},
     "dailymotion": {"dailymotion.com", "www.dailymotion.com", "geo.dailymotion.com"},
+    "wechat": {"mp.weixin.qq.com"},
 }
 
 
@@ -395,6 +396,10 @@ def _is_direct_video_media_url(parsed) -> bool:
 
 def _source_kind_for_path(platform: str, host: str, path: str) -> str:
     normalized_path = path.rstrip("/").lower()
+    if platform == "douyin" and normalized_path.startswith("/note/"):
+        return "image_text"
+    if platform == "wechat" and normalized_path.startswith("/s/"):
+        return "article"
     if platform == "douyin" and (host == "v.douyin.com" or host == "iesdouyin.com"):
         return "share"
     if platform == "youtube" and host == "youtu.be":
@@ -455,6 +460,8 @@ def _source_kind_for_path(platform: str, host: str, path: str) -> str:
         return "creator"
     if any(marker in normalized_path or marker in host for marker in creator_markers.get(platform, ())):
         return "creator"
+    if platform == "unknown":
+        return "public_page"
     return "unknown"
 
 
@@ -464,13 +471,14 @@ def classify_video_source(source_url: str) -> dict:
     host = (parsed.hostname or "").lower().rstrip(".")
     platform = _platform_for_host(host)
     source_kind = "direct_media" if _is_direct_video_media_url(parsed) else _source_kind_for_path(platform, host, parsed.path)
+    page_content = source_kind in {"article", "image_text", "public_page"}
     return {
         "source_url": url,
         "platform": platform,
         "source_kind": source_kind,
         "host": host,
-        "supports_ytdlp": platform != "unknown" or source_kind == "direct_media",
-        "supports_browser_discovery": platform != "unknown",
+        "supports_ytdlp": (platform != "unknown" and not page_content) or source_kind == "direct_media",
+        "supports_browser_discovery": platform != "unknown" and not page_content,
     }
 
 
