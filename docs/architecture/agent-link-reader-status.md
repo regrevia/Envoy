@@ -5,7 +5,7 @@
 计划所依据的提交：`fb582660072bfe04c86ddb67b1810a61a3dcbd4b`  
 开发分支：`dev`
 
-当前开发基线：`dev@f0b2fd6`；本轮视频媒体闭环仍在工作树中，尚未提交，不能视为已发布。GitHub Release 资产仍需由版本 tag 触发发行工作流。
+当前开发基线：`dev@be855b0`；本轮视频媒体闭环已推送至 `dev`，`main` 仍为 `f0b2fd6`，尚未合并/发行。GitHub Release 资产仍需由版本 tag 触发发行工作流。
 
 ## 状态定义
 
@@ -20,14 +20,14 @@
 | 能力 | 状态 | 证据 / 缺口 |
 | --- | --- | --- |
 | 单一链接输入，后端按链接类型自动分流 | 进行中 | 视频和公开视频/图文走不同处理任务；公开视频 bundle 已开始输出统一材料协议 |
-| 常见视频链接与本地视频处理 | 网站已验证，Skill 进行中 | 独立 Skill 工作树已实现公开字幕优先、可选本地 Whisper ASR、预算化直链/平台下载与宿主显式请求抽帧；视频帧按源时间交付为有 TTL 的本地文件，可经 `envoy_observe_visual` 记账并由 `envoy_visual_history` 复用。Wikimedia OGV 历史演讲真实链路：94.1 MB 音频下载、约 163 秒，开头 60 秒 Whisper `base` 返回 8 条英文时间 cue，抽查内容与来源一致；MDN 无口播 MP4 已走通 1.13 MB 下载、3.0 秒抽帧、文件 lease 和 MCP 观察回读。Bilibili 真实音轨返回非语音幻听，已加 no-speech/置信度过滤并正确报告 `no_speech`，不计为 ASR 通过。YouTube 请求登录确认；抖音/多平台成功率尚未完成验收 |
+| 常见视频链接与本地视频处理 | 网站已验证，Skill 进行中 | 独立 Skill 已实现公开字幕优先、本地 Whisper ASR、预算化直链/平台下载与宿主显式请求抽帧；视频帧按源时间交付为有 TTL 的本地文件，可经 `envoy_observe_visual` 记账并由 `envoy_visual_history` 复用。Wikimedia OGV 历史演讲真实链路：94.1 MB 音频下载、约 163 秒，开头 60 秒 Whisper `base` 返回 8 条英文时间 cue，抽查内容与来源一致；MDN 无口播 MP4 已走通 1.13 MB 下载、3.0 秒抽帧、文件 lease 和 MCP 观察回读。Bilibili 所测音轨时段被判无可靠语音，正确返回 `no_speech`，不算平台 ASR 成功。YouTube 请求登录确认；抖音与多个平台的普遍可达性仍未完成验收 |
 | 抖音公开图文正文与配图 | 已验证（开发验收） | 2026-10-18 本地 Envoy 任务读取指定图文，提取 534 字符正文和 4 张原图，图片 OCR 子任务成功，产物 ZIP 校验通过 |
 | 微信公众号和通用网页 | 进行中 | 通用公开页面提取已接入同一入口；微信公众号尚缺固定真实样本验收和长文/延迟资源测试 |
-| PDF、Office、独立音频/图片入口 | 进行中 | 独立 Skill 支持 PDF 文本层、纯文本/Markdown/CSV/JSON 直链和公开图片视觉交接；PDF 按页定位，长纯文本按字符范围续读；无文本层扫描页明确提示 OCR 能力缺口；Office/音视频和扫描页 OCR 仍待接入 |
+| PDF、Office、独立音频/图片入口 | 进行中 | 独立 Skill 支持 PDF 文本层、纯文本/Markdown/CSV/JSON 直链和公开图片视觉交接；PDF 按页定位，长纯文本按字符范围续读；无文本层扫描页明确提示 OCR 能力缺口；独立音频 URL、Office 和扫描页 OCR 仍待接入 |
 | 可供 Agent 消费的 Markdown/HTML/ZIP | 已验证（开发验收） | 公共图文 ZIP 含索引、来源 Markdown、HTML、manifest、`materials.json` 和全部配图；Markdown 适合正文消费，协议 JSON 提供渐进读取和资源定位 |
 | 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；Worker 租约、并发配额、取消贯通仍未达到方案门槛 |
 | 独立无数据库处理核心 | 进行中 | `packages/envoy-core` 已承载第一版 `envoy.read/1` 请求/材料/覆盖/资源 schema；现有 worker 尚未整体迁出 ORM |
-| CLI、宿主 Skill 与 MCP 桥 | 进行中 | 已有开发版 `packages/envoy-cli`、`envoy read/expand/doctor/mcp`；MCP 支持新版 per-request 元数据和旧版初始化协商；Skill 按目标指导 read/search/targeted expand。工作树新增字幕解析/时间检索测试、长行命中窗口、跨 search/expand 区间账本、绝对 offset 续读、稳定图像资源 ID、视觉观察关联拒绝和公开视频直链条件交接。平台 extractor 真实链路暂受站点响应限制，不能据此宣称站点字幕支持已验收 |
+| CLI、宿主 Skill 与 MCP 桥 | 进行中 | `dev` 有 `packages/envoy-cli`、`envoy read/expand/doctor/mcp`；MCP 支持新版 per-request 元数据和旧版初始化协商；Skill 按目标指导 read/search/targeted expand。字幕时间定位、长行命中、跨 search/expand 区间账本、累计预算、material 文件锁、稳定视觉资源 ID、观察关联校验、租约帧交接均已实现。平台访问仍因登录/站点挑战而不稳定，未据此宣传全平台已验收 |
 | 跨来源质量/费用基准 | 未开始 | 尚无固定 60 来源/120 任务集，也未测得全链路费用改善数字 |
 
 ## 近期执行顺序
@@ -99,11 +99,13 @@
 - 长材料与稳定性：首读遵循响应字符预算并明确返回 `partial` 覆盖；来源硬上限也会显式报告；`expand` 从本地快照返回非重叠范围，累计返回范围受 `max_total_response_chars` 约束；网络请求有有限重试与流式字节上限；快照权限为用户私有并遵循请求 TTL（最多 7 天）/100 项清理策略；来源 URL 凭据参数脱敏，签名图片不向宿主暴露。网页内容在 Skill 指令中明确作为不可信数据，不能覆盖 Agent 指令。
 - OCR 配置：当前后端支持 `fast/balanced/quality/pro` 四档 OCR 模型选择，默认 `balanced`；`quality` 使用 PP-OCRv5 server，`pro` 使用 PP-OCRv6 medium，作为当前 Envoy 的最高通用精度档，模型按首次使用按需下载；旧版 PaddleOCR 自动兼容回退，Tesseract 仍作为降级路径；Skill/MCP 的 `ReadRequest` 支持 `ocr_profile`。OCR 进入派生材料协议，不作为默认全量 Agent 上下文。当前本机 PaddleX OCR 模型缓存约 177 MB，实际部署大小随档位和运行时版本变化。
 - OCR 下载诊断（本地改动，故障注入已验）：PaddleOCR 模型初始化/下载错误将保留脱敏错误、所选档位、Tesseract 回退情况和 `ask_to_use_default_ocr` 建议，并进入视频语义材料和任务摘要；真实代理故障尚未在外部网络环境复现。
-- 连续证据账本与会话隔离（本地改动，专项回归已验）：`search` 与 `expand` 共用 source offset 区间账本，跨进程 material 文件锁序列化同一材料的预算读改写；同 session 同 URL 的重复初读也串行化，原子替换保留 visual resources/observations/coverage gaps。相同 URL 与 revision 的不同 session 得到不同 material ID。已验 thread/子进程并发扩展预算不超额及锁争用超时行为；Windows `msvcrt` 验收 job 已加入 GitHub Actions，尚无远端 runner 结果。
+- 连续证据账本与会话隔离（`dev@a6c7b1b` 实现，Windows 回归在 `be855b0`）：`search` 与 `expand` 共用 source offset 区间账本，固定 hash-striped 跨进程 material 锁序列化预算读改写且不删除活动 inode；同 session 同 URL 初读串行化，ASR 模型缓存使用跨进程单槽位。thread/子进程预算竞争、锁 inode 生命周期已测；GitHub Windows standalone job 已通过。
 - Skill 平台字幕尝试（本地改动）：有专用 yt-dlp extractor 时只探测元数据并下载公开 VTT/JSON3/SRT 字幕，不下载视频、不读浏览器 Cookie；cue 返回 `video_time` locator。2026-10-19 本地真实 YouTube 返回 `The page needs to be reloaded`，Bilibili 返回 HTTP 412，因此真实平台字幕成功尚未验收；直链 MP4 与字幕解析/搜索时间定位分别有真实 HTTP/离线 fixture 测试。
 - 2026-10-19 独立视频媒体验收（未提交工作树）：clean Python 3.11 wheel 已安装 `openai-whisper==20250625` 媒体依赖并运行真实本地 Whisper `base`。Project Gutenberg/LibriVox 样本前 50 秒输出英文 8 段，耗时约 2.1 秒，抽查的开头与对应原文吻合；Wikimedia `Tear_down_this_wall.ogv` 当前 wheel 真实端到端：音频下载 94,058,123 bytes、约 163 秒，0–60 秒返回 8 条英文 cue，首分钟主旨相关内容、`video_time`、范围 coverage 均有输出；Bilibili 音轨 600–660 秒的重复幻听被 no-speech 概率过滤，状态为 `no_speech`，不产生 transcript。MDN `flower.mp4` 无语音样本约 1.13 MB 下载、FFprobe 补出 5.055 秒，抽取 842x474、399,108 像素的 3.0 秒帧；帧文件在 material TTL lease 内可读，MCP visual observation 持久化并由 history 回读。host/provider token 数未知；这不代表完整视频视觉问答效果。
 - 本轮检索效率基准：`benchmarks/video_evidence_eval.py` 离线两例 100% 定位预期片段，2 次工具调用返回 207 字符/52 估算 token，对照顺序扫描基线 752 字符/204 估算 token；最近一次本地检索延迟中位数约 2.44 ms（单次小样本，会随主机负载变化）。它不调用答案模型；host/provider 实际 token 数为 `unknown`，这些值只量化本地取证材料缩减。
 - 本轮最终回归：全仓 `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q` 为 `524 passed, 143 warnings`；CLI/MCP/protocol/video/OCR/运行时安全子集 `193 passed`；wheel clean-install/console entrypoint/doctor smoke、Skill ZIP 与视频证据 benchmark `5 passed`；最终 wheel 实际安装后的 doctor 与 MCP tools/list smoke 成功。前端生产构建成功，保留两个既有 Hook 依赖警告。告警包括 backend Python 3.9/LibreSSL urllib3 与既有 FastAPI `on_event` 弃用。
+- GitHub Actions：`dev@be855b0` run `39276276218` 的 Backend tests、Frontend build、Compose validation、Standalone Skill on Windows 四个 job 均通过。
+- 最新本机回归：全仓 `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q` 为 `524 passed, 143 warnings`；CLI/MCP/protocol/video/OCR/runtime 子集最近一次为 `193 passed`；wheel clean-install/console entrypoint/doctor smoke、Skill ZIP 和视频 evidence benchmark `5 passed`；wheel 已在独立 Python 3.11 runtime 重新安装并通过 `envoy doctor --json`。前端 production build 成功，保留两个 Hook 依赖警告。Backend venv 的 Python 3.9/LibreSSL urllib3 和 FastAPI `on_event` 弃用仍有 warnings。
 - GitHub 安装发行（本地改动，尚未发布）：新增自包含 CLI wheel 构建、Skill 安装说明、Release tag 版本校验及 wheel/Skill ZIP/SHA-256 发布工作流。尚未实际创建 GitHub Release 或验证宿主 MCP 配置自动写入；安装步骤仍需用户明确确认所用宿主。
 
 ## 下一次状态更新必须包括
