@@ -232,6 +232,51 @@ def test_vision_settings_are_encrypted_and_status_never_returns_api_key(tmp_path
     assert loaded["base_url"] == "https://provider.example/v1"
 
 
+def test_video_topic_synthesis_uses_goal_without_assuming_a_domain():
+    from app.services.vision_service import synthesize_video_topics
+
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": (
+                    '{"title":"PowerShell 更新","summary":"升级步骤",'
+                    '"points":[{"text":"使用官方命令更新","evidence_ids":["ev-1"]}]}'
+                )
+            }
+        }]
+    }
+    client = Mock()
+    client.post.return_value = response
+
+    with patch.dict(
+        "os.environ",
+        {
+            "HERMES_VISION_BASE_URL": "https://vision.example.test/v1",
+            "HERMES_VISION_TOKEN": "secret",
+            "HERMES_VISION_MODEL": "model",
+            "HERMES_VISION_PROTOCOL": "chat",
+        },
+        clear=False,
+    ):
+        result = synthesize_video_topics(
+            [{
+                "video_id": "video-1",
+                "title": "PowerShell 教程",
+                "evidence": [{"id": "ev-1", "content": "运行更新命令"}],
+            }],
+            client=client,
+            goal="只整理 PowerShell 更新升级步骤",
+        )
+
+    prompt = client.post.call_args.kwargs["json"]["messages"][0]["content"]
+    assert result["status"] == "success"
+    assert "只整理 PowerShell 更新升级步骤" in prompt
+    assert "游戏攻略编辑" not in prompt
+    assert "球员" not in prompt
+
+
 def test_vision_settings_survive_service_reload_from_envoy_project_config(tmp_path, monkeypatch):
     monkeypatch.setenv("ENVOY_VISION_CONFIG_PATH", str(tmp_path / "envoy-vision.enc"))
     monkeypatch.setenv("ENVOY_VISION_KEY_PATH", str(tmp_path / "envoy-vision.key"))

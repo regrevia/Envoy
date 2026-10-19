@@ -35,13 +35,18 @@ def test_video_to_markdown_task_api_creates_one_resumable_task(tmp_path):
         with patch("app.api.v1.tasks.video_to_markdown_job.delay") as delay:
             response = TestClient(app).post(
                 "/api/v1/tasks/video-to-markdown",
-                json={"project_id": project.id, "source_url": "https://www.bilibili.com/video/BV1xx411c7mD"},
+                json={
+                    "project_id": project.id,
+                    "source_url": "https://www.bilibili.com/video/BV1xx411c7mD",
+                    "input_config": {"goal": "提取视频中的核心做法"},
+                },
             )
         assert response.status_code == 200
         body = response.json()
         assert body["task_type"] == "video_to_markdown"
         assert body["status"] == "pending"
         assert body["input_config"]["source_url"].startswith("https://")
+        assert body["input_config"]["goal"] == "提取视频中的核心做法"
         assert body["input_config"]["auth"]["mode"] == "auto"
         assert body["project_id"] == project.id
         delay.assert_called_once()
@@ -81,6 +86,39 @@ def test_video_preprocess_config_carries_selected_ocr_profile():
         "preserve_media_temp_dirs": True,
         "ocr_profile": "pro",
     }
+
+
+def test_video_understanding_instruction_uses_user_goal_without_assuming_a_domain():
+    from app.workers.jobs import (
+        _can_reuse_video_understanding_checkpoint,
+        _video_goal_fingerprint,
+        _video_understanding_instruction,
+    )
+
+    targeted = _video_understanding_instruction("整理 PowerShell 更新升级步骤")
+    generic = _video_understanding_instruction("")
+
+    assert "整理 PowerShell 更新升级步骤" in targeted
+    assert "用户目标" in targeted
+    assert "游戏" not in generic
+    assert "教程" not in generic
+    assert _video_goal_fingerprint("目标 一") == _video_goal_fingerprint(" 目标\n一 ")
+    assert _video_goal_fingerprint("目标 一") != _video_goal_fingerprint("目标 二")
+    current_fingerprint = _video_goal_fingerprint("")
+    assert _can_reuse_video_understanding_checkpoint(
+        {"status": "success", "goal_fingerprint": current_fingerprint},
+        current_fingerprint,
+        vision_enabled=True,
+    )
+    assert not _can_reuse_video_understanding_checkpoint(
+        {
+            "status": "skipped",
+            "goal_fingerprint": current_fingerprint,
+            "error": "vision provider is not configured",
+        },
+        current_fingerprint,
+        vision_enabled=True,
+    )
 
 
 def test_local_task_recovery_requeues_interrupted_video_tasks(tmp_path, monkeypatch):
@@ -191,6 +229,7 @@ def test_video_batch_and_append_api_create_independent_library_tasks(tmp_path):
                         {"source_url": "https://example.test/a", "title": "攻略 A"},
                         {"asset_id": local_asset.id, "title": "本地攻略 B"},
                     ],
+                    "input_config": {"goal": "只提取 PowerShell 更新方式"},
                 },
             )
             assert batch_response.status_code == 200
@@ -198,19 +237,24 @@ def test_video_batch_and_append_api_create_independent_library_tasks(tmp_path):
             assert batch_body["task_type"] == "video_batch_to_markdown"
             assert len(batch_body["input_config"]["video_items"]) == 2
             assert batch_body["input_config"]["video_items"][1]["asset_id"] == local_asset.id
+            assert batch_body["input_config"]["goal"] == "只提取 PowerShell 更新方式"
             library_id = batch_body["input_config"]["library_id"]
             delay.assert_called_once()
 
         with patch("app.api.v1.tasks.video_batch_to_markdown_job.delay") as append_delay:
             append_response = TestClient(app).post(
                 f"/api/v1/tasks/{single_id}/append-videos",
-                json={"items": [{"source_url": "https://example.test/c", "title": "追加 C"}]},
+                json={
+                    "items": [{"source_url": "https://example.test/c", "title": "追加 C"}],
+                    "input_config": {"goal": "比较 PowerShell 更新方式"},
+                },
             )
         assert append_response.status_code == 200
         append_body = append_response.json()
         assert append_body["task_type"] == "video_batch_to_markdown"
         assert append_body["input_config"]["seed_task_ids"] == [single_id]
         assert append_body["input_config"]["video_items"][0]["source_url"] == "https://example.test/c"
+        assert append_body["input_config"]["goal"] == "比较 PowerShell 更新方式"
         assert append_body["input_config"]["library_id"] != library_id
         append_delay.assert_called_once()
     finally:
@@ -485,6 +529,7 @@ def test_video_worker_reuses_successful_download_and_preprocess_checkpoints(tmp_
         assert "视频时间线" not in exported
         assert stored.input_config["checkpoints"]["download"]["status"] == "success"
         assert stored.input_config["checkpoints"]["preprocess"]["status"] == "success"
+        assert stored.input_config["checkpoints"]["understand"]["goal_fingerprint"]
         assert stored.input_config["checkpoints"]["export"]["status"] == "success"
     finally:
         db.close()

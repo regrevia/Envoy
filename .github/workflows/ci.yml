@@ -43,6 +43,9 @@ jobs:
           tests/test_vision_service.py
           tests/core_protocol
           tests/cli
+          tests/test_video_evidence_eval.py
+          tests/test_envoy_cli_distribution.py
+          tests/test_skill_bundle.py
           tests/test_public_page_ingestion.py
         working-directory: .
       - name: Build credential-free Skill bundle

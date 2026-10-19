@@ -27,6 +27,7 @@ type Task = {
     library_id?: string;
     library_title?: string;
     ocr_profile?: "fast" | "balanced" | "quality" | "pro";
+    goal?: string;
   };
   result_summary?: string | null;
   error_message?: string | null;
@@ -87,6 +88,8 @@ const uiCopy = {
     sourcePlaceholder: "粘贴视频、公众号文章或图文链接",
     creatorPlaceholder: "粘贴创作者主页或播放列表链接",
     chooseOutput: "产物",
+    goal: "整理目标（可选）",
+    goalPlaceholder: "例如：提取 PowerShell 更新步骤；留空由模型自由分析",
     both: "Markdown + HTML",
     markdown: "仅 Markdown",
     html: "HTML 预览 + Markdown 索引",
@@ -155,6 +158,8 @@ const uiCopy = {
     sourcePlaceholder: "Paste a video, article, or post link",
     creatorPlaceholder: "Paste a creator or playlist link",
     chooseOutput: "Output",
+    goal: "Focus (optional)",
+    goalPlaceholder: "e.g. Extract the PowerShell update steps; leave blank for open-ended analysis",
     both: "Markdown + HTML",
     markdown: "Markdown only",
     html: "HTML preview + Markdown index",
@@ -287,6 +292,7 @@ export default function VideoPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  const [goal, setGoal] = useState("");
   const [mode, setMode] = useState<"single" | "creator" | "local" | "mixed">("single");
   const [outputMode, setOutputMode] = useState<OutputMode>("both");
   const [localFiles, setLocalFiles] = useState<File[]>([]);
@@ -321,7 +327,11 @@ export default function VideoPage() {
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   const outputFormats = outputMode === "both" ? ["markdown", "html"] : [outputMode];
-  const processingConfig = { output_formats: outputFormats, ocr_profile: ocrProfile };
+  const processingConfig = {
+    output_formats: outputFormats,
+    ocr_profile: ocrProfile,
+    goal: goal.trim(),
+  };
   const copy = uiCopy[locale];
 
   const loadRecentTasks = async () => {
@@ -656,7 +666,7 @@ export default function VideoPage() {
         ? `/api/v1/tasks/${task.id}/append-assets`
         : "/api/v1/tasks/mixed-library-to-markdown";
       const body = append
-        ? { asset_ids: assetIds, title: task?.input_config?.library_title, input_config: { ocr_profile: ocrProfile } }
+        ? { asset_ids: assetIds, title: task?.input_config?.library_title, input_config: { ocr_profile: ocrProfile, goal: goal.trim() } }
         : {
             project_id: selectedId,
             title: "混合素材知识库",
@@ -1110,6 +1120,16 @@ export default function VideoPage() {
                       ? `${copy.upload}${localFiles.length ? ` (${localFiles.length})` : ""}`
                       : `${copy.upload}${mixedFiles.length ? ` (${mixedFiles.length})` : ""}`}
           </button>
+          <label className={`${styles.field} ${styles.fieldFull}`}>
+            {copy.goal}
+            <input
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              maxLength={500}
+              placeholder={copy.goalPlaceholder}
+              className={styles.input}
+            />
+          </label>
           <label className={styles.outputSelect}>
             <span>{copy.chooseOutput}</span>
             <select value={outputMode} onChange={(event) => setOutputMode(event.target.value as OutputMode)}>

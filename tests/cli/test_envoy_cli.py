@@ -1519,6 +1519,39 @@ def test_retained_material_followup_rejects_different_session(tmp_path, monkeypa
             raise AssertionError("Material state must not cross session boundaries")
 
 
+def test_retained_material_followup_without_session_id_remains_compatible(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "3" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "3" * 64,
+        "session_id": "agent-a",
+        "text": "A legacy client can continue this material.",
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    response = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "legacy-sessionless-expand",
+        "material_id": material_id,
+        "offset": 0,
+        "max_chars": 128,
+    }))
+
+    assert response.result.value == "ready"
+    assert response.blocks[0].content.text == "A legacy client can continue this material."
+
+
 def test_material_search_consumes_shared_cumulative_token_budget(tmp_path, monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import MaterialSearchRequest

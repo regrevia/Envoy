@@ -93,6 +93,15 @@ python scripts/build_envoy_cli_wheel.py --output-dir dist
 
 面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。版本 tag 的 GitHub Release 工作流会发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`；wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。工作流已加入，但首个 GitHub Release 尚未创建。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
 
+独立评测：
+
+```bash
+PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
+  python benchmarks/video_evidence_eval.py --materials-dir /tmp/envoy-eval
+```
+
+该固定样本测量字幕证据命中、时间定位、Envoy 调用数、返回字符/估算 token 和检索延迟；不运行宿主 LLM，所以不会虚报实际模型用量。若宿主能提供 usage JSON，可用 `--host-usage-file` 纳入实际输入/输出 token。
+
 宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、平台视频下载/ASR/抽帧、OCR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
 
 支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand`、`envoy_search`、`envoy_doctor`、`envoy_observe_visual` 和 `envoy_visual_history`，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
