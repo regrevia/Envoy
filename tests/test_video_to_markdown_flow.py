@@ -110,6 +110,15 @@ def test_video_understanding_instruction_uses_user_goal_without_assuming_a_domai
         current_fingerprint,
         vision_enabled=True,
     )
+    assert _can_reuse_video_understanding_checkpoint(
+        {
+            "status": "partial_success",
+            "goal_fingerprint": current_fingerprint,
+            "windows": {"0": {"status": "success", "unit_id": "completed-window"}},
+        },
+        current_fingerprint,
+        vision_enabled=True,
+    )
     assert not _can_reuse_video_understanding_checkpoint(
         {
             "status": "skipped",

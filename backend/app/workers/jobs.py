@@ -612,7 +612,7 @@ def _video_goal_fingerprint(value) -> str:
 def _can_reuse_video_understanding_checkpoint(checkpoint, goal_fingerprint: str, vision_enabled: bool) -> bool:
     if not isinstance(checkpoint, dict) or checkpoint.get("goal_fingerprint") != goal_fingerprint:
         return False
-    if checkpoint.get("status") not in {"success", "skipped"}:
+    if checkpoint.get("status") not in {"success", "skipped", "partial_success", "failed"}:
         return False
     if checkpoint.get("error") == "vision provider is not configured" and vision_enabled:
         return False

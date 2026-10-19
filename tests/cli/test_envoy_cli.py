@@ -73,6 +73,7 @@ def test_cli_read_returns_protocol_material_for_public_html(monkeypatch, capsys)
     assert response["protocol_version"] == "envoy.read/1"
     assert response["result"] == "ready"
     assert response["execution_state"] == "completed"
+    assert response["session_id"] is None
     assert any("Run the worker before starting the API." in block["content"].get("text", "") for block in response["blocks"])
     assert response["resources"][0]["delivery"]["uri"] == "https://example.org/diagram.png"
 
@@ -1494,6 +1495,10 @@ def test_retained_material_followup_rejects_different_session(tmp_path, monkeypa
 
     for operation in (
         lambda: reader.expand_material(ExpandRequest.model_validate({
+            "request_id": "missing-session-expand",
+            "material_id": material_id,
+        })),
+        lambda: reader.expand_material(ExpandRequest.model_validate({
             "request_id": "wrong-session-expand",
             "material_id": material_id,
             "session_id": "agent-b",
@@ -1528,7 +1533,6 @@ def test_retained_material_followup_without_session_id_remains_compatible(tmp_pa
     reader._store_material(material_id, {
         "source_url": "https://example.org/guide",
         "source_revision": "3" * 64,
-        "session_id": "agent-a",
         "text": "A legacy client can continue this material.",
         "budget_state": {
             "max_total_response_chars": 2000,
