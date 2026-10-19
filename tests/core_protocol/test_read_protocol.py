@@ -65,6 +65,47 @@ def test_read_protocol_rejects_unversioned_requests_and_invalid_image_coordinate
         )
 
 
+def test_video_visual_scope_requires_explicit_host_frame_and_time_range():
+    from envoy_core.schemas.read_v1 import HostCapabilities, ReadRequest
+
+    request = ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "video-frames",
+        "source": {"url": "https://video.example/watch/1", "kind": "video"},
+        "scope": {
+            "include_visual": True,
+            "start_seconds": 120,
+            "end_seconds": 150,
+        },
+        "host_capabilities": {
+            "image_input": "local_file",
+            "video_input": "frames",
+        },
+    })
+
+    assert request.scope.include_visual is True
+    assert request.scope.start_seconds == 120
+    assert request.scope.end_seconds == 150
+    assert request.host_capabilities.video_input == "frames"
+
+
+def test_video_visual_scope_rejects_incomplete_or_reversed_ranges():
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    base = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "video-frames-invalid",
+        "source": {"url": "https://video.example/watch/1", "kind": "video"},
+    }
+    with pytest.raises(ValidationError):
+        ReadRequest.model_validate({**base, "scope": {"start_seconds": 10}})
+    with pytest.raises(ValidationError):
+        ReadRequest.model_validate({
+            **base,
+            "scope": {"start_seconds": 20, "end_seconds": 10},
+        })
+
+
 def test_visual_observation_request_is_bounded_and_roundtrips():
     from envoy_core.schemas.read_v1 import VisualObservationRequest
 

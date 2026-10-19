@@ -40,8 +40,25 @@ Install the newer Release wheel with `uv tool install --force <wheel-path>`.
 Remove the runtime with `uv tool uninstall envoy-cli`; remove the Skill using
 the Skills CLI's uninstall command or the selected agent's Skill manager.
 
-The standalone runtime currently reads public static pages and documents,
-attempts public subtitle extraction for URLs with a specialized yt-dlp
-extractor, hands images to capable hosts, and passes public direct-video URLs
-to hosts that advertise native video input. Subtitle access varies by source;
-it does not download platform video files or inspect video frames.
+The standard runtime reads public static pages and documents, extracts public
+timed subtitles when supported, hands images to capable hosts, and can pass
+public direct-video URLs to hosts that advertise native video input. Platform
+video download, local ASR, and budgeted frame extraction require the optional
+media runtime and appropriate host capability.
+
+Install local ASR support and prepare its default model with:
+
+```bash
+uv tool install --force --with "openai-whisper==20250625" ./envoy_cli-<version>-py3-none-any.whl
+envoy asr setup --model base
+envoy doctor --json
+```
+
+Install FFmpeg and FFprobe with the operating system's package manager if they
+are not already available.
+
+Video downloads enforce byte budgets. Elapsed-work limits are checked between
+extractor stages and during transfers; a site metadata request may last up to
+its bounded socket timeout. Envoy does not read browser cookies or bypass login,
+CAPTCHA, or anti-bot challenges. Direct media may still be rejected by its host
+or access policy.

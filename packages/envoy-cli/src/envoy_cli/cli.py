@@ -9,6 +9,7 @@ from envoy_core import __version__ as core_version
 from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest, ReadRequest
 
 from .capabilities import capability_catalog
+from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
 from . import __version__
 from . import mcp
 from .reader import PublicPageError, expand_material, read_public_page, search_material
@@ -30,6 +31,18 @@ def _parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
+    asr = subparsers.add_parser("asr", help="prepare local speech recognition")
+    asr_commands = asr.add_subparsers(dest="asr_command", required=True)
+    asr_setup = asr_commands.add_parser("setup", help="download and verify one local Whisper model")
+    asr_setup.add_argument(
+        "--model",
+        default="base",
+        choices=[
+            "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+            "medium", "medium.en", "large", "large-v1", "large-v2",
+            "large-v3", "large-v3-turbo",
+        ],
+    )
     subparsers.add_parser("mcp", help="run the stdio MCP bridge")
     return parser
 
@@ -42,15 +55,30 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "cli_version": __version__,
             "core_version": core_version,
             "protocol_version": "envoy.read/1",
-            "network_reader": "public_static_resources",
+            "network_reader": "public_static_and_supported_media_extractors",
             "credential_access": "disabled",
             "website_backend_required": False,
             "capabilities": capability_catalog(),
+            "runtime": media_runtime_status(),
         }
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
         return 0
     if args.command == "mcp":
         return mcp.main()
+    if args.command == "asr":
+        try:
+            result = prepare_asr_model(args.model)
+        except MediaCapabilityMissing as exc:
+            print(json.dumps({"status": "blocked", "error": str(exc)}, ensure_ascii=False))
+            return 2
+        except Exception as exc:
+            print(json.dumps({
+                "status": "failed",
+                "error": f"Could not prepare local ASR model ({type(exc).__name__}): {exc}",
+            }, ensure_ascii=False))
+            return 2
+        print(json.dumps({"status": "ready", **result}, ensure_ascii=False))
+        return 0
     try:
         if args.request_json == "-":
             payload = stdin if stdin is not None else sys.stdin.read()

@@ -407,12 +407,46 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys)
     assert first["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "envoy"
     assert second["error"]["code"] == -32600
     read_schema = next(tool for tool in first["result"]["tools"] if tool["name"] == "envoy_read")["inputSchema"]
-    assert len(json.dumps(read_schema)) < 2500
+    assert len(json.dumps(read_schema)) < 2700
+    assert "idempotency_key" in read_schema["properties"]
     assert "max_response_chars" in read_schema["properties"]["budget"]["properties"]
     assert "max_total_response_tokens" in read_schema["properties"]["budget"]["properties"]
-    assert "max_total_visual_pixels" not in read_schema["properties"]["budget"]["properties"]
+    assert "max_total_response_chars" in read_schema["properties"]["budget"]["properties"]
+    assert "max_total_visual_pixels" in read_schema["properties"]["budget"]["properties"]
+    assert "max_visual_pixels_per_input" in read_schema["properties"]["budget"]["properties"]
+    assert "max_visual_clip_seconds" in read_schema["properties"]["budget"]["properties"]
+    assert "max_total_visual_clip_seconds" in read_schema["properties"]["budget"]["properties"]
+    assert "max_work_seconds" in read_schema["properties"]["budget"]["properties"]
+    assert "max_expansion_rounds" in read_schema["properties"]["budget"]["properties"]
+    assert "max_optional_model_calls" in read_schema["properties"]["budget"]["properties"]
     image_capability = read_schema["properties"]["host_capabilities"]["properties"]["image_input"]
-    assert image_capability["enum"] == ["none", "uri"]
+    assert image_capability["enum"] == ["none", "local_file", "uri", "inline"]
+    video_capability = read_schema["properties"]["host_capabilities"]["properties"]["video_input"]
+    assert video_capability["enum"] == ["none", "native", "frames"]
+    scope = read_schema["properties"]["scope"]["properties"]
+    assert scope["kind"]["enum"] == ["current_resource", "range", "collection"]
+    assert "include_visual" in scope
+    assert "start_seconds" in scope
+    assert "end_seconds" in scope
+    assert "locator" in scope
+    assert "follow_links" in scope
+    assert "max_items" in scope
+    assert "max_depth" in scope
+    assert "video" in read_schema["properties"]["source"]["properties"]["kind"]["enum"]
+    assert "raw_media" in read_schema["properties"]["retention"]["properties"]
+    host = read_schema["properties"]["host_capabilities"]["properties"]
+    assert host["image_input"]["enum"] == ["none", "local_file", "uri", "inline"]
+    assert "tool_execution" in host
+    assert "usage_reporting" in host
+    assert "async_execution" in host
+    assert host["usage_reporting"]["enum"] == ["actual", "estimated", "unknown"]
+    retention = read_schema["properties"]["retention"]
+    assert retention["additionalProperties"] is False
+    assert retention["properties"]["raw_media"]["enum"] == [
+        "ephemeral",
+        "session",
+        "persistent",
+    ]
     descriptions = {tool["name"]: tool["description"] for tool in first["result"]["tools"]}
     assert "stated goal" in descriptions["envoy_read"].lower()
     assert "coverage" in descriptions["envoy_expand"].lower()
@@ -481,9 +515,10 @@ def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
     assert len(content_text) < 200
     assert "Use a dedicated worker." not in content_text
     catalog = response["result"]["structuredContent"]["capabilities"]
+    runtime = response["result"]["structuredContent"]["runtime"]
     assert catalog["schema_version"] == "envoy.capabilities/1"
     assert "static_html" in catalog["inputs"]["supported"]
-    assert "platform_video_visual_extraction" in catalog["inputs"]["unsupported"]
+    assert "standalone_audio" in catalog["inputs"]["unsupported"]
     assert any(
         item["id"] == "direct_video_handoff"
         for item in catalog["inputs"]["conditional"]
@@ -492,6 +527,19 @@ def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
         item["id"] == "platform_video_subtitles"
         for item in catalog["inputs"]["conditional"]
     )
+    assert any(
+        item["id"] == "local_video_asr"
+        for item in catalog["inputs"]["conditional"]
+    )
+    assert any(
+        item["id"] == "platform_video_frames"
+        for item in catalog["inputs"]["conditional"]
+    )
+    assert "timed_video_transcript" in catalog["outputs"]
+    assert "leased_source_timed_video_frames" in catalog["outputs"]
+    assert runtime["yt_dlp"]
+    assert "yt_dlp_supported" in runtime
+    assert "asr_installed" in runtime
 
 
 def test_legacy_mcp_tool_keeps_text_fallback_for_structured_material(monkeypatch, capsys):

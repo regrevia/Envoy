@@ -16,6 +16,7 @@ from envoy_core.schemas.read_v1 import (
 
 from . import __version__
 from .capabilities import capability_catalog
+from .media import media_runtime_status
 from .reader import (
     PublicPageError,
     _redact_url,
@@ -51,8 +52,9 @@ TOOLS = [
         "description": (
             "Read a public URL toward the user's stated goal. The source type is "
             "auto-detected; use returned coverage and resources to decide whether "
-            "to expand text or request host visual/video inspection. Direct video "
-            "is passed through only when the host advertises native video input."
+            "to expand text or request host visual/video inspection. Public videos "
+            "prefer captions, then optional local ASR. Request frames only when needed "
+            "with scope.include_visual=true and explicit frame-capable host settings."
         ),
         "inputSchema": {
             "type": "object",
@@ -60,62 +62,62 @@ TOOLS = [
             "required": ["protocol_version", "request_id", "source"],
             "properties": {
                 "protocol_version": {"type": "string", "const": "envoy.read/1"},
-                "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                "session_id": {"type": ["string", "null"], "maxLength": 128},
+                "request_id": {"type": "string"},
+                "idempotency_key": {"type": ["string", "null"]},
+                "session_id": {"type": ["string", "null"]},
                 "source": {
                     "type": "object",
                     "additionalProperties": False,
                     "required": ["url"],
                     "properties": {
-                        "url": {"type": "string", "minLength": 1, "maxLength": 8192},
+                        "url": {"type": "string"},
                         "kind": {
                             "type": "string",
-                            "enum": ["auto", "article", "image", "document"],
-                            "default": "auto",
+                            "enum": ["auto", "article", "video", "audio", "image", "document", "collection"],
                         },
-                        "label": {"type": ["string", "null"], "maxLength": 1000},
+                        "label": {"type": ["string", "null"]},
                     },
                 },
-                "goal": {"type": "string", "maxLength": 20_000},
+                "goal": {"type": "string"},
+                "scope": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["current_resource", "range", "collection"],
+                        },
+                        "include_visual": {"type": "boolean"},
+                        "start_seconds": {"type": ["number", "null"], "minimum": 0},
+                        "end_seconds": {"type": ["number", "null"], "exclusiveMinimum": 0},
+                        "locator": {"type": ["string", "null"]},
+                        "follow_links": {"type": "boolean"},
+                        "max_items": {"type": "integer"},
+                        "max_depth": {"type": "integer"},
+                    },
+                },
                 "ocr_profile": {
                     "type": ["string", "null"],
                     "enum": ["fast", "balanced", "quality", "pro", None],
-                    "default": None,
                 },
+                "video_subtitle_language": {"type": ["string", "null"]},
                 "budget": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "max_response_chars": {
-                            "type": "integer",
-                            "minimum": 256,
-                            "maximum": 1_000_000,
-                            "default": 12_000,
-                        },
-                        "max_response_tokens": {
-                            "type": ["integer", "null"],
-                            "minimum": 64,
-                            "maximum": 250_000,
-                            "default": None,
-                        },
-                        "max_total_response_tokens": {
-                            "type": ["integer", "null"],
-                            "minimum": 64,
-                            "maximum": 1_000_000,
-                            "default": None,
-                        },
-                        "max_visual_inputs": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 10_000,
-                            "default": 12,
-                        },
-                        "max_download_bytes": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 10_737_418_240,
-                            "default": 268_435_456,
-                        },
+                        "max_response_chars": {"type": "integer"},
+                        "max_response_tokens": {"type": ["integer", "null"]},
+                        "max_total_response_tokens": {"type": ["integer", "null"]},
+                        "max_total_response_chars": {"type": "integer"},
+                        "max_visual_inputs": {"type": "integer"},
+                        "max_visual_pixels_per_input": {"type": "integer"},
+                        "max_total_visual_pixels": {"type": "integer"},
+                        "max_visual_clip_seconds": {"type": "integer"},
+                        "max_total_visual_clip_seconds": {"type": "integer"},
+                        "max_download_bytes": {"type": "integer"},
+                        "max_work_seconds": {"type": "integer"},
+                        "max_expansion_rounds": {"type": "integer"},
+                        "max_optional_model_calls": {"type": "integer"},
                     },
                 },
                 "host_capabilities": {
@@ -124,20 +126,30 @@ TOOLS = [
                     "properties": {
                         "image_input": {
                             "type": "string",
-                            "enum": ["none", "uri"],
-                            "default": "none",
+                            "enum": ["none", "local_file", "uri", "inline"],
                         },
+                        "video_input": {
+                            "type": "string",
+                            "enum": ["none", "native", "frames"],
+                        },
+                        "tool_execution": {"type": "boolean"},
+                        "usage_reporting": {
+                            "type": "string",
+                            "enum": ["actual", "estimated", "unknown"],
+                        },
+                        "async_execution": {"type": "boolean"},
                     },
                 },
                 "retention": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
+                        "raw_media": {
+                            "type": "string",
+                            "enum": ["ephemeral", "session", "persistent"],
+                        },
                         "derived_ttl_seconds": {
                             "type": "integer",
-                            "minimum": 0,
-                            "maximum": 31_536_000,
-                            "default": 86_400,
                         },
                     },
                 },
@@ -386,10 +398,11 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                 "tool": "envoy",
                 "cli_version": __version__,
                 "protocol_version": "envoy.read/1",
-                "network_reader": "public_static_resources",
+                "network_reader": "public_static_and_supported_media_extractors",
                 "credential_access": "disabled",
                 "website_backend_required": False,
                 "capabilities": capability_catalog(),
+                "runtime": media_runtime_status(),
             }
         elif name == "envoy_observe_visual":
             request = VisualObservationRequest.model_validate(arguments)

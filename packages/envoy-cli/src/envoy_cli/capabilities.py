@@ -33,9 +33,18 @@ def capability_catalog() -> dict:
                     "requires": "yt-dlp installed, a supported extractor, and a public subtitle track",
                     "otherwise": "unsupported or missing_capability",
                 },
+                {
+                    "id": "local_video_asr",
+                    "requires": "supported yt-dlp, FFmpeg/FFprobe, openai-whisper, and a prepared local ASR model",
+                    "otherwise": "missing_capability",
+                },
+                {
+                    "id": "platform_video_frames",
+                    "requires": "supported yt-dlp, FFmpeg/FFprobe, public downloadable video, scope.include_visual=true, video_input=frames, and image_input=local_file",
+                    "otherwise": "missing_capability or partial",
+                },
             ],
             "unsupported": [
-                "platform_video_visual_extraction",
                 "standalone_audio",
                 "scanned_pdf_ocr",
                 "office_document",
@@ -72,6 +81,8 @@ def capability_catalog() -> dict:
             "coverage_and_unresolved_items",
             "budgeted_continuation",
             "conditional_visual_resource_reference",
+            "timed_video_transcript",
+            "leased_source_timed_video_frames",
         ],
         "selection_policy": [
             "Choose operations from the user's goal and the returned coverage/resources.",
