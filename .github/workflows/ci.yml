@@ -44,6 +44,7 @@ jobs:
           tests/core_protocol
           tests/cli
           tests/test_video_evidence_eval.py
+          tests/test_platform_video_probe.py
           tests/test_envoy_cli_distribution.py
           tests/test_skill_bundle.py
           tests/test_public_page_ingestion.py

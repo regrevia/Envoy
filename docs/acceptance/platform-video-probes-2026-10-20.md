@@ -18,10 +18,15 @@ Policy: no cookies, no browser profiles, no certificate bypass, no anti-bot bypa
 Use the installed standalone runtime:
 
 ```bash
-yt-dlp --ignore-config --no-playlist --skip-download \
-  --print 'id=%(id)s\ntitle=%(title)s\nduration=%(duration)s' '<url>'
+python scripts/probe_platform_urls.py \
+  --timeout-seconds 20 \
+  --url 'https://vimeo.com/244405542' \
+  --url 'https://www.dailymotion.com/video/x75iqs7' \
+  --url 'https://upload.wikimedia.org/wikipedia/commons/8/8e/Tear_down_this_wall.ogv'
 ```
 
-The Vimeo and Dailymotion failures must remain explicit `network_error` or
-access-boundary results. Do not turn off TLS verification, import browser
-cookies, or use impersonation/bot-evasion dependencies as an implicit fallback.
+The command returns `envoy.platform-video-probe.v1` JSON and continues after
+individual failures. The Vimeo and Dailymotion failures must remain explicit
+`network_error` or access-boundary results. Do not turn off TLS verification,
+import browser cookies, or use impersonation/bot-evasion dependencies as an
+implicit fallback.
