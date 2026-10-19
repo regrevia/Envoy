@@ -1238,14 +1238,17 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             if not segments:
                 already_returned_matches += 1
             else:
-                segment_text = total_text[start:end]
+                preserve_line_context = stored.get("source_kind") == "video"
+                candidate_start = start if preserve_line_context else segments[0][0]
+                candidate_end = end if preserve_line_context else segments[0][1]
+                segment_text = total_text[candidate_start:candidate_end]
                 segment_score = _goal_score(segment_text, terms)
                 if not segment_score:
                     already_returned_matches += 1
                 else:
                     candidates.append({
-                        "start": start,
-                        "end": end,
+                        "start": candidate_start,
+                        "end": candidate_end,
                         "text": segment_text,
                         "score": segment_score,
                         "hit_offset": _search_hit_offset(segment_text, terms),
