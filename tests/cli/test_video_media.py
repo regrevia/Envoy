@@ -714,6 +714,7 @@ def test_local_asr_returns_partial_checkpoint_when_work_budget_expires(tmp_path,
     )
     monkeypatch.setattr(media, "probe_media_duration", lambda _path, **_kwargs: 600)
     monkeypatch.setattr(media, "ASR_CHUNK_SECONDS", 60)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
     clock_values = iter([100, 100, 100, 100, 102, 103])
     monkeypatch.setattr(media.time, "monotonic", lambda: next(clock_values))
 

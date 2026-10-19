@@ -29,7 +29,11 @@ FORBIDDEN_SUFFIXES = (".db", ".sqlite", ".key", ".pem", ".enc")
 
 def _safe_members(skill_root: Path) -> list[Path]:
     members = []
-    for path in sorted(skill_root.rglob("*")):
+    paths = sorted(
+        skill_root.rglob("*"),
+        key=lambda item: item.relative_to(skill_root).as_posix().casefold(),
+    )
+    for path in paths:
         if not path.is_file():
             continue
         relative = path.relative_to(skill_root)
