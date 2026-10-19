@@ -178,7 +178,7 @@ def test_download_video_uses_ytdlp_and_returns_metadata(tmp_path):
     assert result["duration_sec"] == 12.5
     assert result["path"].endswith(".mp4")
     command = run.call_args_list[0].args[0]
-    assert command[0] in {"yt-dlp", sys.executable}
+    assert command[0] in {"yt-dlp", sys.executable} or command[0].endswith("/yt-dlp")
     if command[0] == sys.executable:
         assert command[1:3] == ["-m", "yt_dlp"]
     assert "--ignore-config" in command
