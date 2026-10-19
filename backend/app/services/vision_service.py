@@ -321,6 +321,7 @@ def synthesize_video_topics(
     sources: list[dict[str, Any]],
     client: Any | None = None,
     topic_hints: list[str] | None = None,
+    goal: str | None = None,
 ) -> dict[str, Any]:
     """Create a theme-first navigation layer; complete evidence remains in JSONL."""
     config = vision_config()
@@ -338,6 +339,13 @@ def synthesize_video_topics(
         + "、".join(str(item).strip() for item in (topic_hints or []) if str(item).strip())
         if topic_hints
         else ""
+    )
+    normalized_goal = " ".join(str(goal or "").split())[:2000]
+    goal_context = (
+        f"用户关注目标：{normalized_goal}。围绕该目标筛选和组织证据，同时保留理解目标所需的上下文；"
+        "目标不授权补充材料之外的事实。"
+        if normalized_goal
+        else "用户未指定关注目标；根据证据本身判断主题与适合的组织方式，不预设领域或文档类型。"
     )
 
     allowed_evidence_ids = {
@@ -358,9 +366,9 @@ def synthesize_video_topics(
                     for item in group
                 )
                 prompt = (
-                    "你是游戏攻略编辑。根据证据提炼可直接使用的干货，"
-                    "按球员/对象归纳进阶价值、推荐徽章或技能、机制、适用场景和不推荐项。"
-                    "不要输出原始转写、窗口编号或时间轴，不要猜测。"
+                    f"{goal_context}"
+                    "根据证据整理可直接使用的信息。由材料和用户目标决定重点及组织方式；"
+                    "保留关键事实、步骤、条件、对象关系、数字和清单，不输出原始转写或窗口编号，不要猜测。"
                     f"{topic_hint_text}"
                     "只返回严格 JSON："
                     "{\"title\":\"主题标题\",\"summary\":\"一句话结论\","
@@ -431,9 +439,10 @@ def synthesize_video_topics(
                     + "\n".join(evidence_lines)
                 )
             prompt = (
-                "为知识库制作主题干货，不要按视频或窗口分别写文档。把内容按对象、角色、球员、机制和流程归并。"
-                "如果是游戏攻略/评测，优先按每个球员或对象输出：进阶价值、是否值得投入、推荐徽章/技能、机制变化、适用场景、明确的不推荐项。"
-                "不要输出原始转写、窗口编号、时间轴或模型过程；只保留用户可以直接使用的结论、步骤、清单和表格信息。"
+                f"{goal_context}"
+                "把相关证据组织成便于阅读和后续使用的内容，不必按来源视频或窗口拆分。"
+                "由材料和用户目标决定分类方式；保留关键事实、步骤、条件、对象关系、数字、清单和表格信息。"
+                "不要输出原始转写、窗口编号或模型过程；不猜测，不补充证据之外的事实。"
                 "仅总结下面提供的证据，不推测、不补充常识。返回严格 JSON："
                 f"{topic_hint_text}"
                 "{\"topics\":[{\"title\":\"主题名\",\"summary\":\"不超过三句的主题摘要\","
@@ -448,6 +457,7 @@ def synthesize_video_topics(
 
         if len(partial_topics) > 8:
             prompt = (
+                f"{goal_context}"
                 "合并重复/高度相关主题，仍返回严格 JSON schema。保留所有来源 evidence_ids，"
                 "不得增加事实或证据编号。\n\n"
                 + json.dumps({"topics": partial_topics}, ensure_ascii=False)

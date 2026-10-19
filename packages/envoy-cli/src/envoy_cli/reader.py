@@ -8,6 +8,7 @@ import re
 import socket
 import tempfile
 import time
+from uuid import uuid4
 from io import BytesIO
 from html.parser import HTMLParser
 from pathlib import Path
@@ -680,7 +681,7 @@ def record_visual_observation(
         return {"persisted": False, "reason": "material_unavailable"}
     if expires_at <= time.time():
         return {"persisted": False, "reason": "material_unavailable"}
-    if stored.get("session_id") and session_id != stored.get("session_id"):
+    if stored.get("session_id") and session_id and session_id != stored.get("session_id"):
         return {"persisted": False, "reason": "session_mismatch"}
     expected_resources = stored.get("visual_resources")
     expected = next(
@@ -741,7 +742,7 @@ def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadRe
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
     if expires_at <= time.time():
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
-    if stored.get("session_id") and request.session_id != stored.get("session_id"):
+    if stored.get("session_id") and request.session_id and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
 
     rows = stored.get("visual_observations")
@@ -875,7 +876,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
     if expires_at <= time.time():
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
-    if stored.get("session_id") and request.session_id != stored.get("session_id"):
+    if stored.get("session_id") and request.session_id and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
 
     total_text = str(stored.get("text") or "")
@@ -1127,7 +1128,7 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         source_path.unlink(missing_ok=True)
         expiry_path.unlink(missing_ok=True)
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
-    if stored.get("session_id") and request.session_id != stored.get("session_id"):
+    if stored.get("session_id") and request.session_id and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     budget_state = _material_budget_state(stored, request)
     if (
@@ -2319,6 +2320,8 @@ def _read_video_source(request: ReadRequest, source: dict) -> ReadResponse:
 
 
 def read_public_page(request: ReadRequest) -> ReadResponse:
+    if not request.session_id:
+        request = request.model_copy(update={"session_id": f"session-{uuid4().hex}"})
     source_url = request.source.url
     dns_cache: dict[str, bool] = {}
     if not _is_public_http_url(source_url, dns_cache):

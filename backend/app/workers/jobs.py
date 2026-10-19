@@ -427,6 +427,7 @@ def _video_understanding_unit(
     window_index: int,
     window_start_sec: int,
     window_end_sec: int,
+    goal_fingerprint: str,
     frame_paths: list[str] | None = None,
 ):
     content = json.dumps({
@@ -448,6 +449,7 @@ def _video_understanding_unit(
         "window_index": window_index,
         "window_start_sec": window_start_sec,
         "window_end_sec": window_end_sec,
+        "goal_fingerprint": goal_fingerprint,
         "model": result.get("model"),
         "status": result.get("status"),
         "frame_paths": list(frame_paths or []),
@@ -597,6 +599,36 @@ def _video_preprocess_config(parent_config: dict, source_path: str) -> dict:
     if profile in {"fast", "balanced", "quality", "pro"}:
         child["ocr_profile"] = profile
     return child
+
+
+def _video_goal_text(value) -> str:
+    return " ".join(str(value or "").split())[:2000]
+
+
+def _video_goal_fingerprint(value) -> str:
+    return hashlib.sha256(_video_goal_text(value).encode("utf-8")).hexdigest()[:16]
+
+
+def _can_reuse_video_understanding_checkpoint(checkpoint, goal_fingerprint: str, vision_enabled: bool) -> bool:
+    if not isinstance(checkpoint, dict) or checkpoint.get("goal_fingerprint") != goal_fingerprint:
+        return False
+    if checkpoint.get("status") not in {"success", "skipped"}:
+        return False
+    if checkpoint.get("error") == "vision provider is not configured" and vision_enabled:
+        return False
+    return True
+
+
+def _video_understanding_instruction(goal) -> str:
+    normalized_goal = _video_goal_text(goal)
+    instruction = (
+        "结合连续画面变化与相邻口播，自主识别视频内容及其结构，提取有用且可核验的信息。"
+        "按内容本身保留关键事实、步骤、条件、对象关系、界面文字、表格条目和前后变化；"
+        "不预设领域或文档类型，不确定的内容明确标注，不要猜测。"
+    )
+    if normalized_goal:
+        return f"用户目标（用于聚焦相关证据，不改变事实边界）：{normalized_goal}\n{instruction}"
+    return instruction
 
 
 def _limit_media_segments(segment_paths: list[str], source_path: str, allow_source_fallback: bool = True):
@@ -1781,14 +1813,38 @@ def video_to_markdown_job(self, payload: dict):
         else:
             _safe_update(db, task_id, "running", 65, result_summary="preprocess checkpoint reused")
 
+        goal = _video_goal_text(config.get("goal"))
+        goal_fingerprint = _video_goal_fingerprint(goal)
         understand_checkpoint = read_video_task_checkpoint(config, "understand")
+        vision_enabled = bool(vision_status().get("enabled"))
+        if not _can_reuse_video_understanding_checkpoint(
+            understand_checkpoint,
+            goal_fingerprint,
+            vision_enabled,
+        ):
+            if understand_checkpoint:
+                checkpoints = config.get("checkpoints")
+                if isinstance(checkpoints, dict):
+                    checkpoints.pop("understand", None)
+                    checkpoints.pop("export", None)
+            understand_checkpoint = None
         if not understand_checkpoint or understand_checkpoint.get("status") not in {"success", "skipped"}:
             _safe_update(db, task_id, "running", 68, result_summary="visual understanding running")
             frames, full_transcript, transcript_segments, _frame_interval = _read_video_understanding_inputs(db, asset_id)
             if not frames:
-                understanding_checkpoint = {"status": "skipped", "window_count": 0, "error": "no frames available"}
-            elif not vision_status().get("enabled"):
-                understanding_checkpoint = {"status": "skipped", "window_count": 0, "error": "vision provider is not configured"}
+                understanding_checkpoint = {
+                    "status": "skipped",
+                    "goal_fingerprint": goal_fingerprint,
+                    "window_count": 0,
+                    "error": "no frames available",
+                }
+            elif not vision_enabled:
+                understanding_checkpoint = {
+                    "status": "skipped",
+                    "goal_fingerprint": goal_fingerprint,
+                    "window_count": 0,
+                    "error": "vision provider is not configured",
+                }
             else:
                 windows = _plan_video_frame_windows(
                     frames,
@@ -1826,7 +1882,7 @@ def video_to_markdown_job(self, payload: dict):
                         window_end_sec,
                     )
                     result = understand_window(
-                        "识别这段游戏/教程视频画面，提取可执行步骤、界面状态变化、物品获取、战斗机制和表格/清单中每个可辨识条目。保留不确定项，不要猜测。",
+                        _video_understanding_instruction(goal),
                         window_transcript,
                         [str(frame["path"]) for frame in window],
                         context=previous_context,
@@ -1842,6 +1898,7 @@ def video_to_markdown_job(self, payload: dict):
                         window_index,
                         window_start_sec,
                         window_end_sec,
+                        goal_fingerprint,
                         frame_paths=[str(frame["path"]) for frame in window],
                     )
                     updated_understanding = True
@@ -1860,6 +1917,7 @@ def video_to_markdown_job(self, payload: dict):
                         failures.append({"window_index": window_index, "error": result.get("error")})
                     merge_video_task_checkpoint(config, "understand", {
                         "status": "partial_success",
+                        "goal_fingerprint": goal_fingerprint,
                         "window_count": len(windows),
                         "completed_window_count": window_index + 1,
                         "windows": window_checkpoints,
@@ -1871,6 +1929,7 @@ def video_to_markdown_job(self, payload: dict):
                 overall_status = "success" if not failures else ("partial_success" if successful_count else "failed")
                 understanding_checkpoint = {
                     "status": overall_status,
+                    "goal_fingerprint": goal_fingerprint,
                     "model": vision_status().get("model"),
                     "window_count": len(windows),
                     "completed_window_count": len(windows),
@@ -1905,6 +1964,12 @@ def video_to_markdown_job(self, payload: dict):
                 and unit.labels.get("stage") in {"preprocess", "understand"}
                 and unit.labels.get("checkpoint") != "segment_transcript"
             ])
+            rows = [
+                row
+                for row in rows
+                if (row.get("labels") or {}).get("stage") != "understand"
+                or (row.get("labels") or {}).get("goal_fingerprint") == goal_fingerprint
+            ]
             if not rows:
                 raise RuntimeError("video preprocessing produced no exportable semantic units")
             title = str(config.get("title") or download_info.get("title") or "Video Markdown Report")
@@ -1937,7 +2002,7 @@ def video_to_markdown_job(self, payload: dict):
                 "evidence_count": len(video_evidence),
                 "evidence": video_evidence,
             }
-            topic_result = synthesize_video_topics([video_row])
+            topic_result = synthesize_video_topics([video_row], goal=goal)
             export_result = export_video_library(
                 evidence_rows=evidence_rows,
                 video_rows=[video_row],
@@ -2077,6 +2142,7 @@ def mixed_assets_to_markdown_job(self, payload: dict):
                     "auth": {"mode": "auto"},
                     "library_id": library_id,
                     "library_title": str(config.get("library_title") or "混合素材知识库"),
+                    "goal": config.get("goal") or "",
                 }
                 child_worker = video_to_markdown_job
             else:
@@ -2839,6 +2905,7 @@ def video_batch_to_markdown_job(self, payload: dict):
                 "auth": config.get("auth") or {"mode": "auto"},
                 "library_id": library_id,
                 "library_title": str(config.get("library_title") or "视频知识库"),
+                "goal": config.get("goal") or "",
             }
             child = create_task(
                 db,
@@ -3022,6 +3089,7 @@ def video_batch_to_markdown_job(self, payload: dict):
                 for topic in previous_manifest.get("topics", [])
                 if isinstance(topic, dict) and topic.get("title")
             ],
+            goal=config.get("goal"),
         )
         if previous_manifest and new_videos:
             topic_result["incremental"] = True
