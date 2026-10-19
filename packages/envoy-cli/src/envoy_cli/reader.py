@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 from pypdf import PdfReader
+from .video import extract_public_subtitles, has_specialized_extractor
 from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
@@ -36,6 +37,8 @@ from envoy_core.schemas.read_v1 import (
     MaterialSearchRequest,
     PdfLocator,
     TextContent,
+    VideoLocator,
+    VideoContent,
     VisualObservationHistoryRequest,
     WebLocator,
 )
@@ -63,6 +66,12 @@ MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif")
+DIRECT_VIDEO_SUFFIXES = (".mp4", ".m4v", ".mov", ".webm", ".m3u8")
+SAFE_VIDEO_QUERY_KEYS = {
+    "v", "t", "start", "end", "list", "index", "share", "modal_id",
+    "mid", "item_id", "lang", "p", "page", "download", "filename",
+    "format", "quality", "source", "utm_source", "utm_medium", "utm_campaign",
+}
 TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst")
 TEXT_CONTENT_TYPES = {
     "text/plain",
@@ -213,6 +222,19 @@ def _is_sensitive_query_key(key: str) -> bool:
     return normalized in SENSITIVE_QUERY_KEYS or normalized.endswith(("_token", "_secret", "_signature"))
 
 
+def _video_handoff_url_is_safe(value: str) -> bool:
+    parsed = urlparse(value)
+    if parsed.username or parsed.password or parsed.fragment:
+        return False
+    for key, _item in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized = re.sub(r"[^a-z0-9_-]", "", key.lower())
+        if _is_sensitive_query_key(key):
+            return False
+        if normalized not in SAFE_VIDEO_QUERY_KEYS and not normalized.startswith("utm_"):
+            return False
+    return True
+
+
 def _redact_url(value: str) -> str:
     parsed = urlparse(value)
     safe_query = [
@@ -286,14 +308,15 @@ def _safe_visual_candidates(
         if image_url in seen_urls or not _is_public_http_url(image_url, dns_cache):
             continue
         seen_urls.add(image_url)
-        block_id = f"blk-image-{rank:04d}"
+        source_index = int(image.get("source_index", rank - 1))
+        block_id = f"blk-image-{source_index + 1:04d}"
         resource_id = f"resource-{hashlib.sha256(image_url.encode()).hexdigest()[:16]}"
         selected.append({
             "image": image,
             "image_url": image_url,
             "block_id": block_id,
             "resource_id": resource_id,
-            "source_index": int(image.get("source_index", rank - 1)),
+            "source_index": source_index,
         })
     return selected, skipped_sensitive
 
@@ -341,6 +364,7 @@ def _token_budget_details(request, returned_tokens: int, remaining_text: str) ->
         "estimated_returned_tokens": returned_tokens,
         "estimated_remaining_tokens": _estimated_tokens(remaining_text),
         "estimated_token_basis": "ascii4_nonascii1_v1",
+        "estimated_token_scope": "returned_material_text_only",
         "token_budget": response_limit,
         "total_token_budget": total_limit,
         "remaining_tokens": max(0, min(limits) - returned_tokens),
@@ -359,18 +383,50 @@ def _take_text_budgeted(
     if max_tokens <= 0 or max_chars <= 0:
         return "", offset
     high = min(len(text), offset + max_chars)
-    low = offset
-    while low < high:
-        middle = (low + high + 1) // 2
-        if _estimated_tokens(text[offset:middle]) <= max_tokens:
-            low = middle
+    ascii_count = 0
+    non_ascii_count = 0
+    budget_end = offset
+    for index in range(offset, high):
+        if ord(text[index]) > 0x7F:
+            non_ascii_count += 1
         else:
-            high = middle - 1
-    content, end = _take_text_range(text, offset, low - offset)
+            ascii_count += 1
+        if non_ascii_count + (ascii_count + 3) // 4 > max_tokens:
+            break
+        budget_end = index + 1
+    content, end = _take_text_range(text, offset, budget_end - offset)
     while content and _estimated_tokens(content) > max_tokens:
         content = content[:-1]
         end -= 1
     return content, end
+
+
+def _unseen_ranges(start: int, end: int, returned_ranges: list[list[int]]) -> list[tuple[int, int]]:
+    segments = [(start, end)]
+    for returned_start, returned_end in returned_ranges:
+        remaining = []
+        for segment_start, segment_end in segments:
+            if returned_end <= segment_start or returned_start >= segment_end:
+                remaining.append((segment_start, segment_end))
+                continue
+            if segment_start < returned_start:
+                remaining.append((segment_start, returned_start))
+            if returned_end < segment_end:
+                remaining.append((returned_end, segment_end))
+        segments = remaining
+        if not segments:
+            break
+    return segments
+
+
+def _merge_ranges(ranges: list[list[int]]) -> list[list[int]]:
+    merged = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
 
 
 def _response_char_budget(request) -> int:
@@ -450,6 +506,11 @@ def _material_root() -> Path:
             except OSError:
                 continue
     return root
+
+
+def _material_id(source_url: str, source_revision: str, session_id: str | None) -> str:
+    identity = f"{source_url}\0{source_revision}\0{session_id or ''}"
+    return f"mat-{hashlib.sha256(identity.encode()).hexdigest()[:24]}"
 
 
 def _store_material(material_id: str, data: dict) -> None:
@@ -534,19 +595,11 @@ def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
     state = stored.get("budget_state")
     if not isinstance(state, dict):
         state = {}
-    ranges = []
-    for item in state.get("returned_ranges") or []:
-        if isinstance(item, list) and len(item) == 2:
-            try:
-                start, end = int(item[0]), int(item[1])
-            except (TypeError, ValueError):
-                continue
-            if 0 <= start < end:
-                ranges.append([start, end])
+    source_text = str(stored.get("text") or "")
+    ranges = _material_returned_ranges(state, len(source_text))
     if state.get("returned_tokens") is not None:
         returned_tokens = int(state["returned_tokens"])
     else:
-        source_text = str(stored.get("text") or "")
         returned_tokens = _estimated_tokens(str(stored.get("title_text") or ""))
         returned_tokens += sum(
             _estimated_tokens(source_text[start:min(end, len(source_text))])
@@ -580,8 +633,23 @@ def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
     }
 
 
+def _material_returned_ranges(state: dict, text_length: int) -> list[list[int]]:
+    ranges = []
+    for field in ("returned_ranges", "search_returned_ranges"):
+        for item in state.get(field) or []:
+            if not isinstance(item, list) or len(item) != 2:
+                continue
+            try:
+                start, end = int(item[0]), int(item[1])
+            except (TypeError, ValueError):
+                continue
+            if 0 <= start < end <= text_length:
+                ranges.append([start, end])
+    return _merge_ranges(ranges)
+
+
 def _record_material_range(stored: dict, state: dict, start: int, end: int, content: str) -> None:
-    state["returned_ranges"].append([start, end])
+    state["returned_ranges"] = _merge_ranges(state["returned_ranges"] + [[start, end]])
     state["returned_chars"] += end - start
     state["returned_tokens"] += _estimated_tokens(content)
     state["expansion_rounds"] += 1
@@ -595,6 +663,7 @@ def record_visual_observation(
     source_block_id: str,
     observation: str,
     locator_quote: str | None = None,
+    session_id: str | None = None,
 ) -> dict:
     """Persist a bounded host observation without exposing raw image bytes."""
     if not material_id:
@@ -611,6 +680,8 @@ def record_visual_observation(
         return {"persisted": False, "reason": "material_unavailable"}
     if expires_at <= time.time():
         return {"persisted": False, "reason": "material_unavailable"}
+    if stored.get("session_id") and session_id != stored.get("session_id"):
+        return {"persisted": False, "reason": "session_mismatch"}
     expected_resources = stored.get("visual_resources")
     expected = next(
         (
@@ -670,6 +741,8 @@ def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadRe
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
     if expires_at <= time.time():
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+    if stored.get("session_id") and request.session_id != stored.get("session_id"):
+        raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
 
     rows = stored.get("visual_observations")
     if not isinstance(rows, list):
@@ -778,6 +851,16 @@ def _material_search_terms(query: str) -> list[str]:
     return terms[:64]
 
 
+def _search_hit_offset(text: str, terms: list[str]) -> int:
+    haystack = text.lower()
+    offsets = [
+        position
+        for term in terms
+        if term and (position := haystack.find(term.lower())) >= 0
+    ]
+    return min(offsets, default=0)
+
+
 def search_material(request: MaterialSearchRequest) -> ReadResponse:
     material_id = request.material_id
     root = _material_root()
@@ -792,32 +875,55 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
     if expires_at <= time.time():
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+    if stored.get("session_id") and request.session_id != stored.get("session_id"):
+        raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
 
     total_text = str(stored.get("text") or "")
+    state = stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {}
+    returned_ranges = _material_returned_ranges(state, len(total_text))
     terms = _material_search_terms(request.query)
     candidates = []
+    lexical_matches = 0
+    already_returned_matches = 0
     for match in re.finditer(r"[^\n]+", total_text):
-        snippet = match.group(0).strip()
+        raw_line = match.group(0)
+        snippet = raw_line.strip()
         if not snippet:
             continue
-        start = match.start()
-        while start < len(total_text) and total_text[start].isspace():
-            start += 1
+        start = match.start() + len(raw_line) - len(raw_line.lstrip())
         score = _goal_score(snippet, terms)
         if score:
-            candidates.append({
-                "start": start,
-                "end": match.end(),
-                "text": snippet,
-                "score": score,
-            })
+            lexical_matches += 1
+            end = match.end() - (len(raw_line) - len(raw_line.rstrip()))
+            segments = _unseen_ranges(
+                start,
+                end,
+                returned_ranges,
+            )
+            if not segments:
+                already_returned_matches += 1
+            for segment_start, segment_end in segments:
+                segment_text = total_text[segment_start:segment_end]
+                candidates.append({
+                    "start": segment_start,
+                    "end": segment_end,
+                    "text": segment_text,
+                    "score": score,
+                    "hit_offset": _search_hit_offset(segment_text, terms),
+                })
     candidates.sort(key=lambda item: (-item["score"], item["start"]))
-    matches_found = len(candidates)
+    matches_found = lexical_matches
+    new_matches = len(candidates)
 
-    state = stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {}
     max_total_chars = int(state.get("max_total_response_chars") or 48_000)
     returned_chars = int(state.get("returned_chars") or 0)
     returned_tokens = int(state.get("returned_tokens") or 0)
+    if "returned_tokens" not in state and "returned_ranges" in state:
+        returned_tokens = _estimated_tokens(str(stored.get("title_text") or ""))
+        returned_tokens += sum(
+            _estimated_tokens(total_text[start:end])
+            for start, end in _material_returned_ranges(state, len(total_text))
+        )
     max_total_tokens = state.get("max_total_response_tokens")
     max_total_tokens = int(max_total_tokens) if max_total_tokens is not None else None
     remaining_chars = max(0, max_total_chars - returned_chars)
@@ -846,7 +952,8 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                     extraction="complete",
                     details={
                         "query_terms": terms,
-                        "matches_found": 0,
+                        "matches_found": matches_found,
+                        "already_returned_matches": already_returned_matches,
                         "remaining_chars": remaining_chars,
                         "remaining_tokens": remaining_tokens,
                     },
@@ -865,7 +972,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
     blocks = []
     used_chars = 0
     used_tokens = 0
-    truncated = matches_found > request.max_results
+    truncated = new_matches > request.max_results
     for candidate in candidates[:request.max_results]:
         available_chars = char_limit - used_chars
         available_tokens = (
@@ -876,8 +983,12 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         if available_chars <= 0 or available_tokens == 0:
             truncated = True
             break
+        context_limit = min(48, available_chars // 3)
+        if available_tokens is not None:
+            context_limit = min(context_limit, available_tokens * 4 // 3)
+        window_start = max(0, candidate["hit_offset"] - context_limit)
         content, _ = _take_text_budgeted(
-            candidate["text"],
+            candidate["text"][window_start:],
             0,
             available_chars,
             available_tokens,
@@ -885,7 +996,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         if not content:
             truncated = True
             break
-        start = candidate["start"]
+        start = candidate["start"] + window_start
         end = start + len(content)
         if stored.get("source_kind") == "pdf":
             span = next(
@@ -900,6 +1011,20 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 type="pdf_page",
                 page_number=int(span["page_number"]) if span else 1,
             )
+        elif stored.get("source_kind") == "video":
+            locator = _video_locator_for_range(
+                str(stored.get("source_url") or ""),
+                stored.get("video_spans") if isinstance(stored.get("video_spans"), list) else [],
+                start,
+                end,
+            )
+            if locator is None:
+                locator = WebLocator(
+                    type="web",
+                    source_url=str(stored.get("source_url") or ""),
+                    block_id="blk-video-transcript",
+                    quote=content[:MAX_LOCATOR_QUOTE_CHARS],
+                )
         else:
             locator = WebLocator(
                 type="web",
@@ -909,9 +1034,9 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             )
         blocks.append(MaterialBlock(
             id=f"blk-search-{len(blocks) + 1:04d}",
-            kind=MaterialKind.PARAGRAPH,
+            kind=MaterialKind.TRANSCRIPT if stored.get("source_kind") == "video" else MaterialKind.PARAGRAPH,
             content=TextContent(type="text", text=content),
-            origin=MaterialOrigin.SOURCE_TEXT,
+            origin=MaterialOrigin.SUBTITLE if stored.get("source_kind") == "video" else MaterialOrigin.SOURCE_TEXT,
             locator=locator,
             order=start,
             quality={
@@ -933,6 +1058,12 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         )
     state["returned_chars"] = returned_chars + used_chars
     state["returned_tokens"] = returned_tokens + used_tokens
+    search_ranges = returned_ranges + [
+        [block.order, block.order + len(block.content.text)]
+        for block in blocks
+    ]
+    state["returned_ranges"] = _merge_ranges(search_ranges)
+    state["search_returned_ranges"] = state["returned_ranges"]
     stored["budget_state"] = state
     try:
         _store_material(material_id, stored)
@@ -962,16 +1093,18 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 details={
                     "query_terms": terms,
                     "matches_found": matches_found,
+                    "already_returned_matches": already_returned_matches,
                     "returned_chars": used_chars,
                     "returned_tokens": used_tokens,
                     "match_offsets": [block.order for block in blocks],
+                    "token_estimate_basis": "ascii4_nonascii1_v1",
+                    "token_estimate_scope": "returned_material_text_only",
                     "remaining_chars": max(0, max_total_chars - state["returned_chars"]),
                     "remaining_tokens": (
                         max(0, max_total_tokens - state["returned_tokens"])
                         if max_total_tokens is not None
                         else None
                     ),
-                    "token_estimate_basis": "ascii4_nonascii1_v1",
                 },
             )
         }),
@@ -994,6 +1127,8 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         source_path.unlink(missing_ok=True)
         expiry_path.unlink(missing_ok=True)
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+    if stored.get("session_id") and request.session_id != stored.get("session_id"):
+        raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     budget_state = _material_budget_state(stored, request)
     if (
         budget_state["max_expansion_rounds"] is not None
@@ -1008,6 +1143,10 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
     ):
         return _expand_blocked(request, "The cumulative response token budget has been exhausted")
     total_text = str(stored.get("text") or "")
+    all_returned_ranges = _material_returned_ranges(
+        stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {},
+        len(total_text),
+    )
     offset = request.offset
     max_chars = min(
         request.max_chars,
@@ -1015,14 +1154,12 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         if request.max_response_tokens is not None
         else request.max_chars,
     )
-    max_total_chars = request.max_total_response_chars
     if offset > len(total_text):
         raise ValueError("offset must be between zero and the material length")
     end = min(
         len(total_text),
         offset + max_chars,
         offset + max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
-        max_total_chars,
     )
     if budget_state["max_total_response_tokens"] is not None:
         token_remaining_chars = max(
@@ -1042,11 +1179,7 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             if response_token_limit is not None
             else total_token_remaining
         )
-    if any(
-        (start <= offset < finish and offset < finish - 8)
-        or offset < start < end
-        for start, finish in budget_state["returned_ranges"]
-    ):
+    if _unseen_ranges(offset, end, all_returned_ranges) != [(offset, end)]:
         return _expand_blocked(request, "The requested material range overlaps an earlier response")
     if stored.get("source_kind") == "pdf":
         spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
@@ -1144,12 +1277,22 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         return _expand_blocked(request, "The material budget ledger could not be persisted")
     has_more = end < len(total_text)
     block_id = "blk-body-0001"
+    video_locator = (
+        _video_locator_for_range(
+            str(stored.get("source_url") or ""),
+            stored.get("video_spans") if isinstance(stored.get("video_spans"), list) else [],
+            offset,
+            end,
+        )
+        if stored.get("source_kind") == "video"
+        else None
+    )
     block = MaterialBlock(
-        id=f"{block_id}-range-{offset}",
-        kind=MaterialKind.PARAGRAPH,
+        id=f"{'blk-video-transcript' if stored.get('source_kind') == 'video' else block_id}-range-{offset}",
+        kind=MaterialKind.TRANSCRIPT if stored.get("source_kind") == "video" else MaterialKind.PARAGRAPH,
         content=TextContent(type="text", text=content),
-        origin=MaterialOrigin.SOURCE_TEXT,
-        locator=WebLocator(
+        origin=MaterialOrigin.SUBTITLE if stored.get("source_kind") == "video" else MaterialOrigin.SOURCE_TEXT,
+        locator=video_locator or WebLocator(
             type="web",
             source_url=str(stored["source_url"]),
             block_id=block_id,
@@ -1257,6 +1400,14 @@ def _fetch_html(
                             raise DetectedMedia({
                                 "url": _redact_url(current_url),
                                 "mime_type": content_type,
+                                "sensitive_url": any(
+                                    _is_sensitive_query_key(key)
+                                    for key, _value in parse_qsl(
+                                        urlparse(current_url).query,
+                                        keep_blank_values=True,
+                                    )
+                                ),
+                                "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
                             })
                         text_path = urlparse(current_url).path.lower()
                         is_text_content = (
@@ -1520,7 +1671,7 @@ def _parse_pdf_source(request: ReadRequest, source: dict) -> ReadResponse:
         response_budget_exhausted = True
 
     source_revision = hashlib.sha256(source["data"]).hexdigest()
-    material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
+    material_id = _material_id(source["url"], source_revision, request.session_id)
     retention_disabled = request.retention.derived_ttl_seconds <= 0
     can_continue = response_budget_exhausted and not retention_disabled
     should_store_material = can_continue or (
@@ -1644,7 +1795,7 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
     returned_tokens = title_tokens + _estimated_tokens(returned_text)
     response_partial = source_truncated or returned_end < len(text)
     source_revision = hashlib.sha256(data).hexdigest()
-    material_id = f"mat-{hashlib.sha256((source['url'] + source_revision).encode()).hexdigest()[:24]}"
+    material_id = _material_id(source["url"], source_revision, request.session_id)
     retention_disabled = request.retention.derived_ttl_seconds <= 0
     can_continue = response_partial and not source_truncated and not retention_disabled
     should_store_material = can_continue or (
@@ -1744,8 +1895,8 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
         dns_cache,
     )
     resource_id = "resource-image"
-    material_id = f"mat-{hashlib.sha256(source['url'].encode()).hexdigest()[:24]}"
     source_revision = hashlib.sha256(source["url"].encode()).hexdigest()
+    material_id = _material_id(source["url"], source_revision, request.session_id)
     if request.retention.derived_ttl_seconds > 0:
         try:
             _store_material(material_id, {
@@ -1838,12 +1989,371 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
     )
 
 
+def _format_video_time(seconds: float) -> str:
+    total_millis = max(0, int(round(float(seconds) * 1000)))
+    hours, remainder = divmod(total_millis, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, millis = divmod(remainder, 1000)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{millis:03d}"
+    return f"{minutes:02d}:{whole_seconds:02d}.{millis:03d}"
+
+
+def _video_spans_for_range(spans: list[dict], start: int, end: int) -> list[dict]:
+    return [
+        item for item in spans
+        if isinstance(item, dict)
+        and int(item.get("end_offset") or 0) > start
+        and int(item.get("start_offset") or 0) < end
+    ]
+
+
+def _video_locator_for_range(source_url: str, spans: list[dict], start: int, end: int):
+    matched = _video_spans_for_range(spans, start, end)
+    if not matched:
+        return None
+    return VideoLocator(
+        type="video_time",
+        source_url=source_url,
+        start_seconds=float(matched[0]["start_seconds"]),
+        end_seconds=max(
+            float(matched[-1]["end_seconds"]),
+            float(matched[0]["start_seconds"]) + 0.001,
+        ),
+    )
+
+
+def _video_subtitle_response(
+    request: ReadRequest,
+    source_url: str,
+    extracted: dict,
+) -> ReadResponse:
+    title = str(extracted.get("title") or request.source.label or "Video transcript")
+    language = str(extracted.get("language") or "")
+    parts = []
+    spans = []
+    cursor = 0
+    for cue in extracted.get("cues") or []:
+        if not isinstance(cue, dict):
+            continue
+        text = re.sub(r"\s+", " ", str(cue.get("text") or "")).strip()
+        try:
+            start_seconds = float(cue.get("start"))
+            end_seconds = float(cue.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if not text or start_seconds < 0 or end_seconds <= start_seconds:
+            continue
+        line = f"[{_format_video_time(start_seconds)}] {text}"
+        start_offset = cursor
+        cursor += len(line)
+        parts.append(line)
+        spans.append({
+            "start_offset": start_offset,
+            "end_offset": cursor,
+            "start_seconds": start_seconds,
+            "end_seconds": end_seconds,
+        })
+        cursor += 2
+    full_text = "\n\n".join(parts)
+    source_truncated = len(full_text) > MAX_TEXT_CHARS
+    if source_truncated:
+        full_text = full_text[:MAX_TEXT_CHARS]
+        spans = [item for item in spans if item["start_offset"] < len(full_text)]
+        for item in spans:
+            item["end_offset"] = min(item["end_offset"], len(full_text))
+    source_revision = hashlib.sha256(
+        f"{source_url}\n{language}\n{full_text}".encode("utf-8", errors="replace")
+    ).hexdigest()
+    material_id = _material_id(source_url, source_revision, request.session_id)
+    title_block = MaterialBlock(
+        id="blk-title",
+        kind=MaterialKind.HEADING,
+        content=TextContent(type="text", text=title),
+        origin=MaterialOrigin.SOURCE_TEXT,
+        locator=WebLocator(
+            type="web",
+            source_url=_redact_url(source_url),
+            block_id="blk-title",
+            quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+        ),
+        order=0,
+    )
+    available_chars = max(
+        0,
+        _response_char_budget(request) - len(title_block.model_dump_json()) - 256,
+    )
+    response_token_limit = request.budget.max_response_tokens
+    if request.budget.max_total_response_tokens is not None:
+        response_token_limit = (
+            min(response_token_limit, request.budget.max_total_response_tokens)
+            if response_token_limit is not None
+            else request.budget.max_total_response_tokens
+        )
+    title_tokens = _estimated_tokens(title)
+    body_token_limit = (
+        max(0, response_token_limit - title_tokens)
+        if response_token_limit is not None
+        else None
+    )
+    returned_text, returned_end = _take_text_budgeted(
+        full_text,
+        0,
+        available_chars,
+        body_token_limit,
+    )
+    returned_tokens = title_tokens + _estimated_tokens(returned_text)
+    response_partial = returned_end < len(full_text) or source_truncated
+    text_block = None
+    if returned_text:
+        text_block = MaterialBlock(
+            id="blk-video-transcript",
+            kind=MaterialKind.TRANSCRIPT,
+            content=TextContent(type="text", text=returned_text, language=language or None),
+            origin=MaterialOrigin.SUBTITLE,
+            locator=_video_locator_for_range(source_url, spans, 0, returned_end),
+            parent_id="blk-title",
+            order=1,
+        )
+    retention_disabled = request.retention.derived_ttl_seconds <= 0
+    can_continue = response_partial and not source_truncated and not retention_disabled
+    should_store_material = (
+        bool(full_text)
+        and not retention_disabled
+        and (can_continue or len(full_text) <= MAX_SEARCH_CACHE_CHARS)
+    )
+    continuation_storage_failed = False
+    if should_store_material:
+        try:
+            _store_material(material_id, {
+                "source_kind": "video",
+                "source_url": _redact_url(source_url),
+                "source_revision": source_revision,
+                "session_id": request.session_id,
+                "text": full_text,
+                "title_text": title,
+                "subtitle_language": language,
+                "subtitle_source": "automatic" if extracted.get("automatic") else "manual",
+                "video_spans": spans,
+                "budget_state": {
+                    "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_total_response_tokens": request.budget.max_total_response_tokens,
+                    "max_expansion_rounds": request.budget.max_expansion_rounds,
+                    "returned_chars": len(returned_text),
+                    "returned_tokens": returned_tokens,
+                    "expansion_rounds": 0,
+                    "returned_ranges": [[0, returned_end]] if returned_end else [],
+                },
+                "expires_at": time.time() + min(
+                    request.retention.derived_ttl_seconds,
+                    MATERIAL_TTL_SECONDS,
+                ),
+            })
+        except OSError:
+            can_continue = False
+            continuation_storage_failed = True
+    unresolved_text = []
+    if response_partial:
+        unresolved_text.append("Subtitle text is limited by the response or local extraction budget")
+    if continuation_storage_failed:
+        unresolved_text.append("Subtitle continuation cache could not be written")
+    if retention_disabled and response_partial:
+        unresolved_text.append("Subtitle continuation is unavailable because local retention is disabled")
+    blocks = [title_block]
+    if text_block:
+        blocks.append(text_block)
+    video_unresolved = ["Video frames were not inspected; this material contains subtitles only"]
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=material_id,
+        source_revision=source_revision,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL if response_partial else ReadResult.READY,
+        blocks=blocks,
+        coverage=Coverage(modalities={
+            "text": CoverageItem(
+                discovered=len(spans),
+                extracted=len(spans),
+                returned=1 if text_block else 0,
+                extraction="partial" if response_partial else "complete",
+                unresolved=unresolved_text,
+                details={
+                    "source": "video_subtitles",
+                    "language": language,
+                    "subtitle_source": "automatic" if extracted.get("automatic") else "manual",
+                    "total_chars": len(full_text),
+                    "returned_chars": len(returned_text),
+                    "continuation_available": can_continue,
+                    "next_offset": returned_end if can_continue else None,
+                    "goal_candidates": _goal_candidates(full_text, _goal_terms(request.goal)),
+                    **_token_budget_details(request, returned_tokens, full_text[returned_end:]),
+                },
+            ),
+            "video": CoverageItem(
+                discovered=1,
+                extracted=1,
+                returned=1,
+                processed=1,
+                extraction="partial",
+                unresolved=video_unresolved,
+                details={
+                    "video_id": extracted.get("video_id"),
+                    "duration_seconds": extracted.get("duration"),
+                    "subtitle_language": language,
+                    "subtitle_source": "automatic" if extracted.get("automatic") else "manual",
+                    "available_subtitle_languages": extracted.get("available_languages", []),
+                    "visual_inspection": "not_performed",
+                },
+            ),
+        }),
+    )
+
+
+def _read_video_source(request: ReadRequest, source: dict) -> ReadResponse:
+    if request.host_capabilities.video_input != "native":
+        return _blocked(
+            request,
+            ErrorCode.MISSING_CAPABILITY,
+            "The host must support native video input to inspect this direct video",
+            action_required=True,
+        )
+    source_url = str(source["url"])
+    if source.get("sensitive_url") or source.get("unsafe_handoff_url") or not _video_handoff_url_is_safe(source_url):
+        return _blocked(
+            request,
+            ErrorCode.MISSING_CAPABILITY,
+            "This media URL has signed or unknown query parameters and cannot be sent to the host model",
+        )
+    resource_id = f"resource-{hashlib.sha256(source_url.encode()).hexdigest()[:16]}"
+    source_revision = hashlib.sha256(source_url.encode()).hexdigest()
+    material_id = _material_id(source_url, source_revision, request.session_id)
+    block_id = "blk-video-0001"
+    if request.retention.derived_ttl_seconds > 0:
+        try:
+            _store_material(material_id, {
+                "source_kind": "video",
+                "source_url": source_url,
+                "source_revision": source_revision,
+                "session_id": request.session_id,
+                "text": "",
+                "title_text": request.source.label or source.get("title") or Path(urlparse(source_url).path).name or "Video",
+                "visual_resources": [{
+                    "resource_id": resource_id,
+                    "source_block_id": block_id,
+                    "source_url": source_url,
+                }],
+                "budget_state": {
+                    "max_total_response_chars": request.budget.max_total_response_chars,
+                    "max_total_response_tokens": request.budget.max_total_response_tokens,
+                    "max_expansion_rounds": 0,
+                    "returned_chars": 0,
+                    "returned_tokens": 0,
+                    "expansion_rounds": 0,
+                    "returned_ranges": [],
+                },
+                "expires_at": time.time() + min(
+                    request.retention.derived_ttl_seconds,
+                    MATERIAL_TTL_SECONDS,
+                ),
+            })
+        except OSError:
+            pass
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=material_id,
+        source_revision=source_revision,
+        execution_state=ExecutionState.WAITING_FOR_HOST,
+        result=ReadResult.NEEDS_HOST,
+        blocks=[MaterialBlock(
+            id=block_id,
+            kind=MaterialKind.VIDEO,
+            content=VideoContent(
+                type="video",
+                resource_id=resource_id,
+                alt_text=request.goal or request.source.label or source.get("title") or "Source video",
+                mime_type=str(source["mime_type"]),
+            ),
+            origin=MaterialOrigin.SOURCE_VIDEO,
+            locator=WebLocator(
+                type="web",
+                source_url=source_url,
+                block_id=block_id,
+                quote=request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Direct video source",
+            ),
+            order=0,
+        )],
+        resources=[ResourceRef(
+            resource_id=resource_id,
+            mime_type=str(source["mime_type"]),
+            delivery=HostDelivery(type="uri", uri=source_url),
+            delivery_evidence="unverified",
+        )],
+        needs=[Need(
+            action_id="inspect-video-0001",
+            type="inspect_video",
+            purpose=request.goal or "Inspect the direct video",
+            resource_ids=[resource_id],
+            source_block_ids=[block_id],
+            reason=(
+                "The host advertises native video input; Envoy passes through this public source without local model processing."
+            ),
+            max_resources=1,
+        )],
+        coverage=Coverage(modalities={
+            "video": CoverageItem(
+                discovered=1,
+                extracted=0,
+                returned=1,
+                delivered=1,
+                extraction="unknown",
+                unresolved=["Video interpretation is delegated to the host model"],
+                details={
+                    "mime_type": source["mime_type"],
+                    "processing": "host_native_page" if source.get("source_type") == "platform_page" else "host_native",
+                },
+            )
+        }),
+    )
+
+
 def read_public_page(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
     dns_cache: dict[str, bool] = {}
     if not _is_public_http_url(source_url, dns_cache):
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     source_path = urlparse(source_url).path.lower()
+    direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
+    if (
+        not direct_video_path
+        and has_specialized_extractor(source_url)
+    ):
+        subtitle_result = extract_public_subtitles(
+            source_url,
+            preferred_language=request.video_subtitle_language,
+        )
+        if subtitle_result.get("status") == "ready":
+            return _video_subtitle_response(request, source_url, subtitle_result)
+        if subtitle_result.get("status") not in {"not_single_video", "extractor_unavailable"}:
+            status = str(subtitle_result.get("status") or "failed")
+            message = str(subtitle_result.get("error") or "")
+            if status == "no_subtitles":
+                message = "No public subtitle track is available for this video"
+            elif status == "subtitle_parse_failed":
+                message = "The public subtitle track could not be parsed"
+            else:
+                message = f"Public video subtitle extraction failed ({message or status})"
+            code = ErrorCode.AUTH_REQUIRED if any(
+                marker in message.lower()
+                for marker in ("login", "sign in", "403", "authentication")
+            ) else ErrorCode.MISSING_CAPABILITY if status == "no_subtitles" else ErrorCode.NETWORK_ERROR
+            return _blocked(
+                request,
+                code,
+                message,
+                action_required=code == ErrorCode.MISSING_CAPABILITY,
+            )
     if request.source.kind.value == "image" or source_path.endswith(IMAGE_SUFFIXES):
         try:
             return _read_image_source(request, source_url, dns_cache)
@@ -1876,7 +2386,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 ErrorCode.NETWORK_ERROR,
                 f"PDF request failed ({type(exc).__name__}) for {_redact_url(source_url)}",
             )
-    if request.source.kind.value not in {"auto", "article"}:
+    if request.source.kind.value not in {"auto", "article", "video"}:
         return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
     try:
         try:
@@ -1899,6 +2409,8 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 )
             return _read_image_source(request, source_url, dns_cache)
         except DetectedMedia as detected_media:
+            if detected_media.source["mime_type"].startswith("video/"):
+                return _read_video_source(request, detected_media.source)
             return _blocked(
                 request,
                 ErrorCode.MISSING_CAPABILITY,
@@ -1985,7 +2497,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         ]
         text_goal_candidates = _goal_candidates(text, goal_terms)
         source_revision = hashlib.sha256(html.encode("utf-8", errors="replace")).hexdigest()
-        material_id = f"mat-{hashlib.sha256((final_url + source_revision).encode()).hexdigest()[:24]}"
+        material_id = _material_id(final_url, source_revision, request.session_id)
         retention_disabled = request.retention.derived_ttl_seconds <= 0
         can_continue = text_is_partial and not source_text_truncated and not retention_disabled
         should_store_material = (

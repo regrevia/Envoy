@@ -8,9 +8,9 @@ version = "0.1.0"
 description = "Independent Envoy link reader launcher"
 requires-python = ">=3.9"
 dependencies = [
-  "envoy-core==0.1.0",
   "httpx>=0.28,<1",
   "pypdf>=5.1,<6",
+  "yt-dlp>=2025.10.14,<2027",
 ]
 
 [project.scripts]
@@ -18,3 +18,4 @@ envoy = "envoy_cli.cli:entrypoint"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["envoy_cli*", "envoy_core*"]

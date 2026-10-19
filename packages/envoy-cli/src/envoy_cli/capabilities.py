@@ -23,9 +23,19 @@ def capability_catalog() -> dict:
                     "requires": "host URI image input capability",
                     "otherwise": "missing_capability",
                 },
+                {
+                    "id": "direct_video_handoff",
+                    "requires": "public direct video URL and host native video input",
+                    "otherwise": "missing_capability",
+                },
+                {
+                    "id": "platform_video_subtitles",
+                    "requires": "yt-dlp installed, a supported extractor, and a public subtitle track",
+                    "otherwise": "unsupported or missing_capability",
+                },
             ],
             "unsupported": [
-                "standalone_video",
+                "platform_video_visual_extraction",
                 "standalone_audio",
                 "scanned_pdf_ocr",
                 "office_document",

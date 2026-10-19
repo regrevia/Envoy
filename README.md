@@ -76,24 +76,24 @@ npm run dev
 
 ### 独立 Skill（开发版）
 
-当前 `dev` 已包含一个不依赖网站数据库的 Skill 运行包，支持公开静态 HTML、PDF 文本层、纯文本类链接和图片视觉交接：
+当前 `dev` 已包含一个不依赖网站数据库的 Skill 运行包，支持公开静态 HTML、PDF 文本层、纯文本类链接、图片视觉交接；有可用专用 extractor 和公开字幕时会尝试生成带时间定位的字幕材料，宿主支持时也可接收公开视频直链。站点成功率仍需逐平台真实验收，平台视频下载、通用 ASR 和抽帧尚未接入独立 Skill：
 
 ```bash
-python -m pip install --upgrade pip
 python -m pip install -e packages/envoy-core -e packages/envoy-cli
 envoy doctor --json
 printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{"url":"https://example.org/"}}' | envoy read --request-json -
 ```
 
-生成无凭据 Skill 安装包：
+开发环境生成无凭据 Skill 包与自包含 CLI wheel：
 
 ```bash
 python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
+python scripts/build_envoy_cli_wheel.py --output-dir dist
 ```
 
-安装包只包含 `SKILL.md`、协议参考、宿主 MCP 配置和 `envoy-skill.json`，不包含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
+面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。版本 tag 的 GitHub Release 工作流会发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`；wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。工作流已加入，但首个 GitHub Release 尚未创建。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
 
-宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、视频、OCR、ASR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
+宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、平台视频下载/ASR/抽帧、OCR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
 
 支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand`、`envoy_search`、`envoy_doctor`、`envoy_observe_visual` 和 `envoy_visual_history`，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
 
@@ -294,6 +294,6 @@ Markdown is best for downstream Wiki generation. HTML is best for reviewing visu
 
 The current development branch has passed one real public Douyin image-post flow: article text and four images were processed into Markdown/HTML and a ZIP package. This single sample does not imply universal site support.
 
-The standalone Skill/MCP reader supports public static HTML, text/Markdown/CSV/JSON, PDF text layers with page locators and incremental reads, and direct-image visual handoff. Scanned-PDF OCR and standalone video/audio processing are not yet available. The self-contained installer, dedicated WeChat validation, and multi-user worker isolation are still in development. See the [product architecture](docs/product/agent-link-reader-v1.md) and [implementation status](docs/architecture/agent-link-reader-status.md). Source access remains subject to site permissions and network conditions.
+The standalone Skill/MCP reader supports public static HTML, text/Markdown/CSV/JSON, PDF text layers with page locators and incremental reads, direct-image visual handoff, public subtitle extraction when a specialized yt-dlp extractor exposes a usable public track, and public direct-video pass-through when the host advertises native video input. Platform subtitle access varies and the current real YouTube/Bilibili checks did not yield captions; platform video downloads, frame extraction, standalone audio, and scanned-PDF OCR are not yet available. The Release workflow is configured but a GitHub Release has not yet been published. See the [product architecture](docs/product/agent-link-reader-v1.md) and [implementation status](docs/architecture/agent-link-reader-status.md). Source access remains subject to site permissions and network conditions.
 
-For MCP agents, ordinary links can go directly to `envoy_read` with the user's goal. `envoy_doctor` provides a versioned capability catalog when optional support is unclear; the model uses coverage to decide whether to continue reading or request host visual inspection, without site-specific prompt workflows.
+For MCP agents, ordinary links can go directly to `envoy_read` with the user's goal. `envoy_doctor` provides a versioned capability catalog when optional support is unclear; the model uses coverage to decide whether to continue reading or request host visual/video inspection, without site-specific prompt workflows.

@@ -135,6 +135,78 @@ def test_goal_reports_later_text_evidence_candidates_for_targeted_expansion(monk
     assert candidates[0]["offset"] > 0
 
 
+def test_goal_candidate_can_be_expanded_without_reading_intervening_text(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/video-guide",
+        "<html><body>"
+        f"<p>{'Historical overview and surrounding context. ' * 14}</p>"
+        "<p>Deployment command: envoy video inspect --frames. "
+        "This command is the relevant answer.</p>"
+        "</body></html>",
+    ))
+    initial = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-targeted-expand-read",
+        "source": {"url": "https://example.org/video-guide"},
+        "goal": "Find the deployment command",
+        "budget": {"max_response_chars": 600},
+    }))
+    candidate = initial.coverage.modalities["text"].details["goal_candidates"][0]
+
+    result = reader.expand_material(ExpandRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-targeted-expand",
+        "material_id": initial.material_id,
+        "offset": candidate["offset"],
+        "max_chars": 256,
+        "max_total_response_chars": 48_000,
+    }))
+
+    assert candidate["offset"] > initial.coverage.modalities["text"].details["returned_chars"]
+    assert "envoy video inspect --frames" in result.blocks[0].content.text
+    assert result.coverage.modalities["text"].details["offset"] == candidate["offset"]
+
+
+def test_same_material_source_gets_independent_material_ids_per_session(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/shared",
+        "<html><body><p>Shared public information about the deployment process.</p></body></html>",
+    ))
+    base = {
+        "protocol_version": "envoy.read/1",
+        "source": {"url": "https://example.org/shared"},
+        "budget": {"max_response_chars": 256, "max_total_response_chars": 1024},
+    }
+    first = reader.read_public_page(ReadRequest.model_validate({
+        **base,
+        "request_id": "session-a-read",
+        "session_id": "agent-session-a",
+    }))
+    second = reader.read_public_page(ReadRequest.model_validate({
+        **base,
+        "request_id": "session-b-read",
+        "session_id": "agent-session-b",
+    }))
+
+    assert first.material_id != second.material_id
+    first_material = json.loads((tmp_path / f"{first.material_id}.json").read_text(encoding="utf-8"))
+    second_material = json.loads((tmp_path / f"{second.material_id}.json").read_text(encoding="utf-8"))
+    assert first_material["session_id"] == "agent-session-a"
+    assert second_material["session_id"] == "agent-session-b"
+    assert (tmp_path / f"{first.material_id}.json").is_file()
+    assert (tmp_path / f"{second.material_id}.json").is_file()
+
+
 def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypatch):
     from envoy_cli import reader
 
@@ -312,7 +384,9 @@ def test_cli_doctor_is_json_and_does_not_report_secrets(capsys):
     assert response["capabilities"]["schema_version"] == "envoy.capabilities/1"
     assert "static_html" in response["capabilities"]["inputs"]["supported"]
     assert "pdf_text_layer" in response["capabilities"]["inputs"]["supported"]
-    assert "standalone_video" in response["capabilities"]["inputs"]["unsupported"]
+    assert "platform_video_visual_extraction" in response["capabilities"]["inputs"]["unsupported"]
+    assert response["capabilities"]["inputs"]["conditional"][1]["id"] == "direct_video_handoff"
+    assert response["capabilities"]["inputs"]["conditional"][2]["id"] == "platform_video_subtitles"
     assert "api_key" not in json.dumps(response).lower()
 
 
@@ -434,7 +508,7 @@ def test_read_creates_local_material_and_expand_returns_next_non_overlapping_sli
         "protocol_version": "envoy.read/1",
         "request_id": "req-expand-2",
         "material_id": material_id,
-        "offset": len(first_body),
+        "offset": first["coverage"]["modalities"]["text"]["details"]["next_offset"],
         "max_chars": 400,
         "max_total_response_chars": 2000,
     }
@@ -444,7 +518,7 @@ def test_read_creates_local_material_and_expand_returns_next_non_overlapping_sli
 
     assert expanded["result"] == "partial"
     assert expanded["blocks"][0]["locator"]["block_id"] == "blk-body-0001"
-    assert expanded["coverage"]["modalities"]["text"]["details"]["offset"] == len(first_body)
+    assert expanded["coverage"]["modalities"]["text"]["details"]["offset"] == expand_request["offset"]
     assert expanded_text
     assert not first_body.endswith(expanded_text[:40])
     assert len(calls) == 1
@@ -471,8 +545,8 @@ def test_expand_enforces_cumulative_response_budget(tmp_path, monkeypatch):
         "max_total_response_chars": 300,
     }))
 
-    assert len(response.blocks[0].content.text) == 100
-    assert response.coverage.modalities["text"].details["next_offset"] == 300
+    assert len(response.blocks[0].content.text) == 300
+    assert response.coverage.modalities["text"].details["next_offset"] == 500
     assert response.result.value == "partial"
 
 
@@ -602,6 +676,155 @@ def test_video_page_reports_unread_video_coverage(monkeypatch):
     assert response.coverage.modalities["video"].discovered == 1
     assert response.coverage.modalities["video"].extraction == "failed"
     assert "standalone video extraction" in response.coverage.modalities["video"].unresolved[0]
+
+
+def test_direct_video_is_handed_to_native_video_host_without_local_model(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedMedia({
+            "url": "https://cdn.example.org/lesson.mp4",
+            "mime_type": "video/mp4",
+        })
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-native-video",
+        "source": {
+            "url": "https://cdn.example.org/lesson.mp4",
+            "kind": "video",
+        },
+        "goal": "Explain the main idea and the steps shown",
+        "host_capabilities": {"video_input": "native"},
+    }))
+
+    assert response.result.value == "needs_host", response.model_dump(mode="json")
+    assert response.needs[0].type == "inspect_video"
+    assert response.resources[0].delivery.uri == "https://cdn.example.org/lesson.mp4"
+    assert response.blocks[0].content.type == "video"
+    assert response.coverage.modalities["video"].delivered == 1
+
+
+def test_direct_video_handoff_uses_real_http_redirect_and_content_type(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/watch":
+                self.send_response(302)
+                self.send_header("Location", "/files/lesson.mp4")
+                self.end_headers()
+                return
+            if self.path == "/files/lesson.mp4":
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", "64")
+                self.end_headers()
+                self.wfile.write(b"x" * 64)
+                return
+            self.send_error(404)
+
+        def log_message(self, *_args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+        response = reader.read_public_page(ReadRequest.model_validate({
+            "protocol_version": "envoy.read/1",
+            "request_id": "req-real-http-video",
+            "source": {
+                "url": f"http://127.0.0.1:{server.server_port}/watch",
+                "kind": "video",
+            },
+            "host_capabilities": {"video_input": "native"},
+        }))
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert response.result.value == "needs_host", response.model_dump(mode="json")
+    assert response.resources[0].mime_type == "video/mp4"
+    assert response.resources[0].delivery.uri.endswith("/files/lesson.mp4")
+
+
+def test_direct_video_without_native_host_capability_is_reported_as_unsupported(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedMedia({
+            "url": "https://cdn.example.org/lesson.mp4",
+            "mime_type": "video/mp4",
+        })
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-video-no-host",
+        "source": {"url": "https://cdn.example.org/lesson.mp4", "kind": "video"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "missing_capability"
+
+
+def test_signed_direct_video_url_is_never_forwarded_to_host(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedMedia({
+            "url": "https://cdn.example.org/lesson.mp4?token=%5BREDACTED%5D",
+            "mime_type": "video/mp4",
+            "sensitive_url": True,
+        })
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-signed-video",
+        "source": {"url": "https://cdn.example.org/lesson.mp4?token=private"},
+        "host_capabilities": {"video_input": "native"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert "private" not in response.model_dump_json()
+
+
+def test_unknown_signed_parameter_direct_video_url_is_not_forwarded(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedMedia({
+            "url": "https://cdn.example.org/lesson.mp4?edge_credential=private",
+            "mime_type": "video/mp4",
+        })
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-unknown-signed-video",
+        "source": {"url": "https://cdn.example.org/lesson.mp4?edge_credential=private"},
+        "host_capabilities": {"video_input": "native"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert "private" not in response.model_dump_json()
 
 
 def test_challenge_page_is_not_reported_as_ready(monkeypatch):
@@ -1158,10 +1381,10 @@ def test_short_material_is_cached_for_goal_directed_followup_search(tmp_path, mo
         "query": "deployment command",
     }))
 
-    assert result.result.value == "ready"
-    assert "envoy start --worker" in result.blocks[0].content.text
-    assert result.blocks[0].locator.block_id == "blk-body-0001"
+    assert result.result.value == "empty"
+    assert result.blocks == []
     assert result.coverage.modalities["text"].details["matches_found"] == 1
+    assert result.coverage.modalities["text"].details["already_returned_matches"] == 1
 
 
 def test_material_search_finds_cjk_query_in_later_paragraph(tmp_path, monkeypatch):
@@ -1186,10 +1409,10 @@ def test_material_search_finds_cjk_query_in_later_paragraph(tmp_path, monkeypatc
             "max_total_response_chars": 4000,
             "max_total_response_tokens": 1000,
             "max_expansion_rounds": 3,
-            "returned_chars": len(source_text),
-            "returned_tokens": reader._estimated_tokens("部署教程" + source_text),
+            "returned_chars": 0,
+            "returned_tokens": 0,
             "expansion_rounds": 0,
-            "returned_ranges": [[0, len(source_text)]],
+            "returned_ranges": [],
         },
     })
 
@@ -1202,6 +1425,98 @@ def test_material_search_finds_cjk_query_in_later_paragraph(tmp_path, monkeypatc
 
     assert "envoy start --worker" in result.blocks[0].content.text
     assert result.blocks[0].order == source_text.index("部署命令")
+
+
+def test_material_search_and_expand_share_returned_range_ledger(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "1" * 24
+    text = "Unrelated introduction.\n\nImportant answer: NEEDLE=42 with context."
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "1" * 64,
+        "title_text": "Guide",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 8,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    searched = reader.search_material(MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "req-search-shared-range",
+        "material_id": material_id,
+        "query": "NEEDLE=42",
+    }))
+    expanded = reader.expand_material(ExpandRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-expand-shared-range",
+        "material_id": material_id,
+        "offset": searched.blocks[0].order,
+        "max_chars": 256,
+    }))
+
+    assert searched.result.value == "ready"
+    assert expanded.result.value == "blocked"
+    assert "overlaps an earlier response" in expanded.errors[0].message
+
+
+def test_retained_material_followup_rejects_different_session(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest, VisualObservationHistoryRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "2" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "2" * 64,
+        "session_id": "agent-a",
+        "text": "Private session state attached to shared public material.",
+        "visual_resources": [],
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    for operation in (
+        lambda: reader.expand_material(ExpandRequest.model_validate({
+            "request_id": "wrong-session-expand",
+            "material_id": material_id,
+            "session_id": "agent-b",
+        })),
+        lambda: reader.search_material(MaterialSearchRequest.model_validate({
+            "request_id": "wrong-session-search",
+            "material_id": material_id,
+            "session_id": "agent-b",
+            "query": "session state",
+        })),
+        lambda: reader.read_visual_observations(VisualObservationHistoryRequest.model_validate({
+            "request_id": "wrong-session-history",
+            "material_id": material_id,
+            "session_id": "agent-b",
+        })),
+    ):
+        try:
+            operation()
+        except reader.PublicPageError as exc:
+            assert exc.code.value == "invalid_request"
+            assert "different session" in str(exc)
+        else:
+            raise AssertionError("Material state must not cross session boundaries")
 
 
 def test_material_search_consumes_shared_cumulative_token_budget(tmp_path, monkeypatch):
@@ -1250,6 +1565,204 @@ def test_material_search_consumes_shared_cumulative_token_budget(tmp_path, monke
 
     assert second.result.value == "blocked"
     assert second.errors[0].code.value == "budget_exceeded"
+
+
+def test_material_search_skips_previously_returned_matches(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "d" * 24
+    text = (
+        "Deployment uses worker queues and bounded retries.\n"
+        "Deployment uses a durable job ledger for recovery."
+    )
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "a" * 64,
+        "title_text": "Deployment guide",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    request = {
+        "protocol_version": "envoy.search/1",
+        "material_id": material_id,
+        "query": "deployment",
+        "max_results": 5,
+    }
+
+    first = reader.search_material(MaterialSearchRequest.model_validate({
+        **request,
+        "request_id": "req-dedupe-first",
+    }))
+    repeated = reader.search_material(MaterialSearchRequest.model_validate({
+        **request,
+        "request_id": "req-dedupe-repeat",
+    }))
+    assert len(first.blocks) == 2
+    assert repeated.result.value == "empty"
+    assert repeated.coverage.modalities["text"].details["already_returned_matches"] == 2
+
+
+def test_material_search_returns_unseen_suffix_of_partially_returned_line(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "c" * 24
+    text = "Deployment command: " + "worker concurrency recovery " * 12
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "b" * 64,
+        "title_text": "Deployment guide",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    first = reader.search_material(MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "req-suffix-first",
+        "material_id": material_id,
+        "query": "deployment command",
+        "max_chars": 128,
+        "max_response_tokens": 64,
+    }))
+    second = reader.search_material(MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "req-suffix-second",
+        "material_id": material_id,
+        "query": "deployment command",
+    }))
+
+    first_text = first.blocks[0].content.text
+    second_text = second.blocks[0].content.text
+    assert text.startswith(first_text)
+    assert second_text == text.rstrip()[len(first_text):]
+    assert first.blocks[0].order + len(first_text) == second.blocks[0].order
+
+
+def test_material_search_returns_window_around_match_in_long_single_line(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "f" * 24
+    text = ("irrelevant background " * 240) + "NEEDLE=42" + (" unrelated tail" * 8)
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/long",
+        "source_revision": "f" * 64,
+        "title_text": "Long page",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "protocol_version": "envoy.search/1",
+        "request_id": "req-long-line-hit",
+        "material_id": material_id,
+        "query": "NEEDLE=42",
+        "max_chars": 128,
+        "max_response_tokens": 64,
+    }))
+
+    assert len(result.blocks) == 1
+    assert "NEEDLE=42" in result.blocks[0].content.text
+    assert result.blocks[0].order > 5000
+
+
+def test_expand_remote_offset_uses_remaining_budget_not_absolute_offset(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "9" * 24
+    text = "x" * 64_100 + "REMOTE-TAIL" + "y" * 200
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/long",
+        "source_revision": "9" * 64,
+        "title_text": "Long page",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 50_000,
+            "max_total_response_tokens": None,
+            "max_expansion_rounds": 8,
+            "returned_chars": 2376,
+            "returned_tokens": 0,
+            "expansion_rounds": 1,
+            "returned_ranges": [],
+        },
+    })
+
+    result = reader.expand_material(ExpandRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-remote-offset",
+        "material_id": material_id,
+        "offset": 64_100,
+        "max_chars": 128,
+        "max_total_response_chars": 50_000,
+    }))
+
+    assert result.result.value == "partial"
+    assert result.blocks[0].content.text.startswith("REMOTE-TAIL")
+    assert result.coverage.modalities["text"].details["offset"] == 64_100
+
+
+def test_visual_resource_block_id_is_stable_when_candidate_order_changes(monkeypatch):
+    from envoy_cli import reader
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    images = [
+        {"url": "https://cdn.example.org/a.png", "source_index": 0},
+        {"url": "https://cdn.example.org/b.png", "source_index": 1},
+    ]
+    first, _ = reader._safe_visual_candidates(images, "https://example.org", {})
+    reordered, _ = reader._safe_visual_candidates(list(reversed(images)), "https://example.org", {})
+    first_ids = {
+        item["resource_id"]: item["block_id"]
+        for item in first
+    }
+    reordered_ids = {
+        item["resource_id"]: item["block_id"]
+        for item in reordered
+    }
+
+    assert first_ids == reordered_ids
+
+
+def test_budgeted_text_prefix_scans_mixed_text_within_estimated_budget():
+    from envoy_cli.reader import _estimated_tokens, _take_text_budgeted
+
+    text = "abcd中文efgh"
+    content, end = _take_text_budgeted(text, 0, len(text), 3)
+
+    assert end == len(content)
+    assert content == "abcd中文"
+    assert _estimated_tokens(content) == 3
+    assert _estimated_tokens(text[:end + 1]) > 3
 
 
 def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):

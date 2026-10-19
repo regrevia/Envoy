@@ -49,6 +49,11 @@ jobs:
         run: |
           python scripts/package_envoy_skill.py --output /tmp/envoy-skill.zip --json
           unzip -l /tmp/envoy-skill.zip
+      - name: Build self-contained GitHub install wheel
+        run: |
+          python scripts/build_envoy_cli_wheel.py --output-dir /tmp/envoy-wheel
+          python -m pip install --target /tmp/envoy-wheel-smoke /tmp/envoy-wheel/envoy_cli-*.whl
+          PYTHONPATH=/tmp/envoy-wheel-smoke python -c "import envoy_cli, envoy_core; print(envoy_cli.__version__, envoy_core.__version__)"
 
   frontend:
     name: Frontend build

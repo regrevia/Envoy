@@ -35,7 +35,53 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     }
 
 
-def test_mcp_bridge_accepts_visual_observation_as_source_material(capsys):
+def test_mcp_bridge_hands_direct_video_to_native_video_host(monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+        reader.DetectedMedia({
+            "url": "https://cdn.example.org/clip.mp4",
+            "mime_type": "video/mp4",
+        })
+    ))
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "video",
+        "method": "tools/call",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+            "name": "envoy_read",
+            "arguments": {
+                "protocol_version": "envoy.read/1",
+                "request_id": "mcp-direct-video",
+                "source": {
+                    "url": "https://cdn.example.org/clip.mp4",
+                    "kind": "video",
+                },
+                "goal": "Answer the user's question about this video",
+                "host_capabilities": {"video_input": "native"},
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out.splitlines()[1])
+    payload = response["result"]["structuredContent"]
+    assert "inspect the delivered video" in response["result"]["content"][0]["text"]
+    assert payload["result"] == "needs_host"
+    assert payload["needs"][0]["type"] == "inspect_video"
+    assert payload["resources"][0]["delivery"]["uri"].endswith("clip.mp4")
+
+
+def test_mcp_bridge_rejects_unlinked_visual_observation(capsys):
     from envoy_cli import mcp
 
     mcp.run_lines([{
@@ -62,9 +108,9 @@ def test_mcp_bridge_accepts_visual_observation_as_source_material(capsys):
 
     response = json.loads(capsys.readouterr().out.splitlines()[1])
     payload = json.loads(response["result"]["content"][0]["text"])
-    assert payload["result"] == "ready"
-    assert payload["blocks"][0]["origin"] == "host_visual"
-    assert payload["blocks"][0]["locator"]["source_url"] == "https://example.org/chart.png"
+    assert payload["result"] == "blocked"
+    assert payload["blocks"] == []
+    assert payload["observation_persistence"]["reason"] == "material_id_missing"
 
 
 def test_mcp_bridge_redacts_visual_observation_source_query(capsys):
@@ -177,10 +223,10 @@ def test_mcp_bridge_search_returns_source_located_goal_match(tmp_path, monkeypat
             "max_total_response_chars": 2000,
             "max_total_response_tokens": 500,
             "max_expansion_rounds": 3,
-            "returned_chars": len(source),
-            "returned_tokens": reader._estimated_tokens("Guide" + source),
+            "returned_chars": 0,
+            "returned_tokens": 0,
             "expansion_rounds": 0,
-            "returned_ranges": [[0, len(source)]],
+            "returned_ranges": [],
         },
     })
     mcp.run_lines([{
@@ -207,6 +253,53 @@ def test_mcp_bridge_search_returns_source_located_goal_match(tmp_path, monkeypat
     payload = json.loads(response["result"]["content"][0]["text"])
     assert payload["blocks"][0]["content"]["text"] == "Deployment command: envoy start --worker."
     assert payload["blocks"][0]["locator"]["source_url"] == "https://example.org/guide"
+
+
+def test_mcp_bridge_rejects_mismatched_visual_observation_as_error(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "d" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/page",
+        "source_revision": "d" * 64,
+        "text": "A page.",
+        "visual_resources": [{
+            "resource_id": "resource-owned",
+            "source_block_id": "blk-image-0001",
+            "source_url": "https://cdn.example.org/chart.png",
+        }],
+    })
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "observe",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_observe_visual",
+            "arguments": {
+                "protocol_version": "envoy.observe/1",
+                "request_id": "observe-mismatch",
+                "material_id": material_id,
+                "source_url": "https://cdn.example.org/other.png",
+                "resource_id": "resource-not-owned",
+                "source_block_id": "blk-image-0009",
+                "observation": "A purported chart observation.",
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out.splitlines()[1])
+    result = response["result"]
+    payload = result["structuredContent"]
+    assert result["isError"] is True
+    assert payload["result"] == "blocked"
+    assert payload["blocks"] == []
+    assert payload["observation_persistence"]["reason"] == "resource_mismatch"
 
 
 def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):
@@ -390,7 +483,15 @@ def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
     catalog = response["result"]["structuredContent"]["capabilities"]
     assert catalog["schema_version"] == "envoy.capabilities/1"
     assert "static_html" in catalog["inputs"]["supported"]
-    assert "standalone_video" in catalog["inputs"]["unsupported"]
+    assert "platform_video_visual_extraction" in catalog["inputs"]["unsupported"]
+    assert any(
+        item["id"] == "direct_video_handoff"
+        for item in catalog["inputs"]["conditional"]
+    )
+    assert any(
+        item["id"] == "platform_video_subtitles"
+        for item in catalog["inputs"]["conditional"]
+    )
 
 
 def test_legacy_mcp_tool_keeps_text_fallback_for_structured_material(monkeypatch, capsys):

@@ -684,12 +684,14 @@ class RuntimeSafetyTests(unittest.TestCase):
                 result = media_service.run_ocr_on_frames(["frame-1.jpg", "frame-2.jpg"])
 
             self.assertEqual(
-                result,
+                [(item["frame"], item["text"], item["confidence"]) for item in result],
                 [
-                    {"frame": "frame-1.jpg", "text": "", "confidence": 0.0},
-                    {"frame": "frame-2.jpg", "text": "", "confidence": 0.0},
+                    ("frame-1.jpg", "", 0.0),
+                    ("frame-2.jpg", "", 0.0),
                 ],
             )
+            self.assertEqual(result[0]["diagnostic"]["status"], "timeout")
+            self.assertEqual(result[0]["diagnostic"]["suggested_action"], "retry_or_use_default_ocr")
             self.assertEqual(processes[0].join_calls, [1, 5])
             self.assertTrue(processes[0].terminated)
         finally:
@@ -737,7 +739,11 @@ class RuntimeSafetyTests(unittest.TestCase):
                 patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
                 result = media_service.run_ocr_on_frames(["frame-1.jpg"], should_cancel=lambda: True)
 
-            self.assertEqual(result, [{"frame": "frame-1.jpg", "text": "", "confidence": 0.0}])
+            self.assertEqual(
+                [(item["frame"], item["text"], item["confidence"]) for item in result],
+                [("frame-1.jpg", "", 0.0)],
+            )
+            self.assertEqual(result[0]["diagnostic"]["status"], "canceled")
             self.assertEqual(processes[0].join_calls, [1, 5])
             self.assertTrue(processes[0].terminated)
         finally:
@@ -789,7 +795,11 @@ class RuntimeSafetyTests(unittest.TestCase):
                 patch("app.services.media_service.multiprocessing.Process", side_effect=make_process):
                 result = media_service.run_ocr_on_frames(["frame-1.jpg"], should_cancel=lambda: True)
 
-            self.assertEqual(result, [{"frame": "frame-1.jpg", "text": "", "confidence": 0.0}])
+            self.assertEqual(
+                [(item["frame"], item["text"], item["confidence"]) for item in result],
+                [("frame-1.jpg", "", 0.0)],
+            )
+            self.assertEqual(result[0]["diagnostic"]["status"], "canceled")
             self.assertTrue(processes[0].terminated)
             self.assertTrue(processes[0].killed)
             self.assertEqual(processes[0].join_calls, [1, 5, 5])

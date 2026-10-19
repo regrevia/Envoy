@@ -1,5 +1,6 @@
 # Envoy Host Setup
 
+See [`../INSTALL.md`](../INSTALL.md) for GitHub Skill and runtime installation.
 The bundled MCP configuration assumes the `envoy` command is available on
 `PATH`:
 
@@ -14,7 +15,7 @@ The bundled MCP configuration assumes the `envoy` command is available on
 }
 ```
 
-Install the CLI and core packages separately, then verify the runtime:
+After installing the Release wheel, verify the runtime:
 
 ```bash
 envoy doctor --json

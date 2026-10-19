@@ -20,6 +20,20 @@ does not imply capabilities available only in the Envoy website.
 }
 ```
 
+To prefer a subtitle language on an extractor-supported video link, an
+`envoy.read/1` request may also include:
+
+```json
+{
+  "video_subtitle_language": "zh-Hans"
+}
+```
+
+Public subtitle tracks are returned as timed transcript blocks. Their
+`video_time` locators refer to the source video's cue time range; the subtitle
+text is a derived transcript, not a visual inspection or a verbatim guarantee
+of the complete video.
+
 ## Output rule
 
 The response is JSON and contains `result`, `execution_state`, `blocks`,
@@ -28,6 +42,14 @@ only load a `resources` URI when the task requires visual inspection.
 
 `source_revision` identifies the fetched snapshot. A later read may produce a
 new revision; do not silently merge blocks from different revisions.
+
+For a public direct video URL, advertise
+`host_capabilities.video_input: "native"` only when the host can actually
+inspect video URIs. Envoy may then return `needs_host`, an `inspect_video`
+need, a `video` material block, and the direct media URI. This is a pass-through
+to the host model, not a claim that Envoy extracted subtitles, transcript, or
+frames. Platform watch pages and signed media URLs are not eligible for this
+handoff.
 
 ## Expand long text
 
@@ -45,6 +67,8 @@ When a read returns `partial` with `continuation_available: true`, send:
 ```
 
 The returned text begins at `offset`; use `next_offset` for the next request.
+If the initial read used `session_id`, include the same value in the expansion
+request.
 The local cache follows `retention.derived_ttl_seconds` (capped at seven days)
 and 100 materials. The cumulative response character limit is enforced against
 the absolute returned range, and repeated or overlapping ranges are rejected.
