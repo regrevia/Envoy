@@ -20,7 +20,7 @@
 | 能力 | 状态 | 证据 / 缺口 |
 | --- | --- | --- |
 | 单一链接输入，后端按链接类型自动分流 | 进行中 | 视频和公开视频/图文走不同处理任务；公开视频 bundle 已开始输出统一材料协议 |
-| 常见视频链接与本地视频处理 | 网站已验证，Skill 进行中 | 独立 Skill 已实现公开字幕优先、本地 Whisper ASR、预算化直链/平台下载与宿主显式请求抽帧；YouTube TED 样本当前已走通 427 条公开英文字幕和 retained-material search，Wikimedia OGV 走通真实 ASR，MDN MP4 走通真实抽帧与视觉观察复用。Bilibili metadata 可解析但所测音轨时段被判无可靠语音，正确返回 `no_speech`；抖音、Vimeo、Dailymotion 与更多平台的稳定可达性仍未完成验收 |
+| 常见视频链接与本地视频处理 | 网站已验证，Skill 进行中 | 独立 Skill 已实现公开字幕优先、本地 Whisper ASR、预算化直链/平台下载与宿主显式请求抽帧；YouTube TED 样本当前已走通 427 条公开英文字幕和 retained-material search，Bilibili TED `BV1zj411K7zL` 无字幕 ASR 走通 0-60 秒 17 条英文 cue，Wikimedia OGV 走通真实 ASR，MDN MP4 走通真实抽帧与视觉观察复用。另一条 Bilibili 样本正确返回 `no_speech`；抖音、Vimeo、Dailymotion 与更多平台的稳定可达性仍未完成验收 |
 | 抖音公开图文正文与配图 | 已验证（开发验收） | 2026-10-18 本地 Envoy 任务读取指定图文，提取 534 字符正文和 4 张原图，图片 OCR 子任务成功，产物 ZIP 校验通过 |
 | 微信公众号和通用网页 | 进行中 | 通用公开页面提取已接入同一入口；微信公众号尚缺固定真实样本验收和长文/延迟资源测试 |
 | PDF、Office、独立音频/图片入口 | 进行中 | 独立 Skill 支持 PDF 文本层、纯文本/Markdown/CSV/JSON 直链和公开图片视觉交接；PDF 按页定位，长纯文本按字符范围续读；无文本层扫描页明确提示 OCR 能力缺口；独立音频 URL、Office 和扫描页 OCR 仍待接入 |

@@ -9,6 +9,7 @@ Policy: no cookies, no browser profiles, no certificate bypass, no anti-bot bypa
 | Platform | Public URL | Result | Boundary |
 | --- | --- | --- | --- |
 | YouTube | `https://www.youtube.com/watch?v=iG9CE55wbtY` | accepted | 427 public English subtitle cues; Envoy read returned bounded transcript with `video_time` locators; retained-material search returned complete cue context |
+| Bilibili | `https://www.bilibili.com/video/BV1zj411K7zL/` | accepted | Public TED talk without subtitle tracks; Envoy downloaded 6,626,352 bytes, ASR `base` returned 17 English cues for 0-60 seconds, with `video_time` coverage |
 | Bilibili | `https://www.bilibili.com/video/BV1xx411c7mD` | metadata accepted | 2055.637-second public video metadata resolved without captions; selected ASR interval produced no reliable speech and returned `no_speech` |
 | Vimeo | `https://vimeo.com/244405542` | blocked | TLS EOF during extractor page request; yt-dlp also reported no available impersonation target |
 | Dailymotion | `https://www.dailymotion.com/video/x75iqs7` | blocked | GraphQL metadata request failed certificate hostname verification |
