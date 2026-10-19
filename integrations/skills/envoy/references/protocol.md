@@ -51,6 +51,44 @@ to the host model, not a claim that Envoy extracted subtitles, transcript, or
 frames. Platform watch pages and signed media URLs are not eligible for this
 handoff.
 
+## Local ASR and frame handoff
+
+For public videos with no usable captions, local ASR is available only when
+`envoy doctor --json` reports a prepared Whisper model and the media runtime has
+FFmpeg/FFprobe plus supported yt-dlp. The optional `openai-whisper` dependency
+can be installed with the released wheel; prepare a model using
+`envoy asr setup --model base`. Source audio is temporary and is not sent to a
+model provider. A no-speech result is not a transcript.
+
+Request sparse frames only when visual evidence matters to the user's goal and
+the host can inspect Envoy's leased local image files:
+
+```json
+{
+  "scope": {
+    "include_visual": true,
+    "start_seconds": 30,
+    "end_seconds": 60
+  },
+  "budget": {
+    "max_visual_inputs": 2,
+    "max_visual_pixels_per_input": 400000,
+    "max_total_visual_pixels": 800000
+  },
+  "host_capabilities": {
+    "video_input": "frames",
+    "image_input": "local_file"
+  }
+}
+```
+
+The response returns bounded frames with actual `video_time` locators and
+leased `local_file` resources. Handle the `inspect_visual` need, then submit
+the bounded observation with `envoy_observe_visual`; later questions can reuse
+it through `envoy_visual_history`. Sparse samples do not imply full-video visual
+coverage. If the source asks for login or anti-bot verification, report that
+access boundary instead of using cookies or bypass techniques.
+
 ## Expand long text
 
 When a read returns `partial` with `continuation_available: true`, send:

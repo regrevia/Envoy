@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 
-def build_wheel(repo_root: Path, output_dir: Path) -> Path:
+def build_wheel(repo_root: Path, output_dir: Path, python_executable: str = sys.executable) -> Path:
     cli_root = repo_root / "packages" / "envoy-cli"
     core_root = repo_root / "packages" / "envoy-core" / "src" / "envoy_core"
     if not cli_root.is_dir() or not core_root.is_dir():
@@ -28,7 +28,7 @@ def build_wheel(repo_root: Path, output_dir: Path) -> Path:
         shutil.copytree(core_root, staging / "src" / "envoy_core")
         subprocess.run(
             [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "wheel",
@@ -53,9 +53,14 @@ def main() -> int:
         default=str(Path(__file__).resolve().parents[1]),
     )
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--python", default=sys.executable, help="Python 3.10+ executable used to build the wheel")
     args = parser.parse_args()
     try:
-        wheel = build_wheel(Path(args.repo_root).resolve(), Path(args.output_dir).resolve())
+        wheel = build_wheel(
+            Path(args.repo_root).resolve(),
+            Path(args.output_dir).resolve(),
+            args.python,
+        )
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"Envoy CLI wheel build failed: {exc}", file=sys.stderr)
         return 2

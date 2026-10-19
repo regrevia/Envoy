@@ -649,6 +649,15 @@ def _ocr_worker(frame_paths: list[str], result_queue, profile: str | None = None
         ))
 
 
+def _close_media_result_queue(result_queue):
+    cancel_join = getattr(result_queue, "cancel_join_thread", None)
+    if callable(cancel_join):
+        cancel_join()
+    close = getattr(result_queue, "close", None)
+    if callable(close):
+        close()
+
+
 def run_ocr_on_frames(
     frame_paths: list[str],
     should_cancel: Callable[[], bool] | None = None,
@@ -658,32 +667,47 @@ def run_ocr_on_frames(
     process = multiprocessing.Process(target=_ocr_worker, args=(frame_paths, result_queue, profile), daemon=True)
     timeout_sec = max(int(MEDIA_OCR_TIMEOUT_SEC or 1), 1)
     process.start()
-    waited = 0
-    while process.is_alive() and waited < timeout_sec:
-        wait_seconds = min(1, timeout_sec - waited)
-        process.join(wait_seconds)
-        waited += wait_seconds
-        if process.is_alive() and should_cancel is not None and should_cancel():
+    deadline = time.monotonic() + timeout_sec
+    result = None
+    while result is None:
+        if should_cancel is not None and should_cancel():
             _terminate_worker_process(process)
+            _close_media_result_queue(result_queue)
             return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
                 "status": "canceled",
                 "error": "OCR was canceled",
             })
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _terminate_worker_process(process)
+            _close_media_result_queue(result_queue)
+            return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
+                "status": "timeout",
+                "error": f"OCR worker timed out after {timeout_sec} seconds",
+                "suggested_action": "retry_or_use_default_ocr",
+            })
+        try:
+            get_result = getattr(result_queue, "get", None)
+            if callable(get_result):
+                result = get_result(timeout=min(0.25, remaining))
+            else:
+                result = result_queue.get_nowait()
+        except Empty:
+            if not process.is_alive():
+                _close_media_result_queue(result_queue)
+                return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
+                    "status": "worker_failed",
+                    "error": "OCR worker exited without a result",
+                    "suggested_action": "retry_or_use_default_ocr",
+                })
+            continue
+
+    remaining = max(0, deadline - time.monotonic())
+    if process.is_alive() and remaining:
+        process.join(min(1, remaining))
     if process.is_alive():
         _terminate_worker_process(process)
-        return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
-            "status": "timeout",
-            "error": f"OCR worker timed out after {timeout_sec} seconds",
-            "suggested_action": "retry_or_use_default_ocr",
-        })
-    try:
-        result = result_queue.get_nowait()
-    except Empty:
-        return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
-            "status": "worker_failed",
-            "error": "OCR worker exited without a result",
-            "suggested_action": "retry_or_use_default_ocr",
-        })
+    _close_media_result_queue(result_queue)
     if isinstance(result, list):
         normalized = []
         for index, item in enumerate(result):

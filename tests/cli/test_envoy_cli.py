@@ -208,6 +208,146 @@ def test_same_material_source_gets_independent_material_ids_per_session(tmp_path
     assert (tmp_path / f"{second.material_id}.json").is_file()
 
 
+def test_material_transaction_serializes_concurrent_budget_updates(tmp_path, monkeypatch):
+    from threading import Event, Thread
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "d" * 24
+    acquired = Event()
+
+    def acquire_second():
+        with reader._material_transaction(material_id):
+            acquired.set()
+
+    with reader._material_transaction(material_id):
+        thread = Thread(target=acquire_second)
+        thread.start()
+        assert not acquired.wait(0.05)
+    assert acquired.wait(1)
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_material_file_lock_serializes_across_processes(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from envoy_cli.media import interprocess_file_lock
+
+    lock_path = tmp_path / ".mat-lock-test.lock"
+    script = (
+        "import sys; "
+        "from envoy_cli.media import interprocess_file_lock; "
+        "\ntry:\n"
+        " with interprocess_file_lock(sys.argv[1], max_wait_seconds=0.1, busy_message='busy'):\n"
+        "  print('acquired')\n"
+        "except TimeoutError:\n"
+        " print('busy')\n"
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            str(path)
+            for path in (
+                Path(__file__).resolve().parents[2] / "packages" / "envoy-cli" / "src",
+                Path(__file__).resolve().parents[2] / "packages" / "envoy-core" / "src",
+            )
+        ),
+    }
+
+    with interprocess_file_lock(
+        lock_path,
+        max_wait_seconds=1,
+        busy_message="parent lock acquisition timed out",
+    ):
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(lock_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "busy"
+
+
+def test_material_cleanup_never_unlinks_an_active_lock_inode(tmp_path, monkeypatch):
+    import os
+    from envoy_cli import reader
+    from envoy_cli.media import interprocess_file_lock
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    stale_lock = tmp_path / ".material-aa.lock"
+    stale_lock.touch()
+    old_time = stale_lock.stat().st_mtime - (8 * 24 * 60 * 60)
+    os.utime(stale_lock, (old_time, old_time))
+
+    with interprocess_file_lock(
+        stale_lock,
+        max_wait_seconds=1,
+        busy_message="test lock timed out",
+    ):
+        reader._material_root()
+        assert stale_lock.exists()
+
+
+def test_concurrent_material_expansions_share_one_cumulative_budget(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import json
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "e" * 24
+    text = "x" * 1000
+    reader._store_material(material_id, {
+        "source_kind": "text",
+        "source_url": "https://example.org/long-text",
+        "source_revision": "f" * 64,
+        "session_id": "expand-budget-session",
+        "text": text,
+        "title_text": "Long text",
+        "budget_state": {
+            "max_total_response_chars": 256,
+            "max_total_response_tokens": None,
+            "max_expansion_rounds": 10,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    requests = [
+        ExpandRequest.model_validate({
+            "protocol_version": "envoy.read/1",
+            "request_id": f"parallel-expand-{offset}",
+            "session_id": "expand-budget-session",
+            "material_id": material_id,
+            "offset": offset,
+            "max_chars": 200,
+        })
+        for offset in (0, 300)
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(reader.expand_material, requests))
+
+    returned_chars = sum(
+        len(block.content.text)
+        for response in responses
+        for block in response.blocks
+    )
+    stored = json.loads((tmp_path / f"{material_id}.json").read_text(encoding="utf-8"))
+    assert returned_chars == 256
+    assert stored["budget_state"]["returned_chars"] == 256
+    ranges = stored["budget_state"]["returned_ranges"]
+    assert sum(end - start for start, end in ranges) == 256
+    assert len(ranges) == 2
+    assert ranges[0][1] <= ranges[1][0]
+
+
 def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypatch):
     from envoy_cli import reader
 
@@ -244,6 +384,68 @@ def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypa
     })
     reread = json.loads((tmp_path / f"{material_id}.json").read_text(encoding="utf-8"))
     assert reread["visual_observations"] == stored["visual_observations"]
+
+
+def test_html_reread_keeps_full_image_catalog_and_prior_observations(tmp_path, monkeypatch):
+    import json
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest, VisualObservationHistoryRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/note",
+        '<html><head><title>Images</title></head><body><p>Shared note content.</p>'
+        '<img src="https://cdn.example.org/alpha.png" alt="Alpha chart">'
+        '<img src="https://cdn.example.org/beta.png" alt="Beta chart">'
+        "</body></html>",
+    ))
+    first = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "image-catalog-alpha",
+        "session_id": "image-catalog-session",
+        "source": {"url": "https://example.org/note"},
+        "goal": "Alpha chart",
+        "host_capabilities": {"image_input": "uri"},
+        "budget": {"max_visual_inputs": 1},
+    }))
+    first_image = next(block for block in first.blocks if block.kind.value == "image")
+    assert "alpha.png" in first.resources[0].delivery.uri
+    assert reader.record_visual_observation(
+        first.material_id,
+        first.resources[0].delivery.uri,
+        first_image.content.resource_id,
+        first_image.id,
+        "Alpha chart has three bars.",
+        session_id="image-catalog-session",
+    )["persisted"] is True
+
+    second = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "image-catalog-beta",
+        "session_id": "image-catalog-session",
+        "source": {"url": "https://example.org/note"},
+        "goal": "Beta chart",
+        "host_capabilities": {"image_input": "uri"},
+        "budget": {"max_visual_inputs": 1},
+    }))
+    history = reader.read_visual_observations(VisualObservationHistoryRequest.model_validate({
+        "request_id": "image-catalog-history",
+        "material_id": first.material_id,
+        "session_id": "image-catalog-session",
+        "max_items": 4,
+        "max_chars": 1000,
+    }))
+    stored = json.loads((tmp_path / f"{first.material_id}.json").read_text(encoding="utf-8"))
+
+    assert second.material_id == first.material_id
+    assert "beta.png" in second.resources[0].delivery.uri
+    assert {item["source_block_id"] for item in stored["visual_resources"]} == {
+        "blk-image-0001",
+        "blk-image-0002",
+    }
+    assert "Alpha chart has three bars." in history.blocks[0].content.text
+    assert "Some source images were not included in this response" in history.coverage.unresolved
 
 
 def test_short_image_article_creates_material_snapshot_for_visual_followup(tmp_path, monkeypatch):
@@ -381,14 +583,44 @@ def test_cli_doctor_is_json_and_does_not_report_secrets(capsys):
     response = json.loads(capsys.readouterr().out)
     assert response["tool"] == "envoy"
     assert response["protocol_version"] == "envoy.read/1"
-    assert response["network_reader"] == "public_static_resources"
+    assert response["network_reader"] == "public_static_and_supported_media_extractors"
     assert response["capabilities"]["schema_version"] == "envoy.capabilities/1"
     assert "static_html" in response["capabilities"]["inputs"]["supported"]
     assert "pdf_text_layer" in response["capabilities"]["inputs"]["supported"]
-    assert "platform_video_visual_extraction" in response["capabilities"]["inputs"]["unsupported"]
+    assert "standalone_audio" in response["capabilities"]["inputs"]["unsupported"]
     assert response["capabilities"]["inputs"]["conditional"][1]["id"] == "direct_video_handoff"
     assert response["capabilities"]["inputs"]["conditional"][2]["id"] == "platform_video_subtitles"
+    assert response["capabilities"]["inputs"]["conditional"][3]["id"] == "local_video_asr"
+    assert response["capabilities"]["inputs"]["conditional"][4]["id"] == "platform_video_frames"
+    assert "timed_video_transcript" in response["capabilities"]["outputs"]
+    assert "leased_source_timed_video_frames" in response["capabilities"]["outputs"]
+    assert response["runtime"]["yt_dlp"]
+    assert "yt_dlp_supported" in response["runtime"]
+    assert "ffmpeg" in response["runtime"]
+    assert "asr_installed" in response["runtime"]
     assert "api_key" not in json.dumps(response).lower()
+
+
+def test_cli_asr_setup_prepares_model_and_reports_only_local_model_status(monkeypatch, capsys):
+    from envoy_cli import cli
+
+    monkeypatch.setattr(cli, "prepare_asr_model", lambda model: {
+        "model": model,
+        "cache_dir": "/private/model-cache",
+        "available": True,
+    }, raising=False)
+
+    exit_code = cli.main(["asr", "setup", "--model", "tiny.en"])
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "status": "ready",
+        "model": "tiny.en",
+        "cache_dir": "/private/model-cache",
+        "available": True,
+    }
+    assert "api_key" not in json.dumps(result).lower()
 
 
 def test_read_respects_response_character_budget_and_reports_partial_coverage(monkeypatch):
@@ -709,6 +941,32 @@ def test_direct_video_is_handed_to_native_video_host_without_local_model(monkeyp
     assert response.coverage.modalities["video"].delivered == 1
 
 
+def test_direct_ogv_video_uses_native_handoff_without_html_fetch(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_url = "https://media.example.org/talk.ogv"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("direct OGV must enter the media pipeline")
+        ),
+    )
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "direct-ogv-native",
+        "source": {"url": source_url, "kind": "video"},
+        "host_capabilities": {"video_input": "native"},
+    }))
+
+    assert response.result.value == "needs_host"
+    assert response.resources[0].mime_type == "video/ogg"
+    assert response.resources[0].delivery.uri == source_url
+
+
 def test_direct_video_handoff_uses_real_http_redirect_and_content_type(monkeypatch):
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from threading import Thread
@@ -862,6 +1120,9 @@ def test_local_material_cache_evicts_expired_and_oldest_without_clearing_recent(
         reader._store_material("mat-" + suffix * 24, {"text": suffix})
         time.sleep(0.01)
     old_path = tmp_path / ("mat-" + "1" * 24 + ".json")
+    expired_frames = tmp_path / ("frames-mat-" + "1" * 24)
+    expired_frames.mkdir()
+    (expired_frames / "frame-001.jpg").write_bytes(b"frame")
     old_timestamp = time.time() - reader.MATERIAL_TTL_SECONDS - 1
     os.utime(old_path, (old_timestamp, old_timestamp))
 
@@ -869,6 +1130,7 @@ def test_local_material_cache_evicts_expired_and_oldest_without_clearing_recent(
     remaining = {path.name for path in tmp_path.glob("mat-*.json")}
 
     assert "mat-" + "1" * 24 + ".json" not in remaining
+    assert not expired_frames.exists()
     assert len(remaining) <= 2
     assert "mat-" + "3" * 24 + ".json" in remaining
 
@@ -1428,6 +1690,59 @@ def test_material_search_finds_cjk_query_in_later_paragraph(tmp_path, monkeypatc
     assert result.blocks[0].order == source_text.index("部署命令")
 
 
+def test_material_search_ignores_english_stopwords_for_goal_queries(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "b" * 24
+    text = "\n".join([
+        "We think visually, in sound, and kinesthetically.",
+        "Students learn arithmetic and grammar in schools.",
+        "Creativity is as important as literacy, and schools should treat it equally.",
+    ])
+    reader._store_material(material_id, {
+        "source_kind": "video",
+        "source_url": "https://www.youtube.com/watch?v=public-demo",
+        "source_revision": "c" * 64,
+        "title_text": "Education",
+        "text": text,
+        "video_spans": [
+            {"start_offset": 0, "end_offset": len(text.splitlines()[0]), "start_seconds": 796, "end_seconds": 799},
+            {"start_offset": len(text.splitlines()[0]) + 1, "end_offset": len("\n".join(text.splitlines()[:2])), "start_seconds": 400, "end_seconds": 404},
+            {"start_offset": len("\n".join(text.splitlines()[:2])) + 1, "end_offset": len("\n".join(text.splitlines()[:3])), "start_seconds": 600, "end_seconds": 605},
+        ],
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "request_id": "req-stopword-search",
+        "material_id": material_id,
+        "query": "What is his central argument about creativity in schools?",
+        "max_results": 3,
+        "max_chars": 1200,
+    }))
+
+    assert result.blocks[0].content.text == (
+        "Creativity is as important as literacy, and schools should treat it equally."
+    )
+    assert result.blocks[0].locator.start_seconds == 600
+    assert result.coverage.modalities["text"].details["query_terms"] == [
+        "central",
+        "argument",
+        "creativity",
+        "schools",
+    ]
+
+
 def test_material_search_and_expand_share_returned_range_ledger(tmp_path, monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest
@@ -1676,7 +1991,7 @@ def test_material_search_returns_unseen_suffix_of_partially_returned_line(tmp_pa
         "protocol_version": "envoy.search/1",
         "request_id": "req-suffix-first",
         "material_id": material_id,
-        "query": "deployment command",
+        "query": "deployment command worker",
         "max_chars": 128,
         "max_response_tokens": 64,
     }))
@@ -1684,7 +1999,7 @@ def test_material_search_returns_unseen_suffix_of_partially_returned_line(tmp_pa
         "protocol_version": "envoy.search/1",
         "request_id": "req-suffix-second",
         "material_id": material_id,
-        "query": "deployment command",
+        "query": "deployment command worker",
     }))
 
     first_text = first.blocks[0].content.text
@@ -1692,6 +2007,48 @@ def test_material_search_returns_unseen_suffix_of_partially_returned_line(tmp_pa
     assert text.startswith(first_text)
     assert second_text == text.rstrip()[len(first_text):]
     assert first.blocks[0].order + len(first_text) == second.blocks[0].order
+
+
+def test_material_search_does_not_return_irrelevant_suffix_after_hit_was_returned(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "a" * 24
+    text = "Deployment command: " + ("unrelated background context " * 40)
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "d" * 64,
+        "title_text": "Guide",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    first = reader.search_material(MaterialSearchRequest.model_validate({
+        "request_id": "search-first-deployment",
+        "material_id": material_id,
+        "query": "deployment command",
+        "max_results": 1,
+        "max_chars": 128,
+    }))
+    second = reader.search_material(MaterialSearchRequest.model_validate({
+        "request_id": "search-second-deployment",
+        "material_id": material_id,
+        "query": "deployment command",
+        "max_results": 1,
+        "max_chars": 128,
+    }))
+
+    assert "Deployment command" in first.blocks[0].content.text
+    assert second.result.value == "empty"
+    assert second.blocks == []
 
 
 def test_material_search_returns_window_around_match_in_long_single_line(tmp_path, monkeypatch):

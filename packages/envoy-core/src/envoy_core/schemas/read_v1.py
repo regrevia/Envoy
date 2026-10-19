@@ -102,6 +102,21 @@ class Scope(ContractModel):
     max_items: int = Field(default=1, ge=1, le=100)
     max_depth: int = Field(default=0, ge=0, le=5)
     locator: Optional[str] = None
+    include_visual: bool = False
+    start_seconds: Optional[float] = Field(default=None, ge=0)
+    end_seconds: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if (self.start_seconds is None) != (self.end_seconds is None):
+            raise ValueError("start_seconds and end_seconds must be provided together")
+        if (
+            self.start_seconds is not None
+            and self.end_seconds is not None
+            and self.end_seconds <= self.start_seconds
+        ):
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
 
 
 class SourceRef(ContractModel):

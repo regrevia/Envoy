@@ -122,9 +122,22 @@ screen. Never invent a timestamp or imply video coverage when the runtime
 catalog does not advertise video reading.
 When a platform extractor is available, `envoy_read` first attempts public
 subtitle extraction; results are transcript blocks with `video_time` locators.
-If subtitles are unavailable, an explicitly native-video-capable host may
-inspect the public page itself; otherwise report the structured access or
-capability error and preserve it for the user.
+If no usable subtitles are available, Envoy can use local Whisper ASR when the
+media extra, FFmpeg/FFprobe, a prepared model, and a supported yt-dlp runtime are
+installed. Download bytes are enforced; elapsed-work limits are checked between
+extraction stages and on transfer progress, while a site metadata request can
+last up to its bounded socket timeout. No-speech and low-confidence non-speech
+output must not be presented as transcript.
+
+When the user's goal depends on video pixels, request
+`scope.include_visual: true` only if the host declares
+`video_input: "frames"` and `image_input: "local_file"`. Envoy then downloads
+within the declared budget, probes duration locally if extractor metadata omits
+it, and returns a small leased set of source-timed frames for host inspection.
+Sparse frames do not imply full-video visual coverage. If subtitles or ASR are
+unavailable but frames were explicitly requested, Envoy can still hand frames
+to the host. Do not use cookies, bypass login/CAPTCHA/anti-bot challenges, or
+claim unsupported source coverage.
 
 Do not expand solely to make the response appear complete. Expand only when the
 remaining coverage can affect the user's requested answer, and state material
@@ -153,12 +166,28 @@ seven days and 100 materials.
 
 The standalone runtime's current support is defined by the capability catalog,
 not by assumptions about a URL's host. It reads public static HTML, PDF text
-layers, text documents, can hand direct images to a capable host, extract
-public subtitles with a supported platform extractor, and can pass public
-direct-video URLs to hosts with native video input. Platform video pixels and
-frames, standalone audio, scanned-PDF OCR, and Office documents are not
-currently processed by this runtime. Website-only capabilities are not
-available unless a runtime advertises them.
+layers, text documents, and can hand direct images to a capable host. Video
+support is conditional: public timed subtitles, optional local ASR, public
+direct-video handoff to native-video hosts, and budgeted frame handoff to
+frame-capable hosts. Platform access may still require login or trigger
+anti-bot challenges; those are returned as access limits, not bypassed.
+Standalone audio URLs, scanned-PDF OCR, and Office documents are not currently
+processed by this runtime. Website-only capabilities are not available unless
+a runtime advertises them.
+
+To install the optional local ASR engine and prepare a model:
+
+```bash
+uv tool install --force --with "openai-whisper==20250625" ./envoy_cli-<version>-py3-none-any.whl
+envoy asr setup --model base
+envoy doctor --json
+```
+
+Install FFmpeg and FFprobe with the operating system's package manager if they
+are not already available.
+
+Model files are stored in the local Whisper cache. The ASR model is never sent
+to a provider. Temporary source media is discarded after transcription.
 
 Direct public image links are a conditional visual handoff: when the request
 declares URI image input, Envoy returns `needs_host` with an `inspect_visual`

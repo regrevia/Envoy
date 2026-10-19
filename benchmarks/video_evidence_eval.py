@@ -99,7 +99,12 @@ def run_benchmark(materials_dir: Path, host_usage_file: Path | None = None) -> d
     text, spans = _build_fixture_text()
     source_url = "https://video.example.invalid/public-demo"
     source_revision = reader.hashlib.sha256(text.encode("utf-8")).hexdigest()
-    material_id = reader._material_id(source_url, source_revision, "envoy-video-eval")
+    material_id = reader._material_id(
+        source_url,
+        source_revision,
+        "envoy-video-eval",
+        "video-evidence-eval",
+    )
     original_data_dir = reader.os.environ.get("ENVOY_LOCAL_DATA_DIR")
     reader.os.environ["ENVOY_LOCAL_DATA_DIR"] = str(materials_dir)
     try:

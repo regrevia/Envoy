@@ -16,6 +16,18 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+def large_ocr_result_worker(frame_paths, result_queue, profile=None):
+    result_queue.put([
+        {
+            "frame": path,
+            "text": f"{path} " + ("x" * (512 * 1024)),
+            "confidence": 0.9,
+            "engine": "fixture",
+        }
+        for path in frame_paths
+    ])
+
+
 def reload_media_service():
     sys.modules.pop("app.core.config", None)
     sys.modules.pop("app.services.media_service", None)
@@ -26,6 +38,23 @@ def reload_media_service():
 
 
 class RuntimeSafetyTests(unittest.TestCase):
+    def test_large_ocr_result_is_drained_before_worker_join(self):
+        import multiprocessing
+
+        media_service = reload_media_service()
+        context = multiprocessing.get_context("spawn")
+        process_api = types.SimpleNamespace(Queue=context.Queue, Process=context.Process)
+        with patch.object(media_service, "MEDIA_OCR_TIMEOUT_SEC", 10), \
+            patch.object(media_service, "_ocr_worker", large_ocr_result_worker), \
+            patch.object(media_service, "multiprocessing", process_api):
+            result = media_service.run_ocr_on_frames(
+                [f"frame-{index}.jpg" for index in range(4)]
+            )
+
+        self.assertEqual(len(result), 4)
+        self.assertGreaterEqual(len(result[0]["text"]), 512 * 1024)
+        self.assertEqual(result[0]["engine"], "fixture")
+
     def test_media_commands_have_timeout(self):
         from app.services import media_service
 
@@ -692,7 +721,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             )
             self.assertEqual(result[0]["diagnostic"]["status"], "timeout")
             self.assertEqual(result[0]["diagnostic"]["suggested_action"], "retry_or_use_default_ocr")
-            self.assertEqual(processes[0].join_calls, [1, 5])
+            self.assertEqual(processes[0].join_calls, [5])
             self.assertTrue(processes[0].terminated)
         finally:
             if previous is None:
@@ -744,7 +773,7 @@ class RuntimeSafetyTests(unittest.TestCase):
                 [("frame-1.jpg", "", 0.0)],
             )
             self.assertEqual(result[0]["diagnostic"]["status"], "canceled")
-            self.assertEqual(processes[0].join_calls, [1, 5])
+            self.assertEqual(processes[0].join_calls, [5])
             self.assertTrue(processes[0].terminated)
         finally:
             if previous is None:
@@ -802,7 +831,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             self.assertEqual(result[0]["diagnostic"]["status"], "canceled")
             self.assertTrue(processes[0].terminated)
             self.assertTrue(processes[0].killed)
-            self.assertEqual(processes[0].join_calls, [1, 5, 5])
+            self.assertEqual(processes[0].join_calls, [5, 5])
         finally:
             if previous is None:
                 os.environ.pop("MEDIA_OCR_TIMEOUT_SEC", None)

@@ -36,7 +36,13 @@ def test_video_evidence_eval_measures_coverage_calls_and_host_usage_status(tmp_p
             str(usage_file),
         ],
         cwd=ROOT,
-        env={**os.environ, "PYTHONPATH": f"{ROOT / 'packages/envoy-core/src'}:{ROOT / 'packages/envoy-cli/src'}"},
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join((
+                str(ROOT / "packages" / "envoy-core" / "src"),
+                str(ROOT / "packages" / "envoy-cli" / "src"),
+            )),
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -65,7 +71,13 @@ def test_video_evidence_eval_does_not_fabricate_actual_host_usage(tmp_path):
             str(tmp_path / "materials"),
         ],
         cwd=ROOT,
-        env={**os.environ, "PYTHONPATH": f"{ROOT / 'packages/envoy-core/src'}:{ROOT / 'packages/envoy-cli/src'}"},
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join((
+                str(ROOT / "packages" / "envoy-core" / "src"),
+                str(ROOT / "packages" / "envoy-cli" / "src"),
+            )),
+        },
         capture_output=True,
         text=True,
         check=False,
