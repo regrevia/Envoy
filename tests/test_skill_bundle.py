@@ -26,11 +26,11 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         names = archive.namelist()
         assert names == [
             "envoy-skill.json",
-            "INSTALL.md",
-            "SKILL.md",
-            "hosts/README.md",
             "hosts/mcp.json",
+            "hosts/README.md",
+            "INSTALL.md",
             "references/protocol.md",
+            "SKILL.md",
         ]
         manifest = json.loads(archive.read("envoy-skill.json"))
         assert manifest["protocol"] == "envoy.read/1"
