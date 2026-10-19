@@ -63,6 +63,26 @@ def test_video_checkpoint_round_trip_is_json_safe():
     assert "video_to_markdown" in RETRYABLE_TASKS
 
 
+def test_video_preprocess_config_carries_selected_ocr_profile():
+    from app.workers.jobs import _video_preprocess_config
+
+    assert _video_preprocess_config(
+        {
+            "ocr_profile": "pro",
+            "video_frame_interval_seconds": 3,
+            "video_max_frame_count": 20,
+        },
+        "/tmp/video.mp4",
+    ) == {
+        "source_path": "/tmp/video.mp4",
+        "video_frame_interval_seconds": 3,
+        "video_target_frame_rate": 0,
+        "video_max_frame_count": 20,
+        "preserve_media_temp_dirs": True,
+        "ocr_profile": "pro",
+    }
+
+
 def test_local_task_recovery_requeues_interrupted_video_tasks(tmp_path, monkeypatch):
     import os
 

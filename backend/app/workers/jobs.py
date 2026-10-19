@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import hashlib
 import inspect
 import re
 import shutil
@@ -9,6 +10,7 @@ import zipfile
 import zlib
 import subprocess
 import tempfile
+from html import escape as html_escape
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from xml.etree import ElementTree
 from uuid import uuid4
@@ -24,11 +26,12 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR, VIDEO_DOWNLOAD_DIR
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, VIDEO_BATCH_MAX_ITEMS, VIDEO_BATCH_MAX_PARALLEL, VIDEO_UNDERSTANDING_WINDOW_FRAMES, VIDEO_UNDERSTANDING_WINDOW_OVERLAP
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_PROFILE, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, VIDEO_BATCH_MAX_ITEMS, VIDEO_BATCH_MAX_PARALLEL, VIDEO_UNDERSTANDING_WINDOW_FRAMES, VIDEO_UNDERSTANDING_WINDOW_OVERLAP
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
 from app.models.processing_task import ProcessingTask
+from app.models.artifact import Artifact
 from app.models.trace_link import TraceLink
 from app.schemas.artifact import ArtifactCreate
 from app.schemas.asset import AssetCreate
@@ -179,8 +182,22 @@ def _extract_frames_for_task(db, task_id: str | None, source_path: str, output_d
 
 
 def _run_ocr_for_task(db, task_id: str | None, frame_paths: list[str]):
+    profile = None
+    task = (
+        db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task_id and hasattr(db, "query")
+        else None
+    )
+    if task is not None and isinstance(task.input_config, dict):
+        profile = task.input_config.get("ocr_profile")
+    profile_kwargs = {"profile": profile} if profile in {"fast", "balanced", "quality", "pro"} else {}
+    supports_profile = _supports_named_parameter(run_ocr_on_frames, "profile")
     if _supports_should_cancel(run_ocr_on_frames):
+        if supports_profile:
+            return run_ocr_on_frames(frame_paths, should_cancel=lambda: _task_is_canceled(db, task_id), **profile_kwargs)
         return run_ocr_on_frames(frame_paths, should_cancel=lambda: _task_is_canceled(db, task_id))
+    if supports_profile:
+        return run_ocr_on_frames(frame_paths, **profile_kwargs)
     return run_ocr_on_frames(frame_paths)
 
 
@@ -567,6 +584,21 @@ def _video_frame_config(payload: dict, task: ProcessingTask | None = None):
     }
 
 
+def _video_preprocess_config(parent_config: dict, source_path: str) -> dict:
+    config = parent_config if isinstance(parent_config, dict) else {}
+    child = {
+        "source_path": str(source_path),
+        "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 5),
+        "video_target_frame_rate": config.get("video_target_frame_rate", 0),
+        "video_max_frame_count": config.get("video_max_frame_count", 480),
+        "preserve_media_temp_dirs": True,
+    }
+    profile = config.get("ocr_profile")
+    if profile in {"fast", "balanced", "quality", "pro"}:
+        child["ocr_profile"] = profile
+    return child
+
+
 def _limit_media_segments(segment_paths: list[str], source_path: str, allow_source_fallback: bool = True):
     inputs = [str(path) for path in segment_paths if str(path).strip()]
     if not inputs and allow_source_fallback:
@@ -615,7 +647,13 @@ def _partial_transcription_suffix(transcription_summary: dict):
     return f"; partial transcription: {failed_count}/{max(total, failed_count)} segment(s) failed"
 
 
-def _media_degraded_capabilities(transcription_summary: dict, segment_truncated: bool, transcript_text: str, ocr_text: str):
+def _media_degraded_capabilities(
+    transcription_summary: dict,
+    segment_truncated: bool,
+    transcript_text: str,
+    ocr_text: str,
+    ocr_results: list[dict] | None = None,
+):
     degraded = []
     failed_count = int(transcription_summary.get("failed_count") or 0)
     success_count = int(transcription_summary.get("success_count") or 0)
@@ -627,15 +665,63 @@ def _media_degraded_capabilities(transcription_summary: dict, segment_truncated:
         degraded.append("truncated_segments")
     if not ocr_text:
         degraded.append("ocr_unavailable")
+    diagnostics = [
+        item.get("diagnostic")
+        for item in (ocr_results or [])
+        if isinstance(item, dict) and isinstance(item.get("diagnostic"), dict)
+    ]
+    if any(item.get("status") == "fallback" for item in diagnostics):
+        degraded.append("ocr_fallback")
+    if any(item.get("status") == "frame_failed" for item in diagnostics):
+        degraded.append("ocr_frame_failed")
+    if any(item.get("status") in {"model_unavailable", "failed", "timeout", "worker_failed"} for item in diagnostics):
+        degraded.append("ocr_model_unavailable")
     return degraded
 
 
-def _media_extraction_status(transcription_summary: dict, segment_truncated: bool, transcript_text: str, ocr_text: str):
+def _media_extraction_status(
+    transcription_summary: dict,
+    segment_truncated: bool,
+    transcript_text: str,
+    ocr_text: str,
+    ocr_results: list[dict] | None = None,
+):
     if not transcript_text and not ocr_text:
         return "failed" if int(transcription_summary.get("failed_count") or 0) else "metadata_only"
-    if _media_degraded_capabilities(transcription_summary, segment_truncated, transcript_text, ocr_text):
+    if _media_degraded_capabilities(
+        transcription_summary,
+        segment_truncated,
+        transcript_text,
+        ocr_text,
+        ocr_results,
+    ):
         return "partial_success"
     return "success"
+
+
+def _ocr_diagnostic_summary(diagnostics: list[dict]) -> str:
+    issue = next(
+        (
+            item for item in diagnostics
+            if isinstance(item, dict) and item.get("status") not in {"ready", "canceled"}
+        ),
+        None,
+    )
+    if not issue:
+        return ""
+    profile = str(issue.get("requested_profile") or "selected")
+    error = str(issue.get("error") or "OCR model unavailable").strip()
+    if len(error) > 240:
+        error = error[:237] + "..."
+    fallback = issue.get("fallback_engine")
+    if fallback:
+        if issue.get("fallback_output_empty"):
+            return (
+                f"; {profile} OCR unavailable ({error}); {str(fallback).capitalize()} fallback returned no text; "
+                "ask whether to use default OCR"
+            )
+        return f"; {profile} OCR unavailable ({error}); used {fallback} fallback"
+    return f"; {profile} OCR unavailable ({error}); ask whether to use default OCR"
 
 
 def _decode_pdf_literal(value: bytes) -> str:
@@ -1659,11 +1745,7 @@ def video_to_markdown_job(self, payload: dict):
         if child_task is None or child_task.status not in {"success", "partial_success"}:
             child_config = {
                 **(config.get("preprocess_config") if isinstance(config.get("preprocess_config"), dict) else {}),
-                "source_path": str(download_info["path"]),
-                "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 5),
-                "video_target_frame_rate": config.get("video_target_frame_rate", 0),
-                "video_max_frame_count": config.get("video_max_frame_count", 480),
-                "preserve_media_temp_dirs": True,
+                **_video_preprocess_config(config, str(download_info["path"])),
             }
             child_task = create_task(
                 db,
@@ -2150,6 +2232,567 @@ def mixed_assets_to_markdown_job(self, payload: dict):
         db.close()
 
 
+def _create_public_page_asset(db, project_id: str, file_name: str, data: bytes, mime_type: str, metadata: dict):
+    storage_name = f"public-pages/{uuid4().hex}{Path(file_name).suffix.lower()}"
+    storage_info = storage_client.upload_bytes(storage_name, data, mime_type)
+    if storage_info.get("storage") not in {"local", "minio"}:
+        raise RuntimeError(f"Storage backend unavailable: {storage_info.get('reason') or 'unknown'}")
+    return create_asset(
+        db,
+        AssetCreate(
+            project_id=project_id,
+            asset_type="image" if mime_type.startswith("image/") else "markdown",
+            file_name=file_name,
+            file_path=storage_info["object_name"],
+            mime_type=mime_type,
+            metadata={
+                **metadata,
+                "storage": storage_info.get("storage"),
+            },
+        ),
+    )
+
+
+def _markdown_text(value: str) -> str:
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _read_asset_bytes_for_export(asset: Asset) -> bytes:
+    if storage_client.mode == "local":
+        return storage_client.read_bytes(asset.file_path)
+    if storage_client.client is None:
+        raise RuntimeError("MinIO storage client is unavailable while exporting public page assets")
+    response = storage_client.client.get_object(storage_client.bucket, asset.file_path)
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def _attach_public_page_source_to_bundle(
+    db,
+    task_id: str,
+    project_id: str,
+    bundle_path: str,
+    source_url: str,
+    page_info: dict,
+    text_asset: Asset,
+    image_assets: list[Asset],
+    ocr_blocks: list[dict] | None = None,
+):
+    from app.services.web_content_service import image_extension, public_page_material_response
+
+    bundle_location = Path(bundle_path)
+    if bundle_location.is_dir():
+        root = bundle_location
+    else:
+        root = next(
+            (
+                parent
+                for parent in bundle_location.parents
+                if (parent / "manifest.json").is_file() and (parent / "index.md").is_file()
+            ),
+            bundle_location.parent,
+        )
+    if not root.is_dir():
+        raise RuntimeError(f"Public page export directory is missing: {root}")
+    image_dir = root / "assets" / "images"
+    source_dir = root / "sources"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    image_records = []
+    for index, asset in enumerate(image_assets, start=1):
+        metadata = asset.extra_metadata if isinstance(asset.extra_metadata, dict) else {}
+        artifact_name = str(metadata.get("artifact_filename") or "")
+        if not artifact_name:
+            content_type = str(asset.mime_type or "image/jpeg")
+            artifact_name = f"image-{index:02d}{image_extension(content_type)}"
+        target = image_dir / Path(artifact_name).name
+        image_bytes = _read_asset_bytes_for_export(asset)
+        if not target.is_file():
+            target.write_bytes(image_bytes)
+        image_records.append({
+            "id": asset.id,
+            "asset_id": asset.id,
+            "file_name": target.name,
+            "alt": str(metadata.get("alt") or f"配图 {index}"),
+            "mime_type": str(asset.mime_type or "application/octet-stream"),
+            "sha256": hashlib.sha256(image_bytes).hexdigest(),
+        })
+
+    source_text = str(page_info.get("text") or "").strip()
+    if not source_text:
+        source_text = _read_asset_bytes_for_export(text_asset).decode("utf-8", errors="replace")
+    title = str(page_info.get("title") or text_asset.file_name)
+    source_slug = _video_library_slug(title) or "source"
+    source_markdown_path = source_dir / f"{source_slug}.md"
+    markdown_parts = [
+        f"# {_markdown_text(title)}",
+        f"来源：{source_url}",
+    ]
+    if page_info.get("author"):
+        markdown_parts.append(f"作者：{_markdown_text(page_info['author'])}")
+    if page_info.get("published_at"):
+        markdown_parts.append(f"发布时间：{page_info['published_at']}")
+    markdown_parts.extend(["", source_text.strip()])
+    if image_records:
+        markdown_parts.extend(["", "## 原始配图"])
+        markdown_parts.extend(
+            f"![{_markdown_text(record['alt'])}](../assets/images/{record['file_name']})"
+            for record in image_records
+        )
+    source_markdown_path.write_text("\n\n".join(markdown_parts).rstrip() + "\n", encoding="utf-8")
+
+    materials = public_page_material_response(
+        page={
+            **page_info,
+            "title": title,
+            "text": source_text,
+            "images": image_records,
+        },
+        source_url=source_url,
+        image_assets=image_records,
+        ocr_blocks=ocr_blocks,
+        request_id=f"web-page-{task_id}",
+    )
+    materials_path = root / "materials.json"
+    materials_path.write_text(
+        json.dumps(materials.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    index_path = root / "index.md"
+    if index_path.is_file():
+        index_text = index_path.read_text(encoding="utf-8")
+        source_link = f"[{title}](sources/{source_markdown_path.name})"
+        if source_link not in index_text:
+            index_path.write_text(
+                index_text.rstrip() + f"\n\n## 原始来源\n\n- {source_link}\n",
+                encoding="utf-8",
+            )
+
+    html_path = root / "index.html"
+    if html_path.is_file():
+        body = "<p>".join(html_escape(line) for line in source_text.splitlines() if line.strip())
+        figures = "".join(
+            (
+                '<figure><img src="assets/images/'
+                + html_escape(record["file_name"], quote=True)
+                + '" alt="'
+                + html_escape(record["alt"], quote=True)
+                + '"><figcaption>'
+                + html_escape(record["alt"])
+                + "</figcaption></figure>"
+            )
+            for record in image_records
+        )
+        source_html = (
+            '<section class="envoy-source"><h1>'
+            + html_escape(title)
+            + '</h1><p><a href="'
+            + html_escape(source_url, quote=True)
+            + '">原始链接</a></p><div>'
+            + body
+            + "</div>"
+            + figures
+            + "</section>"
+        )
+        html_text = html_path.read_text(encoding="utf-8")
+        if "</body>" in html_text and source_html not in html_text:
+            html_path.write_text(html_text.replace("</body>", source_html + "</body>", 1), encoding="utf-8")
+    elif set(page_info.get("output_formats") or []) & {"html", "both"}:
+        body = "".join(
+            f"<p>{html_escape(line)}</p>"
+            for line in source_text.splitlines()
+            if line.strip()
+        )
+        figures = "".join(
+            (
+                '<figure><img src="assets/images/'
+                + html_escape(record["file_name"], quote=True)
+                + '" alt="'
+                + html_escape(record["alt"], quote=True)
+                + '"><figcaption>'
+                + html_escape(record["alt"])
+                + "</figcaption></figure>"
+            )
+            for record in image_records
+        )
+        html_path.write_text(
+            "\n".join([
+                "<!doctype html>",
+                '<html lang="zh-CN"><head><meta charset="utf-8">',
+                '<meta name="viewport" content="width=device-width,initial-scale=1">',
+                f"<title>{html_escape(title)}</title>",
+                "<style>body{margin:0;color:#202124;background:#fff;font:16px/1.8 system-ui,-apple-system,sans-serif}main{max-width:860px;margin:0 auto;padding:32px 22px}h1{font-size:28px;line-height:1.35}a{color:#2563eb}figure{margin:24px 0}img{display:block;width:100%;height:auto}figcaption{color:#667085;font-size:13px}p{white-space:pre-wrap}</style>",
+                "</head><body><main>",
+                f"<h1>{html_escape(title)}</h1>",
+                f'<p><a href="{html_escape(source_url, quote=True)}">原始链接</a></p>',
+                body,
+                figures,
+                "</main></body></html>",
+            ]),
+            encoding="utf-8",
+        )
+
+    manifest_path = root / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            manifest = {}
+        sources = manifest.setdefault("source_pages", [])
+        if not isinstance(sources, list):
+            sources = []
+            manifest["source_pages"] = sources
+        source_record = {
+            "title": title,
+            "source_url": source_url,
+            "content_type": page_info.get("content_type"),
+            "markdown_path": f"sources/{source_markdown_path.name}",
+            "materials_path": "materials.json",
+            "image_count": len(image_records),
+            "images": image_records,
+            "output_formats": page_info.get("output_formats") or ["markdown"],
+        }
+        sources[:] = [
+            item for item in sources
+            if not isinstance(item, dict) or item.get("source_url") != source_url
+        ]
+        sources.append(source_record)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    artifact_id = str(page_info.get("artifact_id") or "")
+    if artifact_id:
+        archive_path = Path(shutil.make_archive(str(root), "zip", root_dir=str(root)))
+        artifact = db.query(Artifact).filter(Artifact.id == artifact_id).first()
+        if artifact is not None:
+            artifact.file_path = str(archive_path)
+            artifact.name = archive_path.name
+            db.commit()
+        _ensure_trace_link(db, "processing_task", task_id, "artifact", artifact_id, "exported_to")
+    return {
+        "markdown_path": str(source_markdown_path),
+        "materials_path": str(materials_path),
+        "image_count": len(image_records),
+        "archive_path": str(archive_path) if artifact_id else "",
+    }
+
+
+@celery_app.task(bind=True, max_retries=2)
+def public_page_to_markdown_job(self, payload: dict):
+    from app.services.web_content_service import (
+        PublicPageError,
+        download_public_image,
+        extract_public_page,
+        image_extension,
+    )
+
+    db = SessionLocal()
+    task_id = str(payload.get("task_id") or "")
+    project_id = str(payload.get("project_id") or "")
+    try:
+        task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first()
+        if task is None:
+            raise RuntimeError(f"Public page task not found: {task_id}")
+        config = dict(task.input_config or {})
+        source_url = str(config.get("source_url") or "").strip()
+        if not source_url:
+            raise RuntimeError("Public page source URL is missing")
+
+        page_info = config.get("page_extraction")
+        if not isinstance(page_info, dict):
+            _safe_update(db, task_id, "running", 5, result_summary="opening public page")
+            page_info = extract_public_page(source_url)
+            if not page_info.get("text") and not page_info.get("images"):
+                raise PublicPageError("Public page contains no readable text or downloadable images")
+            page_info = {
+                "title": str(page_info.get("title") or config.get("title") or "Web page"),
+                "author": str(page_info.get("author") or ""),
+                "published_at": str(page_info.get("published_at") or ""),
+                "content_type": str(page_info.get("content_type") or "article"),
+                "text": str(page_info.get("text") or ""),
+                "images": list(page_info.get("images") or []),
+                "video_urls": list(page_info.get("video_urls") or []),
+            }
+            config["page_extraction"] = page_info
+            config["page_image_asset_ids"] = dict(config.get("page_image_asset_ids") or {})
+            task.input_config = config
+            db.commit()
+        if str(page_info.get("author") or "").strip() in {"我的", "关注", "朋友"}:
+            page_info["author"] = ""
+            config["page_extraction"] = page_info
+            task.input_config = config
+            db.commit()
+
+        asset_ids = list(config.get("source_asset_ids") or [])
+        text_asset_id = str(config.get("source_text_asset_id") or "")
+        text_asset = db.query(Asset).filter(Asset.id == text_asset_id).first() if text_asset_id else None
+        if text_asset is None:
+            page_text = "\n\n".join(filter(None, [
+                f"# {_markdown_text(page_info['title'])}",
+                f"作者：{_markdown_text(page_info['author'])}" if page_info.get("author") else "",
+                f"发布时间：{_markdown_text(page_info['published_at'])}" if page_info.get("published_at") else "",
+                f"来源：{source_url}",
+                _markdown_text(str(page_info.get("text") or "")),
+            ])).strip() + "\n"
+            text_asset = _create_public_page_asset(
+                db,
+                project_id,
+                f"{_video_library_slug(str(page_info['title'])) or 'web-page'}-source.md",
+                page_text.encode("utf-8"),
+                "text/markdown",
+                {
+                    "source_url": source_url,
+                    "source_kind": str(config.get("source_kind") or "public_page"),
+                    "content_type": page_info.get("content_type"),
+                },
+            )
+            text_asset_id = text_asset.id
+            config["source_text_asset_id"] = text_asset_id
+            asset_ids.append(text_asset_id)
+            config["source_asset_ids"] = asset_ids
+            task.input_config = config
+            db.commit()
+
+        image_assets_by_index = dict(config.get("page_image_asset_ids") or {})
+        images = page_info.get("images") if isinstance(page_info.get("images"), list) else []
+        total_image_bytes = sum(
+            int(
+                (asset.extra_metadata if isinstance(asset.extra_metadata, dict) else {}).get("size_bytes")
+                or 0
+            )
+            for asset_id in image_assets_by_index.values()
+            for asset in [db.query(Asset).filter(Asset.id == str(asset_id)).first()]
+            if asset is not None
+        )
+        for index, image in enumerate(images):
+            key = str(index)
+            existing_id = str(image_assets_by_index.get(key) or "")
+            existing_asset = db.query(Asset).filter(Asset.id == existing_id).first() if existing_id else None
+            if existing_asset is not None:
+                continue
+            _safe_update(
+                db,
+                task_id,
+                "running",
+                min(25, 8 + int((index / max(len(images), 1)) * 17)),
+                result_summary=f"downloading source images: {index + 1}/{len(images)}",
+            )
+            image_bytes, content_type = download_public_image(
+                str(image.get("url") or ""),
+                source_url,
+            )
+            total_image_bytes += len(image_bytes)
+            if total_image_bytes > 200 * 1024 * 1024:
+                raise PublicPageError("The page's images exceed the 200 MB total size limit")
+            extension = image_extension(content_type)
+            file_name = f"image-{index + 1:02d}{extension}"
+            image_asset = _create_public_page_asset(
+                db,
+                project_id,
+                file_name,
+                image_bytes,
+                content_type,
+                {
+                    "source_url": source_url,
+                    "source_kind": str(config.get("source_kind") or "public_page"),
+                    "source_image_index": index,
+                    "artifact_filename": file_name,
+                    "alt": str(image.get("alt") or f"配图 {index + 1}"),
+                    "size_bytes": len(image_bytes),
+                },
+            )
+            image_assets_by_index[key] = image_asset.id
+            asset_ids.append(image_asset.id)
+            config["page_image_asset_ids"] = image_assets_by_index
+            config["source_asset_ids"] = asset_ids
+            task.input_config = config
+            db.commit()
+
+        for index, video_url in enumerate(page_info.get("video_urls") or []):
+            key = f"video-{index}"
+            video_asset_id = str((config.get("page_video_asset_ids") or {}).get(key) or "")
+            if video_asset_id and db.query(Asset).filter(Asset.id == video_asset_id).first() is not None:
+                continue
+            output_dir = Path(VIDEO_DOWNLOAD_DIR) / f"public-page-{task_id}-{index}"
+            download_info = download_video(str(video_url), output_dir, auth={"mode": "public"})
+            video_path = Path(download_info["path"])
+            file_size = video_path.stat().st_size
+            if file_size <= 0 or file_size > 1024 * 1024 * 1024:
+                raise PublicPageError("Embedded video is empty or exceeds the 1 GB page-media limit")
+            object_name = f"public-pages/{uuid4().hex}{video_path.suffix.lower() or '.mp4'}"
+            with video_path.open("rb") as video_file:
+                storage_info = storage_client.upload_fileobj(
+                    object_name,
+                    video_file,
+                    file_size,
+                    "video/mp4",
+                )
+            if storage_info.get("storage") not in {"local", "minio"}:
+                raise RuntimeError(f"Video storage backend unavailable: {storage_info.get('reason') or 'unknown'}")
+            video_asset = create_asset(
+                db,
+                AssetCreate(
+                    project_id=project_id,
+                    asset_type="video",
+                    file_name=f"embedded-video-{index + 1}{video_path.suffix.lower() or '.mp4'}",
+                    file_path=storage_info["object_name"],
+                    mime_type="video/mp4",
+                    duration_sec=int(download_info.get("duration_sec") or 0) or None,
+                    metadata={
+                        "source_url": source_url,
+                        "media_url": str(video_url),
+                        "storage": storage_info.get("storage"),
+                    },
+                ),
+            )
+            video_asset_ids = dict(config.get("page_video_asset_ids") or {})
+            video_asset_ids[key] = video_asset.id
+            config["page_video_asset_ids"] = video_asset_ids
+            asset_ids.append(video_asset.id)
+            config["source_asset_ids"] = asset_ids
+            task.input_config = config
+            db.commit()
+
+        asset_ids = list(dict.fromkeys(str(asset_id) for asset_id in config.get("source_asset_ids", []) if asset_id))
+        if not asset_ids:
+            raise PublicPageError("Public page extraction produced no reusable content assets")
+
+        child_id = str(config.get("library_task_id") or "")
+        child = db.query(ProcessingTask).filter(ProcessingTask.id == child_id).first() if child_id else None
+        if child is None or child.status in {"failed", "dispatch_failed", "canceled"}:
+            library_id = str(config.get("library_id") or uuid4())
+            child_config = {
+                "library_id": library_id,
+                "library_title": str(page_info.get("title") or "Public page"),
+                "asset_ids": asset_ids,
+                "max_parallel": 2,
+                "output_formats": config.get("output_formats") or ["markdown", "html"],
+                "markdown_enhance_with_ollama": False,
+                "source_url": source_url,
+                "source_kind": str(config.get("source_kind") or "public_page"),
+            }
+            child = create_task(
+                db,
+                TaskCreate(
+                    project_id=project_id,
+                    task_type="mixed_assets_to_markdown",
+                    input_config=child_config,
+                ),
+            )
+            config["library_id"] = library_id
+            config["library_task_id"] = child.id
+            task.input_config = config
+            db.commit()
+
+        if child.status != "success":
+            _safe_update(db, task_id, "running", 30, result_summary="organizing page text and media")
+            mixed_assets_to_markdown_job.run({
+                "task_id": child.id,
+                "project_id": project_id,
+                "input_config": child.input_config or {},
+            })
+            db.expire_all()
+            child = db.query(ProcessingTask).filter(ProcessingTask.id == child.id).first()
+        if child is None or child.status != "success":
+            child_error = child.error_message if child is not None else "child library task not found"
+            raise RuntimeError(f"Page content processing failed: {child_error}")
+
+        db.expire_all()
+        child = db.query(ProcessingTask).filter(ProcessingTask.id == child.id).first()
+        child_config = dict(child.input_config or {})
+        artifact_id = str(child_config.get("library_artifact_id") or "")
+        bundle_path = str(child_config.get("library_index_path") or "")
+        text_asset = db.query(Asset).filter(Asset.id == str(config["source_text_asset_id"])).first()
+        image_assets = [
+            db.query(Asset).filter(Asset.id == str(asset_id)).first()
+            for _, asset_id in sorted(
+                (config.get("page_image_asset_ids") or {}).items(),
+                key=lambda entry: int(entry[0]),
+            )
+        ]
+        image_assets = [asset for asset in image_assets if asset is not None]
+        if text_asset is None:
+            raise RuntimeError("Public page source text asset was not preserved")
+        ocr_by_asset = {}
+        image_asset_ids = [asset.id for asset in image_assets]
+        if image_asset_ids:
+            ocr_units = (
+                db.query(SemanticUnit)
+                .filter(SemanticUnit.asset_id.in_(image_asset_ids))
+                .order_by(SemanticUnit.created_at.asc())
+                .all()
+            )
+            for unit in ocr_units:
+                labels = unit.labels if isinstance(unit.labels, dict) else {}
+                if labels.get("source") != "image_text":
+                    continue
+                asset_id = str(unit.asset_id or "")
+                if not asset_id or not str(unit.content or "").strip():
+                    continue
+                ocr_by_asset.setdefault(asset_id, []).append(str(unit.content).strip())
+        ocr_blocks = [
+            {
+                "asset_id": asset_id,
+                "content": "\n\n".join(contents),
+                "engine": "semantic_unit_ocr",
+            }
+            for asset_id, contents in ocr_by_asset.items()
+        ]
+        bundle_info = _attach_public_page_source_to_bundle(
+            db,
+            task_id,
+            project_id,
+            bundle_path,
+            source_url,
+            {
+                **page_info,
+                "artifact_id": artifact_id,
+                "output_formats": config.get("output_formats") or ["markdown", "html"],
+            },
+            text_asset,
+            image_assets,
+            ocr_blocks=ocr_blocks,
+        )
+        config["library_artifact_id"] = artifact_id
+        config["library_index_path"] = bundle_path
+        merge_video_task_checkpoint(config, "public_page_export", {
+            "status": "success",
+            "path": bundle_info["archive_path"] or bundle_path,
+            "artifact_id": artifact_id,
+            "source_markdown": bundle_info["markdown_path"],
+            "image_count": bundle_info["image_count"],
+        })
+        task.input_config = config
+        db.commit()
+        image_count = bundle_info["image_count"]
+        text_length = len(str(page_info.get("text") or ""))
+        _safe_update(
+            db,
+            task_id,
+            "success",
+            100,
+            result_summary=(
+                f"Public page ready: {text_length} text chars, {image_count} image(s), "
+                f"artifact {artifact_id}"
+            ),
+        )
+        return {
+            "status": "public_page_ready",
+            "path": bundle_path,
+            "artifact_id": artifact_id,
+            "payload": payload,
+        }
+    except Exception as exc:
+        _safe_update(db, task_id, "failed", 100, error_message=str(exc))
+        return {"status": "failed", "error": str(exc), "payload": payload}
+    finally:
+        db.close()
+
+
 @celery_app.task(bind=True, max_retries=2)
 def video_batch_to_markdown_job(self, payload: dict):
     db = SessionLocal()
@@ -2444,6 +3087,13 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 10)
         task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first() if task_id else None
         asset = db.query(Asset).filter(Asset.id == asset_id).first() if asset_id else None
+        task_input_config = task.input_config if task and isinstance(task.input_config, dict) else {}
+        payload_input_config = payload.get("input_config") if isinstance(payload.get("input_config"), dict) else {}
+        ocr_profile_requested = str(
+            payload_input_config.get("ocr_profile")
+            or task_input_config.get("ocr_profile")
+            or MEDIA_OCR_PROFILE
+        )
         source_path = _resolve_source_path(payload, asset)
         has_previous_preprocess = _has_previous_preprocess_units(db, asset_id, task_id)
         if _is_text_asset(asset):
@@ -2880,7 +3530,25 @@ def preprocess_job(self, payload: dict):
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
         transcription_summary = _transcription_segment_summary(transcription_results)
-        degraded_capabilities = _media_degraded_capabilities(transcription_summary, segments_truncated, transcript_text, ocr_text)
+        degraded_capabilities = _media_degraded_capabilities(
+            transcription_summary,
+            segments_truncated,
+            transcript_text,
+            ocr_text,
+            ocr_results,
+        )
+        ocr_diagnostics = []
+        seen_ocr_diagnostics = set()
+        for item in ocr_results:
+            diagnostic = item.get("diagnostic") if isinstance(item, dict) else None
+            if not isinstance(diagnostic, dict):
+                continue
+            if diagnostic.get("status") == "fallback" and not ocr_text:
+                diagnostic = {**diagnostic, "fallback_output_empty": True}
+            key = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True)
+            if key not in seen_ocr_diagnostics:
+                seen_ocr_diagnostics.add(key)
+                ocr_diagnostics.append(diagnostic)
         usable_text_sources = []
         if transcript_text:
             usable_text_sources.append("transcript")
@@ -2897,6 +3565,8 @@ def preprocess_job(self, payload: dict):
             "frame_config": frame_config,
             "transcript": transcription,
             "ocr": ocr_results,
+            "ocr_diagnostics": ocr_diagnostics,
+            "ocr_profile_requested": ocr_profile_requested,
             "frame_extraction_skipped": frame_extraction_skipped,
             "frame_extraction_error": frame_extraction_error,
             "audio_extraction_error": audio_extraction_error,
@@ -2917,7 +3587,13 @@ def preprocess_job(self, payload: dict):
             if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
         ]
         semantic_payload.update({
-            "extraction_status": _media_extraction_status(transcription_summary, segments_truncated, transcript_text, ocr_text),
+            "extraction_status": _media_extraction_status(
+                transcription_summary,
+                segments_truncated,
+                transcript_text,
+                ocr_text,
+                ocr_results,
+            ),
             "transcription_success_count": transcription_summary["success_count"],
             "transcription_failed_count": transcription_summary["failed_count"],
             "transcription_failed_segments": transcription_summary["failed_segments"],
@@ -2978,15 +3654,17 @@ def preprocess_job(self, payload: dict):
             "task_id": task_id,
             "extraction_status": semantic_payload.get("extraction_status"),
             "degraded_capabilities": semantic_payload.get("degraded_capabilities", []),
-                "usable_text_sources": semantic_payload.get("usable_text_sources", []),
-                "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
-                "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
-                "target_frame_rate": semantic_payload.get("target_frame_rate", 0),
-                "frame_interval_seconds": semantic_payload.get("frame_interval_seconds"),
-                "max_frame_count": semantic_payload.get("max_frame_count"),
-                "frame_sampling_mode": semantic_payload.get("frame_sampling_mode"),
-                **_media_limit_metadata(),
-            }
+            "ocr_diagnostics": semantic_payload.get("ocr_diagnostics", []),
+            "ocr_profile_requested": semantic_payload.get("ocr_profile_requested"),
+            "usable_text_sources": semantic_payload.get("usable_text_sources", []),
+            "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
+            "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
+            "target_frame_rate": semantic_payload.get("target_frame_rate", 0),
+            "frame_interval_seconds": semantic_payload.get("frame_interval_seconds"),
+            "max_frame_count": semantic_payload.get("max_frame_count"),
+            "frame_sampling_mode": semantic_payload.get("frame_sampling_mode"),
+            **_media_limit_metadata(),
+        }
         su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=json.dumps(semantic_payload, ensure_ascii=False), labels=summary_labels, confidence=0.8)
         db.add(su)
         db.commit()
@@ -2999,7 +3677,7 @@ def preprocess_job(self, payload: dict):
             task_id,
             "success",
             100,
-            result_summary=f"media preprocess done: {transcription_count} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}{_segment_truncation_suffix(segment_input_count, transcription_count)}",
+            result_summary=f"media preprocess done: {transcription_count} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}{_segment_truncation_suffix(segment_input_count, transcription_count)}{_ocr_diagnostic_summary(ocr_diagnostics)}",
         )
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:

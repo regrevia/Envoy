@@ -22,6 +22,7 @@ from app.services.video_source_service import (
     classify_video_source,
     discover_video_items,
     normalize_video_auth,
+    resolve_video_url,
     validate_video_url,
 )
 from app.services.browser_session_service import BrowserSessionError, browser_session_manager
@@ -36,6 +37,7 @@ from app.workers.jobs import (
     video_to_markdown_job,
     video_batch_to_markdown_job,
     mixed_assets_to_markdown_job,
+    public_page_to_markdown_job,
 )
 
 router = APIRouter()
@@ -51,6 +53,7 @@ RETRYABLE_TASKS = {
     "video_to_markdown": video_to_markdown_job,
     "video_batch_to_markdown": video_batch_to_markdown_job,
     "mixed_assets_to_markdown": mixed_assets_to_markdown_job,
+    "public_page_to_markdown": public_page_to_markdown_job,
 }
 
 
@@ -302,13 +305,57 @@ def _create_video_task(db: Session, task_payload: TaskCreate):
     return dispatch_task(db, task, video_to_markdown_job, task_payload.model_dump())
 
 
+def _create_public_page_task(
+    db: Session,
+    project_id: str,
+    source_url: str,
+    title: str = "",
+    input_config: Optional[dict] = None,
+):
+    try:
+        source_url = validate_video_url(source_url)
+    except VideoSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    config = dict(input_config or {})
+    config.update({
+        "source_url": source_url,
+        "title": title or "",
+        "source_kind": "public_page",
+    })
+    payload = TaskCreate(
+        project_id=project_id,
+        task_type="public_page_to_markdown",
+        input_config=config,
+    )
+    payload = _validated_task_payload(db, payload)
+    task = create_task(db, payload)
+    return dispatch_task(db, task, public_page_to_markdown_job, payload.model_dump())
+
+
 @router.post("/tasks/video-to-markdown")
 def create_video_to_markdown_task(payload: VideoToMarkdownCreate, db: Session = Depends(get_db)):
     project_id = payload.project_id.strip()
+    try:
+        source_url = resolve_video_url(payload.source_url)
+        source = classify_video_source(source_url)
+    except VideoSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if source["source_kind"] in {"article", "image_text", "public_page"}:
+        return _create_public_page_task(
+            db,
+            project_id,
+            source_url,
+            payload.title,
+            {
+                **payload.input_config,
+                "source_kind": source["source_kind"],
+                "source_platform": source["platform"],
+            },
+        )
     auth = payload.auth if isinstance(payload.auth, dict) else None
     task_payload = _video_task_payload(
         project_id,
-        payload.source_url,
+        source_url,
         payload.title,
         auth,
         payload.input_config,

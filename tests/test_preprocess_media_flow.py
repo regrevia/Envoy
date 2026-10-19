@@ -1122,7 +1122,7 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                         metadata={"storage": storage_info["storage"]},
                     ),
                 )
-                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={}))
+                task = create_task(db, TaskCreate(project_id=project.id, asset_id=asset.id, task_type="preprocess", input_config={"ocr_profile": "pro"}))
                 project_id = project.id
                 asset_id = asset.id
                 task_id = task.id
@@ -1156,7 +1156,19 @@ class PreprocessMediaFlowTests(unittest.TestCase):
             with patch("app.workers.jobs.split_video", side_effect=fake_split), \
                 patch("app.workers.jobs.extract_frames", side_effect=fake_frames), \
                 patch("app.workers.jobs.transcribe_audio", side_effect=fake_transcribe), \
-                patch("app.workers.jobs.run_ocr_on_frames", return_value=[{"frame": "frame_000001.jpg", "text": "Slide: approval checklist", "confidence": 0.81}]), \
+                patch("app.workers.jobs.run_ocr_on_frames", return_value=[{
+                    "frame": "frame_000001.jpg",
+                    "text": "Slide: approval checklist",
+                    "confidence": 0.81,
+                    "diagnostic": {
+                        "status": "fallback",
+                        "requested_profile": "pro",
+                        "fallback_engine": "tesseract",
+                        "fallback_available": True,
+                        "error": "proxy connection refused",
+                        "suggested_action": "ask_to_use_default_ocr",
+                    },
+                }]), \
                 patch("app.workers.jobs.update_task_status", side_effect=record_update):
                 result = preprocess_job.run({"task_id": task_id, "project_id": project_id, "asset_id": asset_id})
 
@@ -1168,7 +1180,10 @@ class PreprocessMediaFlowTests(unittest.TestCase):
 
                 self.assertEqual(result["status"], "preprocessed")
                 self.assertEqual(stored_task.status, "success")
-                self.assertEqual(stored_task.result_summary, "media preprocess done: 2 segment(s), 1 frame(s), max 600 sec")
+                self.assertEqual(
+                    stored_task.result_summary,
+                    "media preprocess done: 2 segment(s), 1 frame(s), max 600 sec; pro OCR unavailable (proxy connection refused); used tesseract fallback",
+                )
                 self.assertEqual(calls["split_video"], expected_path)
                 self.assertEqual(calls["extract_frames"], expected_path)
                 self.assertEqual(calls["transcribe_audio"], result["semantic"]["segments"])
@@ -1176,6 +1191,9 @@ class PreprocessMediaFlowTests(unittest.TestCase):
                 self.assertEqual(result["semantic"]["segment_seconds"], 300)
                 self.assertEqual(result["semantic"]["max_segment_count"], 2)
                 self.assertEqual(result["semantic"]["max_input_seconds"], 600)
+                self.assertEqual(result["semantic"]["ocr_profile_requested"], "pro")
+                self.assertEqual(result["semantic"]["ocr_diagnostics"][0]["error"], "proxy connection refused")
+                self.assertIn("ocr_fallback", result["semantic"]["degraded_capabilities"])
                 sources = {unit.labels["source"] for unit in units}
                 self.assertIn("media_asset", sources)
                 self.assertIn("media_transcript", sources)

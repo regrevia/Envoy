@@ -83,6 +83,61 @@ def test_generic_direct_video_and_stream_urls_are_marked_downloadable():
         assert source["supports_ytdlp"] is True
 
 
+def test_douyin_note_is_classified_as_image_text_content():
+    from app.services.video_source_service import classify_video_source
+
+    source = classify_video_source("https://www.douyin.com/note/7682946325957568933")
+
+    assert source["platform"] == "douyin"
+    assert source["source_kind"] == "image_text"
+    assert source["supports_ytdlp"] is False
+    assert source["supports_browser_discovery"] is False
+
+
+def test_wechat_public_article_and_unrecognized_public_pages_are_auto_routed():
+    from app.services.video_source_service import classify_video_source
+
+    wechat = classify_video_source("https://mp.weixin.qq.com/s/example-article")
+    generic = classify_video_source("https://articles.example.test/guides/topic")
+
+    assert wechat["platform"] == "wechat"
+    assert wechat["source_kind"] == "article"
+    assert generic["platform"] == "unknown"
+    assert generic["source_kind"] == "public_page"
+
+
+def test_video_task_endpoint_routes_douyin_notes_to_public_page_pipeline(monkeypatch):
+    from app.api.v1 import tasks
+    from app.schemas.video_task import VideoToMarkdownCreate
+
+    captured = {}
+
+    def create_public_page_task(db, project_id, source_url, title, input_config):
+        captured.update({
+            "project_id": project_id,
+            "source_url": source_url,
+            "title": title,
+            "input_config": input_config,
+        })
+        return {"task_type": "public_page_to_markdown"}
+
+    monkeypatch.setattr(tasks, "_create_public_page_task", create_public_page_task)
+
+    result = tasks.create_video_to_markdown_task(
+        VideoToMarkdownCreate(
+            project_id="project-1",
+            source_url="https://www.douyin.com/note/7682946325957568933",
+            input_config={"output_formats": ["markdown", "html"]},
+        ),
+        db=None,
+    )
+
+    assert result["task_type"] == "public_page_to_markdown"
+    assert captured["project_id"] == "project-1"
+    assert captured["source_url"] == "https://www.douyin.com/note/7682946325957568933"
+    assert captured["input_config"]["output_formats"] == ["markdown", "html"]
+
+
 def test_missing_video_is_not_classified_as_login_required():
     from app.services.video_source_service import classify_discovery_error
 

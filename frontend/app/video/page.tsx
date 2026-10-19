@@ -26,6 +26,7 @@ type Task = {
     checkpoints?: Record<string, { status?: string; path?: string; artifact_id?: string }>;
     library_id?: string;
     library_title?: string;
+    ocr_profile?: "fast" | "balanced" | "quality" | "pro";
   };
   result_summary?: string | null;
   error_message?: string | null;
@@ -77,13 +78,13 @@ const uiCopy = {
   zh: {
     tasks: "任务中心",
     settings: "视觉模型设置",
-    title: "视频转知识库",
-    subtitle: "粘贴链接，剩下的交给 Envoy",
-    single: "视频链接",
+    title: "链接转 Markdown",
+    subtitle: "粘贴链接，Envoy 自动识别内容",
+    single: "链接",
     creator: "主页作品",
     local: "本地视频",
     mixed: "混合素材",
-    sourcePlaceholder: "粘贴视频链接、BV号或分享链接",
+    sourcePlaceholder: "粘贴视频、公众号文章或图文链接",
     creatorPlaceholder: "粘贴创作者主页或播放列表链接",
     chooseOutput: "产物",
     both: "Markdown + HTML",
@@ -96,7 +97,7 @@ const uiCopy = {
     recent: "最近任务",
     allTasks: "查看全部",
     noTasks: "还没有任务",
-    workspaceDefault: "新建视频知识库",
+    workspaceDefault: "新建内容库",
     workspaceSave: "保存到 Envoy 工作区",
     workspaceFirstUse: "首次处理时自动创建",
     dropVideo: "拖动视频到这里",
@@ -105,7 +106,7 @@ const uiCopy = {
     mixedTypes: "视频、图片、音频、文档",
     selectedFiles: "已选择",
     fileLimit: "最多",
-    publicHint: "支持主流平台公开视频链接。",
+    publicHint: "支持公开的视频、图文和文章链接。",
     creatorHint: "从主页或播放列表选择作品。",
     localHint: "支持 MP4、MOV、MKV、WebM 等常见格式。",
     mixedHint: "合并视频、图片、音频和文档。",
@@ -115,6 +116,11 @@ const uiCopy = {
     baseUrl: "服务地址",
     modelName: "模型名",
     protocol: "协议",
+    ocrProfile: "OCR 识别",
+    ocrFast: "快速",
+    ocrBalanced: "均衡",
+    ocrQuality: "高精度",
+    ocrPro: "专业（最高精度，较慢）",
     apiKeySaved: "已保存，留空保持不变",
     apiKeyPlaceholder: "输入 API Key",
     apiKeyStored: "已安全保存",
@@ -140,13 +146,13 @@ const uiCopy = {
   en: {
     tasks: "Tasks",
     settings: "Vision model settings",
-    title: "Video to knowledge",
-    subtitle: "Paste a link. Envoy handles the rest.",
-    single: "Video link",
+    title: "Link to Markdown",
+    subtitle: "Paste a link. Envoy detects the content.",
+    single: "Link",
     creator: "Creator page",
     local: "Local video",
     mixed: "Mixed files",
-    sourcePlaceholder: "Paste a video link, BV ID, or share link",
+    sourcePlaceholder: "Paste a video, article, or post link",
     creatorPlaceholder: "Paste a creator or playlist link",
     chooseOutput: "Output",
     both: "Markdown + HTML",
@@ -159,7 +165,7 @@ const uiCopy = {
     recent: "Recent tasks",
     allTasks: "All tasks",
     noTasks: "No tasks yet",
-    workspaceDefault: "New video library",
+    workspaceDefault: "New content library",
     workspaceSave: "Save to Envoy workspace",
     workspaceFirstUse: "Created on first use",
     dropVideo: "Drop videos here",
@@ -168,7 +174,7 @@ const uiCopy = {
     mixedTypes: "Video, image, audio, document",
     selectedFiles: "selected",
     fileLimit: "up to",
-    publicHint: "Public video links from major platforms.",
+    publicHint: "Public video, image-post, and article links.",
     creatorHint: "Choose videos from a creator or playlist.",
     localHint: "MP4, MOV, MKV, WebM and common video files.",
     mixedHint: "Combine video, images, audio and documents.",
@@ -178,6 +184,11 @@ const uiCopy = {
     baseUrl: "Base URL",
     modelName: "Model",
     protocol: "Protocol",
+    ocrProfile: "OCR profile",
+    ocrFast: "Fast",
+    ocrBalanced: "Balanced",
+    ocrQuality: "Quality",
+    ocrPro: "Pro (highest accuracy, slower)",
     apiKeySaved: "Saved; leave blank to keep",
     apiKeyPlaceholder: "Enter API key",
     apiKeyStored: "Saved securely",
@@ -250,11 +261,13 @@ function taskStatusLabel(status?: string | null, locale: Locale = "zh") {
 
 function taskTypeLabel(taskType?: string | null, locale: Locale = "zh") {
   if (locale === "en") {
+    if (taskType === "public_page_to_markdown") return "Web page to Markdown";
     if (taskType === "video_to_markdown") return "Video to Markdown";
     if (taskType === "video_batch_to_markdown") return "Batch video library";
     if (taskType === "mixed_assets_to_markdown") return "Mixed materials";
     return taskType || "Processing task";
   }
+  if (taskType === "public_page_to_markdown") return "网页内容整理";
   if (taskType === "video_to_markdown") return "视频转 Markdown";
   if (taskType === "video_batch_to_markdown") return "批量视频整理";
   if (taskType === "mixed_assets_to_markdown") return "混合素材整理";
@@ -301,12 +314,14 @@ export default function VideoPage() {
   const visionApiKeyRef = useRef<HTMLInputElement>(null);
   const [visionBusy, setVisionBusy] = useState(false);
   const [visionMessage, setVisionMessage] = useState("");
+  const [ocrProfile, setOcrProfile] = useState<"fast" | "balanced" | "quality" | "pro">("balanced");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   const outputFormats = outputMode === "both" ? ["markdown", "html"] : [outputMode];
+  const processingConfig = { output_formats: outputFormats, ocr_profile: ocrProfile };
   const copy = uiCopy[locale];
 
   const loadRecentTasks = async () => {
@@ -500,9 +515,9 @@ export default function VideoPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: "视频知识库",
-            description: "从公开视频链接整理的知识文档",
-            domain_type: "video",
+            name: "Envoy 内容库",
+            description: "由公开链接整理的 Markdown 与 HTML 资料",
+            domain_type: "web",
             status: "active",
           }),
         });
@@ -517,7 +532,7 @@ export default function VideoPage() {
           project_id: selectedId,
           source_url: url,
           auth: { mode: "auto" },
-          input_config: { output_formats: outputFormats },
+          input_config: processingConfig,
         }),
       });
       setTask(created);
@@ -534,9 +549,9 @@ export default function VideoPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "视频知识库",
-        description: "从视频素材整理的知识文档",
-        domain_type: "video",
+        name: "Envoy 内容库",
+        description: "由链接和本地素材整理的 Markdown 与 HTML 资料",
+        domain_type: "web",
         status: "active",
       }),
     });
@@ -574,7 +589,7 @@ export default function VideoPage() {
           project_id: selectedId,
           title: "本地视频知识库",
           items,
-          input_config: { output_formats: outputFormats },
+          input_config: processingConfig,
         }),
       });
       setTask(created);
@@ -641,12 +656,12 @@ export default function VideoPage() {
         ? `/api/v1/tasks/${task.id}/append-assets`
         : "/api/v1/tasks/mixed-library-to-markdown";
       const body = append
-        ? { asset_ids: assetIds, title: task?.input_config?.library_title }
+        ? { asset_ids: assetIds, title: task?.input_config?.library_title, input_config: { ocr_profile: ocrProfile } }
         : {
             project_id: selectedId,
             title: "混合素材知识库",
             asset_ids: assetIds,
-            input_config: { output_formats: outputFormats },
+            input_config: processingConfig,
           };
       const created = await apiJson<Task>(endpoint, {
         method: "POST",
@@ -806,12 +821,12 @@ export default function VideoPage() {
         ? `/api/v1/tasks/${task.id}/append-videos`
         : "/api/v1/tasks/video-batch-to-markdown";
       const body = append
-        ? { items, title: task?.input_config?.library_title, input_config: { output_formats: outputFormats } }
+        ? { items, title: task?.input_config?.library_title, input_config: processingConfig }
         : {
             project_id: selectedId,
             title: "视频知识库",
             items,
-            input_config: { output_formats: outputFormats },
+            input_config: processingConfig,
           };
       const created = await apiJson<Task>(endpoint, {
         method: "POST",
@@ -922,6 +937,19 @@ export default function VideoPage() {
                     >
                       <option value="chat">Chat Completions</option>
                       <option value="messages">Anthropic Messages</option>
+                    </select>
+                  </label>
+                  <label className={`${styles.field} ${styles.fieldFull}`}>
+                    {copy.ocrProfile}
+                    <select
+                      value={ocrProfile}
+                      onChange={(event) => setOcrProfile(event.target.value as "fast" | "balanced" | "quality" | "pro")}
+                      className={styles.input}
+                    >
+                      <option value="fast">{copy.ocrFast}</option>
+                      <option value="balanced">{copy.ocrBalanced}</option>
+                      <option value="quality">{copy.ocrQuality}</option>
+                      <option value="pro">{copy.ocrPro}</option>
                     </select>
                   </label>
                   <label className={`${styles.field} ${styles.fieldFull}`}>

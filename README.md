@@ -2,7 +2,7 @@
 
 **Let AI watch everything.**
 
-Envoy 专注视频，把公开视频和本地视频整理成主题化 Markdown / HTML 知识库，适合 Wiki、RAG 和 Agent。
+Envoy 正在演进为面向 AI Agent 的通用链接读取与材料处理引擎。当前 `dev` 网站可处理视频及部分公开文章/图文页面；独立 Skill/MCP 还支持静态网页、PDF 文本层、纯文本/Markdown/CSV/JSON 链接和公开图片视觉交接。
 
 [English](#english)
 
@@ -67,12 +67,60 @@ npm run dev
 
 ## 使用方式
 
-1. 打开首页，粘贴一个视频链接、B 站 BV 号或分享链接。
-2. 也可以切换到主页作品，选择多个视频；或拖入本地视频。
+1. 打开首页，粘贴一个视频或公开网页链接。
+2. Envoy 自动识别已适配的来源类型；主页作品可批量选择，也可拖入本地视频。
 3. 选择 Markdown、HTML 或两者。
 4. 点击开始，任务会在后台运行，刷新页面后可从最近任务继续查看。
 
-任务详情页支持查看进度、错误、断点、重试和浏览器接管。真正需要登录、验证码、地区限制或 DRM 的视频，仍取决于来源网站的访问权限。
+任务详情页支持查看进度、错误、断点、重试和浏览器接管。公开页面能力仍在扩展；登录、验证码、地区限制或 DRM 来源不会被承诺绕过。
+
+### 独立 Skill（开发版）
+
+当前 `dev` 已包含一个不依赖网站数据库的 Skill 运行包，支持公开静态 HTML、PDF 文本层、纯文本类链接、图片视觉交接；有可用专用 extractor 和公开字幕时会尝试生成带时间定位的字幕材料，宿主支持时也可接收公开视频直链。站点成功率仍需逐平台真实验收，平台视频下载、通用 ASR 和抽帧尚未接入独立 Skill：
+
+```bash
+python -m pip install -e packages/envoy-core -e packages/envoy-cli
+envoy doctor --json
+printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{"url":"https://example.org/"}}' | envoy read --request-json -
+```
+
+开发环境生成无凭据 Skill 包与自包含 CLI wheel：
+
+```bash
+python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
+python scripts/build_envoy_cli_wheel.py --output-dir dist
+```
+
+面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。版本 tag 的 GitHub Release 工作流会发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`；wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。工作流已加入，但首个 GitHub Release 尚未创建。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
+
+宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、平台视频下载/ASR/抽帧、OCR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
+
+支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand`、`envoy_search`、`envoy_doctor`、`envoy_observe_visual` 和 `envoy_visual_history`，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
+
+普通链接可直接按用户目标调用 `envoy_read`。`envoy_doctor` 提供版本化能力目录，仅在可选能力不明确时查询；模型根据覆盖信息决定是否续读或请求宿主检查图片，不按网站硬编码提示流程。
+
+```json
+{
+  "mcpServers": {
+    "envoy": {
+      "command": "/absolute/path/to/envoy",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+工具 schema 只公布独立运行时可处理的输入字段；版本化能力目录会明确列出条件能力和暂不支持的类型，避免把网站侧能力误报给 Agent，也减少 schema 占用的上下文。
+
+新版 MCP 返回完整结构化材料一次，文本内容仅提供短状态说明；旧版仍保留文本 JSON 兼容输出。
+
+图片视觉交接完成后，宿主可用 `envoy_observe_visual` 提交有限、带来源的观察；该观察仍被视为不可信材料，不会变成 Agent 指令。
+
+Hook 不是必需依赖。宿主可以在工具调用外层增加日志、缓存和用量统计，但不应改变 `envoy.read/1` 请求/响应契约。
+
+独立 Skill 也支持公开图片链接的视觉交接：宿主声明图片输入后，Envoy 返回图片 URI 和 `inspect_visual`，不会把图片转成 base64 塞进上下文。
+
+长页面首读按请求预算限制返回；若结果标记 `partial` 且覆盖信息给出 `continuation_available`，使用 `envoy expand` 按 `next_offset` 读取下一段。正文快照在本机限额缓存，不会为每段重新下载页面。
 
 ## 模型配置
 
@@ -91,6 +139,7 @@ Envoy 默认不带模型和 API Key。打开 `/video` 右上角齿轮，填写�
 
 - `index.md`：适合 Wiki、Agent 和 RAG 的文字入口
 - `index.html`：带关键帧图片的可视化阅读页
+- `materials.json`：`envoy.read/1` 材料协议，供 Agent 按需读取正文、资源和覆盖信息
 - `themes/`：按主题组织的页面
 - `assets/frames/`：精选关键帧
 - `manifest.json`：机器可读索引
@@ -128,9 +177,15 @@ cd frontend && npm run build
 
 开发分支为 `dev`，验收通过后合并到 `main`。用户从 `main` 获取稳定版本。
 
-## 当前范围
+## 当前状态
 
-当前版本专注于视频：公开视频链接、创作者主页、本地视频、批量整理、增量追加、浏览器辅助恢复和渐进式 Wiki 产物。图片、PDF、音频等格式会在同一界面上继续扩展。
+当前开发版已通过一条抖音公开图文的真实链路验收：提取正文与 4 张配图，生成 OCR 语义、Markdown/HTML 和 ZIP 产物。单个样本不代表所有网站均已适配。
+
+扫描版 PDF OCR、视频/音频独立 Skill 路径、微信公众号专项验收以及多用户 Worker 隔离仍在开发中，尚未发布。Skill ZIP 已可由仓库脚本生成；实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
+
+OCR 默认使用 `balanced` 档位，用户可在高级设置中选择 `fast / balanced / quality / pro`；其中 `pro` 使用 PP-OCRv6 medium，是当前 Envoy 的最高通用精度档，代价是更慢、更占资源。Skill/MCP 请求也可以传入 `ocr_profile`。切换档位时按需下载对应模型，不把全部模型预装进镜像。OCR 属于 Envoy 的派生材料，网站产物可以记录 OCR 文本及来源关系；Skill/MCP 默认不把所有 OCR 原文一次性塞进 Agent 上下文，而是按目标和材料范围逐步读取。
+
+来源访问取决于网站权限和网络条件；遇到登录、验证码、失效内容或 DRM 时应明确报告实际状态。
 
 ---
 
@@ -140,7 +195,7 @@ cd frontend && npm run build
 
 **Let AI watch everything.**
 
-Envoy turns public and local videos into theme-first Markdown / HTML knowledge-base packages for Wiki, RAG, and agents.
+Envoy is evolving into a general link-reading and material-processing engine for AI agents. The current website handles videos and some public articles/image posts. The independent Skill/MCP runtime also supports static HTML, PDF text layers, and visual handoff for public images.
 
 [中文](#envoy)
 
@@ -203,8 +258,8 @@ Local concurrency defaults to two tasks. Set `ENVOY_LOCAL_TASK_MAX_CONCURRENCY` 
 
 ## Usage
 
-1. Paste a video URL, Bilibili BV ID, or share link.
-2. Or choose a creator page, playlist, or local video files.
+1. Paste a video or public web page URL.
+2. Envoy automatically routes supported sources. Creator pages and playlists can be selected in batches; local videos can be dropped in.
 3. Select Markdown, HTML, or both.
 4. Start the task. It continues in the background and remains available after refresh.
 
@@ -237,4 +292,8 @@ Markdown is best for downstream Wiki generation. HTML is best for reviewing visu
 
 ## Scope
 
-The current release is video-first: public video URLs, creator pages, local videos, batch processing, incremental append, browser-assisted recovery, and progressively disclosed Wiki packages. More formats will be added on the same interface.
+The current development branch has passed one real public Douyin image-post flow: article text and four images were processed into Markdown/HTML and a ZIP package. This single sample does not imply universal site support.
+
+The standalone Skill/MCP reader supports public static HTML, text/Markdown/CSV/JSON, PDF text layers with page locators and incremental reads, direct-image visual handoff, public subtitle extraction when a specialized yt-dlp extractor exposes a usable public track, and public direct-video pass-through when the host advertises native video input. Platform subtitle access varies and the current real YouTube/Bilibili checks did not yield captions; platform video downloads, frame extraction, standalone audio, and scanned-PDF OCR are not yet available. The Release workflow is configured but a GitHub Release has not yet been published. See the [product architecture](docs/product/agent-link-reader-v1.md) and [implementation status](docs/architecture/agent-link-reader-status.md). Source access remains subject to site permissions and network conditions.
+
+For MCP agents, ordinary links can go directly to `envoy_read` with the user's goal. `envoy_doctor` provides a versioned capability catalog when optional support is unclear; the model uses coverage to decide whether to continue reading or request host visual/video inspection, without site-specific prompt workflows.
