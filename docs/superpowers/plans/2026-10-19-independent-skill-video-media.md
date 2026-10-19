@@ -19,6 +19,7 @@
 - `packages/envoy-cli/src/envoy_cli/capabilities.py`, `integrations/skills/envoy/SKILL.md`, `integrations/skills/envoy/INSTALL.md`: report when local media/ASR/frame capabilities are available and how the Agent requests frames.
 - `tests/cli/test_video_subtitles.py`, `tests/cli/test_envoy_cli.py`, `tests/core_protocol/test_read_protocol.py`: deterministic protocol, safety, budget, and material-lifecycle tests.
 - `docs/architecture/agent-link-reader-status.md`: record real accepted/rejected platform results and the exact standalone runtime boundary.
+- `scripts/probe_platform_urls.py`: repeatable credential-free platform metadata probe with structured access-boundary classifications.
 
 ## Task 1: Runtime Compatibility And Media Adapter
 
@@ -60,6 +61,7 @@
 - [ ] Run the latest-supported yt-dlp against one real captioned YouTube video and one real no-caption public platform video; record exact URLs, extractor/runtime versions, result codes, transcript/frame counts, and time locators without copying long copyrighted transcript text into the repository. YouTube required sign-in confirmation; tested Bilibili material had no reliable speech in the selected range; a public Wikimedia OGV direct-file ASR sample passed, but does not satisfy the platform-specific criterion.
 - [x] Run local ASR on an actual bounded speech clip and compare its timed output to the public-domain source. A separate real Bilibili clip returned only non-speech hallucination; it is now rejected as `no_speech`. Run frame handoff only with a host declaring the relevant capability.
 - [x] Run the synthetic goal-directed search benchmark against sequential transcript exposure; record returned chars, estimated tokens, tool calls, and latency. Host/provider token use remains `unknown` without host usage telemetry.
+- [x] Add a repeatable multi-URL platform probe that continues after per-site failures and classifies accepted, authentication, network, and unsupported results.
 - [x] Run the full Python suite, frontend build, Skill ZIP build, and final CLI wheel build/install smoke.
 - [x] Update the capability catalog, Skill installation requirements, and architecture status to match only verified behavior.
 - [x] Push `dev` and pass GitHub CI, including the Windows standalone job.

@@ -62,3 +62,13 @@ extractor stages and during transfers; a site metadata request may last up to
 its bounded socket timeout. Envoy does not read browser cookies or bypass login,
 CAPTCHA, or anti-bot challenges. Direct media may still be rejected by its host
 or access policy.
+
+For a repeatable multi-platform connectivity check, use the repository probe:
+
+```bash
+python scripts/probe_platform_urls.py --file urls.txt --timeout-seconds 30
+```
+
+It returns structured per-URL classifications such as `accepted`,
+`auth_required`, `network_error`, and `unsupported`; a blocked URL does not
+prevent the remaining URLs from being tested.
