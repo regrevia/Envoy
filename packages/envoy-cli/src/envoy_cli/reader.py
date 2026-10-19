@@ -1237,19 +1237,20 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             )
             if not segments:
                 already_returned_matches += 1
-            for segment_start, segment_end in segments:
-                segment_text = total_text[segment_start:segment_end]
+            else:
+                segment_text = total_text[start:end]
                 segment_score = _goal_score(segment_text, terms)
                 if not segment_score:
                     already_returned_matches += 1
-                    continue
-                candidates.append({
-                    "start": segment_start,
-                    "end": segment_end,
-                    "text": segment_text,
-                    "score": segment_score,
-                    "hit_offset": _search_hit_offset(segment_text, terms),
-                })
+                else:
+                    candidates.append({
+                        "start": start,
+                        "end": end,
+                        "text": segment_text,
+                        "score": segment_score,
+                        "hit_offset": _search_hit_offset(segment_text, terms),
+                        "unseen_segments": segments,
+                    })
     candidates.sort(key=lambda item: (-item["score"], item["start"]))
     matches_found = lexical_matches
     new_matches = len(candidates)
@@ -1326,7 +1327,13 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         context_limit = min(48, available_chars // 3)
         if available_tokens is not None:
             context_limit = min(context_limit, available_tokens * 4 // 3)
-        window_start = max(0, candidate["hit_offset"] - context_limit)
+        if (
+            stored.get("source_kind") == "video"
+            and len(candidate["text"]) <= available_chars
+        ):
+            window_start = 0
+        else:
+            window_start = max(0, candidate["hit_offset"] - context_limit)
         content, _ = _take_text_budgeted(
             candidate["text"][window_start:],
             0,
@@ -1391,8 +1398,12 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 "unresolved": ["Lexical relevance is a retrieval hint, not semantic verification"],
             },
         ))
-        used_chars += len(content)
-        used_tokens += _estimated_tokens(content)
+        new_segments = _unseen_ranges(start, end, returned_ranges)
+        used_chars += sum(segment_end - segment_start for segment_start, segment_end in new_segments)
+        used_tokens += sum(
+            _estimated_tokens(total_text[segment_start:segment_end])
+            for segment_start, segment_end in new_segments
+        )
         if len(content) < len(candidate["text"]):
             truncated = True
             break
@@ -1405,10 +1416,18 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         )
     state["returned_chars"] = returned_chars + used_chars
     state["returned_tokens"] = returned_tokens + used_tokens
-    search_ranges = returned_ranges + [
-        [block.order, block.order + len(block.content.text)]
-        for block in blocks
-    ]
+    search_ranges = returned_ranges.copy()
+    for block in blocks:
+        search_ranges.extend(
+            [
+                [segment_start, segment_end]
+                for segment_start, segment_end in _unseen_ranges(
+                block.order,
+                block.order + len(block.content.text),
+                returned_ranges,
+                )
+            ]
+        )
     state["returned_ranges"] = _merge_ranges(search_ranges)
     state["search_returned_ranges"] = state["returned_ranges"]
     stored["budget_state"] = state

@@ -2088,6 +2088,50 @@ def test_material_search_returns_window_around_match_in_long_single_line(tmp_pat
     assert result.blocks[0].order > 5000
 
 
+def test_material_search_keeps_timestamp_context_when_match_line_was_partially_returned(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "c" * 24
+    text = "[08:44.918] Every education system has the same hierarchy of subjects."
+    reader._store_material(material_id, {
+        "source_kind": "video",
+        "source_url": "https://example.org/video",
+        "source_revision": "c" * 64,
+        "text": text,
+        "title_text": "Video",
+        "transcript_source": "manual_subtitles",
+        "video_spans": [{
+            "start_offset": 0,
+            "end_offset": len(text),
+            "start_seconds": 524.918,
+            "end_seconds": 528.565,
+        }],
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 12,
+            "returned_tokens": 3,
+            "expansion_rounds": 0,
+            "returned_ranges": [[0, 12]],
+        },
+    })
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "request_id": "timestamp-context-search",
+        "material_id": material_id,
+        "query": "hierarchy subjects",
+        "max_results": 1,
+        "max_chars": 300,
+    }))
+
+    assert result.blocks[0].content.text.startswith("[08:44.918]")
+    assert "hierarchy of subjects" in result.blocks[0].content.text
+    assert result.blocks[0].locator.start_seconds == 524.918
+
+
 def test_expand_remote_offset_uses_remaining_budget_not_absolute_offset(tmp_path, monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ExpandRequest
