@@ -34,6 +34,7 @@ class MaterialKind(str, Enum):
     OCR = "ocr"
     SUBTITLE = "subtitle"
     TRANSCRIPT = "transcript"
+    VIDEO = "video"
     VIDEO_FRAME = "video_frame"
     VIDEO_SEGMENT = "video_segment"
     SUMMARY = "summary"
@@ -42,6 +43,7 @@ class MaterialKind(str, Enum):
 class MaterialOrigin(str, Enum):
     SOURCE_TEXT = "source_text"
     SOURCE_IMAGE = "source_image"
+    SOURCE_VIDEO = "source_video"
     SUBTITLE = "subtitle"
     ASR = "asr"
     OCR = "ocr"
@@ -159,12 +161,14 @@ class ReadRequest(ContractModel):
     retention: Retention = Field(default_factory=Retention)
     host_capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
     ocr_profile: Optional[Literal["fast", "balanced", "quality", "pro"]] = None
+    video_subtitle_language: Optional[str] = Field(default=None, max_length=32)
 
 
 class ExpandRequest(ContractModel):
     protocol_version: Literal["envoy.read/1"] = PROTOCOL_VERSION
     request_id: str = Field(min_length=1, max_length=128)
     material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    session_id: Optional[str] = Field(default=None, max_length=128)
     offset: int = Field(default=0, ge=0)
     max_chars: int = Field(default=4000, ge=128, le=100_000)
     max_response_tokens: Optional[int] = Field(default=None, ge=64, le=25_000)
@@ -177,6 +181,7 @@ class VisualObservationRequest(ContractModel):
     protocol_version: Literal["envoy.observe/1"] = "envoy.observe/1"
     request_id: str = Field(min_length=1, max_length=128)
     material_id: Optional[str] = Field(default=None, pattern=r"^mat-[a-f0-9]{24}$")
+    session_id: Optional[str] = Field(default=None, max_length=128)
     source_url: str = Field(min_length=1, max_length=8192)
     resource_id: str = Field(min_length=1, max_length=256)
     source_block_id: str = Field(min_length=1, max_length=256)
@@ -188,6 +193,7 @@ class VisualObservationHistoryRequest(ContractModel):
     protocol_version: Literal["envoy.observe/1"] = "envoy.observe/1"
     request_id: str = Field(min_length=1, max_length=128)
     material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    session_id: Optional[str] = Field(default=None, max_length=128)
     resource_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     max_items: int = Field(default=8, ge=1, le=16)
     max_chars: int = Field(default=4000, ge=128, le=20_000)
@@ -197,6 +203,7 @@ class MaterialSearchRequest(ContractModel):
     protocol_version: Literal["envoy.search/1"] = "envoy.search/1"
     request_id: str = Field(min_length=1, max_length=128)
     material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    session_id: Optional[str] = Field(default=None, max_length=128)
     query: str = Field(min_length=1, max_length=5000)
     max_results: int = Field(default=5, ge=1, le=20)
     max_chars: int = Field(default=4000, ge=128, le=20_000)
@@ -216,6 +223,13 @@ class ImageContent(ContractModel):
     mime_type: Optional[str] = None
 
 
+class VideoContent(ContractModel):
+    type: Literal["video"] = "video"
+    resource_id: str
+    alt_text: str = ""
+    mime_type: Optional[str] = None
+
+
 class TableContent(ContractModel):
     type: Literal["table"] = "table"
     columns: list[str] = Field(default_factory=list)
@@ -224,7 +238,7 @@ class TableContent(ContractModel):
 
 
 MaterialContent = Annotated[
-    Union[TextContent, ImageContent, TableContent],
+    Union[TextContent, ImageContent, VideoContent, TableContent],
     Field(discriminator="type"),
 ]
 
@@ -407,7 +421,7 @@ class Coverage(ContractModel):
 
 class Need(ContractModel):
     action_id: str
-    type: Literal["inspect_visual", "expand_source", "request_input", "authenticate"]
+    type: Literal["inspect_visual", "inspect_video", "expand_source", "request_input", "authenticate"]
     purpose: str
     resource_ids: list[str] = Field(default_factory=list)
     source_block_ids: list[str] = Field(default_factory=list)

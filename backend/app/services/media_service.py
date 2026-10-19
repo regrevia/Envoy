@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import multiprocessing
+import re
 import shutil
 import subprocess
 import tempfile
@@ -538,18 +539,36 @@ def _run_tesseract_ocr_logic(frame_paths: list[str]):
     return compress_consecutive_ocr_results(results)
 
 
+def _safe_ocr_error(exc: Exception) -> str:
+    message = str(exc)
+    message = re.sub(r"(https?://)[^/@\s]+@", r"\1[REDACTED]@", message, flags=re.IGNORECASE)
+    message = re.sub(
+        r"([?&](?:access_token|api_key|auth|authorization|cookie|password|secret|signature|sig|token)=)[^&\s]+",
+        r"\1[REDACTED]",
+        message,
+        flags=re.IGNORECASE,
+    )
+    return message[:1200] or type(exc).__name__
+
+
+def _attach_ocr_diagnostic(results: list[dict], diagnostic: dict) -> list[dict]:
+    for item in results:
+        item["diagnostic"] = dict(diagnostic)
+    return results
+
+
 def _run_ocr_worker_logic(frame_paths: list[str], profile: str | None = None):
     results = []
+    profile_models = {
+        "fast": ("PP-OCRv6_tiny_det", "PP-OCRv6_tiny_rec"),
+        "balanced": ("PP-OCRv6_small_det", "PP-OCRv6_small_rec"),
+        "quality": ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
+        "pro": ("PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
+    }
+    selected_profile = profile if profile in profile_models else MEDIA_OCR_PROFILE
+    detection_model, recognition_model = profile_models[selected_profile]
     try:
         from paddleocr import PaddleOCR
-        profile_models = {
-            "fast": ("PP-OCRv6_tiny_det", "PP-OCRv6_tiny_rec"),
-            "balanced": ("PP-OCRv6_small_det", "PP-OCRv6_small_rec"),
-            "quality": ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
-            "pro": ("PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
-        }
-        selected_profile = profile if profile in profile_models else MEDIA_OCR_PROFILE
-        detection_model, recognition_model = profile_models[selected_profile]
         try:
             ocr = PaddleOCR(
                 text_detection_model_name=detection_model,
@@ -578,19 +597,56 @@ def _run_ocr_worker_logic(frame_paths: list[str], profile: str | None = None):
                 if items:
                     result["items"] = items
                     result["reading_order"] = "top_left"
+                result["engine"] = "paddleocr"
+                result["diagnostic"] = {
+                    "status": "ready",
+                    "requested_profile": selected_profile,
+                    "used_profile": selected_profile,
+                }
                 results.append(result)
-            except Exception:
-                results.append({"frame": path, "text": "", "confidence": 0.0})
-    except Exception:
-        results = _run_tesseract_ocr_logic(frame_paths)
+            except Exception as exc:
+                results.append({
+                    "frame": path,
+                    "text": "",
+                    "confidence": 0.0,
+                    "engine": "paddleocr",
+                    "diagnostic": {
+                        "status": "frame_failed",
+                        "requested_profile": selected_profile,
+                        "used_profile": selected_profile,
+                        "error": _safe_ocr_error(exc),
+                    },
+                })
+    except Exception as exc:
+        fallback_available = shutil.which("tesseract") is not None
+        results = _attach_ocr_diagnostic(
+            _run_tesseract_ocr_logic(frame_paths),
+            {
+                "status": "fallback" if fallback_available else "model_unavailable",
+                "requested_profile": selected_profile,
+                "used_profile": None,
+                "fallback_engine": "tesseract" if fallback_available else None,
+                "fallback_available": fallback_available,
+                "error": _safe_ocr_error(exc),
+                "suggested_action": "ask_to_use_default_ocr",
+            },
+        )
     return compress_consecutive_ocr_results(results)
 
 
 def _ocr_worker(frame_paths: list[str], result_queue, profile: str | None = None):
     try:
         result_queue.put(_run_ocr_worker_logic(frame_paths, profile=profile))
-    except Exception:
-        result_queue.put(_empty_ocr_results(frame_paths))
+    except Exception as exc:
+        result_queue.put(_attach_ocr_diagnostic(
+            _empty_ocr_results(frame_paths),
+            {
+                "status": "failed",
+                "error": _safe_ocr_error(exc),
+                "requested_profile": profile or MEDIA_OCR_PROFILE,
+                "suggested_action": "ask_to_use_default_ocr",
+            },
+        ))
 
 
 def run_ocr_on_frames(
@@ -609,14 +665,25 @@ def run_ocr_on_frames(
         waited += wait_seconds
         if process.is_alive() and should_cancel is not None and should_cancel():
             _terminate_worker_process(process)
-            return _empty_ocr_results(frame_paths)
+            return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
+                "status": "canceled",
+                "error": "OCR was canceled",
+            })
     if process.is_alive():
         _terminate_worker_process(process)
-        return _empty_ocr_results(frame_paths)
+        return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
+            "status": "timeout",
+            "error": f"OCR worker timed out after {timeout_sec} seconds",
+            "suggested_action": "retry_or_use_default_ocr",
+        })
     try:
         result = result_queue.get_nowait()
     except Empty:
-        return _empty_ocr_results(frame_paths)
+        return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
+            "status": "worker_failed",
+            "error": "OCR worker exited without a result",
+            "suggested_action": "retry_or_use_default_ocr",
+        })
     if isinstance(result, list):
         normalized = []
         for index, item in enumerate(result):
@@ -629,6 +696,8 @@ def run_ocr_on_frames(
                     **({"reading_order": item.get("reading_order")} if item.get("reading_order") else {}),
                     **({"repeat_count": item.get("repeat_count")} if item.get("repeat_count") else {}),
                     **({"frames": item.get("frames")} if isinstance(item.get("frames"), list) else {}),
+                    **({"engine": item.get("engine")} if item.get("engine") else {}),
+                    **({"diagnostic": item.get("diagnostic")} if isinstance(item.get("diagnostic"), dict) else {}),
                 })
         return compress_consecutive_ocr_results(normalized) if normalized else _empty_ocr_results(frame_paths)
     return _empty_ocr_results(frame_paths)

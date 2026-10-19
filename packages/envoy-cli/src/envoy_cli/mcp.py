@@ -9,6 +9,7 @@ from envoy_core.schemas.read_v1 import (
     ExpandRequest,
     MaterialSearchRequest,
     ReadRequest,
+    PROTOCOL_VERSION,
     VisualObservationHistoryRequest,
     VisualObservationRequest,
 )
@@ -50,7 +51,8 @@ TOOLS = [
         "description": (
             "Read a public URL toward the user's stated goal. The source type is "
             "auto-detected; use returned coverage and resources to decide whether "
-            "to expand text or request host visual inspection."
+            "to expand text or request host visual/video inspection. Direct video "
+            "is passed through only when the host advertises native video input."
         ),
         "inputSchema": {
             "type": "object",
@@ -155,7 +157,8 @@ TOOLS = [
         "description": (
             "Find goal-relevant passages in a previously read Envoy material "
             "without expanding through unrelated ranges. Results preserve source "
-            "locators and consume the material's shared response budget."
+            "locators and consume the material's shared response budget. Repeated "
+            "searches omit passages already returned by search."
         ),
         "inputSchema": MaterialSearchRequest.model_json_schema(),
     },
@@ -229,6 +232,18 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
         errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
         code = errors[0].get("code", "unknown") if errors and isinstance(errors[0], dict) else "unknown"
         return f"Envoy read blocked ({code}). See structuredContent.errors for details."
+    if result == "needs_host":
+        needs = payload.get("needs") if isinstance(payload.get("needs"), list) else []
+        action_types = {
+            str(item.get("type"))
+            for item in needs
+            if isinstance(item, dict) and item.get("type")
+        }
+        if "inspect_video" in action_types:
+            return "Envoy read needs_host: inspect the delivered video with native video input; see structuredContent.needs and resources."
+        if "inspect_visual" in action_types:
+            return "Envoy read needs_host: inspect the delivered image; see structuredContent.needs and resources."
+        return "Envoy read needs_host: perform the requested host action in structuredContent.needs."
     return (
         f"Envoy read {result}: {text_chars} text characters, "
         f"{len(blocks)} blocks, {len(resources)} resources. "
@@ -379,53 +394,82 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
         elif name == "envoy_observe_visual":
             request = VisualObservationRequest.model_validate(arguments)
             source_url = _observation_source_url(request.source_url)
-            payload = {
-                "protocol_version": "envoy.read/1",
-                "request_id": request.request_id,
-                "material_id": request.material_id,
-                "execution_state": "completed",
-                "result": "ready",
-                "blocks": [{
-                    "id": f"{request.source_block_id}-observation",
-                    "kind": "paragraph",
-                    "content": {"type": "text", "text": request.observation},
-                    "origin": "host_visual",
-                    "locator": {
-                        "type": "web",
-                        "source_url": source_url,
-                        "block_id": request.source_block_id,
-                        "quote": request.locator_quote or request.observation[:120],
-                    },
-                    "relations": [{
-                        "type": "derived_from",
-                        "target_id": request.source_block_id,
-                        "basis": "host_observation",
-                    }],
-                }],
-                "coverage": {
-                    "modalities": {
-                        "visual_observation": {
-                            "discovered": 1,
-                            "extracted": 1,
-                            "returned": 1,
-                            "observed": 1,
-                            "extraction": "complete",
-                            "details": {
-                                "resource_id": request.resource_id,
-                                "untrusted": True,
-                            },
-                        },
-                    },
-                },
-            }
-            payload["observation_persistence"] = record_visual_observation(
+            persistence = record_visual_observation(
                 request.material_id,
                 source_url,
                 request.resource_id,
                 request.source_block_id,
                 request.observation,
                 request.locator_quote,
+                request.session_id,
             )
+            if not persistence.get("persisted"):
+                error_code = (
+                    "expired_resource"
+                    if persistence.get("reason") == "material_unavailable"
+                    else "internal_error"
+                    if persistence.get("reason") == "storage_unavailable"
+                    else "invalid_request"
+                )
+                payload = {
+                    "protocol_version": "envoy.read/1",
+                    "request_id": request.request_id,
+                    "session_id": request.session_id,
+                    "material_id": request.material_id,
+                    "execution_state": "completed",
+                    "result": "blocked",
+                    "blocks": [],
+                    "errors": [{
+                        "code": error_code,
+                        "message": (
+                            "Visual observation must reference a retained material resource "
+                            "delivered by Envoy; association could not be verified"
+                        ),
+                    }],
+                    "observation_persistence": persistence,
+                }
+            else:
+                payload = {
+                    "protocol_version": "envoy.read/1",
+                    "request_id": request.request_id,
+                    "session_id": request.session_id,
+                    "material_id": request.material_id,
+                    "execution_state": "completed",
+                    "result": "ready",
+                    "blocks": [{
+                        "id": f"{request.source_block_id}-observation",
+                        "kind": "paragraph",
+                        "content": {"type": "text", "text": request.observation},
+                        "origin": "host_visual",
+                        "locator": {
+                            "type": "web",
+                            "source_url": source_url,
+                            "block_id": request.source_block_id,
+                            "quote": request.locator_quote or request.observation[:120],
+                        },
+                        "relations": [{
+                            "type": "derived_from",
+                            "target_id": request.source_block_id,
+                            "basis": "host_observation",
+                        }],
+                    }],
+                    "coverage": {
+                        "modalities": {
+                            "visual_observation": {
+                                "discovered": 1,
+                                "extracted": 1,
+                                "returned": 1,
+                                "observed": 1,
+                                "extraction": "complete",
+                                "details": {
+                                    "resource_id": request.resource_id,
+                                    "untrusted": True,
+                                },
+                            },
+                        },
+                    },
+                    "observation_persistence": persistence,
+                }
         elif name == "envoy_visual_history":
             response = read_visual_observations(
                 VisualObservationHistoryRequest.model_validate(arguments)

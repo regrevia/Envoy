@@ -1,9 +1,11 @@
 # Agent Link Reader 实施状态
 
-更新时间：2026-10-18（Asia/Shanghai）  
+更新时间：2026-10-19（Asia/Shanghai）
 计划基线：[`agent-link-reader-v1.md`](../product/agent-link-reader-v1.md)  
 计划所依据的提交：`fb582660072bfe04c86ddb67b1810a61a3dcbd4b`  
 开发分支：`dev`
+
+当前审阅基线：`origin/dev` 的 `cf3dfbf`，另有未提交的 Skill/MCP 视频交接、证据定位修复、OCR 诊断和发行打包改动。未提交工作树不能视为 GitHub 已发布版本。
 
 ## 状态定义
 
@@ -18,14 +20,14 @@
 | 能力 | 状态 | 证据 / 缺口 |
 | --- | --- | --- |
 | 单一链接输入，后端按链接类型自动分流 | 进行中 | 视频和公开视频/图文走不同处理任务；公开视频 bundle 已开始输出统一材料协议 |
-| 常见视频链接与本地视频处理 | 已验证 | 复用 yt-dlp、浏览器恢复、FFmpeg、转写/OCR 和原有导出链路；来源站点访问限制仍适用 |
+| 常见视频链接与本地视频处理 | 网站已验证，Skill 进行中 | 网站复用 yt-dlp、浏览器恢复、FFmpeg、转写/OCR 和原有导出链路；独立 Skill 工作树新增 yt-dlp 公开字幕时间定位与原生视频宿主交接，但本地真实 YouTube 测试返回需重载提示、本地真实 Bilibili 测试返回 HTTP 412，平台成功样本尚未获得；平台像素/抽帧、通用 ASR 和平台视频闭环仍未完成 |
 | 抖音公开图文正文与配图 | 已验证（开发验收） | 2026-10-18 本地 Envoy 任务读取指定图文，提取 534 字符正文和 4 张原图，图片 OCR 子任务成功，产物 ZIP 校验通过 |
 | 微信公众号和通用网页 | 进行中 | 通用公开页面提取已接入同一入口；微信公众号尚缺固定真实样本验收和长文/延迟资源测试 |
 | PDF、Office、独立音频/图片入口 | 进行中 | 独立 Skill 支持 PDF 文本层、纯文本/Markdown/CSV/JSON 直链和公开图片视觉交接；PDF 按页定位，长纯文本按字符范围续读；无文本层扫描页明确提示 OCR 能力缺口；Office/音视频和扫描页 OCR 仍待接入 |
 | 可供 Agent 消费的 Markdown/HTML/ZIP | 已验证（开发验收） | 公共图文 ZIP 含索引、来源 Markdown、HTML、manifest、`materials.json` 和全部配图；Markdown 适合正文消费，协议 JSON 提供渐进读取和资源定位 |
 | 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；Worker 租约、并发配额、取消贯通仍未达到方案门槛 |
 | 独立无数据库处理核心 | 进行中 | `packages/envoy-core` 已承载第一版 `envoy.read/1` 请求/材料/覆盖/资源 schema；现有 worker 尚未整体迁出 ORM |
-| CLI、宿主 Skill 与 MCP 桥 | 进行中 | 已有开发版 `packages/envoy-cli`、`envoy read/expand/doctor/mcp` 和 `integrations/skills/envoy/SKILL.md`；MCP 支持新版 per-request 版本元数据及多种旧版初始化协商；工具输入 schema 已按独立网页能力裁剪至约 1.2 KB，新版工具结果避免重复传输材料并省略默认字段；CLI/MCP doctor 提供版本化运行时能力目录，Skill 指引 Agent 根据用户目标和覆盖情况选择通用读取、续读或宿主视觉检查；静态 HTML 同一读取内复用 DNS 判定，图片可做 `needs_host` 视觉交接，PDF/text 内容可渐进读取；动态页面、视频/音频和扫描页 OCR 尚未接入独立 Skill |
+| CLI、宿主 Skill 与 MCP 桥 | 进行中 | 已有开发版 `packages/envoy-cli`、`envoy read/expand/doctor/mcp`；MCP 支持新版 per-request 元数据和旧版初始化协商；Skill 按目标指导 read/search/targeted expand。工作树新增字幕解析/时间检索测试、长行命中窗口、跨 search/expand 区间账本、绝对 offset 续读、稳定图像资源 ID、视觉观察关联拒绝和公开视频直链条件交接。平台 extractor 真实链路暂受站点响应限制，不能据此宣称站点字幕支持已验收 |
 | 跨来源质量/费用基准 | 未开始 | 尚无固定 60 来源/120 任务集，也未测得全链路费用改善数字 |
 
 ## 近期执行顺序
@@ -96,6 +98,10 @@
 - 真实长文本验收：IETF RFC 9110 约 503K 字符经已安装 CLI 读取，返回 `partial` 与续读句柄。
 - 长材料与稳定性：首读遵循响应字符预算并明确返回 `partial` 覆盖；来源硬上限也会显式报告；`expand` 从本地快照返回非重叠范围，累计返回范围受 `max_total_response_chars` 约束；网络请求有有限重试与流式字节上限；快照权限为用户私有并遵循请求 TTL（最多 7 天）/100 项清理策略；来源 URL 凭据参数脱敏，签名图片不向宿主暴露。网页内容在 Skill 指令中明确作为不可信数据，不能覆盖 Agent 指令。
 - OCR 配置：当前后端支持 `fast/balanced/quality/pro` 四档 OCR 模型选择，默认 `balanced`；`quality` 使用 PP-OCRv5 server，`pro` 使用 PP-OCRv6 medium，作为当前 Envoy 的最高通用精度档，模型按首次使用按需下载；旧版 PaddleOCR 自动兼容回退，Tesseract 仍作为降级路径；Skill/MCP 的 `ReadRequest` 支持 `ocr_profile`。OCR 进入派生材料协议，不作为默认全量 Agent 上下文。当前本机 PaddleX OCR 模型缓存约 177 MB，实际部署大小随档位和运行时版本变化。
+- OCR 下载诊断（本地改动，故障注入已验）：PaddleOCR 模型初始化/下载错误将保留脱敏错误、所选档位、Tesseract 回退情况和 `ask_to_use_default_ocr` 建议，并进入视频语义材料和任务摘要；真实代理故障尚未在外部网络环境复现。
+- 连续证据账本与会话隔离（本地改动，专项回归已验）：`search` 与 `expand` 共用 source offset 区间账本，visual history/observation/search/expand 校验 session；相同 URL 与 revision 的独立 session 得到不同 material ID。当前文件存储仍无跨进程事务锁/原子预算扣账，不能宣称同 session 并发写入已完全串行化。
+- Skill 平台字幕尝试（本地改动）：有专用 yt-dlp extractor 时只探测元数据并下载公开 VTT/JSON3/SRT 字幕，不下载视频、不读浏览器 Cookie；cue 返回 `video_time` locator。2026-10-19 本地真实 YouTube 返回 `The page needs to be reloaded`，Bilibili 返回 HTTP 412，因此真实平台字幕成功尚未验收；直链 MP4 与字幕解析/搜索时间定位分别有真实 HTTP/离线 fixture 测试。
+- GitHub 安装发行（本地改动，尚未发布）：新增自包含 CLI wheel 构建、Skill 安装说明、Release tag 版本校验及 wheel/Skill ZIP/SHA-256 发布工作流。尚未实际创建 GitHub Release 或验证宿主 MCP 配置自动写入；安装步骤仍需用户明确确认所用宿主。
 
 ## 下一次状态更新必须包括
 

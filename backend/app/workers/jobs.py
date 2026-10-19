@@ -26,7 +26,7 @@ from app.services.train_export_service import export_skill_markdown, export_mark
 from app.services.analysis_service import build_analysis_payload
 from app.services.ollama_service import generate_with_ollama, parse_ollama_json_object
 from app.core.paths import SEGMENT_DIR, FRAME_DIR, AUDIO_DIR, EXPORT_DIR, VIDEO_DOWNLOAD_DIR
-from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, VIDEO_BATCH_MAX_ITEMS, VIDEO_BATCH_MAX_PARALLEL, VIDEO_UNDERSTANDING_WINDOW_FRAMES, VIDEO_UNDERSTANDING_WINDOW_OVERLAP
+from app.core.config import MEDIA_COMMAND_TIMEOUT_SEC, MEDIA_ENABLE_FRAME_EXTRACTION, MEDIA_ENABLE_OCR, MEDIA_FRAME_INTERVAL_SECONDS, MEDIA_MAX_FRAME_COUNT, MEDIA_MAX_SEGMENT_COUNT, MEDIA_OCR_PROFILE, MEDIA_OCR_TIMEOUT_SEC, MEDIA_SEGMENT_SECONDS, MEDIA_TARGET_FRAME_RATE, SAMPLE_GENERATION_BATCH_LIMIT, TEXT_PREPROCESS_CHUNK_CHARS, TEXT_PREPROCESS_CHUNK_OVERLAP_CHARS, VIDEO_BATCH_MAX_ITEMS, VIDEO_BATCH_MAX_PARALLEL, VIDEO_UNDERSTANDING_WINDOW_FRAMES, VIDEO_UNDERSTANDING_WINDOW_OVERLAP
 from app.models.semantic_unit import SemanticUnit
 from app.models.asset import Asset
 from app.models.generated_sample import GeneratedSample
@@ -584,6 +584,21 @@ def _video_frame_config(payload: dict, task: ProcessingTask | None = None):
     }
 
 
+def _video_preprocess_config(parent_config: dict, source_path: str) -> dict:
+    config = parent_config if isinstance(parent_config, dict) else {}
+    child = {
+        "source_path": str(source_path),
+        "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 5),
+        "video_target_frame_rate": config.get("video_target_frame_rate", 0),
+        "video_max_frame_count": config.get("video_max_frame_count", 480),
+        "preserve_media_temp_dirs": True,
+    }
+    profile = config.get("ocr_profile")
+    if profile in {"fast", "balanced", "quality", "pro"}:
+        child["ocr_profile"] = profile
+    return child
+
+
 def _limit_media_segments(segment_paths: list[str], source_path: str, allow_source_fallback: bool = True):
     inputs = [str(path) for path in segment_paths if str(path).strip()]
     if not inputs and allow_source_fallback:
@@ -632,7 +647,13 @@ def _partial_transcription_suffix(transcription_summary: dict):
     return f"; partial transcription: {failed_count}/{max(total, failed_count)} segment(s) failed"
 
 
-def _media_degraded_capabilities(transcription_summary: dict, segment_truncated: bool, transcript_text: str, ocr_text: str):
+def _media_degraded_capabilities(
+    transcription_summary: dict,
+    segment_truncated: bool,
+    transcript_text: str,
+    ocr_text: str,
+    ocr_results: list[dict] | None = None,
+):
     degraded = []
     failed_count = int(transcription_summary.get("failed_count") or 0)
     success_count = int(transcription_summary.get("success_count") or 0)
@@ -644,15 +665,63 @@ def _media_degraded_capabilities(transcription_summary: dict, segment_truncated:
         degraded.append("truncated_segments")
     if not ocr_text:
         degraded.append("ocr_unavailable")
+    diagnostics = [
+        item.get("diagnostic")
+        for item in (ocr_results or [])
+        if isinstance(item, dict) and isinstance(item.get("diagnostic"), dict)
+    ]
+    if any(item.get("status") == "fallback" for item in diagnostics):
+        degraded.append("ocr_fallback")
+    if any(item.get("status") == "frame_failed" for item in diagnostics):
+        degraded.append("ocr_frame_failed")
+    if any(item.get("status") in {"model_unavailable", "failed", "timeout", "worker_failed"} for item in diagnostics):
+        degraded.append("ocr_model_unavailable")
     return degraded
 
 
-def _media_extraction_status(transcription_summary: dict, segment_truncated: bool, transcript_text: str, ocr_text: str):
+def _media_extraction_status(
+    transcription_summary: dict,
+    segment_truncated: bool,
+    transcript_text: str,
+    ocr_text: str,
+    ocr_results: list[dict] | None = None,
+):
     if not transcript_text and not ocr_text:
         return "failed" if int(transcription_summary.get("failed_count") or 0) else "metadata_only"
-    if _media_degraded_capabilities(transcription_summary, segment_truncated, transcript_text, ocr_text):
+    if _media_degraded_capabilities(
+        transcription_summary,
+        segment_truncated,
+        transcript_text,
+        ocr_text,
+        ocr_results,
+    ):
         return "partial_success"
     return "success"
+
+
+def _ocr_diagnostic_summary(diagnostics: list[dict]) -> str:
+    issue = next(
+        (
+            item for item in diagnostics
+            if isinstance(item, dict) and item.get("status") not in {"ready", "canceled"}
+        ),
+        None,
+    )
+    if not issue:
+        return ""
+    profile = str(issue.get("requested_profile") or "selected")
+    error = str(issue.get("error") or "OCR model unavailable").strip()
+    if len(error) > 240:
+        error = error[:237] + "..."
+    fallback = issue.get("fallback_engine")
+    if fallback:
+        if issue.get("fallback_output_empty"):
+            return (
+                f"; {profile} OCR unavailable ({error}); {str(fallback).capitalize()} fallback returned no text; "
+                "ask whether to use default OCR"
+            )
+        return f"; {profile} OCR unavailable ({error}); used {fallback} fallback"
+    return f"; {profile} OCR unavailable ({error}); ask whether to use default OCR"
 
 
 def _decode_pdf_literal(value: bytes) -> str:
@@ -1676,11 +1745,7 @@ def video_to_markdown_job(self, payload: dict):
         if child_task is None or child_task.status not in {"success", "partial_success"}:
             child_config = {
                 **(config.get("preprocess_config") if isinstance(config.get("preprocess_config"), dict) else {}),
-                "source_path": str(download_info["path"]),
-                "video_frame_interval_seconds": config.get("video_frame_interval_seconds", 5),
-                "video_target_frame_rate": config.get("video_target_frame_rate", 0),
-                "video_max_frame_count": config.get("video_max_frame_count", 480),
-                "preserve_media_temp_dirs": True,
+                **_video_preprocess_config(config, str(download_info["path"])),
             }
             child_task = create_task(
                 db,
@@ -3022,6 +3087,13 @@ def preprocess_job(self, payload: dict):
         _safe_update(db, task_id, "running", 10)
         task = db.query(ProcessingTask).filter(ProcessingTask.id == task_id).first() if task_id else None
         asset = db.query(Asset).filter(Asset.id == asset_id).first() if asset_id else None
+        task_input_config = task.input_config if task and isinstance(task.input_config, dict) else {}
+        payload_input_config = payload.get("input_config") if isinstance(payload.get("input_config"), dict) else {}
+        ocr_profile_requested = str(
+            payload_input_config.get("ocr_profile")
+            or task_input_config.get("ocr_profile")
+            or MEDIA_OCR_PROFILE
+        )
         source_path = _resolve_source_path(payload, asset)
         has_previous_preprocess = _has_previous_preprocess_units(db, asset_id, task_id)
         if _is_text_asset(asset):
@@ -3458,7 +3530,25 @@ def preprocess_job(self, payload: dict):
         transcript_text = str(transcription.get("text", "") if isinstance(transcription, dict) else "").strip()
         ocr_text = "\n".join(str(item.get("text", "")).strip() for item in ocr_results if isinstance(item, dict) and str(item.get("text", "")).strip()).strip()
         transcription_summary = _transcription_segment_summary(transcription_results)
-        degraded_capabilities = _media_degraded_capabilities(transcription_summary, segments_truncated, transcript_text, ocr_text)
+        degraded_capabilities = _media_degraded_capabilities(
+            transcription_summary,
+            segments_truncated,
+            transcript_text,
+            ocr_text,
+            ocr_results,
+        )
+        ocr_diagnostics = []
+        seen_ocr_diagnostics = set()
+        for item in ocr_results:
+            diagnostic = item.get("diagnostic") if isinstance(item, dict) else None
+            if not isinstance(diagnostic, dict):
+                continue
+            if diagnostic.get("status") == "fallback" and not ocr_text:
+                diagnostic = {**diagnostic, "fallback_output_empty": True}
+            key = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True)
+            if key not in seen_ocr_diagnostics:
+                seen_ocr_diagnostics.add(key)
+                ocr_diagnostics.append(diagnostic)
         usable_text_sources = []
         if transcript_text:
             usable_text_sources.append("transcript")
@@ -3475,6 +3565,8 @@ def preprocess_job(self, payload: dict):
             "frame_config": frame_config,
             "transcript": transcription,
             "ocr": ocr_results,
+            "ocr_diagnostics": ocr_diagnostics,
+            "ocr_profile_requested": ocr_profile_requested,
             "frame_extraction_skipped": frame_extraction_skipped,
             "frame_extraction_error": frame_extraction_error,
             "audio_extraction_error": audio_extraction_error,
@@ -3495,7 +3587,13 @@ def preprocess_job(self, payload: dict):
             if isinstance(item.get("transcript"), dict) and item["transcript"].get("status") == "failed"
         ]
         semantic_payload.update({
-            "extraction_status": _media_extraction_status(transcription_summary, segments_truncated, transcript_text, ocr_text),
+            "extraction_status": _media_extraction_status(
+                transcription_summary,
+                segments_truncated,
+                transcript_text,
+                ocr_text,
+                ocr_results,
+            ),
             "transcription_success_count": transcription_summary["success_count"],
             "transcription_failed_count": transcription_summary["failed_count"],
             "transcription_failed_segments": transcription_summary["failed_segments"],
@@ -3556,15 +3654,17 @@ def preprocess_job(self, payload: dict):
             "task_id": task_id,
             "extraction_status": semantic_payload.get("extraction_status"),
             "degraded_capabilities": semantic_payload.get("degraded_capabilities", []),
-                "usable_text_sources": semantic_payload.get("usable_text_sources", []),
-                "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
-                "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
-                "target_frame_rate": semantic_payload.get("target_frame_rate", 0),
-                "frame_interval_seconds": semantic_payload.get("frame_interval_seconds"),
-                "max_frame_count": semantic_payload.get("max_frame_count"),
-                "frame_sampling_mode": semantic_payload.get("frame_sampling_mode"),
-                **_media_limit_metadata(),
-            }
+            "ocr_diagnostics": semantic_payload.get("ocr_diagnostics", []),
+            "ocr_profile_requested": semantic_payload.get("ocr_profile_requested"),
+            "usable_text_sources": semantic_payload.get("usable_text_sources", []),
+            "transcription_success_count": semantic_payload.get("transcription_success_count", 0),
+            "transcription_failed_count": semantic_payload.get("transcription_failed_count", 0),
+            "target_frame_rate": semantic_payload.get("target_frame_rate", 0),
+            "frame_interval_seconds": semantic_payload.get("frame_interval_seconds"),
+            "max_frame_count": semantic_payload.get("max_frame_count"),
+            "frame_sampling_mode": semantic_payload.get("frame_sampling_mode"),
+            **_media_limit_metadata(),
+        }
         su = SemanticUnit(id=str(uuid4()), project_id=project_id, asset_id=asset_id, segment_id=None, unit_type="scene", title="preprocess summary", content=json.dumps(semantic_payload, ensure_ascii=False), labels=summary_labels, confidence=0.8)
         db.add(su)
         db.commit()
@@ -3577,7 +3677,7 @@ def preprocess_job(self, payload: dict):
             task_id,
             "success",
             100,
-            result_summary=f"media preprocess done: {transcription_count} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}{_segment_truncation_suffix(segment_input_count, transcription_count)}",
+            result_summary=f"media preprocess done: {transcription_count} segment(s), {len(frame_paths)} frame(s), max {semantic_payload['max_input_seconds']} sec{_partial_transcription_suffix(transcription_summary)}{_segment_truncation_suffix(segment_input_count, transcription_count)}{_ocr_diagnostic_summary(ocr_diagnostics)}",
         )
         return {"status": "preprocessed", "payload": payload, "semantic": semantic_payload}
     except MediaProcessingError as exc:

@@ -13,6 +13,7 @@ from pathlib import Path
 SKILL_VERSION = "0.1.0"
 REQUIRED_FILES = (
     "SKILL.md",
+    "INSTALL.md",
     "references/protocol.md",
 )
 FORBIDDEN_PARTS = {
@@ -40,7 +41,7 @@ def _safe_members(skill_root: Path) -> list[Path]:
     return members
 
 
-def build_bundle(repo_root: Path, output: Path) -> dict:
+def build_bundle(repo_root: Path, output: Path, version: str = SKILL_VERSION) -> dict:
     skill_root = repo_root / "integrations" / "skills" / "envoy"
     if not skill_root.is_dir():
         raise FileNotFoundError(f"Skill directory not found: {skill_root}")
@@ -52,8 +53,9 @@ def build_bundle(repo_root: Path, output: Path) -> dict:
     manifest = {
         "schema_version": "envoy.skill.bundle/1",
         "name": "envoy",
-        "version": SKILL_VERSION,
+        "version": version,
         "entrypoint": "SKILL.md",
+        "installation": "INSTALL.md",
         "references": ["references/protocol.md"],
         "mcp": {"command": "envoy", "args": ["mcp"]},
         "protocol": "envoy.read/1",
@@ -84,10 +86,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Package the credential-free Envoy Skill")
     parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--output", required=True)
+    parser.add_argument("--version", default=SKILL_VERSION)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        result = build_bundle(Path(args.repo_root).resolve(), Path(args.output).resolve())
+        result = build_bundle(
+            Path(args.repo_root).resolve(),
+            Path(args.output).resolve(),
+            args.version,
+        )
     except (OSError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         return 2

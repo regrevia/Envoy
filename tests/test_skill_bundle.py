@@ -26,6 +26,7 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         names = archive.namelist()
         assert names == [
             "envoy-skill.json",
+            "INSTALL.md",
             "SKILL.md",
             "hosts/README.md",
             "hosts/mcp.json",
@@ -33,7 +34,9 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         ]
         manifest = json.loads(archive.read("envoy-skill.json"))
         assert manifest["protocol"] == "envoy.read/1"
+        assert manifest["installation"] == "INSTALL.md"
         assert b"API Key" not in archive.read("SKILL.md")
+        assert b"GitHub Release" in archive.read("INSTALL.md")
         host_config = json.loads(archive.read("hosts/mcp.json"))
         assert host_config["mcpServers"]["envoy"]["args"] == ["mcp"]
 
