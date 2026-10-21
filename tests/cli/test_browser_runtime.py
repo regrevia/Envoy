@@ -38,6 +38,7 @@ class FakeResponse:
 class FakePage:
     def __init__(self, body_text: str):
         self.body_text = body_text
+        self.frames = []
         self.url = "https://example.org/article"
         self.navigated_to = None
         self.routes = []
@@ -50,6 +51,7 @@ class FakePage:
 
     def goto(self, url, **_kwargs):
         self.navigated_to = url
+        self.goto_options = _kwargs
         self.url = url
         return self.goto_response
 
@@ -90,10 +92,16 @@ class FakePage:
                     and "area < viewportArea * 0.98" in script
                     and "dispatchEvent(new MouseEvent" in script
                 )
+                or (
+                    self.chromium.static_login_overlay
+                    and "centeredDialogCard" in script
+                    and "dispatchEvent(new MouseEvent" in script
+                )
             )
         ):
             self.chromium.dismissible_login_overlay = False
             self.chromium.relative_panel_login_overlay = False
+            self.chromium.static_login_overlay = False
             self.body_text = (
                 self.chromium.post_dismissal_text
                 or "视频正文：深圳岗位招聘，工作内容和职位要求如下。"
@@ -143,6 +151,7 @@ class FakeChromium:
         self.visible_text = "岗位：AI 产品经理。公司：示例科技。工作地点：深圳。"
         self.dismissible_login_overlay = False
         self.relative_panel_login_overlay = False
+        self.static_login_overlay = False
         self.reopen_overlay_after_scroll = False
         self.post_dismissal_text = None
         self.evaluated_scripts = []
@@ -182,6 +191,49 @@ def test_public_page_uses_only_headless_browser(tmp_path):
     assert [launch[1]["headless"] for launch in chromium.launches] == [True]
     assert requests == []
     assert chromium.launches[0][0].closed is True
+    assert chromium.launches[0][0].page.goto_options["wait_until"] == "commit"
+
+
+def test_youtube_sign_in_to_confirm_bot_is_detected_as_access_challenge():
+    page = FakePage("Sign in to confirm you're not a bot")
+
+    _title, _text, challenge = browser._page_state(page)
+
+    assert challenge is True
+
+
+def test_browser_uses_system_https_proxy_without_exposing_credentials(monkeypatch):
+    from urllib import request
+
+    monkeypatch.delenv("ENVOY_BROWSER_PROXY", raising=False)
+    monkeypatch.setattr(request, "getproxies", lambda: {
+        "http": "http://proxy.example:8080",
+        "https": "http://proxy.example:8080",
+    })
+
+    assert browser._browser_proxy_server() == "http://proxy.example:8080"
+
+
+def test_browser_does_not_put_proxy_credentials_in_chromium_args(monkeypatch):
+    from urllib import request
+
+    monkeypatch.delenv("ENVOY_BROWSER_PROXY", raising=False)
+    monkeypatch.setattr(request, "getproxies", lambda: {
+        "https": "http://user:secret@proxy.example:8080",
+    })
+
+    assert browser._browser_proxy_server() is None
+
+
+def test_explicit_browser_proxy_overrides_system_proxy(monkeypatch):
+    from urllib import request
+
+    monkeypatch.setenv("ENVOY_BROWSER_PROXY", "socks5://127.0.0.1:7898")
+    monkeypatch.setattr(request, "getproxies", lambda: {
+        "https": "http://system-proxy.example:8080",
+    })
+
+    assert browser._browser_proxy_server() == "socks5://127.0.0.1:7898"
 
 
 def test_dismissible_login_overlay_is_closed_in_headless_browser(tmp_path):
@@ -229,6 +281,58 @@ def test_unmarked_login_overlay_uses_relative_panel_close_in_headless_browser(tm
         and "dispatchEvent(new MouseEvent" in script
         for script in chromium.evaluated_scripts
     )
+
+
+def test_login_overlay_inside_iframe_is_closed_without_showing_browser(tmp_path, monkeypatch):
+    chromium = FakeChromium("视频正文已加载。")
+    chromium.relative_panel_login_overlay = True
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+
+    class LoginFrame:
+        def evaluate(self, script):
+            if "dismiss-login-overlay" not in script:
+                return 0
+            chromium.relative_panel_login_overlay = False
+            chromium.launches[0][0].page.body_text = (
+                "视频正文：公开视频内容和岗位介绍已经加载完成。"
+            )
+            return 1
+
+    chromium.frames = [LoginFrame()]
+    original_launch = chromium.launch_persistent_context
+
+    def launch_with_frame(user_data_dir, **kwargs):
+        context = original_launch(user_data_dir, **kwargs)
+        context.page.frames = chromium.frames
+        return context
+
+    chromium.launch_persistent_context = launch_with_frame
+    result = browser.read_page(
+        "https://video.example/watch/123",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+    )
+
+    assert "公开视频内容" in result.text
+    assert chromium.relative_panel_login_overlay is False
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+
+
+def test_login_overlay_in_static_hashed_card_is_closed_headlessly(tmp_path, monkeypatch):
+    chromium = FakeChromium("视频页面已加载，登录弹窗覆盖播放器。")
+    chromium.static_login_overlay = True
+    chromium.post_dismissal_text = "视频章节和公开播放器内容正常显示。"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+
+    result = browser.read_page(
+        "https://video.example/watch/123",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+    )
+
+    assert "公开播放器内容" in result.text
+    assert chromium.static_login_overlay is False
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
 
 
 def test_login_overlay_appearing_during_lazy_load_is_closed_before_capture(tmp_path):
@@ -410,6 +514,30 @@ def test_reader_preserves_browser_challenge_instead_of_returning_empty_content(
     assert "visible page still requires login" in response.errors[0].message
 
 
+def test_browser_navigation_timeout_is_reported_as_network_error(monkeypatch):
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            reader.PublicPageError("Static request was denied", reader.ErrorCode.AUTH_REQUIRED)
+        ),
+    )
+
+    def navigation_timeout(*_args, **_kwargs):
+        raise TimeoutError("navigation timed out")
+
+    monkeypatch.setattr(browser, "read_page", navigation_timeout)
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "browser-navigation-timeout",
+        "source": {"url": "https://example.org/article"},
+    }))
+
+    assert response.result == ReadResult.BLOCKED
+    assert response.errors[0].code.value == "network_error"
+    assert "navigation timed out" in response.errors[0].message
+
+
 def test_video_extractor_auth_error_falls_back_to_visible_browser_page(monkeypatch):
     source_url = "https://www.douyin.com/video/7698386448961683813"
     page = browser.BrowserPage(
@@ -530,6 +658,20 @@ def test_browser_video_media_candidates_allow_signed_local_use_but_reject_privat
     assert rejected == 1
 
 
+def test_browser_video_media_candidates_preserve_page_video_priority(monkeypatch):
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    page_video = "https://v95-web.example/video.mp4?token=public"
+    incidental_clip = "https://a-effect-cdn.example/animation.mp4"
+
+    selected, rejected = reader._select_browser_video_url(
+        [page_video, incidental_clip],
+        {},
+    )
+
+    assert selected == page_video
+    assert rejected == 0
+
+
 def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
     monkeypatch,
     tmp_path,
@@ -636,6 +778,14 @@ def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
     assert frame.locator.start_seconds == 7.5
     assert response.coverage.modalities["video"].details["transcript_source"] == "asr"
     assert response.coverage.modalities["video"].details["frame_timestamps"] == [7.5]
+    stored = reader._load_matching_material(
+        response.material_id,
+        response.source_revision,
+        request.session_id,
+    )
+    assert stored["source_kind"] == "video"
+    assert stored["transcript_source"] == "asr"
+    assert "岗位地点在深圳" in stored["text"]
 
 
 def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
@@ -706,6 +856,19 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
             content=TextContent(type="text", text="视频章节摘要：招聘岗位"),
             origin=MaterialOrigin.SOURCE_TEXT,
         )],
+        coverage={
+            "unresolved": [
+                "Embedded video resources were discovered but not processed",
+                "The isolated browser read the video page only; no transcript or video-frame inspection was completed",
+            ],
+            "modalities": {
+                "video": {
+                    "unresolved": [
+                        "Browser page was read, but video transcript and frames have not been extracted",
+                    ],
+                },
+            },
+        },
     )
     monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
     downloaded = {}
@@ -740,6 +903,14 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
     assert result.result == ReadResult.PARTIAL
     assert downloaded["url"].endswith("token=secret")
     assert "token=secret" not in result.model_dump_json()
+    assert not any(
+        "video page only" in item or "video resources were discovered but not processed" in item
+        for item in result.coverage.unresolved
+    )
+    assert not any(
+        "have not been extracted" in item
+        for item in result.coverage.modalities["video"].unresolved
+    )
     assert result.coverage.modalities["video"].details["browser_media_url"].endswith(
         "token=%5BREDACTED%5D"
     )

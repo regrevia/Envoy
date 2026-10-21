@@ -512,7 +512,7 @@ def _read_with_isolated_browser(
     except (browser.BrowserRuntimeUnavailable, browser.BrowserReadError) as exc:
         return None, str(exc)
     except Exception as exc:
-        return None, f"Browser fallback failed ({type(exc).__name__})"
+        return None, exc
     if not _is_public_http_url(page.url, dns_cache):
         return None, "The browser resolved the source to a non-public address"
     return page, None
@@ -521,6 +521,8 @@ def _read_with_isolated_browser(
 def _browser_read_failure_code(error) -> ErrorCode:
     from .browser import BrowserChallengeRequired
 
+    if isinstance(error, TimeoutError) or type(error).__name__ == "TimeoutError":
+        return ErrorCode.NETWORK_ERROR
     return (
         ErrorCode.CHALLENGE_REQUIRED
         if isinstance(error, BrowserChallengeRequired)
@@ -552,12 +554,6 @@ def _select_browser_video_url(
             rejected += 1
             continue
         accepted.append(value)
-    accepted.sort(
-        key=lambda value: (
-            0 if urlparse(value).path.lower().endswith((".mp4", ".m4v", ".webm", ".mov", ".ogv")) else 1,
-            value,
-        )
-    )
     return (accepted[0] if accepted else None), rejected
 
 
@@ -640,7 +636,18 @@ def _attach_browser_video_evidence(
         discovered=1,
         extraction="partial",
     )
-    unresolved = list(video_coverage.unresolved)
+    obsolete_video_gaps = {
+        "Browser page was read, but video transcript and frames have not been extracted",
+        "Embedded video was discovered but not processed",
+    }
+    obsolete_coverage_gaps = {
+        "Embedded video resources were discovered but not processed",
+        "The isolated browser read the video page only; no transcript or video-frame inspection was completed",
+    }
+    unresolved = [
+        item for item in video_coverage.unresolved
+        if item not in obsolete_video_gaps
+    ]
     if selected_url is None:
         reason = (
             "Browser media URLs were private, malformed, or otherwise unsafe for local processing"
@@ -687,6 +694,8 @@ def _attach_browser_video_evidence(
     transcript_segments: list[dict] = []
     language = None
     asr_model = None
+    asr_status = None
+    asr_processed_until = None
     asr_elapsed_ms = None
     downloaded_bytes = None
     frame_response = response
@@ -731,6 +740,8 @@ def _attach_browser_video_evidence(
                     transcript_source = "asr" if transcript_segments else "no_speech"
                     language = asr_result.get("language")
                     asr_model = asr_result.get("model")
+                    asr_status = asr_result.get("status")
+                    asr_processed_until = asr_result.get("next_seconds")
                     asr_elapsed_ms = asr_result.get("elapsed_ms")
                     if not transcript_segments:
                         unresolved.append("ASR completed without speech segments")
@@ -797,6 +808,25 @@ def _attach_browser_video_evidence(
                     quality=Quality(engine=f"whisper-{asr_model or 'local'}"),
                 ))
 
+            persisted_transcript = None
+            if transcript_segments:
+                persisted_transcript = _video_subtitle_response(
+                    request,
+                    source_url,
+                    {
+                        "source": "asr",
+                        "title": str(response.blocks[0].content.text)
+                        if response.blocks
+                        and isinstance(response.blocks[0].content, TextContent)
+                        else request.source.label or "Video transcript",
+                        "language": language,
+                        "model": asr_model,
+                        "transcription_status": asr_status,
+                        "processed_until_seconds": asr_processed_until,
+                        "cues": transcript_segments,
+                    },
+                )
+
             video_coverage = video_coverage.model_copy(update={
                 "discovered": 1,
                 "extracted": 1 if transcript_segments or frame_enabled else 0,
@@ -822,7 +852,21 @@ def _attach_browser_video_evidence(
             modalities["video"] = video_coverage
             evidence_response = response.model_copy(update={
                 "blocks": blocks,
-                "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+                **(
+                    {
+                        "material_id": persisted_transcript.material_id,
+                        "source_revision": persisted_transcript.source_revision,
+                    }
+                    if persisted_transcript is not None
+                    else {}
+                ),
+                "coverage": response.coverage.model_copy(update={
+                    "modalities": modalities,
+                    "unresolved": [
+                        item for item in response.coverage.unresolved
+                        if item not in obsolete_coverage_gaps
+                    ],
+                }),
                 "result": ReadResult.PARTIAL,
             })
             if frame_enabled:

@@ -25,7 +25,8 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert exit_code == 0
     assert lines[0]["result"]["protocolVersion"] == "2025-11-25"
-    assert {tool["name"] for tool in lines[1]["result"]["tools"]} == {
+    tools = {tool["name"]: tool for tool in lines[1]["result"]["tools"]}
+    assert set(tools) == {
         "envoy_read",
         "envoy_expand",
         "envoy_search",
@@ -33,6 +34,9 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
         "envoy_observe_visual",
         "envoy_visual_history",
     }
+    assert "needs_host response is a handoff, not a terminal state" in tools["envoy_read"]["description"]
+    assert "inspect every" in tools["envoy_read"]["description"]
+    assert "one observation per inspected resource" in tools["envoy_observe_visual"]["description"]
 
 
 def test_mcp_bridge_hands_direct_video_to_native_video_host(monkeypatch, capsys):
@@ -79,6 +83,30 @@ def test_mcp_bridge_hands_direct_video_to_native_video_host(monkeypatch, capsys)
     assert payload["result"] == "needs_host"
     assert payload["needs"][0]["type"] == "inspect_video"
     assert payload["resources"][0]["delivery"]["uri"].endswith("clip.mp4")
+
+
+def test_mcp_needs_host_visual_text_requires_observe_for_each_resource():
+    from envoy_cli.mcp import _tool_content_text
+
+    text = _tool_content_text({
+        "result": "needs_host",
+        "needs": [{
+            "type": "inspect_visual",
+            "resource_ids": ["frame-a", "frame-b"],
+            "source_block_ids": ["block-a", "block-b"],
+        }],
+    }, modern=True)
+
+    assert "each listed resource" in text
+    assert "envoy_observe_visual" in text
+    assert "material_id" in text
+    assert "resource_id" in text
+    assert "source_block_id" in text
+    assert "session_id" in text
+    assert "source URL" in text
+    assert "not a terminal state" in text
+    assert "do not repeat envoy_read" in text
+    assert "uninspected frames" in text
 
 
 def test_mcp_bridge_rejects_unlinked_visual_observation(capsys):
@@ -514,8 +542,11 @@ def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
     content_text = response["result"]["content"][0]["text"]
     assert len(content_text) < 200
     assert "Use a dedicated worker." not in content_text
-    catalog = response["result"]["structuredContent"]["capabilities"]
-    runtime = response["result"]["structuredContent"]["runtime"]
+    structured = response["result"]["structuredContent"]
+    assert structured["build"]["channel"] == "source-checkout"
+    assert structured["build"]["version"] == structured["cli_version"]
+    catalog = structured["capabilities"]
+    runtime = structured["runtime"]
     assert catalog["schema_version"] == "envoy.capabilities/1"
     assert "static_html" in catalog["inputs"]["supported"]
     assert "standalone_audio" in catalog["inputs"]["unsupported"]

@@ -582,6 +582,9 @@ def test_cli_doctor_is_json_and_does_not_report_secrets(capsys):
     assert exit_code == 0
     response = json.loads(capsys.readouterr().out)
     assert response["tool"] == "envoy"
+    assert response["build"]["channel"] == "source-checkout"
+    assert response["build"]["version"] == response["cli_version"]
+    assert response["build"]["source_revision"] == "working-tree"
     assert response["protocol_version"] == "envoy.read/1"
     assert response["network_reader"] == "public_static_and_supported_media_extractors"
     assert response["capabilities"]["schema_version"] == "envoy.capabilities/1"

@@ -500,6 +500,43 @@ def test_asr_segments_keep_video_time_offsets_and_skip_empty_cues():
     ]
 
 
+def test_whisper_worker_keeps_progress_output_off_protocol_stdout(monkeypatch, capsys):
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import media
+
+    class Model:
+        def transcribe(self, *_args, **_kwargs):
+            print("Detected language: English")
+            return {
+                "language": "en",
+                "segments": [{"start": 0, "end": 1, "text": "Hello"}],
+            }
+
+    monkeypatch.setitem(sys.modules, "whisper", SimpleNamespace(
+        load_model=lambda *_args, **_kwargs: Model(),
+        load_audio=lambda *_args, **_kwargs: [0] * 16_000,
+    ))
+
+    class Connection:
+        def __init__(self):
+            self.events = []
+
+        def send(self, event):
+            self.events.append(event)
+
+        def close(self):
+            pass
+
+    connection = Connection()
+    media._whisper_worker("audio.wav", "base", "/tmp/models", 0, 1, connection)
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "Detected language: English" in captured.err
+    assert connection.events[-1]["event"] == "complete"
+
+
 def test_completed_asr_with_no_speech_is_not_reported_as_success(tmp_path, monkeypatch):
     import multiprocessing
     from envoy_cli import media
@@ -733,6 +770,82 @@ def test_local_asr_returns_partial_checkpoint_when_work_budget_expires(tmp_path,
     assert result["status"] == "partial"
     assert result["next_seconds"] == 60
     assert result["segments"] == [{"start": 1, "end": 2, "text": "First cue"}]
+
+
+def test_asr_model_setup_resumes_partial_download_and_verifies_checksum(
+    tmp_path,
+    monkeypatch,
+):
+    import hashlib
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import media
+
+    payload = b"verified-whisper-model-payload"
+    digest = hashlib.sha256(payload).hexdigest()
+    url = f"https://models.example/{digest}/base.pt"
+    requests = []
+
+    class Response:
+        def __init__(self, body, *, status, fail_after=None):
+            self.body = body
+            self.status = status
+            self.fail_after = fail_after
+            self.read_bytes = 0
+            self.headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, size):
+            if self.fail_after is not None and self.read_bytes >= self.fail_after:
+                raise OSError("connection interrupted")
+            limit = size
+            if self.fail_after is not None:
+                limit = min(limit, self.fail_after - self.read_bytes)
+            chunk = self.body[self.read_bytes:self.read_bytes + limit]
+            self.read_bytes += len(chunk)
+            return chunk
+
+    def urlopen(request, timeout):
+        headers = {key.lower(): value for key, value in request.header_items()}
+        requests.append({"range": headers.get("range"), "timeout": timeout})
+        if len(requests) == 1:
+            return Response(payload, status=200, fail_after=9)
+        assert headers.get("range") == "bytes=9-"
+        return Response(payload[9:], status=206)
+
+    def load_model(model_name, *, device, download_root):
+        model_path = Path(download_root) / f"{model_name}.pt"
+        assert model_path.read_bytes() == payload
+        return object()
+
+    monkeypatch.setattr(media, "asr_model_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(media.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(media, "asr_model_slot", lambda *_args, **_kwargs: _null_context())
+    monkeypatch.setitem(sys.modules, "whisper", SimpleNamespace(
+        _MODELS={"base": url},
+        load_model=load_model,
+    ))
+
+    result = media.prepare_asr_model("base")
+
+    assert result["available"] is True
+    assert [item["range"] for item in requests] == [None, "bytes=9-"]
+    assert (tmp_path / "base.pt").read_bytes() == payload
+    assert not (tmp_path / "base.pt.part").exists()
+
+
+class _null_context:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
 
 
 def test_runtime_status_reports_audio_and_local_asr_capability(monkeypatch):
