@@ -9,7 +9,7 @@ def capability_catalog() -> dict:
     return {
         "schema_version": CAPABILITY_SCHEMA_VERSION,
         "runtime": "standalone_cli_mcp",
-        "credential_access": "disabled",
+        "credential_access": "isolated_envoy_browser_profile_only",
         "inputs": {
             "supported": [
                 "static_html",
@@ -42,6 +42,18 @@ def capability_catalog() -> dict:
                     "id": "platform_video_frames",
                     "requires": "supported yt-dlp, FFmpeg/FFprobe, public downloadable video, scope.include_visual=true, video_input=frames, and image_input=local_file",
                     "otherwise": "missing_capability or partial",
+                },
+                {
+                    "id": "browser_captured_video_evidence",
+                    "requires": "headless browser exposes a safe public media URL; yt-dlp for download; optional FFmpeg/FFprobe for frames and Whisper for ASR",
+                    "behavior": "reuse one bounded media download for timestamped ASR and host-requested sparse frames; Envoy does not infer job locations or entity matches",
+                    "otherwise": "page metadata only or partial",
+                },
+                {
+                    "id": "dynamic_public_pages",
+                    "requires": "Playwright and Chromium installed",
+                    "behavior": "read headlessly; show the Envoy-owned browser only when user login or verification is required",
+                    "otherwise": "missing_capability",
                 },
             ],
             "unsupported": [
@@ -97,7 +109,8 @@ def capability_catalog() -> dict:
         "limits": {
             "network_scope": "public_http_https_only",
             "website_backend_required": False,
-            "dynamic_site_support": False,
-            "browser_or_cookie_access": False,
+            "dynamic_site_support": "conditional",
+            "browser_or_cookie_access": "isolated_envoy_profile_only",
+            "external_browser_profile_access": False,
         },
     }

@@ -1,0 +1,850 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import sys
+import types
+
+import pytest
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-core" / "src"))
+sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-cli" / "src"))
+
+from envoy_cli import browser, reader
+from envoy_cli.media import MediaCapabilityMissing
+from envoy_cli.capabilities import capability_catalog
+from envoy_core.schemas.read_v1 import (
+    ExecutionState,
+    HostDelivery,
+    ImageInputCapability,
+    MaterialBlock,
+    MaterialKind,
+    MaterialOrigin,
+    ReadRequest,
+    ReadResponse,
+    ReadResult,
+    TextContent,
+    VideoLocator,
+)
+
+
+@dataclass
+class FakeResponse:
+    status: int = 200
+
+
+class FakePage:
+    def __init__(self, body_text: str):
+        self.body_text = body_text
+        self.url = "https://example.org/article"
+        self.navigated_to = None
+        self.routes = []
+        self.goto_response = FakeResponse()
+        self.context = None
+        self.chromium = None
+
+    def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+    def goto(self, url, **_kwargs):
+        self.navigated_to = url
+        self.url = url
+        return self.goto_response
+
+    def wait_for_load_state(self, *_args, **_kwargs):
+        return None
+
+    def wait_for_timeout(self, _milliseconds):
+        if self.context and self.context.headless is False:
+            if self.chromium.visible_text is not None:
+                self.body_text = self.chromium.visible_text
+
+    def evaluate(self, script):
+        self.chromium.evaluated_scripts.append(script)
+        if (
+            self.context
+            and self.context.headless
+            and "window.scrollTo" in script
+            and self.chromium.reopen_overlay_after_scroll
+        ):
+            self.chromium.reopen_overlay_after_scroll = False
+            self.chromium.relative_panel_login_overlay = True
+            self.body_text = (
+                "视频章节摘要：深圳岗位招聘，登录后免费畅享高清视频，验证码登录"
+            )
+            return None
+        if (
+            self.context
+            and self.context.headless
+            and "dismiss-login-overlay" in script
+            and (
+                (
+                    self.chromium.dismissible_login_overlay
+                    and '["fixed", "absolute"]' in script
+                )
+                or (
+                    self.chromium.relative_panel_login_overlay
+                    and "svg" in script
+                    and "area < viewportArea * 0.98" in script
+                    and "dispatchEvent(new MouseEvent" in script
+                )
+            )
+        ):
+            self.chromium.dismissible_login_overlay = False
+            self.chromium.relative_panel_login_overlay = False
+            self.body_text = (
+                self.chromium.post_dismissal_text
+                or "视频正文：深圳岗位招聘，工作内容和职位要求如下。"
+            )
+            return 1
+        return 0
+
+    def title(self):
+        return "Example article"
+
+    def locator(self, selector):
+        assert selector == "body"
+        return self
+
+    def inner_text(self, **_kwargs):
+        return self.body_text
+
+    def content(self):
+        return f"<html><head><title>{self.title()}</title></head><body>{self.body_text}</body></html>"
+
+
+class FakeContext:
+    def __init__(self, headless, initial_text):
+        self.headless = headless
+        self.page = FakePage(initial_text)
+        self.page.context = self
+        self.closed = False
+        self.routes = []
+
+    @property
+    def pages(self):
+        return [self.page]
+
+    def new_page(self):
+        return self.page
+
+    def close(self):
+        self.closed = True
+
+    def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+
+class FakeChromium:
+    def __init__(self, initial_text):
+        self.initial_text = initial_text
+        self.visible_text = "岗位：AI 产品经理。公司：示例科技。工作地点：深圳。"
+        self.dismissible_login_overlay = False
+        self.relative_panel_login_overlay = False
+        self.reopen_overlay_after_scroll = False
+        self.post_dismissal_text = None
+        self.evaluated_scripts = []
+        self.launches = []
+
+    def launch_persistent_context(self, user_data_dir, **kwargs):
+        context = FakeContext(kwargs["headless"], self.initial_text)
+        context.user_data_dir = user_data_dir
+        context.page.chromium = self
+        self.launches.append((context, kwargs))
+        return context
+
+
+class FakePlaywrightManager:
+    def __init__(self, chromium):
+        self.chromium = chromium
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+
+def test_public_page_uses_only_headless_browser(tmp_path):
+    chromium = FakeChromium("A public article with enough readable content.")
+    requests = []
+
+    result = browser.read_page(
+        "https://example.org/article",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+        on_user_action=requests.append,
+    )
+
+    assert result.text == "A public article with enough readable content."
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+    assert requests == []
+    assert chromium.launches[0][0].closed is True
+
+
+def test_dismissible_login_overlay_is_closed_in_headless_browser(tmp_path):
+    chromium = FakeChromium("请登录后继续观看")
+    chromium.dismissible_login_overlay = True
+
+    result = browser.read_page(
+        "https://www.douyin.com/video/7698386448961683813",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+    )
+
+    assert "深圳岗位招聘" in result.text
+    assert chromium.dismissible_login_overlay is False
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+    assert chromium.launches[0][0].closed is True
+    assert any("dismiss-login-overlay" in script for script in chromium.evaluated_scripts)
+
+
+def test_unmarked_login_overlay_uses_relative_panel_close_in_headless_browser(tmp_path):
+    chromium = FakeChromium("登录后免费畅享高清视频")
+    chromium.relative_panel_login_overlay = True
+    chromium.post_dismissal_text = (
+        "视频正文：深圳岗位招聘，工作内容和职位要求如下。"
+        "请先登录后发表评论"
+    )
+    requests = []
+
+    result = browser.read_page(
+        "https://www.douyin.com/video/7698386448961683813",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+        on_user_action=requests.append,
+        max_work_seconds=1,
+    )
+
+    assert "深圳岗位招聘" in result.text
+    assert chromium.relative_panel_login_overlay is False
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+    assert requests == []
+    assert chromium.launches[0][0].closed is True
+    assert any(
+        "svg" in script
+        and "area < viewportArea * 0.98" in script
+        and "dispatchEvent(new MouseEvent" in script
+        for script in chromium.evaluated_scripts
+    )
+
+
+def test_login_overlay_appearing_during_lazy_load_is_closed_before_capture(tmp_path):
+    chromium = FakeChromium("视频页面已加载。")
+    chromium.reopen_overlay_after_scroll = True
+    chromium.relative_panel_login_overlay = False
+    chromium.post_dismissal_text = (
+        "视频章节摘要：深圳岗位招聘，相关企业和岗位如下。"
+        "请先登录后发表评论"
+    )
+    requests = []
+
+    result = browser.read_page(
+        "https://www.douyin.com/video/7698386448961683813",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+        on_user_action=requests.append,
+        max_work_seconds=1,
+    )
+
+    assert "深圳岗位招聘" in result.text
+    assert "登录后免费畅享高清视频" not in result.text
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+    assert requests == []
+
+
+def test_access_challenge_escalates_to_visible_profile_and_resumes(tmp_path):
+    chromium = FakeChromium("安全验证，请完成登录后继续。")
+    requests = []
+
+    result = browser.read_page(
+        "https://example.org/article",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+        on_user_action=requests.append,
+        max_work_seconds=5,
+    )
+
+    assert result.text == "岗位：AI 产品经理。公司：示例科技。工作地点：深圳。"
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True, False]
+    assert chromium.launches[0][0].closed is True
+    assert chromium.launches[1][0].closed is True
+    assert requests == ["https://example.org/article"]
+    assert all(
+        Path(context.user_data_dir) == tmp_path / "profile"
+        for context, _kwargs in chromium.launches
+    )
+
+
+def test_unresolved_challenge_fails_closed_after_visible_browser_timeout(tmp_path):
+    chromium = FakeChromium("安全验证，请完成登录后继续。")
+    chromium.visible_text = None
+
+    with pytest.raises(browser.BrowserReadError, match="still requires login"):
+        browser.read_page(
+            "https://example.org/article",
+            profile_dir=tmp_path / "profile",
+            playwright_factory=lambda: FakePlaywrightManager(chromium),
+            max_work_seconds=1,
+        )
+
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True, False]
+    assert all(context.closed for context, _kwargs in chromium.launches)
+
+
+@pytest.mark.parametrize(
+    "initial_html",
+    [
+        "<html><title>Security verification</title><body>安全验证，请完成登录后继续。</body></html>",
+        "<html><title>Article</title><body></body></html>",
+    ],
+)
+def test_reader_uses_browser_snapshot_for_challenge_or_empty_html(
+    initial_html,
+    monkeypatch,
+    tmp_path,
+):
+    source_url = "https://example.org/article"
+    browser_page = browser.BrowserPage(
+        url=source_url,
+        title="Article",
+        text="岗位：AI 产品经理。公司：示例科技。工作地点：深圳。",
+        html=(
+            "<html><title>Article</title><body><p>"
+            "岗位：AI 产品经理。公司：示例科技。工作地点：深圳。"
+            "</p></body></html>"
+        ),
+    )
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (source_url, initial_html))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setenv("ENVOY_BROWSER_PROFILE_DIR", str(tmp_path / "profile"))
+    calls = []
+
+    def fake_read_page(url, **kwargs):
+        calls.append((url, kwargs))
+        return browser_page
+
+    monkeypatch.setattr(browser, "read_page", fake_read_page)
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "browser-fallback",
+        "source": {"url": source_url},
+        "goal": "Find the role and company",
+    }))
+
+    assert response.result.value == "ready"
+    assert any(
+        block.content.type == "text"
+        and "AI 产品经理" in block.content.text
+        for block in response.blocks
+    )
+    assert response.coverage.modalities["text"].details["reader"] == "isolated_chromium"
+    assert calls and calls[0][0] == source_url
+    assert calls[0][1]["max_work_seconds"] > 0
+
+
+def test_reader_uses_browser_after_http_auth_required(monkeypatch):
+    source_url = "https://example.org/article"
+    browser_page = browser.BrowserPage(
+        url=source_url,
+        title="Article",
+        text="A public article rendered in the isolated browser with enough readable text.",
+        html=(
+            "<html><title>Article</title><body><p>"
+            "A public article rendered in the isolated browser with enough readable text."
+            "</p></body></html>"
+        ),
+    )
+
+    def require_auth(*_args, **_kwargs):
+        raise reader.PublicPageError("The server requires access", reader.ErrorCode.AUTH_REQUIRED)
+
+    monkeypatch.setattr(reader, "_fetch_html", require_auth)
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: browser_page)
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "browser-auth-fallback",
+        "source": {"url": source_url},
+    }))
+
+    assert response.result.value == "ready"
+
+
+def test_reader_preserves_browser_challenge_instead_of_returning_empty_content(
+    monkeypatch,
+):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    monkeypatch.setattr(reader, "has_specialized_extractor", lambda _url: True)
+    monkeypatch.setattr(
+        reader,
+        "extract_public_subtitles",
+        lambda *_args, **_kwargs: {
+            "status": "failed",
+            "error": "Fresh cookies are required",
+        },
+    )
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args, **_kwargs: (source_url, "<html><body></body></html>"),
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+
+    def challenge_timeout(*_args, **_kwargs):
+        raise browser.BrowserChallengeRequired(
+            "The visible page still requires login or security verification; "
+            "complete it in Envoy's browser and retry the link"
+        )
+
+    monkeypatch.setattr(browser, "read_page", challenge_timeout)
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "douyin-browser-challenge",
+        "source": {"url": source_url},
+        "goal": "Read the job details in the video",
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "challenge_required"
+    assert response.errors[0].action_required is True
+    assert "visible page still requires login" in response.errors[0].message
+
+
+def test_video_extractor_auth_error_falls_back_to_visible_browser_page(monkeypatch):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    page = browser.BrowserPage(
+        url=source_url,
+        title="Douyin video",
+        text="视频标题：工作介绍和招聘岗位详细信息，请查看完整职位和企业介绍。",
+        html="<html><title>Douyin video</title><body>视频标题：工作介绍和招聘岗位详细信息，请查看完整职位和企业介绍。</body></html>",
+    )
+    monkeypatch.setattr(reader, "has_specialized_extractor", lambda _url: True)
+    monkeypatch.setattr(
+        reader,
+        "extract_public_subtitles",
+        lambda *_args, **_kwargs: {
+            "status": "failed",
+            "error": "Fresh cookies are required",
+        },
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: pytest.fail(
+        "browser-rendered page should be parsed without a second static request"
+    ))
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "douyin-extractor-browser-fallback",
+        "source": {"url": source_url, "kind": "video"},
+        "goal": "Find the job title in the video",
+    }))
+
+    assert response.result.value == "partial"
+    assert response.coverage.modalities["text"].details["reader"] == "isolated_chromium"
+    assert "no transcript or video-frame inspection" in " ".join(response.coverage.unresolved)
+
+
+def test_read_public_page_routes_browser_captured_video_to_evidence_upgrade(monkeypatch):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    media_url = "https://cdn.example.test/public-video.mp4"
+    page = browser.BrowserPage(
+        url=source_url,
+        title="Douyin video",
+        text="视频章节摘要：招聘岗位及章节时间码信息已成功加载。",
+        html="<html><title>Douyin video</title><body>视频章节摘要：招聘岗位及章节时间码信息已成功加载。</body></html>",
+        media_urls=(media_url,),
+    )
+    observed = {}
+    monkeypatch.setattr(reader, "has_specialized_extractor", lambda _url: True)
+    monkeypatch.setattr(reader, "extract_public_subtitles", lambda *_args, **_kwargs: {
+        "status": "failed",
+        "error": "Fresh cookies are required",
+    })
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+
+    def attach(request, url, urls, response, **kwargs):
+        observed.update({"url": url, "media_urls": urls, "response": response})
+        return response
+
+    monkeypatch.setattr(reader, "_attach_browser_video_evidence", attach)
+    monkeypatch.setattr(reader, "_read_video_asr", lambda *_args, **_kwargs: pytest.fail(
+        "browser-captured video should use the unified video pipeline"
+    ))
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
+        source_url,
+        "<html><title>Video</title><body>视频章节摘要：招聘岗位</body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "douyin-video-evidence-pipeline",
+        "source": {"url": source_url, "kind": "video"},
+    }))
+
+    assert "url" in observed, response.model_dump(mode="json")
+    assert observed["url"] == source_url
+    assert observed["media_urls"] == [media_url]
+    assert observed["response"].result == ReadResult.PARTIAL
+    assert response.result == ReadResult.PARTIAL
+
+
+def test_video_extractor_auth_error_preserves_browser_challenge_type(monkeypatch):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    monkeypatch.setattr(reader, "has_specialized_extractor", lambda _url: True)
+    monkeypatch.setattr(
+        reader,
+        "extract_public_subtitles",
+        lambda *_args, **_kwargs: {
+            "status": "failed",
+            "error": "Fresh cookies are required",
+        },
+    )
+    monkeypatch.setattr(
+        browser,
+        "read_page",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            browser.BrowserChallengeRequired("The visible page still requires login or security verification")
+        ),
+    )
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "douyin-extractor-challenge",
+        "source": {"url": source_url, "kind": "video"},
+    }))
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "challenge_required"
+
+
+def test_browser_video_media_candidates_allow_signed_local_use_but_reject_private_urls(monkeypatch):
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda url, _cache=None: not url.startswith(
+        "http://127.0.0.1"
+    ))
+
+    selected, rejected = reader._select_browser_video_url([
+        "https://cdn.example.test/video.mp4?token=secret",
+        "http://127.0.0.1/private.mp4",
+    ], {})
+
+    assert selected == "https://cdn.example.test/video.mp4?token=secret"
+    assert rejected == 1
+
+
+def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
+    monkeypatch,
+    tmp_path,
+):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    media_url = "https://cdn.example.test/video.mp4"
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-evidence",
+        "session_id": "video-session",
+        "source": {"url": source_url, "kind": "video"},
+        "goal": "Extract all video evidence",
+        "host_capabilities": {"image_input": "local_file", "video_input": "frames"},
+        "budget": {
+            "max_visual_inputs": 2,
+            "max_visual_pixels_per_input": 400,
+            "max_total_visual_pixels": 800,
+            "max_download_bytes": 4096,
+        },
+    })
+    material_id = "mat-" + "a" * 24
+    page_block = MaterialBlock(
+        id="blk-body-0001",
+        kind=MaterialKind.PARAGRAPH,
+        content=TextContent(type="text", text="00:10 第二章：深圳岗位介绍"),
+        origin=MaterialOrigin.SOURCE_TEXT,
+    )
+    page_response = ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=material_id,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL,
+        blocks=[page_block],
+    )
+    video_path = tmp_path / "download.mp4"
+    video_path.write_bytes(b"video")
+    calls = []
+
+    def download(url, output, **kwargs):
+        calls.append(("download", url, kwargs["max_download_bytes"]))
+        return {
+            "path": str(video_path),
+            "duration": 30,
+            "downloaded_bytes": 5,
+            "elapsed_ms": 10,
+        }
+
+    def transcribe(path, **kwargs):
+        calls.append(("asr", path))
+        return {
+            "status": "success",
+            "language": "zh",
+            "model": "base",
+            "duration_seconds": 30,
+            "elapsed_ms": 20,
+            "segments": [
+                {"start": 8.0, "end": 11.0, "text": "岗位地点在深圳。"},
+            ],
+        }
+
+    def extract(path, output, timestamps, **kwargs):
+        calls.append(("frames", list(timestamps)))
+        Path(output).mkdir(parents=True, exist_ok=True)
+        frame_path = Path(output) / "frame.jpg"
+        frame_path.write_bytes(b"frame")
+        return [{
+            "path": str(frame_path),
+            "timestamp": timestamps[0],
+            "width_px": 20,
+            "height_px": 20,
+            "pixels": 400,
+            "size_bytes": 5,
+            "sha256": "b" * 64,
+        }]
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", download)
+    monkeypatch.setattr(reader, "probe_media_duration", lambda *_args, **_kwargs: 30)
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": True,
+        "asr_model_available": True,
+        "asr_model": "base",
+    })
+    monkeypatch.setattr(reader, "asr_model_cache_dir", lambda: tmp_path / "models")
+    monkeypatch.setattr(reader, "transcribe_audio_file", transcribe)
+    monkeypatch.setattr(reader, "extract_video_frames", extract)
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader._attach_browser_video_evidence(
+        request,
+        source_url,
+        [media_url],
+        page_response,
+        duration_seconds=30,
+    )
+
+    assert calls[0][0] == "download"
+    assert [call[0] for call in calls] == ["download", "asr", "frames"]
+    transcript = next(block for block in response.blocks if block.origin == MaterialOrigin.ASR)
+    assert transcript.locator.type == "video_time"
+    assert transcript.locator.start_seconds == 8.0
+    frame = next(block for block in response.blocks if block.kind == MaterialKind.VIDEO_FRAME)
+    assert frame.locator.type == "video_time"
+    assert frame.locator.start_seconds == 7.5
+    assert response.coverage.modalities["video"].details["transcript_source"] == "asr"
+    assert response.coverage.modalities["video"].details["frame_timestamps"] == [7.5]
+
+
+def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
+    monkeypatch,
+    tmp_path,
+):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    media_url = "https://cdn.example.test/video.mp4"
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-no-capabilities",
+        "source": {"url": source_url, "kind": "video"},
+    })
+    page_response = ReadResponse(
+        request_id=request.request_id,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL,
+    )
+    video_path = tmp_path / "download.mp4"
+    video_path.write_bytes(b"video")
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", lambda *_args, **_kwargs: {
+        "path": str(video_path),
+        "duration": 30,
+        "downloaded_bytes": 5,
+        "elapsed_ms": 10,
+    })
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": False,
+        "asr_model_available": False,
+        "asr_model": "base",
+    })
+    monkeypatch.setattr(reader, "extract_video_frames", lambda *_args, **_kwargs: pytest.fail(
+        "frames must not be delivered when the host has not declared image capability"
+    ))
+
+    response = reader._attach_browser_video_evidence(
+        request,
+        source_url,
+        [media_url],
+        page_response,
+        duration_seconds=30,
+    )
+
+    assert response.result == ReadResult.PARTIAL
+    assert response.coverage.modalities["video"].extraction == "partial"
+    assert "ASR is unavailable" in " ".join(response.coverage.modalities["video"].unresolved)
+    assert "host did not declare" in " ".join(response.coverage.modalities["video"].unresolved)
+
+
+def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
+    monkeypatch,
+    tmp_path,
+):
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-signed-source",
+        "source": {
+            "url": "https://www.douyin.com/video/7698386448961683813",
+            "kind": "video",
+        },
+    })
+    response = ReadResponse(
+        request_id=request.request_id,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL,
+        blocks=[MaterialBlock(
+            id="page-summary",
+            kind=MaterialKind.PARAGRAPH,
+            content=TextContent(type="text", text="视频章节摘要：招聘岗位"),
+            origin=MaterialOrigin.SOURCE_TEXT,
+        )],
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    downloaded = {}
+
+    def download(url, output, **kwargs):
+        downloaded["url"] = url
+        video = Path(output) / "video.mp4"
+        video.write_bytes(b"video")
+        return {
+            "path": str(video),
+            "duration": 10,
+            "downloaded_bytes": 5,
+            "elapsed_ms": 1,
+        }
+
+    monkeypatch.setattr(reader, "download_video_for_frames", download)
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": False,
+        "asr_model_available": False,
+        "asr_model": "base",
+    })
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    result = reader._attach_browser_video_evidence(
+        request,
+        request.source.url,
+        ["https://cdn.example.test/video.mp4?token=secret"],
+        response,
+        duration_seconds=None,
+    )
+
+    assert result.result == ReadResult.PARTIAL
+    assert downloaded["url"].endswith("token=secret")
+    assert "token=secret" not in result.model_dump_json()
+    assert result.coverage.modalities["video"].details["browser_media_url"].endswith(
+        "token=%5BREDACTED%5D"
+    )
+    assert any(block.id == "page-summary" for block in result.blocks)
+
+
+def test_browser_network_guard_blocks_private_redirect_targets(monkeypatch):
+    class Request:
+        url = "http://127.0.0.1/private"
+
+    class Route:
+        request = Request()
+        continued = False
+        aborted = None
+
+        def continue_(self):
+            self.continued = True
+
+        def abort(self, reason):
+            self.aborted = reason
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: False)
+    route = Route()
+
+    browser._guard_route(route, {})
+
+    assert route.continued is False
+    assert route.aborted == "blockedbyclient"
+
+
+def test_browser_profile_is_created_with_user_only_permissions(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Windows profile permissions inherit from the user's home directory")
+    profile = tmp_path / "private-profile"
+    monkeypatch.setenv("ENVOY_BROWSER_PROFILE_DIR", str(profile))
+
+    assert browser.browser_profile_dir() == profile
+    assert profile.is_dir()
+    assert profile.stat().st_mode & 0o777 == 0o700
+
+
+def test_capability_catalog_explains_headless_and_interactive_browser_modes():
+    catalog = capability_catalog()
+    browser_capability = next(
+        item
+        for item in catalog["inputs"]["conditional"]
+        if item["id"] == "dynamic_public_pages"
+    )
+
+    assert "read headlessly" in browser_capability["behavior"]
+    assert "show the Envoy-owned browser only" in browser_capability["behavior"]
+    assert catalog["limits"]["external_browser_profile_access"] is False
+
+
+def test_browser_runtime_status_reports_missing_playwright(monkeypatch):
+    real_import = __import__
+
+    def import_without_playwright(name, *args, **kwargs):
+        if name == "playwright" or name.startswith("playwright."):
+            raise ImportError("not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", import_without_playwright)
+
+    status = browser.browser_runtime_status()
+
+    assert status["installed"] is False
+    assert status["ready"] is False
+    assert status["browser"] == "chromium"
+
+
+def test_browser_runtime_status_reports_installed_chromium(monkeypatch, tmp_path):
+    executable = tmp_path / "chromium"
+    executable.write_text("browser")
+
+    class FakeSyncPlaywright:
+        def __enter__(self):
+            return types.SimpleNamespace(
+                chromium=types.SimpleNamespace(executable_path=str(executable))
+            )
+
+        def __exit__(self, *_args):
+            return None
+
+    playwright_package = types.ModuleType("playwright")
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.sync_playwright = FakeSyncPlaywright
+    monkeypatch.setitem(sys.modules, "playwright", playwright_package)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+
+    status = browser.browser_runtime_status()
+
+    assert status["installed"] is True
+    assert status["ready"] is True
+
+
+def test_cli_doctor_reports_browser_runtime(monkeypatch, capsys):
+    from envoy_cli import cli
+
+    monkeypatch.setattr(
+        cli.browser_runtime,
+        "browser_runtime_status",
+        lambda: {"installed": True, "browser": "chromium", "ready": False},
+    )
+
+    assert cli.main(["doctor", "--json"]) == 0
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert payload["runtime"]["browser"]["ready"] is False

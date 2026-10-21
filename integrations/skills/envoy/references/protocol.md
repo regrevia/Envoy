@@ -4,8 +4,10 @@ The independent Skill uses `envoy.read/1`.
 
 If the requested operation or runtime support is unclear, inspect
 `envoy_doctor`'s `capabilities` object before choosing a follow-up. It is
-versioned as `envoy.capabilities/1` and describes the standalone runtime; it
-does not imply capabilities available only in the Envoy website.
+versioned as `envoy.capabilities/1` and describes the standalone runtime.
+Dynamic public HTML is read by Envoy's isolated Chromium when that runtime is
+installed. The host does not need to provide a browser or share its browser
+profile.
 
 ## Minimal request
 

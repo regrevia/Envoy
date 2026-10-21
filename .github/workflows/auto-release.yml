@@ -1,0 +1,103 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-main
+  cancel-in-progress: false
+
+jobs:
+  tag-version:
+    name: Tag a new package version
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect a new matching package version
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          paths = (
+              "packages/envoy-cli/pyproject.toml",
+              "packages/envoy-core/pyproject.toml",
+          )
+          current = [
+              tomllib.loads(Path(path).read_text(encoding="utf-8"))["project"]["version"]
+              for path in paths
+          ]
+          if current[0] != current[1]:
+              raise SystemExit(f"CLI/core versions must match, got {current}")
+          version = current[0]
+          if not re.fullmatch(
+              r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)",
+              version,
+          ):
+              raise SystemExit(f"Expected a stable x.y.z package version, got {version}")
+
+          before_sha = os.environ["BEFORE_SHA"]
+          previous = []
+          if before_sha and set(before_sha) != {"0"}:
+              for path in paths:
+                  content = subprocess.check_output(
+                      ["git", "show", f"{before_sha}:{path}"],
+                      text=True,
+                      stderr=subprocess.DEVNULL,
+                  )
+                  previous.append(tomllib.loads(content)["project"]["version"])
+          if previous and previous[0] == current[0] and previous[1] == current[1]:
+              print(f"Package version unchanged at {version}; no release tag needed.")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write("release=false\n")
+              raise SystemExit(0)
+
+          tag = f"v{version}"
+          existing = subprocess.run(
+              ["git", "ls-remote", "--exit-code", "--tags", "origin", f"refs/tags/{tag}"],
+              check=False,
+              capture_output=True,
+              text=True,
+          )
+          if existing.returncode == 0:
+              print(f"Release tag {tag} already exists; leaving it unchanged.")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write("release=false\n")
+              raise SystemExit(0)
+
+          if existing.returncode != 2:
+              raise SystemExit(existing.stderr or "Could not check the remote release tag")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"release=true\ntag={tag}\n")
+          PY
+      - name: Push release tag
+        if: steps.version.outputs.release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "$RELEASE_TAG"
+  publish-release:
+    needs: tag-version
+    if: needs.tag-version.outputs.release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      release_tag: ${{ needs.tag-version.outputs.tag }}

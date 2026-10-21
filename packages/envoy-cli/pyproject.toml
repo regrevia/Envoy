@@ -12,6 +12,7 @@ dependencies = [
   "pypdf>=5.1,<6",
   "pydantic>=2.10,<3",
   "yt-dlp>=2026.8.19,<2027",
+  "playwright>=1.52,<2",
 ]
 
 [project.optional-dependencies]

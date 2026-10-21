@@ -592,6 +592,7 @@ def test_cli_doctor_is_json_and_does_not_report_secrets(capsys):
     assert response["capabilities"]["inputs"]["conditional"][2]["id"] == "platform_video_subtitles"
     assert response["capabilities"]["inputs"]["conditional"][3]["id"] == "local_video_asr"
     assert response["capabilities"]["inputs"]["conditional"][4]["id"] == "platform_video_frames"
+    assert response["capabilities"]["inputs"]["conditional"][5]["id"] == "browser_captured_video_evidence"
     assert "timed_video_transcript" in response["capabilities"]["outputs"]
     assert "leased_source_timed_video_frames" in response["capabilities"]["outputs"]
     assert response["runtime"]["yt_dlp"]

@@ -80,9 +80,14 @@ npm run dev
 
 ```bash
 python -m pip install -e packages/envoy-core -e packages/envoy-cli
+envoy browser setup
 envoy doctor --json
 printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{"url":"https://example.org/"}}' | envoy read --request-json -
 ```
+
+`envoy browser setup` installs Chromium for Envoy's isolated page reader. Public
+pages are read headlessly; the Envoy browser window appears only when a page
+needs a user login or verification action.
 
 开发环境生成无凭据 Skill 包与自包含 CLI wheel：
 
@@ -91,7 +96,7 @@ python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
 python scripts/build_envoy_cli_wheel.py --output-dir dist
 ```
 
-面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。版本 tag 的 GitHub Release 工作流会发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`；wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。工作流已加入，但首个 GitHub Release 尚未创建。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
+面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。在 `main` 上同步提升 `envoy-cli` 和 `envoy-core` 版本后，GitHub Actions 会自动创建对应的 `v<version>` tag；tag 触发 Release workflow，发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`。普通代码提交不会创建 Release，同一版本只发布一次。wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
 
 独立评测：
 

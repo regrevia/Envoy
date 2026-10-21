@@ -15,6 +15,7 @@ from envoy_core.schemas.read_v1 import (
 )
 
 from . import __version__
+from .browser import browser_runtime_status
 from .capabilities import capability_catalog
 from .media import media_runtime_status
 from .reader import (
@@ -53,8 +54,11 @@ TOOLS = [
             "Read a public URL toward the user's stated goal. The source type is "
             "auto-detected; use returned coverage and resources to decide whether "
             "to expand text or request host visual/video inspection. Public videos "
-            "prefer captions, then optional local ASR. Request frames only when needed "
-            "with scope.include_visual=true and explicit frame-capable host settings."
+            "prefer captions, then optional local ASR; browser-captured public media "
+            "may be processed into timestamped ASR and bounded frames. Envoy returns "
+            "evidence and coverage gaps, not job-location or company-match conclusions. "
+            "Request frames only when needed with scope.include_visual=true and "
+            "explicit frame-capable host settings."
         ),
         "inputSchema": {
             "type": "object",
@@ -399,10 +403,13 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                 "cli_version": __version__,
                 "protocol_version": "envoy.read/1",
                 "network_reader": "public_static_and_supported_media_extractors",
-                "credential_access": "disabled",
+                "credential_access": "isolated_envoy_browser_profile_only",
                 "website_backend_required": False,
                 "capabilities": capability_catalog(),
-                "runtime": media_runtime_status(),
+                "runtime": {
+                    **media_runtime_status(),
+                    "browser": browser_runtime_status(),
+                },
             }
         elif name == "envoy_observe_visual":
             request = VisualObservationRequest.model_validate(arguments)
