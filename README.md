@@ -76,7 +76,7 @@ npm run dev
 
 ### 独立 Skill（开发版）
 
-当前 `dev` 已包含一个不依赖网站数据库的 Skill 运行包，支持公开静态 HTML、PDF 文本层、纯文本类链接、图片视觉交接；有可用专用 extractor 和公开字幕时会尝试生成带时间定位的字幕材料，宿主支持时也可接收公开视频直链。站点成功率仍需逐平台真实验收，平台视频下载、通用 ASR 和抽帧尚未接入独立 Skill：
+当前 `dev` 包含独立 Skill/MCP 运行包，支持公开静态/动态 HTML、PDF 文本层、纯文本类链接、图片视觉交接，以及公开视频字幕、受预算约束的本地媒体下载/Whisper ASR 和宿主请求的视频帧。页面读取、媒体下载、字幕/ASR 和帧是不同证据层；`envoy_doctor` 会返回构建来源与本机能力，`envoy_read` 会明确标记缺少的证据。平台覆盖按真实验收矩阵跟踪，不把 extractor 可识别等同于站点已验收。
 
 ```bash
 python -m pip install -e packages/envoy-core -e packages/envoy-cli
@@ -89,12 +89,14 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{
 pages are read headlessly; the Envoy browser window appears only when a page
 needs a user login or verification action.
 
-开发环境生成无凭据 Skill 包与自包含 CLI wheel：
+开发环境生成无凭据 Skill 包与带独立 `+preview` 标识的本地试用 wheel：
 
 ```bash
 python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
 python scripts/build_envoy_cli_wheel.py --output-dir dist
 ```
+
+正式 Release workflow 使用 `--channel release`，只允许从 clean source tree 构建，且产物版本严格匹配仓库版本。dirty worktree 只能构建带 `+preview` 标识的本地 wheel。不要把本地 preview wheel 当成 GitHub Release，也不要安装到正式 runtime 的同一工具目录。
 
 面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。在 `main` 上同步提升 `envoy-cli` 和 `envoy-core` 版本后，GitHub Actions 会自动创建对应的 `v<version>` tag；tag 触发 Release workflow，发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`。普通代码提交不会创建 Release，同一版本只发布一次。wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
 
@@ -308,6 +310,6 @@ Markdown is best for downstream Wiki generation. HTML is best for reviewing visu
 
 The current development branch has passed one real public Douyin image-post flow: article text and four images were processed into Markdown/HTML and a ZIP package. This single sample does not imply universal site support.
 
-The standalone Skill/MCP reader supports public static HTML, text/Markdown/CSV/JSON, PDF text layers with page locators and incremental reads, direct-image visual handoff, public subtitle extraction when a specialized yt-dlp extractor exposes a usable public track, and public direct-video pass-through when the host advertises native video input. Platform subtitle access varies and the current real YouTube/Bilibili checks did not yield captions; platform video downloads, frame extraction, standalone audio, and scanned-PDF OCR are not yet available. The Release workflow is configured but a GitHub Release has not yet been published. See the [product architecture](docs/product/agent-link-reader-v1.md) and [implementation status](docs/architecture/agent-link-reader-status.md). Source access remains subject to site permissions and network conditions.
+The standalone Skill/MCP reader supports public static and browser-rendered HTML, text/Markdown/CSV/JSON, PDF text layers with page locators and incremental reads, direct-image visual handoff, timed public subtitles, bounded public-video downloads, optional local Whisper ASR, and host-requested sparse frame handoff. Video-level outputs are explicitly partial when a modality is unavailable. Platform behavior and real acceptance results are tracked in the [platform coverage matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md). See the [product architecture](docs/product/agent-link-reader-v1.md) and [implementation status](docs/architecture/agent-link-reader-status.md). Source access remains subject to site permissions and network conditions.
 
 For MCP agents, ordinary links can go directly to `envoy_read` with the user's goal. `envoy_doctor` provides a versioned capability catalog when optional support is unclear; the model uses coverage to decide whether to continue reading or request host visual/video inspection, without site-specific prompt workflows.

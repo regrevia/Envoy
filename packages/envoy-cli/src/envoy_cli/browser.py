@@ -8,7 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
+from urllib import request as urllib_request
 
 
 _CHALLENGE_MARKERS = (
@@ -26,6 +27,10 @@ _CHALLENGE_MARKERS = (
     "sign in to continue",
     "log in to continue",
     "login required",
+    "sign in to confirm you're not a bot",
+    "sign in to confirm you’re not a bot",
+    "confirm you're not a bot",
+    "confirm you’re not a bot",
     "access denied",
     "unusual traffic",
     "security check",
@@ -33,10 +38,16 @@ _CHALLENGE_MARKERS = (
     "checking your browser",
     "captcha",
 )
+_LOGIN_OVERLAY_MARKERS = (
+    "login|sign in to continue|log in to continue|login required|"
+    "登录后免费畅享|扫码登录|手机号登录|手机登录|验证码登录|"
+    "请登录后继续观看"
+)
 _DISMISS_LOGIN_OVERLAY_SCRIPT = r"""
 /* dismiss-login-overlay */
 () => {
   const loginMarkers = /login|sign in|log in|登录|扫码|手机号|手机登录/i;
+  const loginOverlayMarkers = /__LOGIN_OVERLAY_MARKERS__/i;
   const closeMarkers = /^(close|dismiss|关闭|关闭弹窗|×|✕|x)$/i;
   const overlays = [...document.querySelectorAll(
     'dialog,[role="dialog"],[class*="modal" i],[class*="popup" i],' +
@@ -46,11 +57,13 @@ _DISMISS_LOGIN_OVERLAY_SCRIPT = r"""
     document.documentElement.clientWidth * document.documentElement.clientHeight,
     1
   );
+  const viewportWidth = Math.max(document.documentElement.clientWidth, 1);
+  const viewportHeight = Math.max(document.documentElement.clientHeight, 1);
   const loginTextNodes = [...document.querySelectorAll("body *")]
     .filter(node => {
       const text = (node.innerText || "").trim();
       return text.length > 0 && text.length <= 1200 &&
-        loginMarkers.test(text);
+        loginOverlayMarkers.test(text);
     })
     .sort((left, right) =>
       (left.innerText || "").length - (right.innerText || "").length
@@ -63,8 +76,18 @@ _DISMISS_LOGIN_OVERLAY_SCRIPT = r"""
       const style = getComputedStyle(ancestor);
       const box = ancestor.getBoundingClientRect();
       const area = box.width * box.height;
-      if (!panelAdded && style.position !== "static" &&
-          area >= viewportArea * 0.12 && area < viewportArea * 0.98) {
+      const centeredDialogCard =
+        area >= viewportArea * 0.1 &&
+        area < viewportArea * 0.8 &&
+        box.width >= Math.min(viewportWidth * 0.35, 320) &&
+        box.height >= Math.min(viewportHeight * 0.3, 200) &&
+        Math.abs((box.left + box.right) / 2 - viewportWidth / 2) <
+          viewportWidth * 0.2 &&
+        Math.abs((box.top + box.bottom) / 2 - viewportHeight / 2) <
+          viewportHeight * 0.25;
+      if (!panelAdded && area >= viewportArea * 0.12 &&
+          area < viewportArea * 0.98 &&
+          (style.position !== "static" || centeredDialogCard)) {
         overlays.push(ancestor);
         panelAdded = true;
       }
@@ -124,6 +147,10 @@ _DISMISS_LOGIN_OVERLAY_SCRIPT = r"""
   return 0;
 }
 """
+_DISMISS_LOGIN_OVERLAY_SCRIPT = _DISMISS_LOGIN_OVERLAY_SCRIPT.replace(
+    "__LOGIN_OVERLAY_MARKERS__",
+    _LOGIN_OVERLAY_MARKERS,
+)
 _EXPAND_SCRIPT = r"""
 () => {
   const labels = new Set([
@@ -194,6 +221,43 @@ def browser_profile_dir(*, create: bool = True) -> Path:
     return profile
 
 
+def _browser_proxy_server() -> str | None:
+    configured = os.getenv("ENVOY_BROWSER_PROXY", "").strip()
+    if configured:
+        candidates = [configured]
+    else:
+        proxies = urllib_request.getproxies()
+        candidates = [
+            str(proxies[key])
+            for key in ("https", "http", "all", "socks")
+            if proxies.get(key)
+        ]
+    for candidate in candidates:
+        value = candidate if "://" in candidate else f"http://{candidate}"
+        try:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme.lower() not in {"http", "https", "socks5"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                continue
+            port = parsed.port or {
+                "http": 80,
+                "https": 443,
+                "socks5": 1080,
+            }[parsed.scheme.lower()]
+        except (KeyError, ValueError):
+            continue
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        return urlunsplit((parsed.scheme.lower(), f"{host}:{port}", "", "", ""))
+    return None
+
+
 def browser_runtime_status() -> dict:
     try:
         import playwright  # noqa: F401
@@ -216,6 +280,7 @@ def browser_runtime_status() -> dict:
         "installed": True,
         "browser": "chromium",
         "ready": ready,
+        "proxy_configured": _browser_proxy_server() is not None,
         "profile": str(browser_profile_dir(create=False)),
     }
 
@@ -262,19 +327,45 @@ def _guard_route(route, dns_cache: dict[str, bool]) -> None:
 
 def _navigate(context, page, url: str, dns_cache: dict[str, bool], timeout_ms: int) -> None:
     context.route("**/*", lambda route: _guard_route(route, dns_cache))
-    page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+    page.goto(url, wait_until="commit", timeout=timeout_ms)
     try:
-        page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 2500))
+        page.wait_for_load_state(
+            "domcontentloaded",
+            timeout=min(max(timeout_ms // 3, 1000), 5000),
+        )
+    except Exception as exc:
+        if type(exc).__name__ != "TimeoutError":
+            raise
+    try:
+        page.wait_for_load_state(
+            "networkidle",
+            timeout=min(max(timeout_ms // 6, 500), 1500),
+        )
     except Exception:
         pass
 
 
+def _dismiss_login_overlays(page) -> int:
+    dismissed = 0
+    try:
+        dismissed += int(page.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT) or 0)
+    except Exception:
+        pass
+    try:
+        frames = list(page.frames)
+    except Exception:
+        frames = []
+    for frame in frames[:20]:
+        try:
+            dismissed += int(frame.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT) or 0)
+        except Exception:
+            continue
+    return dismissed
+
+
 def _load_visible_content(page) -> tuple[str, str]:
     for _ in range(3):
-        try:
-            dismissed = page.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT)
-        except Exception:
-            break
+        dismissed = _dismiss_login_overlays(page)
         if not dismissed:
             break
         page.wait_for_timeout(300)
@@ -285,12 +376,12 @@ def _load_visible_content(page) -> tuple[str, str]:
             page.wait_for_timeout(350)
             page.evaluate(_EXPAND_SCRIPT)
             page.wait_for_timeout(250)
-            page.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT)
+            _dismiss_login_overlays(page)
             page.wait_for_timeout(300)
         except Exception:
             break
     try:
-        page.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT)
+        _dismiss_login_overlays(page)
         page.wait_for_timeout(300)
     except Exception:
         pass
@@ -366,9 +457,13 @@ def read_page(
 
     with playwright_factory() as playwright:
         def launch(headless: bool):
+            browser_args = ["--disable-dev-shm-usage"]
+            proxy_server = _browser_proxy_server()
+            if proxy_server:
+                browser_args.append(f"--proxy-server={proxy_server}")
             kwargs = {
                 "headless": headless,
-                "args": ["--disable-dev-shm-usage"],
+                "args": browser_args,
                 "service_workers": "block",
             }
             if not headless:

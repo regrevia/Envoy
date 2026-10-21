@@ -73,7 +73,8 @@ def test_skill_bundle_uses_isolated_browser_after_empty_or_challenged_read(tmp_p
     assert "the source in its isolated browser" in skill
     assert "ordinary page controls such as" in skill
     assert "dismiss a dismissible login dialog" in skill
-    assert "a browser window, then checks" in skill
+    assert "dialogs inside embedded frames" in skill
+    assert "repeats after scrolling and lazy" in skill
     assert "waits for the user to complete" in skill
     assert "browser automation tool is" in skill
     assert "required." in skill
@@ -82,3 +83,35 @@ def test_skill_bundle_uses_isolated_browser_after_empty_or_challenged_read(tmp_p
     assert "returns `challenge_required` instead of `empty_content`" in skill
     assert "scope.include_visual: true" in skill
     assert "cross-evidence interpretation" in skill
+    normalized_skill = " ".join(skill.split())
+    assert "inspect every listed resource" in normalized_skill
+    assert "once per inspected resource" in normalized_skill
+    assert "Do not claim complete visual coverage" in normalized_skill
+    assert "`needs_host` is a handoff, not a terminal answer state" in normalized_skill
+    assert "expires_at" in normalized_skill
+    assert "Do not repeat" in normalized_skill
+
+
+def test_skill_bundle_explains_per_frame_observation_handoff(tmp_path):
+    output = tmp_path / "envoy-skill.zip"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--output", str(output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    with zipfile.ZipFile(output) as archive:
+        skill = archive.read("SKILL.md").decode("utf-8")
+        protocol = archive.read("references/protocol.md").decode("utf-8")
+    normalized_skill = " ".join(skill.split())
+    normalized_protocol = " ".join(protocol.split())
+    assert "pairing" in normalized_skill
+    assert "resource_id" in normalized_skill
+    assert "source_block_id" in normalized_protocol
+    assert "per inspected frame" in normalized_protocol
+    assert "Wait for each observation call to return" in normalized_protocol
+    assert "`needs_host` is a handoff, not a terminal answer state" in normalized_protocol
+    assert "expires_at" in normalized_protocol
+    assert "do not repeat `envoy_read`" in normalized_protocol

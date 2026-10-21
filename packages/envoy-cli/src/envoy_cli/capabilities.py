@@ -52,7 +52,7 @@ def capability_catalog() -> dict:
                 {
                     "id": "dynamic_public_pages",
                     "requires": "Playwright and Chromium installed",
-                    "behavior": "read headlessly; show the Envoy-owned browser only when user login or verification is required",
+                    "behavior": "use the system HTTP(S) proxy when configured; read headlessly; dismiss clearly identified login-card close controls; show the Envoy-owned browser only when user login or verification is still required",
                     "otherwise": "missing_capability",
                 },
             ],

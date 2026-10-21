@@ -85,11 +85,21 @@ the host can inspect Envoy's leased local image files:
 ```
 
 The response returns bounded frames with actual `video_time` locators and
-leased `local_file` resources. Handle the `inspect_visual` need, then submit
-the bounded observation with `envoy_observe_visual`; later questions can reuse
-it through `envoy_visual_history`. Sparse samples do not imply full-video visual
-coverage. If the source asks for login or anti-bot verification, report that
-access boundary instead of using cookies or bypass techniques.
+leased `local_file` resources. For every `inspect_visual` need, inspect each
+listed resource the host can access before its `expires_at` lease and submit
+one `envoy_observe_visual` call per inspected frame. Pair `resource_ids` and
+`source_block_ids` by index; use the matching block locator's `source_url`,
+original `material_id` and `session_id`, and a unique request ID. Wait for each
+observation call to return before using it. `needs_host` is a handoff, not a
+terminal answer state: continue with the original ASR/chapter evidence and the
+returned observations; do not repeat `envoy_read` just to clear its original
+status. If a frame cannot be inspected, its lease has expired, or its
+observation cannot be submitted, state which resource remains unobserved and
+answer only from available evidence. Later questions can reuse saved
+observations through `envoy_visual_history`. Sparse samples do not imply
+full-video visual coverage. If the source asks for login or anti-bot
+verification, report that access boundary instead of using cookies or bypass
+techniques.
 
 ## Expand long text
 

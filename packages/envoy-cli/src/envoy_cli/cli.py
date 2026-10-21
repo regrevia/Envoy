@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Optional
 
 from envoy_core import __version__ as core_version
@@ -10,6 +11,7 @@ from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest, Rea
 
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
+from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
 from . import __version__
 from . import mcp
@@ -60,6 +62,17 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "tool": "envoy",
             "cli_version": __version__,
             "core_version": core_version,
+            "build": {
+                "channel": BUILD_CHANNEL,
+                "version": BUILD_VERSION,
+                "source_revision": BUILD_REVISION,
+                "source_dirty": BUILD_DIRTY,
+                **(
+                    {"source_checkout": str(Path(__file__).resolve().parents[2])}
+                    if BUILD_CHANNEL == "source-checkout"
+                    else {}
+                ),
+            },
             "protocol_version": "envoy.read/1",
             "network_reader": "public_static_and_supported_media_extractors",
             "credential_access": "isolated_envoy_browser_profile_only",

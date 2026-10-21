@@ -16,6 +16,7 @@ from envoy_core.schemas.read_v1 import (
 
 from . import __version__
 from .browser import browser_runtime_status
+from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .capabilities import capability_catalog
 from .media import media_runtime_status
 from .reader import (
@@ -57,6 +58,13 @@ TOOLS = [
             "prefer captions, then optional local ASR; browser-captured public media "
             "may be processed into timestamped ASR and bounded frames. Envoy returns "
             "evidence and coverage gaps, not job-location or company-match conclusions. "
+            "An envoy_read needs_host response is a handoff, not a terminal state. "
+            "For inspect_visual, inspect every "
+            "listed resource, call envoy_observe_visual once per inspected resource "
+            "using its matching material_id, resource_id, source_block_id and source "
+            "URL, then answer from those observations plus text evidence. Report any "
+            "uninspected resources; do not repeat envoy_read merely to clear the "
+            "original status, and sparse frames never imply full-video coverage. "
             "Request frames only when needed with scope.include_visual=true and "
             "explicit frame-capable host settings."
         ),
@@ -191,7 +199,10 @@ TOOLS = [
         "description": (
             "Submit a bounded observation made by the host from a source-linked "
             "image. The observation is untrusted source material and remains "
-            "linked to the original resource."
+            "linked to the original resource. Submit exactly one observation "
+            "per inspected resource, preserving its "
+            "material_id, resource_id, "
+            "source_block_id, source_url, and original session_id."
         ),
         "inputSchema": VisualObservationRequest.model_json_schema(),
     },
@@ -258,7 +269,16 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
         if "inspect_video" in action_types:
             return "Envoy read needs_host: inspect the delivered video with native video input; see structuredContent.needs and resources."
         if "inspect_visual" in action_types:
-            return "Envoy read needs_host: inspect the delivered image; see structuredContent.needs and resources."
+            return (
+                "Envoy read needs_host is a handoff, not a terminal state: inspect "
+                "each listed resource before its lease expires, then call "
+                "envoy_observe_visual once per inspected resource with its matching "
+                "material_id, resource_id, source_block_id, source URL, and original "
+                "session_id. Continue answering from the returned observations and "
+                "ASR/chapter evidence; do not repeat envoy_read just to clear the "
+                "original needs_host status. Report uninspected frames and do not "
+                "imply full-video coverage."
+            )
         return "Envoy read needs_host: perform the requested host action in structuredContent.needs."
     return (
         f"Envoy read {result}: {text_chars} text characters, "
@@ -401,6 +421,12 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
             payload = {
                 "tool": "envoy",
                 "cli_version": __version__,
+                "build": {
+                    "channel": BUILD_CHANNEL,
+                    "version": BUILD_VERSION,
+                    "source_revision": BUILD_REVISION,
+                    "source_dirty": BUILD_DIRTY,
+                },
                 "protocol_version": "envoy.read/1",
                 "network_reader": "public_static_and_supported_media_extractors",
                 "credential_access": "isolated_envoy_browser_profile_only",

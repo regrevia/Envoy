@@ -12,11 +12,12 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import urllib.request
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from multiprocessing.connection import wait as wait_for_connections
 from pathlib import Path
 from typing import Any
@@ -449,6 +450,79 @@ def media_runtime_status() -> dict[str, Any]:
     }
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[str, Any]:
+    url = str(whisper._MODELS[model_name])
+    parsed = urlsplit(url)
+    expected_sha256 = parsed.path.rstrip("/").split("/")[-2]
+    filename = Path(parsed.path).name
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or not filename:
+        raise MediaProcessingError("Whisper model registry has an invalid URL or checksum")
+
+    target = cache_dir / filename
+    if target.is_file() and _sha256_file(target) == expected_sha256:
+        return {"downloaded_bytes": 0, "resumed": False}
+
+    partial = target.with_name(target.name + ".part")
+    resumed = partial.is_file() and partial.stat().st_size > 0
+    last_error = None
+    last_progress = 0
+    for attempt in range(20):
+        offset = partial.stat().st_size if partial.exists() else 0
+        headers = {"Range": f"bytes={offset}-"} if offset else {}
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                status = getattr(response, "status", None)
+                if status is None:
+                    status = response.getcode()
+                status = int(status)
+                append = offset > 0 and status == 206
+                if offset > 0 and not append:
+                    offset = 0
+                content_range = response.headers.get("Content-Range", "")
+                if append and content_range and not content_range.startswith(f"bytes {offset}-"):
+                    raise MediaProcessingError("Whisper model server returned an unexpected range")
+                mode = "ab" if append else "wb"
+                with partial.open(mode) as destination:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        destination.write(chunk)
+                        downloaded = destination.tell()
+                        if downloaded - last_progress >= 16 * 1024 * 1024:
+                            print(
+                                f"Whisper model download checkpoint: {downloaded} bytes",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            last_progress = downloaded
+                    destination.flush()
+                    os.fsync(destination.fileno())
+            if _sha256_file(partial) == expected_sha256:
+                os.replace(partial, target)
+                return {
+                    "downloaded_bytes": target.stat().st_size,
+                    "resumed": resumed,
+                }
+            last_error = "downloaded model checksum does not match"
+            resumed = True
+        except (OSError, urllib.error.URLError, MediaProcessingError) as exc:
+            last_error = _safe_error(exc)
+            resumed = resumed or (partial.is_file() and partial.stat().st_size > 0)
+    raise MediaProcessingError(
+        f"Whisper model download did not complete after resumable retries ({last_error or 'unknown error'})"
+    )
+
+
 def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
     try:
         asr_installed = importlib.util.find_spec("whisper") is not None
@@ -463,6 +537,7 @@ def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
         with asr_model_slot(cache_dir, max_wait_seconds=3600):
             import whisper
 
+            download = _download_whisper_model(whisper, model_name, cache_dir)
             model = whisper.load_model(
                 model_name,
                 device="cpu",
@@ -475,6 +550,7 @@ def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
         "model": model_name,
         "cache_dir": str(cache_dir),
         "available": True,
+        **download,
     }
 
 
@@ -901,44 +977,49 @@ def _whisper_worker(
     result_connection,
 ) -> None:
     try:
-        import whisper
+        with redirect_stdout(sys.stderr):
+            import whisper
 
-        model = whisper.load_model(model_name, device="cpu", download_root=download_root)
-        audio = whisper.load_audio(audio_path, sr=16_000)
-        audio_duration = len(audio) / 16_000
-        end_seconds = min(float(end_seconds), audio_duration)
-        language = None
-        cursor = float(start_seconds)
-        while cursor < end_seconds:
-            chunk_duration = min(float(ASR_CHUNK_SECONDS), end_seconds - cursor)
-            start_sample = int(cursor * 16_000)
-            end_sample = int((cursor + chunk_duration) * 16_000)
-            audio_chunk = audio[start_sample:end_sample]
-            if len(audio_chunk) <= 0:
-                break
-            result = model.transcribe(
-                audio_chunk,
-                task="transcribe",
-                language=language,
-                temperature=0,
-                fp16=False,
-                verbose=False,
-                condition_on_previous_text=False,
+            model = whisper.load_model(
+                model_name,
+                device="cpu",
+                download_root=download_root,
             )
-            language = str(result.get("language") or language or "")
-            chunk_end = min(end_seconds, cursor + (len(audio_chunk) / 16_000))
-            result_connection.send({
-                "event": "chunk",
-                "start_seconds": cursor,
-                "end_seconds": chunk_end,
-                "language": language,
-                "segments": normalize_asr_segments(
-                    result.get("segments") or [],
-                    offset_seconds=cursor,
-                ),
-            })
-            cursor = chunk_end
-        result_connection.send({"event": "complete", "end_seconds": cursor, "language": language or ""})
+            audio = whisper.load_audio(audio_path, sr=16_000)
+            audio_duration = len(audio) / 16_000
+            end_seconds = min(float(end_seconds), audio_duration)
+            language = None
+            cursor = float(start_seconds)
+            while cursor < end_seconds:
+                chunk_duration = min(float(ASR_CHUNK_SECONDS), end_seconds - cursor)
+                start_sample = int(cursor * 16_000)
+                end_sample = int((cursor + chunk_duration) * 16_000)
+                audio_chunk = audio[start_sample:end_sample]
+                if len(audio_chunk) <= 0:
+                    break
+                result = model.transcribe(
+                    audio_chunk,
+                    task="transcribe",
+                    language=language,
+                    temperature=0,
+                    fp16=False,
+                    verbose=False,
+                    condition_on_previous_text=False,
+                )
+                language = str(result.get("language") or language or "")
+                chunk_end = min(end_seconds, cursor + (len(audio_chunk) / 16_000))
+                result_connection.send({
+                    "event": "chunk",
+                    "start_seconds": cursor,
+                    "end_seconds": chunk_end,
+                    "language": language,
+                    "segments": normalize_asr_segments(
+                        result.get("segments") or [],
+                        offset_seconds=cursor,
+                    ),
+                })
+                cursor = chunk_end
+            result_connection.send({"event": "complete", "end_seconds": cursor, "language": language or ""})
     except Exception as exc:
         try:
             result_connection.send({"event": "failed", "error": _safe_error(exc)})
