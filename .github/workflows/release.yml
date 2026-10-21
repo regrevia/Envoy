@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -20,7 +26,7 @@ jobs:
           python-version: "3.11"
       - name: Verify tag matches package versions
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           python - <<'PY'
           import os
@@ -37,10 +43,12 @@ jobs:
                   raise SystemExit(f"{path}: version {actual} does not match tag {expected}")
           PY
       - name: Build installable assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           python -m pip install --upgrade pip
           python scripts/build_envoy_cli_wheel.py --output-dir dist
-          python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --version "${GITHUB_REF_NAME#v}" --json
+          python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --version "${RELEASE_TAG#v}" --json
           python - <<'PY'
           import hashlib
           from pathlib import Path
@@ -55,4 +63,5 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes

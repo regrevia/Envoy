@@ -50,9 +50,16 @@ The request must include:
 - optionally `video_subtitle_language` as a BCP-47-like language tag when a
   platform extractor exposes public subtitle tracks; Envoy extracts timed
   captions without downloading the video or calling an analysis model
+- for video-content questions, set `scope.include_visual: true`; declare
+  `host_capabilities.video_input: "frames"` and
+  `host_capabilities.image_input: "local_file"` only when the host can inspect
+  Envoy-delivered local frame resources. Envoy then extracts a bounded,
+  timestamped frame sample within the request budgets
 
 Do not put API keys, cookies, browser profile paths, or full chat history in
-the request. Envoy does not read credentials for the independent Skill.
+the request. Envoy does not read credentials from the user's personal browser.
+When a page requires login, the user may sign in manually in Envoy's separate
+local browser profile; that session remains on the machine.
 
 Hooks are optional, not required for normal use. A host may wrap tool calls for
 logging, caching, or usage accounting, but the Envoy request/response contract
@@ -81,6 +88,61 @@ budget before expanding. Use a visual resource only
 when the task depends on pixels, layout, a chart, a table, or interface state
 and the catalog/response says the host can inspect it. Keep source URLs, block
 IDs, and resource IDs available for citations or follow-up reads.
+
+### Isolated browser fallback
+
+When `envoy_read` returns `blocked` with `empty_content` or
+`challenge_required`, or returns `auth_required`, Envoy automatically retries
+the source in its isolated browser when the Chromium runtime is installed.
+Public pages load headlessly. Before classifying a login prompt as a real
+challenge, Envoy tries to dismiss a dismissible login dialog without showing
+a browser window, then checks whether the underlying page is readable. The
+browser window is shown only when the page still requires a user login or
+verification action. Envoy waits for the user, then
+the same operation resumes if verification completes before the request's
+`max_work_seconds` budget expires (180 seconds by default). If the budget
+expires first, Envoy returns `challenge_required` instead of `empty_content`;
+retry the same link to reopen the same local isolated profile and continue the
+normal verification there. No host browser automation tool is required.
+
+The isolated browser waits for dynamic content, scrolls the page, and clicks
+ordinary page controls such as “展开”, “阅读全文”, or “继续阅读”. Use only
+content the browser actually exposes.
+
+For a short-video share link, Envoy follows its redirect in the isolated
+browser and reads visible title/creator metadata and captions. When the browser
+exposes a public video URL, including a signed URL that is usable only by the
+current local browser session, Envoy may use it only in a temporary local
+download within the request budget, run local Whisper when installed, and deliver a bounded timestamped
+frame sample for video-content questions when the host declares
+`video_input: "frames"` and `image_input: "local_file"`. These transcript and
+frame blocks are evidence for the host model to inspect; Envoy does not decide
+job locations, company matches, or whether a role is in Shenzhen. If only the
+video page is readable but no safe local media URL is available, Envoy marks the
+material `partial` and states which video evidence is missing. Signed media URLs
+are never returned to the host model or forwarded as `needs_host` resources. Page
+metadata is not evidence of spoken or visual video content.
+
+For a video request, inspect all returned timestamped page-chapter, subtitle,
+ASR, and frame blocks together. Preserve their source time locators and origin;
+do not merge page chapter summaries into speech transcripts or imply that a
+sparse frame sample covers the full video. The model, not Envoy, performs
+cross-evidence interpretation and any requested entity/location verification.
+
+For a public article that opens in a verification interstitial, Envoy opens its
+isolated browser in the foreground and waits for the user to complete the
+normal login or verification flow. Never automate solving or bypassing a
+CAPTCHA/security challenge, export cookies, or send private browser state to
+the host model. The isolated profile is stored locally with user-only
+permissions (POSIX mode `0700`; Windows inherits the user's home-directory
+ACL) and is not the user's personal browser profile. If the request reaches
+its work-time limit first, that browser window closes with the request; retry
+the link to reopen the same isolated profile and continue verification.
+
+If Chromium is not installed, setup failed, or the page remains unavailable
+after normal interaction, report the exact access boundary and which requested
+facts remain unverified. Do not claim complete coverage unless the resulting
+page content was actually read.
 
 Token counts estimate returned material text (including titles), using
 approximately four ASCII characters per token and one token per non-ASCII code
@@ -166,14 +228,14 @@ seven days and 100 materials.
 
 The standalone runtime's current support is defined by the capability catalog,
 not by assumptions about a URL's host. It reads public static HTML, PDF text
-layers, text documents, and can hand direct images to a capable host. Video
-support is conditional: public timed subtitles, optional local ASR, public
-direct-video handoff to native-video hosts, and budgeted frame handoff to
-frame-capable hosts. Platform access may still require login or trigger
-anti-bot challenges; those are returned as access limits, not bypassed.
-Standalone audio URLs, scanned-PDF OCR, and Office documents are not currently
-processed by this runtime. Website-only capabilities are not available unless
-a runtime advertises them.
+layers, text documents, and can hand direct images to a capable host. Dynamic
+public HTML pages use the isolated browser fallback when Playwright and
+Chromium are installed. Video support is conditional: public timed subtitles,
+optional local ASR, public direct-video handoff to native-video hosts, and
+budgeted frame handoff to frame-capable hosts. Platform access may still
+require login or trigger anti-bot challenges; wait for user action rather than
+bypassing them. Standalone audio URLs, scanned-PDF OCR, and Office documents
+are not currently processed by this runtime.
 
 To install the optional local ASR engine and prepare a model:
 

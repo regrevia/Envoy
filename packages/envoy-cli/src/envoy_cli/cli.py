@@ -9,6 +9,7 @@ from envoy_core import __version__ as core_version
 from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest, ReadRequest
 
 from .capabilities import capability_catalog
+from . import browser as browser_runtime
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
 from . import __version__
 from . import mcp
@@ -31,6 +32,9 @@ def _parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
+    browser = subparsers.add_parser("browser", help="manage the isolated browser runtime")
+    browser_commands = browser.add_subparsers(dest="browser_command", required=True)
+    browser_commands.add_parser("setup", help="install the isolated Chromium browser")
     asr = subparsers.add_parser("asr", help="prepare local speech recognition")
     asr_commands = asr.add_subparsers(dest="asr_command", required=True)
     asr_setup = asr_commands.add_parser("setup", help="download and verify one local Whisper model")
@@ -50,19 +54,23 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "doctor":
+        runtime = media_runtime_status()
+        runtime["browser"] = browser_runtime.browser_runtime_status()
         result = {
             "tool": "envoy",
             "cli_version": __version__,
             "core_version": core_version,
             "protocol_version": "envoy.read/1",
             "network_reader": "public_static_and_supported_media_extractors",
-            "credential_access": "disabled",
+            "credential_access": "isolated_envoy_browser_profile_only",
             "website_backend_required": False,
             "capabilities": capability_catalog(),
-            "runtime": media_runtime_status(),
+            "runtime": runtime,
         }
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
         return 0
+    if args.command == "browser":
+        return browser_runtime.setup_browser()
     if args.command == "mcp":
         return mcp.main()
     if args.command == "asr":

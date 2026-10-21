@@ -8,6 +8,7 @@ import os
 import re
 import socket
 import shutil
+import sys
 import tempfile
 import time
 from contextvars import ContextVar
@@ -480,6 +481,402 @@ def _source_text_was_truncated(values: list[str]) -> bool:
 def _looks_like_access_challenge(title: str, text: str) -> bool:
     haystack = f"{title}\n{text}".lower()
     return any(marker in haystack for marker in CHALLENGE_MARKERS)
+
+
+def _read_with_isolated_browser(
+    request: ReadRequest,
+    source_url: str,
+    dns_cache: dict[str, bool],
+):
+    from . import browser
+
+    def user_action(url: str) -> None:
+        print(
+            "Envoy opened its isolated browser for "
+            f"{_redact_url(url)}. Complete the normal login or verification "
+            "action there; Envoy will resume automatically.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    try:
+        page = browser.read_page(
+            source_url,
+            max_work_seconds=_remaining_work_seconds(request),
+            on_user_action=user_action,
+        )
+    except MediaBudgetExceeded as exc:
+        raise PublicPageError(str(exc), ErrorCode.BUDGET_EXCEEDED) from exc
+    except browser.BrowserChallengeRequired as exc:
+        return None, exc
+    except (browser.BrowserRuntimeUnavailable, browser.BrowserReadError) as exc:
+        return None, str(exc)
+    except Exception as exc:
+        return None, f"Browser fallback failed ({type(exc).__name__})"
+    if not _is_public_http_url(page.url, dns_cache):
+        return None, "The browser resolved the source to a non-public address"
+    return page, None
+
+
+def _browser_read_failure_code(error) -> ErrorCode:
+    from .browser import BrowserChallengeRequired
+
+    return (
+        ErrorCode.CHALLENGE_REQUIRED
+        if isinstance(error, BrowserChallengeRequired)
+        else ErrorCode.AUTH_REQUIRED
+    )
+
+
+def _select_browser_video_url(
+    candidates: list[str],
+    dns_cache: dict[str, bool],
+) -> tuple[str | None, int]:
+    rejected = 0
+    accepted = []
+    seen = set()
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        parsed = urlparse(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+            or not _is_public_http_url(value, dns_cache)
+        ):
+            rejected += 1
+            continue
+        accepted.append(value)
+    accepted.sort(
+        key=lambda value: (
+            0 if urlparse(value).path.lower().endswith((".mp4", ".m4v", ".webm", ".mov", ".ogv")) else 1,
+            value,
+        )
+    )
+    return (accepted[0] if accepted else None), rejected
+
+
+def _chapter_timestamp(value: str) -> float | None:
+    pieces = value.split(":")
+    try:
+        numbers = [float(item) for item in pieces]
+    except ValueError:
+        return None
+    if len(numbers) == 2:
+        return numbers[0] * 60 + numbers[1]
+    if len(numbers) == 3:
+        return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+    return None
+
+
+def _page_video_chapter_blocks(
+    text: str,
+    source_url: str,
+    *,
+    first_order: int,
+    duration: float | None,
+) -> list[MaterialBlock]:
+    chapters = []
+    pattern = re.compile(
+        r"(?m)^\s*(?P<time>(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,3})?)\s+"
+        r"(?P<label>\S[^\n]*)$"
+    )
+    for match in pattern.finditer(text):
+        timestamp = _chapter_timestamp(match.group("time"))
+        label = " ".join(match.group("label").split())
+        if timestamp is None or not label:
+            continue
+        if duration is not None and timestamp >= duration:
+            continue
+        chapters.append((timestamp, label, match.group(0).strip()))
+    chapters.sort(key=lambda item: item[0])
+    blocks = []
+    for index, (timestamp, label, quote) in enumerate(chapters):
+        next_timestamp = chapters[index + 1][0] if index + 1 < len(chapters) else None
+        end = next_timestamp if next_timestamp and next_timestamp > timestamp else timestamp + 1
+        if duration is not None:
+            end = min(end, duration)
+        if end <= timestamp:
+            end = timestamp + 0.001
+        block_id = f"blk-video-chapter-{index + 1:03d}"
+        blocks.append(MaterialBlock(
+            id=block_id,
+            kind=MaterialKind.VIDEO_SEGMENT,
+            content=TextContent(type="text", text=label),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=VideoLocator(
+                type="video_time",
+                source_url=_redact_url(source_url),
+                start_seconds=timestamp,
+                end_seconds=end,
+            ),
+            order=first_order + index,
+            quality=Quality(
+                engine="page_chapter_metadata",
+                unresolved=["Chapter text was extracted from the page, not verified against video playback"],
+            ),
+        ))
+    return blocks
+
+
+def _attach_browser_video_evidence(
+    request: ReadRequest,
+    source_url: str,
+    media_urls: list[str],
+    response: ReadResponse,
+    *,
+    duration_seconds: float | None = None,
+) -> ReadResponse:
+    selected_url, rejected_count = _select_browser_video_url(
+        media_urls,
+        {},
+    )
+    video_coverage = response.coverage.modalities.get("video") or CoverageItem(
+        discovered=1,
+        extraction="partial",
+    )
+    unresolved = list(video_coverage.unresolved)
+    if selected_url is None:
+        reason = (
+            "Browser media URLs were private, malformed, or otherwise unsafe for local processing"
+            if rejected_count
+            else "No downloadable video resource was exposed by the browser"
+        )
+        video_coverage = video_coverage.model_copy(update={
+            "discovered": max(int(video_coverage.discovered or 0), 1),
+            "extraction": "partial",
+            "unresolved": list(dict.fromkeys([*unresolved, reason])),
+            "details": {
+                **video_coverage.details,
+                "browser_media_candidates": len(media_urls),
+                "rejected_media_candidates": rejected_count,
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+        })
+        modalities = dict(response.coverage.modalities)
+        modalities["video"] = video_coverage
+        return response.model_copy(update={
+            "result": ReadResult.PARTIAL,
+            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+        })
+
+    root = _material_root()
+    media_dir = root / f"video-{response.material_id or 'browser'}"
+    if media_dir.is_symlink() or (media_dir.exists() and not media_dir.is_dir()):
+        video_coverage = video_coverage.model_copy(update={
+            "extraction": "failed",
+            "unresolved": list(dict.fromkeys([*unresolved, "Video staging path is not a regular directory"])),
+        })
+        modalities = dict(response.coverage.modalities)
+        modalities["video"] = video_coverage
+        return response.model_copy(update={
+            "result": ReadResult.PARTIAL,
+            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+        })
+    media_dir.mkdir(mode=0o700, exist_ok=True)
+
+    duration = float(duration_seconds or 0)
+    downloaded = None
+    transcript_source = "unavailable"
+    transcript_segments: list[dict] = []
+    language = None
+    asr_model = None
+    asr_elapsed_ms = None
+    downloaded_bytes = None
+    frame_response = response
+    frame_request = request.model_copy(update={
+        "scope": request.scope.model_copy(update={"include_visual": True}),
+    })
+    frame_enabled = (
+        request.host_capabilities.video_input == "frames"
+        and request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
+    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="envoy-browser-video-") as temporary_dir:
+            downloaded = download_video_for_frames(
+                selected_url,
+                temporary_dir,
+                max_download_bytes=request.budget.max_download_bytes,
+                max_work_seconds=_remaining_work_seconds(request),
+            )
+            video_path = Path(downloaded["path"]).resolve()
+            if not video_path.is_file() or video_path.stat().st_size <= 0:
+                raise MediaProcessingError("Browser video download did not produce a usable file")
+            duration = duration or float(downloaded.get("duration") or 0)
+            if duration <= 0:
+                duration = probe_media_duration(
+                    video_path,
+                    max_work_seconds=_remaining_work_seconds(request),
+                )
+            downloaded_bytes = int(downloaded.get("downloaded_bytes") or video_path.stat().st_size)
+
+            runtime = media_runtime_status()
+            if runtime.get("asr_installed") and runtime.get("asr_model_available"):
+                try:
+                    asr_result = transcribe_audio_file(
+                        video_path,
+                        model_name=str(runtime["asr_model"]),
+                        download_root=asr_model_cache_dir(),
+                        max_work_seconds=_remaining_work_seconds(request),
+                        start_seconds=request.scope.start_seconds or 0,
+                        end_seconds=request.scope.end_seconds or duration,
+                    )
+                    transcript_segments = list(asr_result.get("segments") or [])
+                    transcript_source = "asr" if transcript_segments else "no_speech"
+                    language = asr_result.get("language")
+                    asr_model = asr_result.get("model")
+                    asr_elapsed_ms = asr_result.get("elapsed_ms")
+                    if not transcript_segments:
+                        unresolved.append("ASR completed without speech segments")
+                except MediaNoSpeech as exc:
+                    transcript_source = "no_speech"
+                    unresolved.append(str(exc))
+                except (MediaBudgetExceeded, MediaCapabilityMissing, MediaProcessingError) as exc:
+                    transcript_source = "failed"
+                    unresolved.append(f"Local ASR did not complete ({exc})")
+            elif not runtime.get("asr_installed"):
+                unresolved.append("Local video ASR is unavailable because Whisper is not installed")
+            else:
+                unresolved.append("Local video ASR is unavailable because its Whisper model is not prepared")
+
+            blocks = list(response.blocks)
+            source_text = "\n".join(
+                block.content.text
+                for block in response.blocks
+                if isinstance(block.content, TextContent)
+            )
+            chapter_blocks = _page_video_chapter_blocks(
+                source_text,
+                source_url,
+                first_order=len(blocks),
+                duration=duration or None,
+            )
+            blocks.extend(chapter_blocks)
+            remaining_chars = max(
+                0,
+                request.budget.max_response_chars
+                - sum(
+                    len(block.content.text)
+                    for block in blocks
+                    if isinstance(block.content, TextContent)
+                ),
+            )
+            asr_char_count = 0
+            for index, cue in enumerate(transcript_segments[:200], start=1):
+                cue_text = " ".join(str(cue.get("text") or "").split())
+                try:
+                    start = float(cue["start"])
+                    end = float(cue["end"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not cue_text or start < 0 or end <= start:
+                    continue
+                if len(cue_text) > remaining_chars - asr_char_count:
+                    unresolved.append("ASR transcript was truncated by the response character budget")
+                    break
+                asr_char_count += len(cue_text)
+                blocks.append(MaterialBlock(
+                    id=f"blk-video-asr-{index:04d}",
+                    kind=MaterialKind.TRANSCRIPT,
+                    content=TextContent(type="text", text=cue_text, language=language),
+                    origin=MaterialOrigin.ASR,
+                    locator=VideoLocator(
+                        type="video_time",
+                        source_url=_redact_url(source_url),
+                        start_seconds=start,
+                        end_seconds=end,
+                    ),
+                    parent_id=blocks[0].id if blocks else None,
+                    order=len(blocks),
+                    quality=Quality(engine=f"whisper-{asr_model or 'local'}"),
+                ))
+
+            video_coverage = video_coverage.model_copy(update={
+                "discovered": 1,
+                "extracted": 1 if transcript_segments or frame_enabled else 0,
+                "returned": 1 if transcript_segments or frame_enabled else 0,
+                "processed": 1 if downloaded else 0,
+                "extraction": "partial",
+                "unresolved": list(dict.fromkeys(unresolved)),
+                "details": {
+                    **video_coverage.details,
+                    "browser_media_url": _redact_url(selected_url),
+                    "media_downloaded_bytes": downloaded_bytes,
+                    "duration_seconds": duration or None,
+                    "transcript_source": transcript_source,
+                    "transcript_language": language,
+                    "asr_model": asr_model,
+                    "asr_duration_ms": asr_elapsed_ms,
+                    "page_chapter_count": len(chapter_blocks),
+                    "transcript_segment_count": len(transcript_segments),
+                    "frame_inspection": "requested" if frame_enabled else "host_capability_missing",
+                },
+            })
+            modalities = dict(response.coverage.modalities)
+            modalities["video"] = video_coverage
+            evidence_response = response.model_copy(update={
+                "blocks": blocks,
+                "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+                "result": ReadResult.PARTIAL,
+            })
+            if frame_enabled:
+                frame_response = _attach_video_frames(
+                    frame_request,
+                    source_url,
+                    evidence_response,
+                    downloaded_media=downloaded,
+                )
+            else:
+                video_coverage = video_coverage.model_copy(update={
+                    "unresolved": list(dict.fromkeys([
+                        *video_coverage.unresolved,
+                        "The host did not declare local image input and frame inspection capability",
+                    ])),
+                })
+                modalities["video"] = video_coverage
+                frame_response = evidence_response.model_copy(update={
+                    "coverage": evidence_response.coverage.model_copy(update={"modalities": modalities}),
+                })
+    except MediaBudgetExceeded as exc:
+        unresolved.append(str(exc))
+    except MediaUnsafeAddress:
+        unresolved.append("A browser-captured video redirect resolved to a non-public address")
+    except (MediaCapabilityMissing, MediaProcessingError) as exc:
+        unresolved.append(f"Browser-captured video processing failed ({exc})")
+    except (OSError, ValueError, TypeError) as exc:
+        unresolved.append(f"Browser-captured video evidence could not be stored ({type(exc).__name__})")
+
+    if downloaded is None:
+        video_coverage = video_coverage.model_copy(update={
+            "discovered": 1,
+            "extraction": "partial",
+            "unresolved": list(dict.fromkeys(unresolved)),
+            "details": {
+                **video_coverage.details,
+                "browser_media_url": _redact_url(selected_url),
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+        })
+        modalities = dict(response.coverage.modalities)
+        modalities["video"] = video_coverage
+        return response.model_copy(update={
+            "result": ReadResult.PARTIAL,
+            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+        })
+
+    if frame_response.result == ReadResult.NEEDS_HOST:
+        return frame_response
+    return frame_response.model_copy(update={
+        "result": ReadResult.PARTIAL,
+        "execution_state": ExecutionState.COMPLETED,
+    })
 
 
 def _take_text_range(text: str, offset: int, max_chars: int) -> tuple[str, int]:
@@ -2884,6 +3281,8 @@ def _attach_video_frames(
     request: ReadRequest,
     source_url: str,
     response: ReadResponse,
+    *,
+    downloaded_media: dict | None = None,
 ) -> ReadResponse:
     if not request.scope.include_visual or response.result == ReadResult.BLOCKED:
         return response
@@ -2989,17 +3388,20 @@ def _attach_video_frames(
     frame_dir.mkdir(mode=0o700, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix="envoy-video-frames-") as temporary_dir:
-            downloaded = download_video_for_frames(
+            downloaded = downloaded_media or download_video_for_frames(
                 source_url,
                 temporary_dir,
                 max_download_bytes=request.budget.max_download_bytes,
                 max_work_seconds=_remaining_work_seconds(request),
             )
+            media_path = Path(str(downloaded.get("path") or "")).resolve()
+            if not media_path.is_file():
+                raise MediaProcessingError("Downloaded video file is unavailable for frame extraction")
             duration = duration or float(downloaded.get("duration") or 0)
             if duration <= 0:
                 remaining_work = _remaining_work_seconds(request)
                 duration = probe_media_duration(
-                    downloaded["path"],
+                    media_path,
                     max_work_seconds=remaining_work,
                 )
             timestamps = _video_frame_timestamps(request, duration)[:frame_limit]
@@ -3007,7 +3409,7 @@ def _attach_video_frames(
                 raise MediaProcessingError("The requested video time range is outside the video duration")
             remaining_work = _remaining_work_seconds(request)
             extracted_frames = extract_video_frames(
-                downloaded["path"],
+                media_path,
                 Path(temporary_dir) / "frames",
                 timestamps,
                 max_visual_pixels_per_input=per_frame_limit,
@@ -3172,7 +3574,7 @@ def _attach_video_frames(
         purpose=request.goal or "Inspect the requested video frames",
         resource_ids=[record["resource_id"] for record in visual_records],
         source_block_ids=[record["source_block_id"] for record in visual_records],
-        reason="The host explicitly requested sparse local video frames and declared local-file image input.",
+        reason="The host declared local-file image input and Envoy extracted a bounded frame sample for model inspection.",
         max_resources=len(visual_records),
     ))
     video_coverage = video_coverage.model_copy(update={
@@ -3388,6 +3790,8 @@ def _read_video_media_url(request: ReadRequest, media_source: dict) -> ReadRespo
 def read_public_page(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
     dns_cache: dict[str, bool] = {}
+    browser_snapshot = None
+    browser_snapshot_for_video = False
     if not _is_public_http_url(source_url, dns_cache):
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     source_path = urlparse(source_url).path.lower()
@@ -3417,71 +3821,84 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             message = str(subtitle_result.get("error") or "")
             auth_markers = ("login", "sign in", "403", "authentication", "fresh cookies")
             if any(marker in message.lower() for marker in auth_markers):
-                return _blocked(
+                browser_snapshot, browser_error = _read_with_isolated_browser(
                     request,
-                    ErrorCode.AUTH_REQUIRED,
-                    f"Public subtitle extraction requires access ({message or status})",
-                    action_required=True,
+                    source_url,
+                    dns_cache,
                 )
-            try:
-                transcript_response = _read_video_asr(request, source_url)
-                return _attach_video_frames(request, source_url, transcript_response)
-            except MediaUnsafeAddress:
-                return _blocked(
-                    request,
-                    ErrorCode.SOURCE_UNAVAILABLE,
-                    "Media extraction resolved a non-public network address",
-                )
-            except MediaNoSpeech as exc:
-                if request.scope.include_visual:
-                    frame_base = _video_frame_base_response(
+                if browser_snapshot is not None:
+                    browser_snapshot_for_video = True
+                else:
+                    error_code = _browser_read_failure_code(browser_error)
+                    return _blocked(
                         request,
-                        source_url,
-                        str(subtitle_result.get("title") or ""),
-                        subtitle_result.get("duration"),
-                        [str(exc)],
+                        error_code,
+                        (
+                            f"Public subtitle extraction requires access ({message or status}). "
+                            f"{browser_error or 'Envoy could not read the page in its isolated browser.'}"
+                        ),
+                        action_required=True,
                     )
-                    return _attach_video_frames(request, source_url, frame_base)
-                return _blocked(request, ErrorCode.EMPTY_CONTENT, str(exc))
-            except MediaCapabilityMissing as exc:
-                if request.scope.include_visual:
-                    frame_base = _video_frame_base_response(
+            if browser_snapshot is None:
+                try:
+                    transcript_response = _read_video_asr(request, source_url)
+                    return _attach_video_frames(request, source_url, transcript_response)
+                except MediaUnsafeAddress:
+                    return _blocked(
                         request,
-                        source_url,
-                        str(subtitle_result.get("title") or ""),
-                        subtitle_result.get("duration"),
-                        [f"No transcript is available ({exc})"],
+                        ErrorCode.SOURCE_UNAVAILABLE,
+                        "Media extraction resolved a non-public network address",
                     )
-                    return _attach_video_frames(request, source_url, frame_base)
-                subtitle_state = (
-                    "No public subtitle track is available"
-                    if status == "no_subtitles"
-                    else "Public subtitle extraction failed"
-                )
-                return _blocked(
-                    request,
-                    ErrorCode.MISSING_CAPABILITY,
-                    f"{subtitle_state}; {exc}",
-                    action_required=True,
-                )
-            except MediaBudgetExceeded as exc:
-                return _blocked(request, ErrorCode.BUDGET_EXCEEDED, str(exc))
-            except MediaProcessingError as exc:
-                if request.scope.include_visual:
-                    frame_base = _video_frame_base_response(
+                except MediaNoSpeech as exc:
+                    if request.scope.include_visual:
+                        frame_base = _video_frame_base_response(
+                            request,
+                            source_url,
+                            str(subtitle_result.get("title") or ""),
+                            subtitle_result.get("duration"),
+                            [str(exc)],
+                        )
+                        return _attach_video_frames(request, source_url, frame_base)
+                    return _blocked(request, ErrorCode.EMPTY_CONTENT, str(exc))
+                except MediaCapabilityMissing as exc:
+                    if request.scope.include_visual:
+                        frame_base = _video_frame_base_response(
+                            request,
+                            source_url,
+                            str(subtitle_result.get("title") or ""),
+                            subtitle_result.get("duration"),
+                            [f"No transcript is available ({exc})"],
+                        )
+                        return _attach_video_frames(request, source_url, frame_base)
+                    subtitle_state = (
+                        "No public subtitle track is available"
+                        if status == "no_subtitles"
+                        else "Public subtitle extraction failed"
+                    )
+                    return _blocked(
                         request,
-                        source_url,
-                        str(subtitle_result.get("title") or ""),
-                        subtitle_result.get("duration"),
-                        [f"Local speech extraction failed ({exc})"],
+                        ErrorCode.MISSING_CAPABILITY,
+                        f"{subtitle_state}; {exc}",
+                        action_required=True,
                     )
-                    return _attach_video_frames(request, source_url, frame_base)
-                subtitle_message = message or status
-                return _blocked(
-                    request,
-                    ErrorCode.NETWORK_ERROR,
-                    f"Public subtitle extraction failed ({subtitle_message}); local ASR failed ({exc})",
-                )
+                except MediaBudgetExceeded as exc:
+                    return _blocked(request, ErrorCode.BUDGET_EXCEEDED, str(exc))
+                except MediaProcessingError as exc:
+                    if request.scope.include_visual:
+                        frame_base = _video_frame_base_response(
+                            request,
+                            source_url,
+                            str(subtitle_result.get("title") or ""),
+                            subtitle_result.get("duration"),
+                            [f"Local speech extraction failed ({exc})"],
+                        )
+                        return _attach_video_frames(request, source_url, frame_base)
+                    subtitle_message = message or status
+                    return _blocked(
+                        request,
+                        ErrorCode.NETWORK_ERROR,
+                        f"Public subtitle extraction failed ({subtitle_message}); local ASR failed ({exc})",
+                    )
     if request.source.kind.value == "image" or source_path.endswith(IMAGE_SUFFIXES):
         try:
             return _read_image_source(request, source_url, dns_cache)
@@ -3523,47 +3940,142 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
     if request.source.kind.value not in {"auto", "article", "video"}:
         return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
     try:
-        try:
-            final_url, html = _fetch_html(
-                source_url,
-                min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
-                dns_cache,
-            )
-        except DetectedPDF as detected_pdf:
-            return _parse_pdf_source(request, detected_pdf.source)
-        except DetectedText as detected_text:
-            return _parse_text_source(request, detected_text.source)
-        except DetectedImage as detected_image:
-            if request.host_capabilities.image_input.value != "uri":
+        browser_error = None
+        browser_attempted = browser_snapshot is not None
+        browser_used = browser_snapshot is not None
+        if browser_snapshot is not None:
+            final_url, html = browser_snapshot.url, browser_snapshot.html
+        else:
+            try:
+                final_url, html = _fetch_html(
+                    source_url,
+                    min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
+                    dns_cache,
+                )
+            except DetectedPDF as detected_pdf:
+                return _parse_pdf_source(request, detected_pdf.source)
+            except DetectedText as detected_text:
+                return _parse_text_source(request, detected_text.source)
+            except DetectedImage as detected_image:
+                if request.host_capabilities.image_input.value != "uri":
+                    return _blocked(
+                        request,
+                        ErrorCode.MISSING_CAPABILITY,
+                        "The host must support URI image input to inspect this image source",
+                        action_required=True,
+                    )
+                return _read_image_source(request, source_url, dns_cache)
+            except DetectedMedia as detected_media:
+                if detected_media.source["mime_type"].startswith("video/"):
+                    return _read_video_media_url(request, detected_media.source)
                 return _blocked(
                     request,
                     ErrorCode.MISSING_CAPABILITY,
-                    "The host must support URI image input to inspect this image source",
-                    action_required=True,
+                    f"Standalone media extraction is unavailable for {detected_media.source['mime_type']}",
                 )
-            return _read_image_source(request, source_url, dns_cache)
-        except DetectedMedia as detected_media:
-            if detected_media.source["mime_type"].startswith("video/"):
-                return _read_video_media_url(request, detected_media.source)
-            return _blocked(
-                request,
-                ErrorCode.MISSING_CAPABILITY,
-                f"Standalone media extraction is unavailable for {detected_media.source['mime_type']}",
-            )
+            except PublicPageError as exc:
+                if exc.code != ErrorCode.AUTH_REQUIRED:
+                    raise
+                browser_page, browser_error = _read_with_isolated_browser(
+                    request,
+                    source_url,
+                    dns_cache,
+                )
+                browser_attempted = True
+                if browser_page is None:
+                    return _blocked(
+                        request,
+                        _browser_read_failure_code(browser_error),
+                        f"{exc}. {browser_error or 'The isolated browser could not read the page.'}",
+                        action_required=True,
+                    )
+                browser_used = True
+                final_url, html = browser_page.url, browser_page.html
+                browser_snapshot_for_video = (
+                    request.source.kind.value == "video"
+                    or bool(browser_page.media_urls)
+                )
         parser = _PageParser()
         parser.feed(html)
         title = _clean_text(parser.title_parts) or final_url
         source_text_truncated = _source_text_was_truncated(parser.text_parts)
         text = _clean_text(parser.text_parts)
         if _looks_like_access_challenge(title, text):
+            if not browser_attempted:
+                browser_page, browser_error = _read_with_isolated_browser(
+                    request,
+                    source_url,
+                    dns_cache,
+                )
+                browser_attempted = True
+                if browser_page is not None:
+                    browser_used = True
+                    final_url, html = browser_page.url, browser_page.html
+                    browser_snapshot_for_video = (
+                        request.source.kind.value == "video"
+                        or bool(browser_page.media_urls)
+                    )
+                    parser = _PageParser()
+                    parser.feed(html)
+                    title = _clean_text(parser.title_parts) or final_url
+                    source_text_truncated = _source_text_was_truncated(parser.text_parts)
+                    text = _clean_text(parser.text_parts)
+        if _looks_like_access_challenge(title, text):
             return _blocked(
                 request,
-                ErrorCode.CHALLENGE_REQUIRED,
-                "The public page appears to be a login, CAPTCHA, or security verification page",
+                _browser_read_failure_code(browser_error)
+                if isinstance(browser_error, Exception)
+                else ErrorCode.CHALLENGE_REQUIRED,
+                "The page still requires login or security verification. "
+                f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                 action_required=True,
             )
-        if len(text) < 20 and not parser.images and not parser.video_urls:
-            return _blocked(request, ErrorCode.EMPTY_CONTENT, "No readable public HTML text was found")
+        if len(text) < 20:
+            if not browser_attempted:
+                browser_page, browser_error = _read_with_isolated_browser(
+                    request,
+                    source_url,
+                    dns_cache,
+                )
+                browser_attempted = True
+                if browser_page is not None:
+                    browser_used = True
+                    final_url, html = browser_page.url, browser_page.html
+                    browser_snapshot_for_video = (
+                        request.source.kind.value == "video"
+                        or bool(browser_page.media_urls)
+                    )
+                    parser = _PageParser()
+                    parser.feed(html)
+                    title = _clean_text(parser.title_parts) or final_url
+                    source_text_truncated = _source_text_was_truncated(parser.text_parts)
+                    text = _clean_text(parser.text_parts)
+            if _looks_like_access_challenge(title, text):
+                return _blocked(
+                    request,
+                    _browser_read_failure_code(browser_error)
+                    if isinstance(browser_error, Exception)
+                    else ErrorCode.CHALLENGE_REQUIRED,
+                    "The page still requires login or security verification. "
+                    f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
+                    action_required=True,
+                )
+            if isinstance(browser_error, Exception):
+                return _blocked(
+                    request,
+                    _browser_read_failure_code(browser_error),
+                    str(browser_error),
+                    action_required=True,
+                )
+            if len(text) < 20 and not parser.images and not parser.video_urls:
+                if browser_attempted and browser_error is None:
+                    browser_error = "The isolated browser returned no readable page content."
+                detail = f" Browser fallback: {browser_error}" if browser_error else ""
+                return _blocked(
+                    request,
+                    ErrorCode.EMPTY_CONTENT,
+                    f"No readable public HTML text was found.{detail}",
+                )
         safe_source_url = _redact_url(final_url)
         title_block = MaterialBlock(
             id="blk-title",
@@ -3670,6 +4182,13 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 if video_urls
                 else []
             ),
+            *(
+                [
+                    "The isolated browser read the video page only; no transcript or video-frame inspection was completed"
+                ]
+                if browser_snapshot_for_video
+                else []
+            ),
         ]
         should_store_material = (
             can_continue
@@ -3762,13 +4281,13 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             if len(resources) >= min(MAX_IMAGES, visual_budget):
                 break
         image_partial = len(resources) < len(parser.images)
-        return ReadResponse(
+        response = ReadResponse(
             request_id=request.request_id,
             session_id=request.session_id,
             material_id=material_id,
             source_revision=source_revision,
             execution_state=ExecutionState.COMPLETED,
-            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls else ReadResult.READY,
+            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video else ReadResult.READY,
             blocks=blocks,
             resources=resources,
             coverage=Coverage(
@@ -3809,6 +4328,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             ]
                         ),
                         details={
+                            "reader": "isolated_chromium" if browser_used else "static_http",
                             "total_chars": len(text),
                             "returned_chars": len(returned_text),
                             "continuation_available": can_continue,
@@ -3870,21 +4390,38 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                         ),
                     ),
                     **({"video": CoverageItem(
-                        discovered=len(video_urls),
+                        discovered=max(len(video_urls), 1),
                         extracted=0,
                         returned=0,
-                        extraction="failed" if video_urls else "complete",
+                        extraction="partial" if browser_snapshot_for_video else "failed" if video_urls else "complete",
                         unresolved=(
-                            ["Embedded video was discovered but standalone video extraction is unavailable"]
-                            if video_urls
+                            [
+                                "Browser page was read, but video transcript and frames have not been extracted"
+                                if browser_snapshot_for_video
+                                else "Embedded video was discovered but standalone video extraction is unavailable"
+                            ]
+                            if video_urls or browser_snapshot_for_video
                             else []
                         ),
-                        details={"urls": video_urls},
-                    )} if video_urls else {}),
+                        details={
+                            "urls": video_urls,
+                            "browser_media_candidates": len(browser_snapshot.media_urls)
+                            if browser_snapshot is not None
+                            else 0,
+                        },
+                    )} if video_urls or browser_snapshot_for_video else {}),
                     },
                     unresolved=source_coverage_unresolved,
                 ),
         )
+        if browser_snapshot_for_video and browser_snapshot is not None:
+            response = _attach_browser_video_evidence(
+                request,
+                source_url,
+                list(browser_snapshot.media_urls),
+                response,
+            )
+        return response
     except PublicPageError as exc:
         return _blocked(request, exc.code, str(exc))
     except httpx.HTTPError as exc:

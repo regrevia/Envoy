@@ -51,6 +51,7 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
     assert any(name.startswith("envoy_core/") and name.endswith(".py") for name in names)
     assert "Requires-Dist: envoy-core" not in metadata
     assert "Requires-Dist: pydantic<3,>=2.10" in metadata
+    assert "Requires-Dist: playwright<2,>=1.52" in metadata
     assert "Requires-Dist: openai-whisper==20250625; extra == \"media\"" in metadata
 
     environment_dir = tmp_path / "clean-env"

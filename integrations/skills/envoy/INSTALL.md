@@ -18,12 +18,19 @@ After the first GitHub Release is published, download its
 
 ```bash
 uv tool install ./envoy_cli-<version>-py3-none-any.whl
+envoy browser setup
 envoy doctor --json
 ```
 
 The wheel contains the matching `envoy-cli` and `envoy-core` code. It does not
 contain user configuration, API keys, cookies, browser profiles, or source
-materials.
+materials. `envoy browser setup` installs Chromium for Envoy's isolated
+browser. Public pages are handled headlessly; a foreground Envoy browser opens
+only when a page needs the user to log in or complete a normal verification.
+The isolated profile is stored under `~/.envoy/browser-profile` (mode `0700`
+on POSIX; on Windows it inherits the current user's home-directory ACL). It is
+separate from personal browser profiles, is never sent to the model, and is
+not exported to MCP requests.
 
 ## 3. Connect the MCP server
 
@@ -53,6 +60,10 @@ uv tool install --force --with "openai-whisper==20250625" ./envoy_cli-<version>-
 envoy asr setup --model base
 envoy doctor --json
 ```
+
+Browser page reading is available in the standard wheel. Run
+`envoy browser setup` once after installing or updating the CLI to install or
+update Chromium.
 
 Install FFmpeg and FFprobe with the operating system's package manager if they
 are not already available.
