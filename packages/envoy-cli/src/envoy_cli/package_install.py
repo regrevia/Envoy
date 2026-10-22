@@ -112,10 +112,29 @@ def select_package_indexes() -> list[PackageIndex]:
         key=lambda probe: probe.latency_ms,
     )
     if healthy:
-        return [
+        selected = [
             PackageIndex(probe.index.url, "adaptive")
             for probe in healthy
         ]
+        latencies = {
+            probe.index.url: probe.latency_ms
+            for probe in healthy
+        }
+        print(
+            "Envoy package indexes by measured latency: "
+            + ", ".join(
+                f"{item.url} ({latencies[item.url]} ms)"
+                for item in selected
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        return selected
+    print(
+        "Envoy could not preflight a package index; trying configured sources in order.",
+        file=sys.stderr,
+        flush=True,
+    )
     return candidates
 
 
@@ -144,9 +163,15 @@ def install_media_dependencies(
     uv = resolve_uv()
     last_error = ""
     attempts = 0
-    for index in indexes:
+    for index_number, index in enumerate(indexes, start=1):
         for attempt in range(max(1, int(max_attempts_per_index))):
             attempts += 1
+            print(
+                f"Installing {WHISPER_PACKAGE} from {index.url} "
+                f"(source {index_number}/{len(indexes)}, attempt {attempt + 1})",
+                file=sys.stderr,
+                flush=True,
+            )
             command = [
                 uv,
                 "pip",
@@ -155,7 +180,6 @@ def install_media_dependencies(
                 sys.executable,
                 "--index-url",
                 index.url,
-                "--no-progress",
                 WHISPER_PACKAGE,
             ]
             environment = {
@@ -165,7 +189,6 @@ def install_media_dependencies(
             }
             result = subprocess.run(
                 command,
-                capture_output=True,
                 text=True,
                 check=False,
                 env=environment,
@@ -178,7 +201,13 @@ def install_media_dependencies(
                     "attempts": attempts,
                     "model": model,
                 }
-            last_error = (result.stderr or result.stdout or "uv pip install failed")[-2000:]
+            last_error = f"uv pip install exited with status {result.returncode}"
+            print(
+                f"Installation from {index.url} failed; "
+                "Envoy will try the next reachable index if one is available.",
+                file=sys.stderr,
+                flush=True,
+            )
             if attempt + 1 < max(1, int(max_attempts_per_index)):
                 time.sleep(1.0 * (attempt + 1))
     raise RuntimeError(
