@@ -55,6 +55,22 @@ def capability_catalog() -> dict:
                     "behavior": "use the system HTTP(S) proxy when configured; read headlessly; dismiss clearly identified login-card close controls; show the Envoy-owned browser only when user login or verification is still required",
                     "otherwise": "missing_capability",
                 },
+                {
+                    "id": "xiaohongshu_image_notes",
+                    "requires": "public Xiaohongshu note page exposed through static HTML or isolated Chromium",
+                    "behavior": "return ordered note images and page text when exposed; album totals may remain unknown; never route notes through video ASR",
+                    "otherwise": "partial or normal user-action boundary",
+                },
+                {
+                    "id": "common_video_platform_pages",
+                    "requires": "a supported yt-dlp extractor or readable isolated-browser page",
+                    "platforms": [
+                        "YouTube", "Bilibili", "Douyin", "Instagram",
+                        "Vimeo", "Dailymotion", "X/Twitter", "Kuaishou",
+                    ],
+                    "behavior": "extractor recognition is routing only; subtitles, ASR, media, and frames each report separate coverage",
+                    "otherwise": "unsupported or partial",
+                },
             ],
             "unsupported": [
                 "standalone_audio",

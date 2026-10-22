@@ -1,0 +1,14 @@
+name: Feature Request
+description: Suggest a workflow or platform improvement
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: User goal and current limitation
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and public examples
+      description: Do not include credentials, private files, or signed media URLs.

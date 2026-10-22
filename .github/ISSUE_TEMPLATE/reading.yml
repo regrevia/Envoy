@@ -1,0 +1,30 @@
+name: Link Reading Failure or Missing Evidence
+description: Report unreadable sources or incomplete material
+body:
+  - type: markdown
+    attributes:
+      value: "Share only public URLs without tokens/signatures. Never attach credentials, cookies, profiles, or private media."
+  - type: input
+    id: environment
+    attributes:
+      label: Envoy version, host agent, OS
+    validations:
+      required: true
+  - type: input
+    id: stage
+    attributes:
+      label: Stage, result state, error code
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Public source, steps, expected result, actual evidence
+      description: Describe the source without a URL if the URL contains sensitive parameters.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics and browser accessibility
+      description: Can you open it normally? Is a configured trusted proxy used? Do not disclose proxy credentials.

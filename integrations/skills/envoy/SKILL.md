@@ -109,6 +109,27 @@ album counts. Titles never establish what a post says. The host model performs
 the requested filtering, interpretation, and final Markdown/table/report
 composition; Envoy does not verify job locations or choose the final artifact.
 
+## Xiaohongshu Notes
+
+For a Xiaohongshu note or `xhslink.com` share, call `envoy_read` on the exact
+link. Envoy follows public redirects and, when the resulting note is exposed,
+returns page text and ordered note images. Inspect every returned image resource
+when the user's request depends on image content, then submit one
+`envoy_observe_visual` call per inspected resource. Album totals may be unknown;
+report that gap rather than claiming the entire note was read. This image-note
+route is experimental, not general Xiaohongshu video support. Unattributed page
+or recommendation videos never enter video ASR as evidence for the note.
+
+## Common Video Links
+
+Send YouTube, Bilibili, Douyin, Instagram, Vimeo, Dailymotion, X/Twitter, and
+Kuaishou links through the same `envoy_read` tool. Extractor recognition only
+selects a route; it does not mean the platform's captions or media are
+available. Use returned timed captions/ASR, page text, and frames as separate
+evidence. If login, verification, private media, TLS/network failure, or signed
+media prevents extraction, report the exact gap. Do not import personal
+cookies or bypass access controls.
+
 ## Interpret the response
 
 - `ready`: use the returned blocks and resources for the user's task.
@@ -285,6 +306,11 @@ the user's request calls for comparison or synthesis. Retry a long read with
 the same `idempotency_key`; Envoy replays completed evidence within its
 retention lease rather than repeating ASR. If the evidence lease has expired,
 Envoy reports that and the host may begin a new read with a new operation key.
+Recoverable `blocked` results (network, missing capability, login or challenge)
+are not completed evidence: after the environment or user action is resolved,
+retry the same key and unchanged input to execute again. Legacy cached failures
+are also re-evaluated. Completed `partial` and `needs_host` evidence still replays;
+finish its handoff/continuation, or choose a new key for an intentional fresh read.
 
 Do not expand solely to make the response appear complete. Expand only when the
 remaining coverage can affect the user's requested answer, and state material
@@ -318,7 +344,12 @@ public HTML pages use the isolated browser fallback when Playwright and
 Chromium are installed. Video support is conditional: public timed subtitles,
 optional local ASR, public direct-video handoff to native-video hosts, and
 budgeted frame handoff to frame-capable hosts. Browser and media requests use
-the machine's configured public HTTP(S) proxy when available. Platform access
+the machine's configured trusted HTTP(S) proxy when available. Never discover,
+download, or use public proxies. For HTTP 404 or network failure, use the returned
+facts; do not assume deletion or region blocking. Ask whether the user can open
+the same link normally. If they can, reuse an already configured trusted proxy
+or ask for a user-approved one when none is available. Never expose proxy
+credentials or retry unchanged conditions indefinitely. Platform access
 may still require login or trigger anti-bot challenges; wait for user action
 rather than bypassing them. Standalone audio URLs, scanned-PDF OCR, and Office documents
 are not currently processed by this runtime.

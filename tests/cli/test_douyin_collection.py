@@ -457,6 +457,35 @@ def test_idempotent_operation_replays_result_after_host_checkpoint_gap(tmp_path,
     assert calls == ["expensive-read"]
 
 
+def test_idempotent_operation_retries_returned_temporary_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    calls = []
+
+    def execute():
+        calls.append("read")
+        return {"result": "blocked", "errors": [{"code": "network_error"}]}
+
+    def should_cache(result):
+        return result.get("result") != "blocked"
+
+    first = operations.run_idempotent(
+        "retryable-network-read",
+        fingerprint="same-source",
+        execute=execute,
+        should_cache=should_cache,
+    )
+    second = operations.run_idempotent(
+        "retryable-network-read",
+        fingerprint="same-source",
+        execute=lambda: calls.append("recovered-read") or {"result": "ready"},
+        should_cache=should_cache,
+    )
+
+    assert first["result"] == "blocked"
+    assert second["result"] == "ready"
+    assert calls == ["read", "recovered-read"]
+
+
 def test_idempotent_operation_rejects_reuse_for_different_input(tmp_path, monkeypatch):
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     operations.run_idempotent(
@@ -471,6 +500,22 @@ def test_idempotent_operation_rejects_reuse_for_different_input(tmp_path, monkey
             fingerprint="different-source",
             execute=lambda: pytest.fail("mismatched idempotency key must not run"),
         )
+
+
+def test_legacy_completed_failure_is_retried_with_new_cache_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    operations.run_idempotent(
+        "legacy-network",
+        fingerprint="same",
+        execute=lambda: {"result": "blocked"},
+    )
+    result = operations.run_idempotent(
+        "legacy-network",
+        fingerprint="same",
+        execute=lambda: {"result": "ready"},
+        should_cache=lambda result: result["result"] != "blocked",
+    )
+    assert result == {"result": "ready"}
 
 
 def test_douyin_note_gallery_keeps_order_and_excludes_recommendations():

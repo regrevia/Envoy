@@ -258,6 +258,7 @@ def read_local_video(request: LocalVideoReadRequest) -> ReadResponse:
                 request.idempotency_key,
                 fingerprint=fingerprint,
                 execute=execute,
+                should_cache=reader._read_operation_result_is_cacheable,
                 ttl_seconds=request.retention.derived_ttl_seconds,
             )
             response = ReadResponse.model_validate(payload)

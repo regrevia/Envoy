@@ -6,6 +6,8 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+*.egg-info/
+packages/envoy-cli/uv.lock
 
 # Node / Next.js
 node_modules/

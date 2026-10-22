@@ -23,6 +23,11 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import httpx
 from pypdf import PdfReader
 from .video import extract_public_subtitles, has_specialized_extractor
+from .platforms import (
+    classify_public_url,
+    extract_xhs_note_images,
+    is_platform_page,
+)
 from .media import (
     MediaBudgetExceeded,
     MediaCapabilityMissing,
@@ -134,9 +139,25 @@ SENSITIVE_QUERY_KEYS = {
 
 
 class PublicPageError(RuntimeError):
-    def __init__(self, message: str, code: ErrorCode = ErrorCode.SOURCE_UNAVAILABLE):
+    def __init__(
+        self,
+        message: str,
+        code: ErrorCode = ErrorCode.SOURCE_UNAVAILABLE,
+        details: dict | None = None,
+    ):
         super().__init__(message)
         self.code = code
+        self.details = details or {}
+
+
+def _http_proxy_configured() -> bool:
+    return any(
+        os.getenv(name, "").strip()
+        for name in (
+            "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+            "ALL_PROXY", "all_proxy",
+        )
+    )
 
 
 class DetectedPDF(PublicPageError):
@@ -620,12 +641,16 @@ def _browser_page_has_video(page, requested_kind: str) -> bool:
     return (
         requested_kind == "video"
         or bool(page.page_video_urls)
+        or classify_public_url(page.url) == "video_page"
         or bool(re.search(r"/(?:video|watch|shorts?)/", path))
     )
 
 
 def _url_is_video_page(value: str) -> bool:
-    return bool(re.search(r"/(?:video|watch|shorts?)/", urlparse(value).path.lower()))
+    return (
+        classify_public_url(value) == "video_page"
+        or bool(re.search(r"/(?:video|watch|shorts?)/", urlparse(value).path.lower()))
+    )
 
 
 def _select_browser_video_url(
@@ -1152,6 +1177,30 @@ def _remaining_work_seconds(request: ReadRequest) -> int:
     return remaining
 
 
+def _read_operation_result_is_cacheable(payload: dict) -> bool:
+    try:
+        response = ReadResponse.model_validate(payload)
+    except (TypeError, ValueError):
+        return True
+    retryable_codes = {
+        ErrorCode.NETWORK_ERROR,
+        ErrorCode.SOURCE_UNAVAILABLE,
+        ErrorCode.AUTH_REQUIRED,
+        ErrorCode.CHALLENGE_REQUIRED,
+        ErrorCode.MISSING_CAPABILITY,
+        ErrorCode.BUDGET_ENFORCEMENT_UNAVAILABLE,
+        ErrorCode.BUDGET_EXCEEDED,
+    }
+    if response.result == ReadResult.BLOCKED:
+        return not any(
+            error.retryable
+            or error.action_required
+            or error.code in retryable_codes
+            for error in response.errors
+        )
+    return True
+
+
 @contextmanager
 def _material_transaction(material_id: str):
     root = _material_root()
@@ -1235,6 +1284,7 @@ def _serialize_read_request(function):
                         request.idempotency_key,
                         fingerprint=fingerprint,
                         execute=lambda: execute().model_dump(mode="json"),
+                        should_cache=_read_operation_result_is_cacheable,
                         ttl_seconds=min(
                             request.retention.derived_ttl_seconds,
                             MATERIAL_TTL_SECONDS,
@@ -2452,6 +2502,26 @@ def _fetch_html(
                             raise PublicPageError(
                                 "The source requires access that Envoy cannot provide",
                                 ErrorCode.AUTH_REQUIRED,
+                                details={
+                                    "http_status": response.status_code,
+                                    "final_url": _redact_url(current_url),
+                                    "diagnosis": "access_required",
+                                    "user_check_recommended": True,
+                                    "proxy_configured": _http_proxy_configured(),
+                                },
+                            )
+                        if response.status_code == 404:
+                            raise PublicPageError(
+                                "The source returned HTTP 404. This may be a removed or private item, an invalid share link, or an upstream proxy response; Envoy cannot distinguish these from the response alone.",
+                                ErrorCode.SOURCE_UNAVAILABLE,
+                                details={
+                                    "http_status": 404,
+                                    "final_url": _redact_url(current_url),
+                                    "diagnosis": "source_or_route_not_found",
+                                    "user_check_recommended": True,
+                                    "proxy_configured": _http_proxy_configured(),
+                                    "suggested_next_action": "Ask the user to open the same link in their regular browser. If it opens there, ask whether to use an already configured or user-approved trusted proxy.",
+                                },
                             )
                         if response.status_code in {408, 425, 429} or response.status_code >= 500:
                             if attempt + 1 < MAX_FETCH_ATTEMPTS:
@@ -4109,10 +4179,17 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     source_path = urlparse(source_url).path.lower()
     direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
-    direct_douyin_note = bool(re.match(r"^/note/[^/]+", source_path))
+    direct_douyin_note = (
+        urlparse(source_url).hostname in {"douyin.com", "www.douyin.com"}
+        and bool(re.match(r"^/note/[^/]+", source_path))
+    )
+    direct_xhs_note = classify_public_url(source_url) in {
+        "xiaohongshu_note", "xiaohongshu_share",
+    }
     if (
         not direct_video_path
         and not direct_douyin_note
+        and not direct_xhs_note
         and has_specialized_extractor(source_url)
     ):
         subtitle_result = extract_public_subtitles(
@@ -4315,7 +4392,11 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 )
         if (
             browser_snapshot is None
-            and (request.source.kind.value == "video" or _url_is_video_page(final_url))
+            and (
+                request.source.kind.value == "video"
+                or _url_is_video_page(final_url)
+                or is_platform_page(final_url)
+            )
         ):
             browser_page, browser_error = _read_with_isolated_browser(
                 request,
@@ -4418,17 +4499,38 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     f"No readable public HTML text was found.{detail}",
                 )
         safe_source_url = _redact_url(final_url)
-        image_note_page = bool(re.match(
-            r"^/note/[^/]+",
-            urlparse(final_url).path,
-            re.IGNORECASE,
-        ))
+        image_note_page = (
+            urlparse(final_url).hostname in {"douyin.com", "www.douyin.com"}
+            and bool(re.match(
+                r"^/note/[^/]+",
+                urlparse(final_url).path,
+                re.IGNORECASE,
+            ))
+        ) or classify_public_url(final_url) in {
+            "xiaohongshu_note", "xiaohongshu_share",
+        }
         image_note_total: int | None = None
+        unbound_note_video = False
         if image_note_page:
-            parser.images, image_note_total = extract_douyin_note_gallery(
-                html,
-                final_url,
-            )
+            if classify_public_url(final_url) in {
+                "xiaohongshu_note", "xiaohongshu_share",
+            }:
+                parser.images, image_note_total = extract_xhs_note_images(
+                    html,
+                    final_url,
+                )
+                unbound_note_video = bool(
+                    parser.video_urls
+                    or (browser_snapshot and browser_snapshot.page_video_urls)
+                )
+                # XHS recommendation media is not evidence for the requested note.
+                parser.video_urls = []
+                browser_snapshot_for_video = False
+            else:
+                parser.images, image_note_total = extract_douyin_note_gallery(
+                    html,
+                    final_url,
+                )
         title_block = MaterialBlock(
             id="blk-title",
             kind=MaterialKind.HEADING,
@@ -4519,6 +4621,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             and not already_returned
         )
         source_coverage_unresolved = [
+            *(
+                ["Page video detected but not attributed to this note; video-level evidence was not extracted"]
+                if unbound_note_video else []
+            ),
             *(
                 ["Text source exceeded the local extraction limit"]
                 if source_text_truncated
@@ -4644,7 +4750,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             material_id=material_id,
             source_revision=source_revision,
             execution_state=ExecutionState.COMPLETED,
-            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video else ReadResult.READY,
+            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video else ReadResult.READY,
             blocks=blocks,
             resources=resources,
             coverage=Coverage(
@@ -4810,12 +4916,33 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             )
         return response
     except PublicPageError as exc:
-        return _blocked(request, exc.code, str(exc))
+        return _blocked(request, exc.code, str(exc), details=exc.details)
     except httpx.HTTPError as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code == 404:
+            final_url = _redact_url(str(exc.response.url))
+            return _blocked(
+                request,
+                ErrorCode.SOURCE_UNAVAILABLE,
+                "The source returned HTTP 404. This may be a removed or private item, an invalid share link, or an upstream proxy response; Envoy cannot distinguish these from the response alone.",
+                details={
+                    "http_status": 404,
+                    "final_url": final_url,
+                    "diagnosis": "source_or_route_not_found",
+                    "user_check_recommended": True,
+                    "proxy_configured": _http_proxy_configured(),
+                    "suggested_next_action": "Ask the user to open the same link in their regular browser. If it opens there, ask whether to use an already configured or user-approved trusted proxy.",
+                },
+            )
         return _blocked(
             request,
             ErrorCode.NETWORK_ERROR,
             f"Public page request failed ({type(exc).__name__}) for {_redact_url(source_url)}",
+            details={
+                "diagnosis": "transport_or_network_error",
+                "proxy_configured": _http_proxy_configured(),
+                "user_check_recommended": True,
+            },
         )
 
 
@@ -4824,6 +4951,7 @@ def _blocked(
     code: ErrorCode,
     message: str,
     action_required: bool = False,
+    details: dict | None = None,
 ) -> ReadResponse:
     return ReadResponse(
         request_id=request.request_id,
@@ -4836,6 +4964,7 @@ def _blocked(
                 message=message,
                 retryable=code == ErrorCode.NETWORK_ERROR,
                 action_required=action_required,
+                details=details or {},
             )
         ],
     )

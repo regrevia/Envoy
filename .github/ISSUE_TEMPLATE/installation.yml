@@ -1,0 +1,30 @@
+name: Installation or Update Failure
+description: Report a Skill, runtime, browser, or MCP installation problem
+body:
+  - type: markdown
+    attributes:
+      value: "Never include credentials, cookies, signed URLs, browser profiles, or private files."
+  - type: input
+    id: environment
+    attributes:
+      label: Envoy version, host agent, OS, Python version
+    validations:
+      required: true
+  - type: input
+    id: stage
+    attributes:
+      label: Failure stage and error code
+      description: Skill, wheel, browser, MCP, ASR, or update
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Steps, expected result, actual result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Review doctor output and logs before attaching them.

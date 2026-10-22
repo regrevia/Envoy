@@ -12,7 +12,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "scripts" / "build_envoy_cli_wheel.py"
-PACKAGE_VERSION = "0.1.5"
+PACKAGE_VERSION = "0.1.6"
+
+
+def test_distributed_license_files_match_canonical_repository_notices():
+    for directory in (
+        ROOT / "packages" / "envoy-cli",
+        ROOT / "packages" / "envoy-core",
+        ROOT / "integrations" / "skills" / "envoy",
+    ):
+        for filename in ("LICENSE", "NOTICE"):
+            assert (directory / filename).read_bytes() == (ROOT / filename).read_bytes()
 
 
 def test_release_wheel_build_refuses_a_dirty_source_tree(tmp_path, monkeypatch):
@@ -70,6 +80,12 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
     assert any(name.startswith("envoy_cli/") and name.endswith(".py") for name in names)
     assert any(name.startswith("envoy_core/") and name.endswith(".py") for name in names)
     assert "Requires-Dist: envoy-core" not in metadata
+    assert "License: Apache-2.0" in metadata
+    for filename in ("LICENSE", "NOTICE"):
+        license_path = next(name for name in names if name.endswith("/" + filename))
+        assert wheel_path.is_file()
+        with zipfile.ZipFile(wheel_path) as wheel:
+            assert wheel.read(license_path) == (ROOT / filename).read_bytes()
     assert f"Version: {PACKAGE_VERSION}+preview." in metadata
     assert "Requires-Dist: pydantic<3,>=2.10" in metadata
     assert "Requires-Dist: playwright<2,>=1.52" in metadata
