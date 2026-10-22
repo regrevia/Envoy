@@ -97,6 +97,7 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
     assert "Requires-Dist: pydantic<3,>=2.10" in metadata
     assert "Requires-Dist: playwright<2,>=1.52" in metadata
     assert "Requires-Dist: openai-whisper==20250625; extra == \"media\"" in metadata
+    assert "Requires-Dist: Pillow<13,>=10; extra == \"ocr\"" in metadata
     assert 'BUILD_CHANNEL = "local-preview"' in build_info
 
     environment_dir = tmp_path / "clean-env"

@@ -116,6 +116,19 @@ update Chromium.
 Install FFmpeg and FFprobe with the operating system's package manager if they
 are not already available.
 
+Optional image OCR keeps the base runtime light. Install the Python image
+helper and either PaddleOCR or the system Tesseract executable:
+
+```bash
+uv tool install --force --python 3.11 \
+  --with 'Pillow>=10,<13' ./envoy_cli-<version>-py3-none-any.whl
+```
+
+PaddleOCR is preferred for Chinese documents and complex layouts; Tesseract is
+the lightweight fallback. `envoy doctor --json` reports detected OCR backends.
+OCR is only run when the request supplies `ocr_profile`; it returns source-bound
+regions and does not replace host visual inspection.
+
 Video downloads enforce byte budgets. Elapsed-work limits are checked between
 extractor stages and during transfers; a site metadata request may last up to
 its bounded socket timeout. Envoy does not read browser cookies or bypass login,

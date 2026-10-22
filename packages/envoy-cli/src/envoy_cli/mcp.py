@@ -32,6 +32,7 @@ from .collections import (
 )
 from .local_video import read_local_video
 from .media import media_runtime_status
+from .ocr import available_ocr_backends
 from .reader import (
     PublicPageError,
     _redact_url,
@@ -614,6 +615,7 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                 "capabilities": capability_catalog(),
                 "runtime": {
                     **media_runtime_status(),
+                    "ocr": available_ocr_backends(),
                     "browser": browser_runtime_status(),
                 },
             }

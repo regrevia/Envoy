@@ -287,3 +287,62 @@ def test_xhs_read_uses_note_images_without_video_extractor_or_asr(monkeypatch, t
         "https://sns.example/two.jpg",
     ]
     assert not response.coverage.modalities.get("video")
+
+
+def test_public_image_note_can_return_source_bound_ocr_regions(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from envoy_cli import browser, reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_url = "https://www.xiaohongshu.com/explore/65abc123"
+    html = """
+    <html><head><title>岗位图文</title></head><body>
+      <main class="note-container"><div class="note-image">
+        <img src="https://sns.example/job.png">
+      </div></main></body></html>
+    """
+    page = SimpleNamespace(
+        url=source_url,
+        title="岗位图文",
+        text="",
+        html=html,
+        media_urls=(),
+        page_video_urls=(),
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (source_url, html))
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+    monkeypatch.setattr(reader, "_download_image_for_ocr", lambda *_args, **_kwargs: (
+        tmp_path / "job.png", "a" * 64,
+    ))
+    monkeypatch.setattr(reader, "_read_cached_image_ocr", lambda *_args, **_kwargs: {
+        "backend": "tesseract",
+        "regions": [{
+            "text": "深圳岗位",
+            "bbox": [0.1, 0.2, 0.8, 0.4],
+            "confidence": 0.91,
+        }],
+    })
+    monkeypatch.setattr(reader, "_safe_visual_candidates", lambda candidates, *_args: (
+        [{
+            "image": item,
+            "image_url": item["url"],
+            "block_id": "blk-image-0001",
+            "resource_id": "resource-image-1",
+        } for item in candidates],
+        0,
+    ))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "xhs-ocr",
+        "source": {"url": source_url},
+        "ocr_profile": "balanced",
+    }))
+
+    ocr = [block for block in response.blocks if block.kind.value == "ocr"]
+    assert len(ocr) == 1
+    assert ocr[0].content.text == "深圳岗位"
+    assert ocr[0].locator.type == "image_region"
+    assert ocr[0].locator.resource_id == "resource-image-1"
+    assert response.coverage.modalities["ocr"].details["region_count"] == 1

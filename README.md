@@ -229,7 +229,7 @@ cd frontend && npm run build
 
 当前开发版已通过一条抖音公开图文的真实链路验收：提取正文与 4 张配图，生成 OCR 语义、Markdown/HTML 和 ZIP 产物。单个样本不代表所有网站均已适配。
 
-独立 Skill/MCP 已通过 GitHub Release 发布，包含视频字幕、可选 Whisper ASR 和有限帧交接；缺失模态时明确返回 partial。扫描版 PDF OCR、微信公众号专项验收以及多用户 Worker 隔离仍未完成。实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
+独立 Skill/MCP 已通过 GitHub Release 发布，包含视频字幕、可选 Whisper ASR、有限帧交接和按需本地图片 OCR；缺失模态时明确返回 partial。OCR 依赖 PaddleOCR 或系统 Tesseract，默认安装保持轻量。扫描版 PDF OCR、微信公众号专项验收以及多用户 Worker 隔离仍未完成。实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
 
 OCR 默认使用 `balanced` 档位，用户可在高级设置中选择 `fast / balanced / quality / pro`；其中 `pro` 使用 PP-OCRv6 medium，是当前 Envoy 的最高通用精度档，代价是更慢、更占资源。Skill/MCP 请求也可以传入 `ocr_profile`。切换档位时按需下载对应模型，不把全部模型预装进镜像。OCR 属于 Envoy 的派生材料，网站产物可以记录 OCR 文本及来源关系；Skill/MCP 默认不把所有 OCR 原文一次性塞进 Agent 上下文，而是按目标和材料范围逐步读取。
 

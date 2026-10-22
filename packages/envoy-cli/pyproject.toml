@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 media = ["openai-whisper==20250625"]
+ocr = ["Pillow>=10,<13"]
 
 [project.scripts]
 envoy = "envoy_cli.cli:entrypoint"
