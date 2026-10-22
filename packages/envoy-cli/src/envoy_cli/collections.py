@@ -297,6 +297,7 @@ def discover_profile(
     youtube_dl, _extractors = _load_yt_dlp()
     if youtube_dl is None:
         raise CollectionError("yt-dlp is not installed")
+    extractor_error: Exception | None = None
     options = {
         "ignoreconfig": True,
         "quiet": True,

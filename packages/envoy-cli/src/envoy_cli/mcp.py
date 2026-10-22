@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sys
 from typing import Any, Iterable, TextIO
@@ -40,6 +41,8 @@ from .reader import (
     read_visual_observations,
     search_material,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 CURRENT_PROTOCOL_VERSION = "2026-07-28"
@@ -710,6 +713,13 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
         }
     except (TypeError, ValueError, CollectionRevisionConflict) as exc:
         return _error(request_id, -32602, str(exc))
+    except Exception:
+        _LOGGER.exception("Unexpected Envoy MCP tool failure: %s", name)
+        return _error(
+            request_id,
+            -32603,
+            "Internal error while handling MCP tool call",
+        )
     return _result(request_id, {
         "content": [{
             "type": "text",
@@ -723,7 +733,16 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
 def run_lines(lines: Iterable[dict]) -> int:
     session = MCPProtocolSession()
     for message in lines:
-        response = handle_message(message, session)
+        try:
+            response = handle_message(message, session)
+        except Exception:
+            request_id = message.get("id") if isinstance(message, dict) else None
+            _LOGGER.exception("Unexpected Envoy MCP request failure")
+            response = _error(
+                request_id,
+                -32603,
+                "Internal error while handling MCP request",
+            )
         if response is not None:
             print(json.dumps(response, ensure_ascii=False), flush=True)
     return 0
@@ -740,7 +759,16 @@ def run_stream(input_stream: TextIO, output_stream: TextIO) -> int:
             output_stream.write(json.dumps(_error(None, -32700, "Parse error")) + "\n")
             output_stream.flush()
             continue
-        response = handle_message(message, session)
+        try:
+            response = handle_message(message, session)
+        except Exception:
+            request_id = message.get("id") if isinstance(message, dict) else None
+            _LOGGER.exception("Unexpected Envoy MCP request failure")
+            response = _error(
+                request_id,
+                -32603,
+                "Internal error while handling MCP request",
+            )
         if response is not None:
             output_stream.write(json.dumps(response, ensure_ascii=False) + "\n")
             output_stream.flush()
