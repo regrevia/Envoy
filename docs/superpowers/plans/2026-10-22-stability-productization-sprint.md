@@ -103,4 +103,5 @@
   relation and parent video-time locator, so timestamps remain recoverable.
 - [ ] Run a Chinese PaddleOCR acceptance sample; current local smoke acceptance
   covers Tesseract English text only.
-- Establish versioned real-host evaluation for at least 20 sources and 40 tasks before making token/cost savings claims.
+- [x] Add a versioned 20-source/40-task evaluator contract requiring actual paired host usage, per-task baseline, answer/citation review, timings, visual inputs, and repeated-work counts. The tool withholds savings metrics unless answer and citation quality are non-inferior.
+- [ ] Populate the contract with real sources and run the paired host evaluation; no product savings claim is made yet.
