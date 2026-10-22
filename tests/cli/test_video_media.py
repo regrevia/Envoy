@@ -869,7 +869,12 @@ def test_runtime_status_reports_audio_and_local_asr_capability(monkeypatch):
         "asr_engine": "openai-whisper",
         "asr_installed": True,
         "asr_model": "tiny",
-        "asr_model_available": True,
+        "asr_model_available": False,
+        "asr_configured": True,
+        "asr_model_file_present": True,
+        "asr_model_verified": None,
+        "asr_operational": "not_checked",
+        "asr_next_step": "run envoy doctor --verify-asr",
     }
 
 
