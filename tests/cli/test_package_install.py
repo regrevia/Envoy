@@ -104,7 +104,7 @@ def test_select_package_index_prefers_fast_healthy_candidate(monkeypatch):
     assert result.source == "adaptive"
 
 
-def test_install_media_dependencies_retries_next_index(monkeypatch):
+def test_install_media_dependencies_retries_next_index(monkeypatch, capsys):
     from envoy_cli import package_install
 
     indexes = [
@@ -129,6 +129,7 @@ def test_install_media_dependencies_retries_next_index(monkeypatch):
     assert calls[0][calls[0].index("--index-url") + 1] == indexes[0].url
     assert calls[1][calls[1].index("--index-url") + 1] == indexes[1].url
     assert "openai-whisper==20250625" in calls[1]
+    assert "source 1/2" in capsys.readouterr().err
 
 
 def test_asr_install_command_installs_engine_before_preparing_model(
