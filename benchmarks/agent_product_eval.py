@@ -22,6 +22,10 @@ MIN_SOURCES = 20
 MIN_TASKS = 40
 PLACEHOLDER_HOSTS = {"example.org", "example.com", "example.invalid", "localhost"}
 PLACEHOLDER_SUFFIXES = (".example", ".invalid", ".test", ".localhost")
+SENSITIVE_QUERY_KEYS = {
+    "access_token", "auth", "authorization", "cookie", "key", "signature",
+    "sig", "token", "x-amz-credential", "x-amz-signature",
+}
 REQUIRED_SOURCE_FIELDS = {"source_id", "url", "source_class"}
 REQUIRED_RUN_FIELDS = {
     "run_id",
@@ -92,6 +96,11 @@ def _require_non_negative(item: dict, field: str, record_id: str) -> None:
         raise ValueError(f"{record_id}: {field} must be a non-negative number")
 
 
+def _canonical_source_url(value: str) -> str:
+    parsed = urlparse(value)
+    return f"{parsed.scheme.lower()}://{(parsed.hostname or '').lower()}{parsed.path.rstrip('/') or '/'}?{parsed.query}"
+
+
 def validate_records(
     run: dict,
     sources: list[dict],
@@ -103,7 +112,12 @@ def validate_records(
     missing_run = REQUIRED_RUN_FIELDS - run.keys()
     if missing_run:
         errors.append(f"run: missing fields {sorted(missing_run)}")
+    for field in ("envoy_version", "envoy_commit", "host_agent", "host_agent_version", "operating_system", "python_version"):
+        value = str(run.get(field) or "").strip().lower()
+        if not value or value.startswith("replace-with") or value in {"unknown", "draft"}:
+            errors.append(f"run: {field} must identify the actual evaluation runtime")
     source_ids = set()
+    source_urls = set()
     for source in sources:
         missing = REQUIRED_SOURCE_FIELDS - source.keys()
         source_id = str(source.get("source_id") or "<unknown-source>")
@@ -120,6 +134,18 @@ def validate_records(
             or parsed.hostname.lower().endswith(PLACEHOLDER_SUFFIXES)
         ):
             errors.append(f"{source_id}: placeholder URL is not real acceptance evidence")
+        else:
+            canonical = _canonical_source_url(str(source.get("url") or ""))
+            if canonical in source_urls:
+                errors.append(f"{source_id}: duplicate source URL does not count as a new source")
+            source_urls.add(canonical)
+            query_keys = {
+                pair.partition("=")[0].lower()
+                for pair in parsed.query.split("&")
+                if pair
+            }
+            if query_keys & SENSITIVE_QUERY_KEYS:
+                errors.append(f"{source_id}: source URL contains sensitive query parameters")
         if source.get("accepted_state") not in {
             "accepted", "partial", "blocked", "unverified", "failed"
         }:
@@ -192,6 +218,8 @@ def validate_records(
                 _require_non_negative(task, field, task_id)
         if not isinstance(task.get("evidence_locators"), list):
             errors.append(f"{task_id}: evidence_locators must be a list")
+        elif task.get("citation_correct") and not task["evidence_locators"]:
+            errors.append(f"{task_id}: a correct citation requires at least one evidence locator")
         if not isinstance(task.get("reused_material"), bool):
             errors.append(f"{task_id}: reused_material must be boolean")
 
@@ -247,7 +275,8 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "task_count": len(tasks),
         "minimum_source_gate": MIN_SOURCES,
         "minimum_task_gate": MIN_TASKS,
-        "gate_status": "passed" if len(sources) >= MIN_SOURCES and len(tasks) >= MIN_TASKS else "incomplete",
+        "scale_gate_status": "passed" if len(sources) >= MIN_SOURCES and len(tasks) >= MIN_TASKS else "incomplete",
+        "gate_status": "pending_validation",
         "answer_accuracy": answer_accuracy,
         "baseline_answer_accuracy": baseline_answer_accuracy,
         "citation_accuracy": citation_accuracy,
@@ -270,11 +299,7 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "envoy_actual_output_tokens": sum(task["output_tokens"] for task in usage_actual) if len(usage_actual) == len(tasks) else None,
         "baseline_actual_input_tokens": baseline_input_tokens if len(usage_actual) == len(tasks) else None,
         "baseline_actual_output_tokens": sum(task["baseline_output_tokens"] for task in usage_actual) if len(usage_actual) == len(tasks) else None,
-        "input_token_savings_fraction": (
-            round((baseline_input_tokens - envoy_input_tokens) / baseline_input_tokens, 6)
-            if savings_eligible and baseline_input_tokens > 0
-            else None
-        ),
+        "input_token_savings_fraction": None,
         "source_classes": dict(Counter(str(source["source_class"]) for source in sources)),
     }
 
@@ -303,6 +328,26 @@ def main(argv: list[str] | None = None) -> int:
             require_minimum=not args.allow_incomplete,
         )
         report = summarize(run, sources, tasks)
+        release_eval_ready = (
+            not errors
+            and len(sources) >= MIN_SOURCES
+            and len(tasks) >= MIN_TASKS
+            and report["actual_usage_status"] == "paired_actual"
+            and report["quality_non_inferior"]
+        )
+        report["gate_status"] = "passed" if release_eval_ready else "incomplete"
+        if (
+            release_eval_ready
+            and report["baseline_actual_input_tokens"] is not None
+            and report["baseline_actual_input_tokens"] > 0
+        ):
+            report["input_token_savings_fraction"] = round(
+                (
+                    report["baseline_actual_input_tokens"]
+                    - report["envoy_actual_input_tokens"]
+                ) / report["baseline_actual_input_tokens"],
+                6,
+            )
         report["validation_status"] = "passed" if not errors else "failed"
         report["validation_errors"] = errors
     except (OSError, ValueError) as exc:
