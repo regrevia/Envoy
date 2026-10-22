@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "scripts" / "build_envoy_cli_wheel.py"
-PACKAGE_VERSION = "0.1.1"
+PACKAGE_VERSION = "0.1.2"
 
 
 def test_release_wheel_build_refuses_a_dirty_source_tree(tmp_path, monkeypatch):
@@ -139,6 +139,8 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
     response = json.loads(smoke.stdout)
     assert response["tool"] == "envoy"
+    assert response["cli_version"].split("+", 1)[0] == PACKAGE_VERSION
+    assert response["core_version"] == PACKAGE_VERSION
     assert response["build"]["channel"] == "local-preview"
     assert response["build"]["source_revision"]
     assert response["build"]["source_dirty"] is True
