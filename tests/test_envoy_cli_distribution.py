@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "scripts" / "build_envoy_cli_wheel.py"
-PACKAGE_VERSION = "0.1.2"
+PACKAGE_VERSION = "0.1.3"
 
 
 def test_release_wheel_build_refuses_a_dirty_source_tree(tmp_path, monkeypatch):

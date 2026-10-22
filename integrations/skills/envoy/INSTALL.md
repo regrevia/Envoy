@@ -56,30 +56,16 @@ media runtime and appropriate host capability.
 Install local ASR support and prepare its default model with:
 
 ```bash
-HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7897}" \
-HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7897}" \
-ALL_PROXY="${ALL_PROXY:-socks5h://127.0.0.1:7897}" \
-uv tool install --with "openai-whisper==20250625" \
-  ./envoy_cli-<release-version>-py3-none-any.whl
-envoy asr setup --model base
+envoy asr install --model base
 envoy doctor --json
 ```
 
-Use the same Envoy runtime for normal use and updates. To get pip's resumable
-download retries for large dependencies, use a dedicated temporary virtual
-environment:
-
-```bash
-python3.12 -m venv "$HOME/.local/share/envoy-asr"
-HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7897}" \
-HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7897}" \
-ALL_PROXY="${ALL_PROXY:-socks5h://127.0.0.1:7897}" \
-"$HOME/.local/share/envoy-asr/bin/python" -m pip install \
-  --resume-retries 20 --retries 10 --timeout 60 \
-  ./envoy_cli-<release-version>-py3-none-any.whl "openai-whisper==20250625"
-"$HOME/.local/share/envoy-asr/bin/envoy" asr setup --model base
-"$HOME/.local/share/envoy-asr/bin/envoy" doctor --json
-```
+Envoy probes PyPI and regional indexes for both Whisper and PyTorch, chooses the
+fastest reachable index, and retries through other reachable indexes if an
+install attempt fails. Explicit proxy settings are honored. To use a specific
+index, set `ENVOY_PYPI_INDEX_URL`; to provide an ordered fallback list, set
+`ENVOY_PYPI_INDEXES` to comma-separated index URLs. Standard `UV_INDEX_URL` is
+also honored as an explicit override.
 
 Browser page reading is available in the standard wheel. Run
 `envoy browser setup` once after installing or updating the CLI to install or

@@ -18,6 +18,7 @@ from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
+from .package_install import install_media_dependencies
 from . import __version__
 from . import mcp
 from .collections import CollectionError, discover_profile
@@ -61,6 +62,19 @@ def _parser() -> argparse.ArgumentParser:
     asr_commands = asr.add_subparsers(dest="asr_command", required=True)
     asr_setup = asr_commands.add_parser("setup", help="download and verify one local Whisper model")
     asr_setup.add_argument(
+        "--model",
+        default="base",
+        choices=[
+            "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+            "medium", "medium.en", "large", "large-v1", "large-v2",
+            "large-v3", "large-v3-turbo",
+        ],
+    )
+    asr_install = asr_commands.add_parser(
+        "install",
+        help="install Whisper and its large dependencies using the fastest reachable package index",
+    )
+    asr_install.add_argument(
         "--model",
         default="base",
         choices=[
@@ -123,6 +137,14 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         return mcp.main()
     if args.command == "asr":
         try:
+            if args.asr_command == "install":
+                install = install_media_dependencies(model=args.model)
+                result = {
+                    **install,
+                    **prepare_asr_model(args.model),
+                }
+                print(json.dumps({"status": "ready", **result}, ensure_ascii=False))
+                return 0
             result = prepare_asr_model(args.model)
         except MediaCapabilityMissing as exc:
             print(json.dumps({"status": "blocked", "error": str(exc)}, ensure_ascii=False))
