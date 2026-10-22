@@ -953,6 +953,7 @@ def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
         "session_id": "video-session",
         "source": {"url": source_url, "kind": "video"},
         "goal": "Extract all video evidence",
+        "ocr_profile": "balanced",
         "scope": {"include_visual": True},
         "host_capabilities": {"image_input": "local_file", "video_input": "frames"},
         "budget": {
@@ -1029,6 +1030,15 @@ def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
     monkeypatch.setattr(reader, "asr_model_cache_dir", lambda: tmp_path / "models")
     monkeypatch.setattr(reader, "transcribe_audio_file", transcribe)
     monkeypatch.setattr(reader, "extract_video_frames", extract)
+    monkeypatch.setattr(reader, "_read_cached_image_ocr", lambda *_args, **_kwargs: {
+        "backend": "tesseract",
+        "engine_version": "tesseract 5",
+        "regions": [{
+            "text": "深圳岗位",
+            "bbox": [0.1, 0.2, 0.8, 0.4],
+            "confidence": 0.9,
+        }],
+    })
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
 
     response = reader._attach_browser_video_evidence(
@@ -1049,6 +1059,11 @@ def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
     assert frame.locator.type == "video_time"
     assert frame.locator.start_seconds == 7.5
     assert response.coverage.modalities["video"].details["transcript_source"] == "asr"
+    ocr = next(block for block in response.blocks if block.kind == MaterialKind.OCR)
+    assert ocr.content.text == "深圳岗位"
+    assert ocr.locator.resource_id == frame.content.resource_id
+    assert ocr.locator.type == "image_region"
+    assert response.coverage.modalities["ocr"].details["timestamp_source"] == "parent_video_frame_locator"
     assert response.coverage.modalities["video"].details["frame_timestamps"] == [7.5]
     stored = reader._load_matching_material(
         response.material_id,
