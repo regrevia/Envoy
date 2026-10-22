@@ -62,6 +62,12 @@ def capability_catalog() -> dict:
                     "otherwise": "partial or normal user-action boundary",
                 },
                 {
+                    "id": "local_image_ocr",
+                    "requires": "ocr_profile plus PaddleOCR or system Tesseract and a safely downloadable public image",
+                    "behavior": "return source-bound OCR text regions with normalized boxes, confidence, backend, and cache reuse; OCR never replaces host visual inspection",
+                    "otherwise": "partial or missing_capability",
+                },
+                {
                     "id": "common_video_platform_pages",
                     "requires": "a supported yt-dlp extractor or readable isolated-browser page",
                     "platforms": [

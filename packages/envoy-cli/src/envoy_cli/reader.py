@@ -43,6 +43,7 @@ from .media import (
     probe_media_duration,
     transcribe_audio_file,
 )
+from .ocr import _engine_version, available_ocr_backends, extract_image_ocr, ocr_cache_key
 from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
@@ -51,6 +52,7 @@ from envoy_core.schemas.read_v1 import (
     ExecutionState,
     HostDelivery,
     ImageContent,
+    ImageRegionLocator,
     ImageInputCapability,
     MaterialBlock,
     MaterialKind,
@@ -60,6 +62,7 @@ from envoy_core.schemas.read_v1 import (
     ReadResponse,
     ReadResult,
     ResourceRef,
+    Relation,
     Need,
     Quality,
     MaterialSearchRequest,
@@ -465,6 +468,108 @@ def _safe_visual_candidates(
             "source_index": source_index,
         })
     return selected, skipped_sensitive
+
+
+def _download_image_for_ocr(
+    image_url: str,
+    *,
+    max_bytes: int,
+    dns_cache: dict[str, bool],
+) -> tuple[Path, str]:
+    if not _is_public_http_url(image_url, dns_cache):
+        raise PublicPageError("OCR image URL is not a public HTTP(S) address")
+    root = _material_root() / "ocr-inputs"
+    root.mkdir(mode=0o700, exist_ok=True)
+    current_url = image_url
+    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False) as client:
+        for _ in range(5):
+            if not _is_public_http_url(current_url, dns_cache):
+                raise PublicPageError("OCR image redirect resolved to a non-public address")
+            with client.stream("GET", current_url, headers={"User-Agent": "Envoy/0.1"}) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise PublicPageError("OCR image returned an invalid redirect")
+                    current_url = urljoin(current_url, location)
+                    continue
+                return _download_image_response(response, root, max_bytes)
+    raise PublicPageError("OCR image exceeded redirect limit")
+
+
+def _download_image_response(response, root: Path, max_bytes: int) -> tuple[Path, str]:
+    response.raise_for_status()
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+    if not content_type.startswith("image/"):
+        raise PublicPageError(
+            f"OCR source returned unsupported content type: {content_type or 'unknown'}",
+            ErrorCode.UNSUPPORTED_SOURCE,
+        )
+    digest = hashlib.sha256()
+    temporary = tempfile.NamedTemporaryFile(
+        prefix=".ocr-", suffix=".img", dir=root, delete=False
+    )
+    total = 0
+    try:
+        with temporary:
+            for chunk in response.iter_bytes(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise MediaBudgetExceeded("OCR image exceeded max_download_bytes")
+                digest.update(chunk)
+                temporary.write(chunk)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        target = root / f"{digest.hexdigest()}.img"
+        if not target.exists():
+            os.replace(temporary.name, target)
+        else:
+            Path(temporary.name).unlink(missing_ok=True)
+        return target, digest.hexdigest()
+    finally:
+        Path(temporary.name).unlink(missing_ok=True)
+
+
+def _read_cached_image_ocr(
+    image_path: Path,
+    image_sha256: str,
+    *,
+    profile: str,
+    language: str,
+) -> dict:
+    cache_root = _material_root() / "ocr-cache"
+    cache_root.mkdir(mode=0o700, exist_ok=True)
+    cache_candidates = []
+    available = available_ocr_backends()
+    for backend in ("paddleocr", "tesseract"):
+        if available.get(backend):
+            key = ocr_cache_key(
+                image_sha256,
+                profile=profile,
+                language=language,
+                backend=backend,
+                engine_version=_engine_version(backend),
+            )
+            cache_candidates.append(cache_root / f"{key}.json")
+    for cache_path in cache_candidates:
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(cached, dict) and cached.get("source_sha256") == image_sha256:
+                return {**cached, "cache_hit": True}
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+    result = extract_image_ocr(
+        image_path,
+        profile=profile,
+        language=language,
+    )
+    backend = str(result.get("backend") or "auto")
+    cache_path = cache_root / f"{ocr_cache_key(image_sha256, profile=profile, language=language, backend=backend, engine_version=str(result.get('engine_version') or 'unknown'))}.json"
+    cache_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    try:
+        cache_path.chmod(0o600)
+    except OSError:
+        pass
+    return {**result, "cache_hit": False}
 
 
 def _goal_candidates(text: str, terms: list[str], limit: int = 5) -> list[dict]:
@@ -4766,6 +4871,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 order=1,
             ))
         resources = []
+        ocr_blocks = []
+        ocr_unresolved = []
+        ocr_profile = request.ocr_profile
+        ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
         for item in safe_images:
             image = item["image"]
             image_url = item["image_url"]
@@ -4792,6 +4901,56 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             )
             if len(resources) >= min(MAX_IMAGES, visual_budget):
                 break
+        if ocr_profile:
+            for item in safe_images:
+                try:
+                    image_path, image_sha256 = _download_image_for_ocr(
+                        item["image_url"],
+                        max_bytes=request.budget.max_download_bytes,
+                        dns_cache=dns_cache,
+                    )
+                    ocr_result = _read_cached_image_ocr(
+                        image_path,
+                        image_sha256,
+                        profile=ocr_profile,
+                        language=ocr_language,
+                    )
+                    for region_index, region in enumerate(ocr_result.get("regions") or [], start=1):
+                        ocr_text = str(region.get("text") or "").strip()
+                        bbox = region.get("bbox")
+                        if not ocr_text or not isinstance(bbox, list) or len(bbox) != 4:
+                            continue
+                        ocr_blocks.append(MaterialBlock(
+                            id=f"{item['block_id']}-ocr-{region_index:03d}",
+                            kind=MaterialKind.OCR,
+                            content=TextContent(type="text", text=ocr_text),
+                            origin=MaterialOrigin.OCR,
+                            locator=ImageRegionLocator(
+                                type="image_region",
+                                resource_id=item["resource_id"],
+                                coordinate_system="normalized_top_left",
+                                bbox=[float(value) for value in bbox],
+                            ),
+                            parent_id=item["block_id"],
+                            order=len(blocks) + len(ocr_blocks),
+                            relations=[Relation(
+                                type="derived_from",
+                                target_id=item["block_id"],
+                                basis="extraction",
+                            )],
+                            quality=Quality(
+                                engine=f"{ocr_result.get('backend', 'ocr')}-{ocr_profile}",
+                                engine_score=float(region.get("confidence") or 0),
+                                unresolved=[
+                                    "OCR is a text extraction hint; inspect the source image for layout or ambiguity"
+                                ],
+                            ),
+                        ))
+                except (OSError, ValueError, PublicPageError, MediaBudgetExceeded, RuntimeError) as exc:
+                    ocr_unresolved.append(
+                        f"OCR skipped for {item['resource_id']} ({type(exc).__name__})"
+                    )
+            blocks.extend(ocr_blocks)
         image_note_unknown_total = image_note_page and image_note_total is None
         image_partial = (
             len(resources) < len(parser.images)
@@ -4804,7 +4963,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             material_id=material_id,
             source_revision=source_revision,
             execution_state=ExecutionState.COMPLETED,
-            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video else ReadResult.READY,
+            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video or ocr_unresolved else ReadResult.READY,
             blocks=blocks,
             resources=resources,
             coverage=Coverage(
@@ -4935,6 +5094,20 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             ),
                         },
                     ),
+                    **({"ocr": CoverageItem(
+                        discovered=len(safe_images),
+                        extracted=len(ocr_blocks),
+                        returned=len(ocr_blocks),
+                        extraction="complete" if not ocr_unresolved else "partial",
+                        unresolved=ocr_unresolved,
+                        details={
+                            "profile": ocr_profile,
+                            "language": ocr_language,
+                            "source_image_count": len(safe_images),
+                            "region_count": len(ocr_blocks),
+                            "host_visual_fallback": True,
+                        },
+                    )} if ocr_profile else {}),
                     **({"video": CoverageItem(
                         discovered=max(len(video_urls), 1),
                         extracted=0,

@@ -60,6 +60,8 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
             assert tool_name in skill
         assert b"Xiaohongshu Notes" in skill
         assert b"Common Video Links" in skill
+        assert b"Optional OCR" in skill
+        assert b"ocr_profile" in skill
         assert b"Album totals may be unknown" in skill
         host_config = json.loads(archive.read("hosts/mcp.json"))
         assert host_config["mcpServers"]["envoy"]["args"] == ["mcp"]

@@ -18,6 +18,7 @@ from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
+from .ocr import available_ocr_backends
 from .package_install import install_media_dependencies
 from . import __version__
 from . import mcp
@@ -112,6 +113,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
     if args.command == "doctor":
         runtime = media_runtime_status(verify_asr=args.verify_asr)
         runtime["browser"] = browser_runtime.browser_runtime_status()
+        runtime["ocr"] = available_ocr_backends()
         result = {
             "tool": "envoy",
             "cli_version": __version__,

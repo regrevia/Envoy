@@ -130,6 +130,17 @@ evidence. If login, verification, private media, TLS/network failure, or signed
 media prevents extraction, report the exact gap. Do not import personal
 cookies or bypass access controls.
 
+## Optional OCR
+
+Set `ocr_profile` to `fast`, `balanced`, `quality`, or `pro` when image text is
+relevant to the user's goal. Envoy first uses local PaddleOCR when installed,
+then system Tesseract; it returns OCR blocks linked to the source image through
+an `image_region` locator with normalized coordinates, confidence, backend, and
+cache metadata. OCR text is a derived evidence hint, not a complete image
+interpretation. Use the source image and `envoy_observe_visual` for layout,
+charts, ambiguous text, or low-confidence regions. If no OCR backend is
+available, report the `missing_capability`/partial gap and do not invent text.
+
 ## Interpret the response
 
 - `ready`: use the returned blocks and resources for the user's task.

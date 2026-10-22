@@ -98,5 +98,6 @@
 
 - [x] Persist selected ASR model/checksum separately from the replaceable uv tool environment; make routine `doctor` distinguish installed engine, configured capability, model file, verified checkpoint, and an explicitly loaded operational check.
 - [x] Exercise a real upgrade with Whisper enabled, verify `uv tool install --force --with openai-whisper==20250625 ...` restores the engine, and verify the selected model/checkpoint survive.
-- Add standalone OCR only after selecting an optional engine and evidence schema that preserves source image, reading order, regions, timestamp where applicable, and quality.
+- [x] Add the first standalone OCR evidence path with optional Pillow, PaddleOCR/Tesseract backend selection, source-bound normalized regions, confidence, engine/profile metadata, bounded download, and cache reuse.
+- [ ] Extend OCR to video-frame timestamps and run a Chinese PaddleOCR acceptance sample; current local smoke acceptance covers Tesseract English text only.
 - Establish versioned real-host evaluation for at least 20 sources and 40 tasks before making token/cost savings claims.
