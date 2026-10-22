@@ -24,6 +24,31 @@ def test_select_package_index_honors_explicit_override(monkeypatch):
     assert result.source == "explicit"
 
 
+def test_select_package_index_honors_existing_uv_default_index(monkeypatch):
+    from envoy_cli import package_install
+
+    monkeypatch.delenv("ENVOY_PYPI_INDEX_URL", raising=False)
+    monkeypatch.delenv("UV_INDEX_URL", raising=False)
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "https://managed.example/simple/")
+    monkeypatch.setattr(
+        package_install,
+        "_probe_index",
+        lambda *_args, **_kwargs: pytest.fail("explicit index must not be probed"),
+    )
+
+    result = package_install.select_package_index()
+
+    assert result.url == "https://managed.example/simple/"
+    assert result.source == "explicit"
+
+
+def test_package_index_rejects_embedded_credentials():
+    from envoy_cli.package_install import _normalize_index
+
+    with pytest.raises(ValueError, match="credential-free"):
+        _normalize_index("https://user:password@mirror.example/simple/")
+
+
 def test_probe_targets_package_name_under_simple_index(monkeypatch):
     from envoy_cli import package_install
 

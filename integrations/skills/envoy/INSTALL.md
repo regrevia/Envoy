@@ -64,8 +64,10 @@ Envoy probes PyPI and regional indexes for both Whisper and PyTorch, chooses the
 fastest reachable index, and retries through other reachable indexes if an
 install attempt fails. Explicit proxy settings are honored. To use a specific
 index, set `ENVOY_PYPI_INDEX_URL`; to provide an ordered fallback list, set
-`ENVOY_PYPI_INDEXES` to comma-separated index URLs. Standard `UV_INDEX_URL` is
-also honored as an explicit override.
+`ENVOY_PYPI_INDEXES` to comma-separated index URLs. `UV_INDEX_URL`,
+`UV_DEFAULT_INDEX`, and `PIP_INDEX_URL` are also honored as explicit
+overrides. Index URLs must not embed credentials; use the proxy's normal
+environment configuration for private network access.
 
 Browser page reading is available in the standard wheel. Run
 `envoy browser setup` once after installing or updating the CLI to install or
