@@ -114,11 +114,15 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
         for key, value in clean_env.items()
         if key in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
     }
+    clean_home = tmp_path / "clean-home"
+    clean_home.mkdir()
     smoke_env.update({
-        "HOME": str(tmp_path / "clean-home"),
+        "HOME": str(clean_home),
         "PATH": os.pathsep.join((str(envoy_executable.parent), clean_env.get("PATH", ""))),
         "PYTHONPATH": "",
     })
+    if os.name == "nt":
+        smoke_env["USERPROFILE"] = str(clean_home)
     smoke = subprocess.run(
         [
             str(environment_python),

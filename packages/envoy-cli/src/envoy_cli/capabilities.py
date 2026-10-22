@@ -64,6 +64,18 @@ def capability_catalog() -> dict:
         },
         "operations": [
             {
+                "tool": "envoy_read_local_video",
+                "use": "Read an explicitly selected local video using bounded on-device ASR and optional host-requested frames; the source file is never uploaded.",
+            },
+            {
+                "tool": "envoy_discover",
+                "use": "Return a bounded, persisted snapshot of public Douyin profile candidates; metadata is a selection hint, not content evidence.",
+            },
+            {
+                "tool": "envoy_collection_checkpoint",
+                "use": "Persist revision-checked collection progress, idempotent operations, and cumulative usage across process restarts.",
+            },
+            {
                 "tool": "envoy_read",
                 "use": "Read a public URL toward the user's stated goal; source type is auto-detected.",
             },

@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Optional
 
 from envoy_core import __version__ as core_version
-from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest, ReadRequest
+from envoy_core.schemas.read_v1 import (
+    ExpandRequest,
+    LocalVideoReadRequest,
+    MaterialSearchRequest,
+    ReadRequest,
+)
 
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
@@ -15,6 +20,8 @@ from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSIO
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
 from . import __version__
 from . import mcp
+from .collections import CollectionError, discover_profile
+from .local_video import read_local_video
 from .reader import PublicPageError, expand_material, read_public_page, search_material
 
 
@@ -26,11 +33,24 @@ def _parser() -> argparse.ArgumentParser:
     read = subparsers.add_parser("read", help="read a public link")
     read.add_argument("--request-json", required=True, help="read an envoy.read/1 request from this path or '-' for stdin")
 
+    local_video = subparsers.add_parser("read-local-video", help="transcribe and inspect a local video file")
+    local_video.add_argument(
+        "--request-json",
+        required=True,
+        help="read an envoy.read/1 local-video request from this path or '-' for stdin",
+    )
+
     expand = subparsers.add_parser("expand", help="read the next range from a local material")
     expand.add_argument("--request-json", required=True, help="read an expansion request from this path or '-' for stdin")
 
     search = subparsers.add_parser("search", help="find relevant passages in a local material")
     search.add_argument("--request-json", required=True, help="read an envoy.search/1 request from this path or '-' for stdin")
+
+    discover = subparsers.add_parser("discover", help="discover bounded public Douyin profile candidates")
+    discover.add_argument("--url", required=True)
+    discover.add_argument("--limit", type=int, default=20)
+    discover.add_argument("--cursor")
+    discover.add_argument("--max-work-seconds", type=int, default=60)
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
@@ -55,6 +75,21 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "discover":
+        try:
+            print(json.dumps(discover_profile(
+                args.url,
+                limit=args.limit,
+                cursor=args.cursor,
+                max_work_seconds=args.max_work_seconds,
+            ), ensure_ascii=False))
+            return 0
+        except CollectionError as exc:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "source_unavailable", "message": str(exc)},
+            }, ensure_ascii=False))
+            return 2
     if args.command == "doctor":
         runtime = media_runtime_status()
         runtime["browser"] = browser_runtime.browser_runtime_status()
@@ -113,6 +148,9 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         elif args.command == "search":
             operation_request = MaterialSearchRequest.model_validate_json(payload)
             response = search_material(operation_request)
+        elif args.command == "read-local-video":
+            operation_request = LocalVideoReadRequest.model_validate_json(payload)
+            response = read_local_video(operation_request)
         else:
             request = ReadRequest.model_validate_json(payload)
             operation_request = request

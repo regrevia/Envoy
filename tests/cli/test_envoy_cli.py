@@ -1101,6 +1101,11 @@ def test_challenge_page_is_not_reported_as_ready(monkeypatch):
         "<p>Checking your browser before accessing the site.</p>"
         "<p>" + ("Please wait. " * 20) + "</p></body></html>",
     ))
+    monkeypatch.setattr(
+        reader,
+        "_read_with_isolated_browser",
+        lambda *_args, **_kwargs: (None, "BrowserChallengeRequired"),
+    )
 
     response = reader.read_public_page(ReadRequest.model_validate({
         "protocol_version": "envoy.read/1",

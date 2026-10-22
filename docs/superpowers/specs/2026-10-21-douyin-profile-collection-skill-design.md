@@ -25,13 +25,19 @@ semantic analysis, and composes the requested artifact.
    the user to confirm or narrow the selection.
 4. The host records selected candidate IDs, then reads selected candidates
    individually with `envoy_read`. Video posts use public subtitles or local
-   ASR and optional sparse frames; image-note posts use the existing page/image
-   reader path. Per-item source blocks, timestamps, material IDs, and coverage
-   gaps remain separate.
-5. After each item, the host checkpoints its state. On interruption it resumes
-   from the collection manifest, reuses completed material IDs, and processes
-   only unfinished items.
-6. The host composes the requested artifact from selected evidence, preserving
+   ASR and explicitly requested sparse frames; image-note posts use a
+   post-bound, ordered album reader. Per-item source blocks, timestamps,
+   material IDs, and coverage gaps remain separate.
+5. Before an expensive read, the host starts or resumes a stable operation ID.
+   Envoy returns a persisted completed operation when the same ID is retried,
+   including after a process restart. The host checkpoints the returned material
+   reference and status with a revision-checked incremental update.
+6. On interruption the host resumes from the collection manifest. Envoy
+   distinguishes work completion from evidence availability and can replay
+   cached evidence within the new response budget without downloading or
+   transcribing the source again. Expired/evicted evidence is explicitly
+   unavailable and may be reacquired only as a new operation.
+7. The host composes the requested artifact from selected evidence, preserving
    source links and time locators and reporting skipped, blocked, or partial
    items. It does not imply that title matching or sparse frames are complete
    source verification.
@@ -41,17 +47,31 @@ semantic analysis, and composes the requested artifact.
 ### Independent Skill/MCP path
 
 Add `envoy_discover` to the standalone MCP surface and the `envoy discover`
-CLI. It uses the existing yt-dlp extractor and isolated-browser discovery
-patterns, with static public metadata attempted first and headless browser
-discovery used when needed. It never reads a personal browser profile or
-automates login, CAPTCHA, or anti-bot verification.
+CLI. It uses a dedicated Douyin adapter, with bounded public metadata extraction
+attempted first and the isolated headless browser used when needed. Discovery
+persists the complete bounded candidate snapshot before returning its first
+page. Cursors address that immutable revision, not a live-page offset. A
+refreshed discovery creates a new revision; dynamic source ordering or unknown
+continuation is reported rather than claimed complete. It never reads a
+personal browser profile or automates login, CAPTCHA, or anti-bot verification.
 
 Add `envoy_collection_checkpoint` to persist and retrieve a bounded collection
-manifest. The manifest contains the canonical profile URL, collection ID,
-discovery revision, page cursor, candidate metadata, selected candidate IDs,
-per-item status, and completed material IDs. It contains no cookies, signed
-media URLs, or downloaded media. Apply the existing local retention policy and
-file permission rules.
+manifest via incremental operations (`get`, `discovery_snapshot`, `select`,
+`item_state`, `record_evidence`, `record_usage`, `set_cursor`). The manifest contains distinct
+collection, run, discovery, selection-plan, and manifest revision identifiers;
+the current cursor; candidate metadata; selected candidate IDs; per-item work
+status; material references and their availability/expiry; and cumulative
+actual usage. Updates require `expected_manifest_revision`; duplicate
+`operation_id` updates are idempotent. It contains no cookies, signed media
+URLs, or downloaded media. Apply restrictive local permissions and explicit
+retention.
+
+Add a stable idempotent operation record keyed by collection/run/candidate and
+operation ID before starting media work. A retry first checks for a completed
+record and reuses it; in-progress records have an attempt lease and can be
+retried after lease expiry. Material evidence is replayable within budgets even
+when it was already delivered in a previous host context. Completed work with
+missing or expired evidence is not represented as reusable completion.
 
 The host remains the orchestrator. It filters candidates by title/metadata,
 calls `envoy_read` per selected post, and writes the final artifact with its
@@ -62,27 +82,52 @@ backend and lets the host adapt the final format to the user's request.
 
 Each candidate has:
 
-- A stable `candidate_id` derived from its canonical public post URL.
+- A stable `candidate_id` derived from a canonical public post identity; Douyin
+  video and note IDs normalize away tracking/share parameters.
 - `source_url`, canonicalized and safe for `envoy_read`.
-- `item_type`: `video` or `image_note`.
+- `item_type`: `video` or `image_note`; never infer post type from title text.
 - `title`, optional `published_at`, optional `duration_seconds`, and creator
   display name when publicly exposed.
 - `position` within the discovered page and optional thumbnail URI.
 
-Discovery is bounded. `limit` is capped at 100 per page, and a continuation
-cursor is returned only when the platform exposes another page. An optional
-publication-time range can be applied when timestamps are available; otherwise
-the response marks the range filter as incomplete rather than silently
-discarding candidates. Duplicate URLs are removed while preserving platform
-order.
+Discovery defaults to 20 and is hard-capped at 100 candidates per snapshot.
+Each response includes `discovery_revision`, `cursor_mode`, `ordering`,
+`has_more` (true/false/unknown), `stop_reason`, and `discovered_at`. Cursors
+replay the same persisted snapshot page. If the source cannot provide a stable
+continuation signal, report unknown rather than false. An optional
+publication-time range uses match/nonmatch/unknown; it may stop early only when
+the adapter confirms newest-first ordering and no pinned-item ambiguity.
+Duplicate canonical IDs are removed while preserving source order.
 
 ### Checkpoint states
 
-Each selected item moves through `selected`, `processing`, `completed`,
-`partial`, `blocked`, or `skipped`. Checkpoints retain the last completed
-material ID and a redacted failure summary. A repeated checkpoint update is
-idempotent. A resumed host can fetch the manifest, continue discovery from its
-cursor, and process only items without a terminal state.
+Work states are `selected`, `processing`, `completed`, `partial`, `blocked`,
+`skipped`, and `failed`. Completion state is separate from evidence
+availability (`available`, `expired`, `evicted`, `missing`). `needs_host` is a
+handoff action, not a terminal work state; pending visual resources remain
+individually addressable and already submitted observations are not repeated.
+Processing attempts include a lease and attempt count so stale `processing`
+items can resume. Network failures are retryable only within remaining
+collection budget; a user skip records its reason. An accepted partial result
+can complete the current requested scope while preserving explicit coverage
+gaps.
+
+Collection budgets are cumulative across all pages and operations: scanned
+pages/candidates, selected items, elapsed work, downloaded bytes, returned
+characters, visual inputs/pixels, and retry attempts. Defaults are 20
+candidates/page and a 100-candidate hard snapshot maximum. Budget exhaustion
+returns a resumable cursor and `stop_reason`, never an empty/no-more result.
+
+Video media, frames, transcript segments, note images, and host observations
+must bind to the current candidate identity. A browser-captured media request
+that is not uniquely associated with the page's primary video is not processed.
+Short-link redirects are reclassified by final URL and enter the same source
+evidence pipeline. Frame capability does not imply frame request:
+`scope.include_visual=true` is also required.
+
+Image notes retain album order and stable per-image resource IDs. The response
+reports discovered/read/uncovered image counts; unknown total is represented
+as unknown. Video ASR is never run for an image note.
 
 ## Alternatives Considered
 
@@ -146,7 +191,21 @@ Not included:
 - The model can clarify missing date/count/format decisions, select from
   titles, and read only the chosen candidates.
 - `envoy_collection_checkpoint` survives process restart, idempotently updates
-  per-item state, and allows the host to resume only unfinished candidates.
+  per-item state with revision checks, and allows the host to resume unfinished
+  candidates without overwriting concurrent updates.
+- Repeating an operation ID after a crash returns the existing completed
+  material without repeating download or ASR; a new host context can replay
+  cached evidence under a fresh bounded response budget.
+- Dynamic pagination replays a persisted candidate revision and never claims
+  that an unknown continuation state is exhausted.
+- Cumulative collection budgets stop additional work with an explicit cursor,
+  usage, and stop reason.
+- Media/ASR/frame evidence is tied to the requested candidate; unbound
+  recommendation/ad media is not processed.
+- `include_visual=false` yields zero frame extraction even when the host
+  advertises frame capability.
+- Multi-image notes preserve order and report unknown/remaining album coverage;
+  they never enter the video ASR pipeline.
 - Video and image-note items route through their existing source-specific
   readers; a blocked item does not erase completed item materials.
 - The host can compose a user-requested Markdown or other supported artifact
@@ -155,6 +214,6 @@ Not included:
 - Deterministic fixtures cover creator-page discovery, redirects, duplicate
   entries, mixed video/note pages, missing publication dates, pagination,
   access challenges, partial item reads, and resume behavior.
-- A final installed-preview acceptance uses a public Douyin creator page and a
+- A final installed-runtime acceptance uses a public Douyin creator page and a
   public image-note/video sample where network access allows. The acceptance
   record distinguishes live-site results from mocks and extractor-only tests.

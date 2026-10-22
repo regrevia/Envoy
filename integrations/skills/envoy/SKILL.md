@@ -50,7 +50,8 @@ The request must include:
 - optionally `video_subtitle_language` as a BCP-47-like language tag when a
   platform extractor exposes public subtitle tracks; Envoy extracts timed
   captions without downloading the video or calling an analysis model
-- for video-content questions, set `scope.include_visual: true`; declare
+- for video-content questions, set `scope.include_visual: true`; frame
+  capability alone never enables frame extraction. Declare
   `host_capabilities.video_input: "frames"` and
   `host_capabilities.image_input: "local_file"` only when the host can inspect
   Envoy-delivered local frame resources. Envoy then extracts a bounded,
@@ -67,6 +68,46 @@ must remain usable without host hooks.
 Envoy does not install an automatic URL-interception hook by default: hook
 formats and routing semantics differ by host, and users should retain control
 over which links are sent to the local reader.
+
+## Douyin Profile Collections
+
+When the user provides a Douyin creator profile and asks to organize a range of
+posts, first check whether the goal is actionable. If date range, maximum
+number, selection criteria, or output format would materially change the work,
+ask a follow-up question before discovery. Do not ask questions whose answers
+are already clear from the request.
+
+Call `envoy_discover` with the public profile URL and a bounded limit (default
+20; maximum 100). Discovery returns candidate IDs, canonical links, titles,
+publication metadata when exposed, item type, and a continuation cursor.
+Discovery does not read post contents, download media, run ASR, or extract
+frames. Titles are selection hints, not content evidence. Select only candidates
+that reasonably match the user's stated scope; ask the user to confirm or narrow
+the set when the selection is ambiguous or large. Do not claim that the profile
+is fully enumerated when `has_more` is unknown, a cursor is absent because of a
+budget, or discovery reports an access boundary.
+
+Create a run with `envoy_collection_checkpoint`, then checkpoint each selected
+item's processing/result state using the returned
+`manifest_revision` as `expected_revision` and a stable `operation_id` for each
+mutation. First save each discovery page with action `discovery_snapshot`,
+passing the returned page under `usage.snapshot`; this preserves the candidate
+revision, accumulated IDs, and next cursor across context loss. Then checkpoint
+the selected IDs with action `select`. Keep work state separate from evidence
+availability. For a completed
+item, retain its `material_id`, source revision, and expiry. After interruption
+or loss of host context, retrieve the manifest first; reuse still-available
+material or report that evidence expired and needs reacquisition. Process only
+selected unfinished items and preserve successful items if another item is
+blocked.
+
+Read each selected candidate through `envoy_read` using its canonical source
+URL and a goal scoped to the requested deliverable. For video, inspect the
+returned page summary, timed subtitles/ASR, and requested frames as distinct
+evidence. For image notes, keep image order and report uncovered or unknown
+album counts. Titles never establish what a post says. The host model performs
+the requested filtering, interpretation, and final Markdown/table/report
+composition; Envoy does not verify job locations or choose the final artifact.
 
 ## Interpret the response
 
@@ -123,11 +164,14 @@ forms that merely say “log in to comment” are not treated as page-wide login
 walls. Use only content the browser actually exposes.
 
 For a short-video share link, Envoy follows its redirect in the isolated
-browser and reads visible title/creator metadata and captions. When the browser
-exposes a public video URL, including a signed URL that is usable only by the
-current local browser session, Envoy may use it only in a temporary local
-download within the request budget, run local Whisper when installed, and deliver a bounded timestamped
-frame sample for video-content questions when the host declares
+browser and reads visible title/creator metadata and captions. Envoy processes
+only a unique URL exposed by the page's primary video element; incidental
+captured requests such as recommendations are not assumed to belong to the
+requested post. When that uniquely bound URL is public and safe, including a
+signed URL usable only by the current local browser session, Envoy may use it
+only in a temporary local download within the request budget, run local Whisper
+when installed, and deliver a bounded timestamped frame sample only when the
+request explicitly sets `scope.include_visual: true` and the host declares
 `video_input: "frames"` and `image_input: "local_file"`. These transcript and
 frame blocks are evidence for the host model to inspect; Envoy does not decide
 job locations, company matches, or whether a role is in Shenzhen. If only the
@@ -221,6 +265,27 @@ unavailable but frames were explicitly requested, Envoy can still hand frames
 to the host. Do not use cookies, bypass login/CAPTCHA/anti-bot challenges, or
 claim unsupported source coverage.
 
+### Local Video Files
+
+When the user provides a local video file, call `envoy_read_local_video` with
+the user-selected path, goal, and a stable `idempotency_key`. Set
+`scope.include_visual: true` only when frame inspection is relevant and the
+host can inspect local image resources. Envoy probes the local file, runs
+bounded on-device Whisper when available, and can return timestamped frames.
+The original file is never uploaded or copied; returned source locators use a
+content hash and filename instead of exposing its absolute path. If Whisper is
+unavailable, report the capability gap; frame-only inspection is available when
+explicitly requested and the host supports it.
+
+If the same request also includes a public link, read the local file and public
+link as separate sources. Do not pass a filesystem path as a public URL or
+claim that the link identifies the local file. Keep their source locators and
+coverage separate, then combine their evidence in the host response only when
+the user's request calls for comparison or synthesis. Retry a long read with
+the same `idempotency_key`; Envoy replays completed evidence within its
+retention lease rather than repeating ASR. If the evidence lease has expired,
+Envoy reports that and the host may begin a new read with a new operation key.
+
 Do not expand solely to make the response appear complete. Expand only when the
 remaining coverage can affect the user's requested answer, and state material
 gaps when relevant evidence is unavailable.
@@ -261,16 +326,10 @@ are not currently processed by this runtime.
 To install the optional local ASR engine and prepare a model:
 
 ```bash
-# For a Release wheel, this updates the installed Release runtime:
+# Install or update Envoy with local ASR support:
 uv tool install --with "openai-whisper==20250625" ./envoy_cli-<release-version>-py3-none-any.whl
 envoy asr setup --model base
 envoy doctor --json
-
-# For a local preview, keep the existing dedicated preview virtualenv:
-"$HOME/.local/share/envoy-preview/bin/python" -m pip install \
-  "openai-whisper==20250625"
-"$HOME/.local/share/envoy-preview/bin/envoy" asr setup --model base
-"$HOME/.local/share/envoy-preview/bin/envoy" doctor --json
 ```
 
 Install FFmpeg and FFprobe with the operating system's package manager if they
@@ -301,7 +360,8 @@ For hosts that use stdio MCP tools, launch:
 envoy mcp
 ```
 
-The bridge exposes `envoy_read`, `envoy_expand`, `envoy_search`, `envoy_doctor`,
+The bridge exposes `envoy_read`, `envoy_read_local_video`, `envoy_discover`,
+`envoy_collection_checkpoint`, `envoy_expand`, `envoy_search`, `envoy_doctor`,
 `envoy_observe_visual`, and `envoy_visual_history`. Discover
 the catalog once, choose a tool from the user's goal and returned coverage, and
 do not assume a capability that is absent from the catalog. The bridge supports

@@ -179,6 +179,19 @@ class ReadRequest(ContractModel):
     video_subtitle_language: Optional[str] = Field(default=None, max_length=32)
 
 
+class LocalVideoReadRequest(ContractModel):
+    protocol_version: Literal["envoy.read/1"] = PROTOCOL_VERSION
+    request_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: Optional[str] = Field(default=None, max_length=256)
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    path: str = Field(min_length=1, max_length=8192)
+    goal: str = Field(default="", max_length=20_000)
+    scope: Scope = Field(default_factory=Scope)
+    budget: Budget = Field(default_factory=Budget)
+    retention: Retention = Field(default_factory=Retention)
+    host_capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
+
+
 class ExpandRequest(ContractModel):
     protocol_version: Literal["envoy.read/1"] = PROTOCOL_VERSION
     request_id: str = Field(min_length=1, max_length=128)

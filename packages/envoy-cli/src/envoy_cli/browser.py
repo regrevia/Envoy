@@ -202,6 +202,7 @@ class BrowserPage:
     text: str
     html: str
     media_urls: tuple[str, ...] = ()
+    page_video_urls: tuple[str, ...] = ()
 
 
 def browser_profile_dir(*, create: bool = True) -> Path:
@@ -395,16 +396,19 @@ def _capture(page, source_url: str) -> BrowserPage:
         html = str(page.content())
     except Exception as exc:
         raise BrowserReadError(f"Could not capture the visible page ({type(exc).__name__})") from exc
+    page_video_urls = tuple(_page_video_urls(page))
+    media_urls = tuple(dict.fromkeys([*page_video_urls, *_captured_media_urls(page)]))
     return BrowserPage(
         url=str(page.url or source_url),
         title=title,
         text=text,
         html=html,
-        media_urls=tuple(_page_media_urls(page)),
+        media_urls=media_urls,
+        page_video_urls=page_video_urls,
     )
 
 
-def _page_media_urls(page) -> list[str]:
+def _page_video_urls(page) -> list[str]:
     urls: list[str] = []
     try:
         values = page.evaluate(
@@ -416,9 +420,21 @@ def _page_media_urls(page) -> list[str]:
             urls.extend(str(value) for value in values if str(value).strip())
     except Exception:
         pass
-    captured = getattr(page, "_envoy_media_urls", ())
-    urls.extend(str(value) for value in captured if str(value).strip())
     return list(dict.fromkeys(urls))
+
+
+def _captured_media_urls(page) -> list[str]:
+    captured = getattr(page, "_envoy_media_urls", ())
+    return list(dict.fromkeys(
+        str(value) for value in captured if str(value).strip()
+    ))
+
+
+def _page_media_urls(page) -> list[str]:
+    return list(dict.fromkeys([
+        *_page_video_urls(page),
+        *_captured_media_urls(page),
+    ]))
 
 
 def read_page(

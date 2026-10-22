@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any, Iterable, TextIO
 from urllib.parse import urlparse
 
 from envoy_core.schemas.read_v1 import (
     ExpandRequest,
+    LocalVideoReadRequest,
     MaterialSearchRequest,
     ReadRequest,
     PROTOCOL_VERSION,
@@ -18,6 +20,16 @@ from . import __version__
 from .browser import browser_runtime_status
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .capabilities import capability_catalog
+from .collections import (
+    CollectionBudget,
+    CollectionError,
+    CollectionRevisionConflict,
+    create_collection,
+    discover_profile,
+    get_collection,
+    update_collection,
+)
+from .local_video import read_local_video
 from .media import media_runtime_status
 from .reader import (
     PublicPageError,
@@ -47,8 +59,101 @@ SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 
 SERVER_INFO = {"name": "envoy", "version": __version__}
 SERVER_CAPABILITIES = {"tools": {}}
+LOCAL_VIDEO_SCHEMA = LocalVideoReadRequest.model_json_schema()
+LOCAL_VIDEO_SCHEMA["required"] = list(dict.fromkeys([
+    *LOCAL_VIDEO_SCHEMA.get("required", []),
+    "idempotency_key",
+]))
 
 TOOLS = [
+    {
+        "name": "envoy_read_local_video",
+        "description": (
+            "Read a user-selected local video file with bounded local Whisper ASR "
+            "and optional timestamped frames. Requires explicit idempotency_key "
+            "for crash recovery. Never transmits the source file; its absolute "
+            "path is not returned. Envoy extracts evidence and does not interpret it."
+        ),
+        "inputSchema": LOCAL_VIDEO_SCHEMA,
+    },
+    {
+        "name": "envoy_discover",
+        "description": (
+            "Discover a bounded page of public Douyin video and image-note "
+            "candidates. Returns titles and metadata as selection hints only; "
+            "does not download media, run ASR, extract frames, or decide relevance."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["profile_url"],
+            "properties": {
+                "profile_url": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                "cursor": {"type": ["string", "null"]},
+                "max_work_seconds": {"type": "integer", "minimum": 1, "maximum": 600, "default": 60},
+            },
+        },
+    },
+    {
+        "name": "envoy_collection_checkpoint",
+        "description": (
+            "Create, retrieve, or revision-checkpoint a bounded collection run. "
+            "Operation IDs make repeated updates idempotent. Work state and "
+            "evidence availability are reported separately."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action", "collection_id", "run_id"],
+            "properties": {
+                "action": {"type": "string", "enum": [
+                    "create", "get", "select", "item_state", "record_evidence",
+                    "discovery_snapshot", "record_handoff", "record_observation",
+                    "record_usage", "set_cursor",
+                ]},
+                "collection_id": {"type": "string"},
+                "run_id": {"type": "string"},
+                "profile_url": {"type": ["string", "null"]},
+                "expected_revision": {"type": ["integer", "null"], "minimum": 1},
+                "operation_id": {"type": ["string", "null"]},
+                "candidate_ids": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 100},
+                "candidate_id": {"type": ["string", "null"]},
+                "pending_resource_ids": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 12},
+                "observed_resource_ids": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 12},
+                "item_state": {"type": ["string", "null"], "enum": [
+                    "selected", "processing", "completed", "partial", "blocked", "skipped", "failed", None,
+                ]},
+                "material_id": {"type": ["string", "null"]},
+                "source_revision": {"type": ["string", "null"]},
+                "expires_at": {"type": ["number", "null"]},
+                "evidence_available": {"type": ["boolean", "null"]},
+                "usage": {"type": ["object", "null"], "additionalProperties": False, "properties": {
+                    "scanned_pages": {"type": "integer", "minimum": 0},
+                    "scanned_candidates": {"type": "integer", "minimum": 0},
+                    "selected_items": {"type": "integer", "minimum": 0},
+                    "work_seconds": {"type": "integer", "minimum": 0},
+                    "downloaded_bytes": {"type": "integer", "minimum": 0},
+                    "returned_chars": {"type": "integer", "minimum": 0},
+                    "visual_inputs": {"type": "integer", "minimum": 0},
+                    "visual_pixels": {"type": "integer", "minimum": 0},
+                    "retries": {"type": "integer", "minimum": 0},
+                    "snapshot": {"type": "object"},
+                }},
+                "budget": {"type": ["object", "null"], "additionalProperties": False, "properties": {
+                    "max_pages": {"type": "integer", "minimum": 0},
+                    "max_scanned_candidates": {"type": "integer", "minimum": 0},
+                    "max_items": {"type": "integer", "minimum": 0},
+                    "max_download_bytes": {"type": "integer", "minimum": 0},
+                    "max_response_chars": {"type": "integer", "minimum": 0},
+                    "max_visual_inputs": {"type": "integer", "minimum": 0},
+                    "max_visual_pixels": {"type": "integer", "minimum": 0},
+                    "max_retries": {"type": "integer", "minimum": 0},
+                    "max_work_seconds": {"type": "integer", "minimum": 0},
+                }},
+            },
+        },
+    },
     {
         "name": "envoy_read",
         "description": (
@@ -226,6 +331,15 @@ class MCPProtocolSession:
 
 def _observation_source_url(value: str) -> str:
     parsed = urlparse(value)
+    if parsed.scheme == "envoy-local-video":
+        if (
+            parsed.netloc == "sha256"
+            and re.fullmatch(r"/[a-fA-F0-9]{64}/[^/]+", parsed.path)
+            and not parsed.query
+            and not parsed.fragment
+        ):
+            return value
+        raise ValueError("Local video observations require a content-addressed source identity")
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Visual observations require a credential-free HTTP(S) source URL")
     return _redact_url(value)
@@ -245,6 +359,18 @@ def _result(request_id: Any, payload: dict, modern: bool, cacheable: bool = Fals
 def _tool_content_text(payload: dict, modern: bool) -> str:
     if payload.get("tool") == "envoy":
         return "Envoy doctor ready."
+    if payload.get("tool") == "envoy_discover":
+        candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
+        return (
+            f"Envoy discovered {len(candidates)} candidate(s); "
+            f"has_more={payload.get('has_more', 'unknown')}. "
+            "Titles and metadata are selection hints only."
+        )
+    if payload.get("tool") == "envoy_collection_checkpoint":
+        return (
+            f"Envoy collection checkpoint {payload.get('action', 'updated')}; "
+            f"manifest_revision={payload.get('manifest_revision', 'unknown')}."
+        )
     if not modern:
         return json.dumps(payload, ensure_ascii=False)
     result = str(payload.get("result") or "unknown")
@@ -411,6 +537,57 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
         if name == "envoy_read":
             response = read_public_page(ReadRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_read_local_video":
+            response = read_local_video(LocalVideoReadRequest.model_validate(arguments))
+            payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_discover":
+            payload = {"tool": "envoy_discover", **discover_profile(
+                str(arguments.get("profile_url") or ""),
+                limit=int(arguments.get("limit") or 20),
+                cursor=arguments.get("cursor"),
+                max_work_seconds=int(arguments.get("max_work_seconds") or 60),
+            )}
+        elif name == "envoy_collection_checkpoint":
+            action = str(arguments.get("action") or "")
+            collection_id = str(arguments.get("collection_id") or "")
+            run_id = str(arguments.get("run_id") or "")
+            if action == "create":
+                payload = create_collection(
+                    collection_id,
+                    run_id,
+                    str(arguments.get("profile_url") or ""),
+                    operation_id=str(arguments.get("operation_id") or ""),
+                    budget=(
+                        CollectionBudget(**arguments["budget"])
+                        if arguments.get("budget")
+                        else None
+                    ),
+                )
+            elif action == "get":
+                payload = get_collection(collection_id, run_id)
+            else:
+                if arguments.get("expected_revision") is None or not arguments.get("operation_id"):
+                    raise CollectionError("Mutations require expected_revision and operation_id")
+                budget_data = arguments.get("budget") or {}
+                payload = update_collection(
+                    collection_id,
+                    run_id=run_id,
+                    expected_revision=int(arguments["expected_revision"]),
+                    operation_id=str(arguments["operation_id"]),
+                    action=action,
+                    candidate_ids=arguments.get("candidate_ids"),
+                    candidate_id_value=arguments.get("candidate_id"),
+                    item_state=arguments.get("item_state"),
+                    material_id=arguments.get("material_id"),
+                    source_revision=arguments.get("source_revision"),
+                    expires_at=arguments.get("expires_at"),
+                    evidence_available=arguments.get("evidence_available"),
+                    pending_resource_ids=arguments.get("pending_resource_ids"),
+                    observed_resource_ids=arguments.get("observed_resource_ids"),
+                    usage=arguments.get("usage"),
+                    budget=CollectionBudget(**budget_data) if budget_data else None,
+                )
+            payload = {"tool": "envoy_collection_checkpoint", "action": action, **payload}
         elif name == "envoy_expand":
             response = expand_material(ExpandRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
@@ -531,7 +708,7 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
             "result": "blocked",
             "errors": [{"code": exc.code.value, "message": str(exc)}],
         }
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, CollectionRevisionConflict) as exc:
         return _error(request_id, -32602, str(exc))
     return _result(request_id, {
         "content": [{

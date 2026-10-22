@@ -25,6 +25,7 @@ from envoy_core.schemas.read_v1 import (
     ReadRequest,
     ReadResponse,
     ReadResult,
+    ResourceRef,
     TextContent,
     VideoLocator,
 )
@@ -448,6 +449,95 @@ def test_reader_uses_browser_snapshot_for_challenge_or_empty_html(
     assert calls[0][1]["max_work_seconds"] > 0
 
 
+def test_read_idempotency_key_replays_material_without_fetching_twice(monkeypatch, tmp_path):
+    source_url = "https://example.org/idempotent-article"
+    calls = []
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
+        calls.append(source_url) or source_url,
+        "<html><title>Article</title><body>"
+        "<p>This article contains enough public text to be read and reused.</p>"
+        "</body></html>",
+    ))
+
+    first = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "idempotent-first",
+        "idempotency_key": "same-read-op",
+        "session_id": "host-session-a",
+        "source": {"url": source_url},
+    }))
+    retry = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "idempotent-retry",
+        "idempotency_key": "same-read-op",
+        "session_id": "host-session-b",
+        "source": {"url": source_url},
+    }))
+
+    assert calls == [source_url]
+    assert retry.request_id == "idempotent-retry"
+    assert retry.session_id == "host-session-b"
+    assert retry.material_id != first.material_id
+    assert retry.blocks == first.blocks
+    replayed_material = reader._load_matching_material(
+        retry.material_id,
+        retry.source_revision,
+        "host-session-b",
+    )
+    assert replayed_material is not None
+
+
+def test_cached_frame_replay_rebinds_resource_lease_to_new_session(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    old_frame = tmp_path / "materials" / "frames-mat-old" / "frame-001.jpg"
+    old_frame.parent.mkdir(parents=True)
+    old_frame.write_bytes(b"frame")
+    reader._store_material("mat-" + "a" * 24, {
+        "source_url": "https://example.org/video",
+        "source_revision": "b" * 64,
+        "session_id": "session-a",
+        "text": "",
+        "expires_at": 9_999_999_999,
+        "visual_resources": [{
+            "resource_id": "resource-frame",
+            "source_block_id": "blk-frame",
+            "source_url": "https://example.org/video",
+            "frame_path": str(old_frame),
+        }],
+    })
+    response = ReadResponse(
+        request_id="replay-old",
+        session_id="session-a",
+        material_id="mat-" + "a" * 24,
+        source_revision="b" * 64,
+        execution_state=ExecutionState.WAITING_FOR_HOST,
+        result=ReadResult.NEEDS_HOST,
+        resources=[ResourceRef(
+            resource_id="resource-frame",
+            mime_type="image/jpeg",
+            delivery=HostDelivery(type="local_file", path=str(old_frame)),
+        )],
+    )
+
+    rebound = reader._rebind_cached_response_session(
+        response,
+        "session-b",
+        "replay-new",
+    )
+
+    new_path = rebound.resources[0].delivery.path
+    assert new_path != str(old_frame)
+    assert new_path is not None and Path(new_path).is_file()
+    assert Path(new_path).read_bytes() == b"frame"
+    import shutil
+
+    shutil.rmtree(old_frame.parent)
+    assert Path(new_path).is_file()
+
+
 def test_reader_uses_browser_after_http_auth_required(monkeypatch):
     source_url = "https://example.org/article"
     browser_page = browser.BrowserPage(
@@ -540,11 +630,14 @@ def test_browser_navigation_timeout_is_reported_as_network_error(monkeypatch):
 
 def test_video_extractor_auth_error_falls_back_to_visible_browser_page(monkeypatch):
     source_url = "https://www.douyin.com/video/7698386448961683813"
+    media_url = "https://cdn.example.test/current-post.mp4"
     page = browser.BrowserPage(
         url=source_url,
         title="Douyin video",
         text="视频标题：工作介绍和招聘岗位详细信息，请查看完整职位和企业介绍。",
         html="<html><title>Douyin video</title><body>视频标题：工作介绍和招聘岗位详细信息，请查看完整职位和企业介绍。</body></html>",
+        media_urls=(media_url,),
+        page_video_urls=(media_url,),
     )
     monkeypatch.setattr(reader, "has_specialized_extractor", lambda _url: True)
     monkeypatch.setattr(
@@ -658,6 +751,25 @@ def test_browser_video_media_candidates_allow_signed_local_use_but_reject_privat
     assert rejected == 1
 
 
+def test_browser_page_video_urls_are_separate_from_incidental_media_requests():
+    class Page:
+        _envoy_media_urls = [
+            "https://cdn.example.test/recommendation.mp4",
+        ]
+
+        def evaluate(self, _script):
+            return ["https://cdn.example.test/current-post.mp4"]
+
+    page = Page()
+
+    assert browser._page_video_urls(page) == [
+        "https://cdn.example.test/current-post.mp4",
+    ]
+    assert browser._captured_media_urls(page) == [
+        "https://cdn.example.test/recommendation.mp4",
+    ]
+
+
 def test_browser_video_media_candidates_preserve_page_video_priority(monkeypatch):
     monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
     page_video = "https://v95-web.example/video.mp4?token=public"
@@ -672,6 +784,128 @@ def test_browser_video_media_candidates_preserve_page_video_priority(monkeypatch
     assert rejected == 0
 
 
+def test_browser_video_evidence_does_not_process_unbound_captured_media(monkeypatch):
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", lambda *_args, **_kwargs: pytest.fail(
+        "an unrelated captured recommendation must not be downloaded as the current post"
+    ))
+
+    response = reader._attach_browser_video_evidence(
+        ReadRequest.model_validate({
+            "request_id": "browser-video-unbound",
+            "source": {"url": source_url, "kind": "video"},
+        }),
+        source_url,
+        ["https://cdn.example.test/recommendation.mp4"],
+        ReadResponse(
+            request_id="browser-video-unbound",
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        ),
+        bound_media_urls=[],
+    )
+
+    video = response.coverage.modalities["video"]
+    assert response.result == ReadResult.PARTIAL
+    assert video.extraction == "partial"
+    assert "could not be associated with the requested post" in " ".join(video.unresolved)
+
+
+def test_browser_video_evidence_respects_include_visual_false(monkeypatch, tmp_path):
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-text-only",
+        "source": {
+            "url": "https://www.douyin.com/video/7698386448961683813",
+            "kind": "video",
+        },
+        "host_capabilities": {"image_input": "local_file", "video_input": "frames"},
+    })
+    video_path = tmp_path / "download.mp4"
+    video_path.write_bytes(b"video")
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", lambda *_args, **_kwargs: {
+        "path": str(video_path),
+        "duration": 10,
+        "downloaded_bytes": 5,
+        "elapsed_ms": 1,
+    })
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": False,
+        "asr_model_available": False,
+        "asr_model": "base",
+    })
+    monkeypatch.setattr(reader, "extract_video_frames", lambda *_args, **_kwargs: pytest.fail(
+        "declaring frame capability must not override scope.include_visual=false"
+    ))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader._attach_browser_video_evidence(
+        request,
+        request.source.url,
+        ["https://cdn.example.test/video.mp4"],
+        ReadResponse(
+            request_id=request.request_id,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        ),
+        duration_seconds=10,
+        bound_media_urls=["https://cdn.example.test/video.mp4"],
+    )
+
+    assert response.result == ReadResult.PARTIAL
+    assert not any(block.kind == MaterialKind.VIDEO_FRAME for block in response.blocks)
+
+
+def test_browser_short_link_uses_final_video_url_for_video_evidence(monkeypatch):
+    source_url = "https://v.douyin.com/short-share/"
+    final_url = "https://www.douyin.com/video/7698386448961683813"
+    media_url = "https://cdn.example.test/current-post.mp4"
+    page = browser.BrowserPage(
+        url=final_url,
+        title="Douyin video",
+        text="视频章节摘要：招聘岗位及章节时间码信息已成功加载。",
+        html=(
+            "<html><title>Douyin video</title><body>"
+            "视频章节摘要：招聘岗位及章节时间码信息已成功加载。"
+            "</body></html>"
+        ),
+        media_urls=(media_url,),
+        page_video_urls=(media_url,),
+    )
+    observed = {}
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
+        final_url,
+        "<html><title>Douyin video</title><body>"
+        "视频章节摘要：招聘岗位及章节时间码信息已成功加载。"
+        "</body></html>",
+    ))
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+
+    def attach(request, url, urls, response, **kwargs):
+        observed.update({
+            "url": url,
+            "urls": urls,
+            "bound": kwargs.get("bound_media_urls"),
+        })
+        return response
+
+    monkeypatch.setattr(reader, "_attach_browser_video_evidence", attach)
+    monkeypatch.setattr(reader, "_read_with_isolated_browser", lambda *_args, **_kwargs: (page, None))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "douyin-short-link",
+        "source": {"url": source_url},
+    }))
+
+    assert response.result == ReadResult.PARTIAL
+    assert observed["url"] == final_url
+    assert observed["urls"] == [media_url]
+    assert observed["bound"] == [media_url]
+
+
 def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
     monkeypatch,
     tmp_path,
@@ -683,6 +917,7 @@ def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
         "session_id": "video-session",
         "source": {"url": source_url, "kind": "video"},
         "goal": "Extract all video evidence",
+        "scope": {"include_visual": True},
         "host_capabilities": {"image_input": "local_file", "video_input": "frames"},
         "budget": {
             "max_visual_inputs": 2,
@@ -766,6 +1001,7 @@ def test_browser_video_evidence_merges_timestamped_asr_and_sparse_frames(
         [media_url],
         page_response,
         duration_seconds=30,
+        bound_media_urls=[media_url],
     )
 
     assert calls[0][0] == "download"
@@ -827,6 +1063,7 @@ def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
         [media_url],
         page_response,
         duration_seconds=30,
+        bound_media_urls=[media_url],
     )
 
     assert response.result == ReadResult.PARTIAL
@@ -898,6 +1135,7 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
         ["https://cdn.example.test/video.mp4?token=secret"],
         response,
         duration_seconds=None,
+        bound_media_urls=["https://cdn.example.test/video.mp4?token=secret"],
     )
 
     assert result.result == ReadResult.PARTIAL

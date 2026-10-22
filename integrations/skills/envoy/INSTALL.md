@@ -13,7 +13,7 @@ npx skills add regrevia/Envoy --skill envoy --global --yes
 
 ## 2. Install the runtime
 
-After the first GitHub Release is published, download its
+After the first Envoy release is published, download its
 `envoy_cli-*.whl` asset and install it with `uv`:
 
 ```bash
@@ -32,46 +32,6 @@ on POSIX; on Windows it inherits the current user's home-directory ACL). It is
 separate from personal browser profiles, is never sent to the model, and is
 not exported to MCP requests.
 
-## Local Preview Runtime
-
-To test repository changes without replacing the Release installation, build
-and install a preview in its own virtual environment:
-
-```bash
-python3.12 scripts/build_envoy_cli_wheel.py \
-  --output-dir /tmp/envoy-preview \
-  --channel local-preview
-python3.12 -m venv "$HOME/.local/share/envoy-preview"
-HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7897}" \
-HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7897}" \
-ALL_PROXY="${ALL_PROXY:-socks5h://127.0.0.1:7897}" \
-"$HOME/.local/share/envoy-preview/bin/python" -m pip install \
-  --resume-retries 20 --retries 10 --timeout 60 \
-  /tmp/envoy-preview/envoy_cli-*.whl "openai-whisper==20250625"
-"$HOME/.local/share/envoy-preview/bin/envoy" browser setup
-"$HOME/.local/share/envoy-preview/bin/envoy" asr setup --model base
-"$HOME/.local/share/envoy-preview/bin/envoy" doctor --json
-```
-
-The preview wheel version contains `+preview`, and doctor reports the build
-channel, source revision, and dirty state. Point a test MCP host at the preview
-executable explicitly:
-
-```json
-{
-  "mcpServers": {
-    "envoy-preview": {
-      "command": "/Users/<user>/.local/share/envoy-preview/bin/envoy",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Only wheels built with `--channel release` and published by the repository's
-tagged Release workflow are release builds. Do not copy a preview wheel into a
-release install or report its acceptance as release validation.
-
 ## 3. Connect the MCP server
 
 Add the contents of `hosts/mcp.json` to the selected agent's MCP configuration.
@@ -83,7 +43,7 @@ Those steps are kept explicit so users can review what runs locally.
 
 ## Update or remove
 
-Install the newer Release wheel with `uv tool install --force <wheel-path>`.
+Install the newer Envoy wheel with `uv tool install --force <wheel-path>`.
 Remove the runtime with `uv tool uninstall envoy-cli`; remove the Skill using
 the Skills CLI's uninstall command or the selected agent's Skill manager.
 
@@ -105,14 +65,9 @@ envoy asr setup --model base
 envoy doctor --json
 ```
 
-Use this command only with a Release wheel when updating the Release tool
-environment. For a local preview, install Whisper into the dedicated
-`~/.local/share/envoy-preview` virtual environment shown above, then invoke
-that environment's `envoy` executable. Do not mix preview and Release wheels
-in one tool environment.
-
-To get pip's resumable download retries for large dependencies while testing a
-Release wheel, use a dedicated virtual environment:
+Use the same Envoy runtime for normal use and updates. To get pip's resumable
+download retries for large dependencies, use a dedicated temporary virtual
+environment:
 
 ```bash
 python3.12 -m venv "$HOME/.local/share/envoy-asr"

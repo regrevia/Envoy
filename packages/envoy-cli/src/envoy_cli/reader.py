@@ -217,6 +217,91 @@ class _PageParser(HTMLParser):
             self.text_parts.append(value)
 
 
+class _DouyinNoteGalleryParser(HTMLParser):
+    _excluded_markers = (
+        "recommend", "related", "related-list", "video-playing-item",
+        "avatar", "profile", "comment", "feed",
+    )
+    _gallery_markers = ("note-image", "image-list", "swiper", "album")
+    _void_tags = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self, source_url: str):
+        super().__init__(convert_charrefs=True)
+        self.source_url = source_url
+        self.images: list[dict[str, str]] = []
+        self.total_count: int | None = None
+        self._note_depth = 0
+        self._gallery_depth = 0
+        self._excluded_depth = 0
+        self._stack: list[tuple[bool, bool, bool]] = []
+
+    def handle_starttag(self, tag: str, attrs):
+        attrs_map = dict(attrs)
+        identity = " ".join(str(attrs_map.get(key) or "") for key in (
+            "class", "id", "data-e2e", "data-testid",
+        )).lower()
+        excluded = any(marker in identity for marker in self._excluded_markers)
+        note_region = (
+            attrs_map.get("data-e2e") == "note-detail"
+            or "note-detail-container" in identity
+        )
+        gallery = self._note_depth > 0 and any(
+            marker in identity for marker in self._gallery_markers
+        )
+        if tag.lower() not in self._void_tags:
+            self._stack.append((note_region, gallery, excluded))
+        if note_region:
+            self._note_depth += 1
+        if gallery:
+            self._gallery_depth += 1
+            for key in ("data-total", "data-count", "data-image-count"):
+                try:
+                    count = int(attrs_map.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if count >= len(self.images):
+                    self.total_count = count
+                    break
+        if excluded:
+            self._excluded_depth += 1
+        if tag.lower() != "img" or self._gallery_depth <= 0 or self._excluded_depth:
+            return
+        src = next((
+            str(attrs_map.get(key) or "").strip()
+            for key in ("src", "data-src", "data-lazy-src", "data-origin-src")
+            if str(attrs_map.get(key) or "").strip()
+        ), "")
+        if not src:
+            srcset = str(attrs_map.get("srcset") or "").strip()
+            if srcset:
+                src = srcset.split(",")[0].strip().split(" ")[0]
+        if src:
+            absolute = urljoin(self.source_url, src)
+            if absolute not in {image["url"] for image in self.images}:
+                self.images.append({
+                    "url": absolute,
+                    "alt": str(attrs_map.get("alt") or "").strip(),
+                })
+
+    def handle_endtag(self, _tag: str):
+        if not self._stack:
+            return
+        note_region, gallery, excluded = self._stack.pop()
+        if note_region:
+            self._note_depth = max(0, self._note_depth - 1)
+        if gallery:
+            self._gallery_depth = max(0, self._gallery_depth - 1)
+        if excluded:
+            self._excluded_depth = max(0, self._excluded_depth - 1)
+
+
+def extract_douyin_note_gallery(html: str, source_url: str) -> tuple[list[dict[str, str]], int | None]:
+    parser = _DouyinNoteGalleryParser(source_url)
+    parser.feed(html)
+    parser.close()
+    return parser.images, parser.total_count
+
+
 def _is_public_http_url(value: str, dns_cache: dict[str, bool] | None = None) -> bool:
     try:
         parsed = urlparse(value)
@@ -530,6 +615,19 @@ def _browser_read_failure_code(error) -> ErrorCode:
     )
 
 
+def _browser_page_has_video(page, requested_kind: str) -> bool:
+    path = urlparse(page.url).path.lower()
+    return (
+        requested_kind == "video"
+        or bool(page.page_video_urls)
+        or bool(re.search(r"/(?:video|watch|shorts?)/", path))
+    )
+
+
+def _url_is_video_page(value: str) -> bool:
+    return bool(re.search(r"/(?:video|watch|shorts?)/", urlparse(value).path.lower()))
+
+
 def _select_browser_video_url(
     candidates: list[str],
     dns_cache: dict[str, bool],
@@ -627,11 +725,15 @@ def _attach_browser_video_evidence(
     response: ReadResponse,
     *,
     duration_seconds: float | None = None,
+    bound_media_urls: list[str] | None = None,
 ) -> ReadResponse:
-    selected_url, rejected_count = _select_browser_video_url(
-        media_urls,
-        {},
-    )
+    eligible_urls = list(dict.fromkeys(bound_media_urls or []))
+    selected_url = None
+    rejected_count = 0
+    if len(eligible_urls) == 1:
+        selected_url, rejected_count = _select_browser_video_url(eligible_urls, {})
+    elif len(eligible_urls) > 1:
+        rejected_count = len(eligible_urls)
     video_coverage = response.coverage.modalities.get("video") or CoverageItem(
         discovered=1,
         extraction="partial",
@@ -652,7 +754,7 @@ def _attach_browser_video_evidence(
         reason = (
             "Browser media URLs were private, malformed, or otherwise unsafe for local processing"
             if rejected_count
-            else "No downloadable video resource was exposed by the browser"
+            else "Browser media could not be associated with the requested post because no unique page video URL was exposed"
         )
         video_coverage = video_coverage.model_copy(update={
             "discovered": max(int(video_coverage.discovered or 0), 1),
@@ -699,10 +801,9 @@ def _attach_browser_video_evidence(
     asr_elapsed_ms = None
     downloaded_bytes = None
     frame_response = response
-    frame_request = request.model_copy(update={
-        "scope": request.scope.model_copy(update={"include_visual": True}),
-    })
     frame_enabled = (
+        request.scope.include_visual
+        and
         request.host_capabilities.video_input == "frames"
         and request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
     )
@@ -871,7 +972,7 @@ def _attach_browser_video_evidence(
             })
             if frame_enabled:
                 frame_response = _attach_video_frames(
-                    frame_request,
+                    request,
                     source_url,
                     evidence_response,
                     downloaded_media=downloaded,
@@ -1100,19 +1201,74 @@ def _serialize_read_request(function):
         )
         identity = f"{request.source.url}\0{request_scope}"
         lock_id = hashlib.sha256(identity.encode()).hexdigest()
+
+        def execute():
+            token = _READ_WORK_DEADLINE.set(
+                time.monotonic() + max(int(request.budget.max_work_seconds), 1)
+            )
+            try:
+                return function(request, *args, **kwargs)
+            finally:
+                _READ_WORK_DEADLINE.reset(token)
+
         try:
             with interprocess_file_lock(
                 root / f".read-{lock_id[:2]}.lock",
                 max_wait_seconds=request.budget.max_work_seconds,
                 busy_message="This source is already being read in the current session",
             ):
-                token = _READ_WORK_DEADLINE.set(
-                    time.monotonic() + max(int(request.budget.max_work_seconds), 1)
+                if not request.idempotency_key:
+                    return execute()
+                from .operations import OperationConflict, run_idempotent
+
+                fingerprint_payload = request.model_dump(
+                    mode="json",
+                    exclude={"request_id", "session_id", "idempotency_key"},
                 )
+                fingerprint = hashlib.sha256(json.dumps(
+                    fingerprint_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()).hexdigest()
                 try:
-                    return function(request, *args, **kwargs)
-                finally:
-                    _READ_WORK_DEADLINE.reset(token)
+                    payload = run_idempotent(
+                        request.idempotency_key,
+                        fingerprint=fingerprint,
+                        execute=lambda: execute().model_dump(mode="json"),
+                        ttl_seconds=min(
+                            request.retention.derived_ttl_seconds,
+                            MATERIAL_TTL_SECONDS,
+                        ),
+                    )
+                    response = ReadResponse.model_validate(payload)
+                    if response.material_id and response.source_revision:
+                        cached_material = _load_matching_material(
+                            response.material_id,
+                            response.source_revision,
+                            response.session_id,
+                        )
+                        if cached_material is None:
+                            raise OperationConflict(
+                                "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
+                            )
+                    for resource in response.resources:
+                        target = resource.delivery.path
+                        if target and not Path(target).is_file():
+                            raise OperationConflict(
+                                "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
+                            )
+                    return _rebind_cached_response_session(
+                        response,
+                        request.session_id,
+                        request.request_id,
+                    )
+                except OperationConflict as exc:
+                    code = (
+                        ErrorCode.EXPIRED_RESOURCE
+                        if "expired" in str(exc).lower() or "evicted" in str(exc).lower()
+                        else ErrorCode.INVALID_REQUEST
+                    )
+                    return _blocked(request, code, str(exc))
         except TimeoutError:
             return _blocked(
                 request,
@@ -1189,6 +1345,119 @@ def _cached_material_read_response(
             unresolved=source_unresolved,
         ),
     )
+
+
+def _rebind_cached_response_session(
+    response: ReadResponse,
+    session_id: str | None,
+    request_id: str,
+) -> ReadResponse:
+    if response.session_id == session_id:
+        return response.model_copy(update={"request_id": request_id})
+    if not response.material_id or not response.source_revision:
+        return response.model_copy(update={
+            "request_id": request_id,
+            "session_id": session_id,
+        })
+    original = _load_matching_material(
+        response.material_id,
+        response.source_revision,
+        response.session_id,
+    )
+    if original is None:
+        raise PublicPageError(
+            "Completed material expired or was evicted; start a new operation to reacquire it",
+            ErrorCode.EXPIRED_RESOURCE,
+        )
+    remaining_ttl = max(
+        0,
+        int(float(original.get("expires_at") or time.time()) - time.time()),
+    )
+    rebound_id = _material_id(
+        str(original.get("source_url") or ""),
+        response.source_revision,
+        session_id,
+        request_id,
+    )
+    rebound_material = {
+        **original,
+        "session_id": session_id,
+        "expires_at": time.time() + min(remaining_ttl, MATERIAL_TTL_SECONDS),
+    }
+    rebound_resources = []
+    stored_resources = []
+    root = _material_root().resolve()
+    rebound_frame_dir = root / f"frames-{rebound_id}"
+    if rebound_frame_dir.is_symlink() or (
+        rebound_frame_dir.exists() and not rebound_frame_dir.is_dir()
+    ):
+        raise PublicPageError(
+            "The rebound local frame lease path is not a regular Envoy directory",
+            ErrorCode.INVALID_REQUEST,
+        )
+    staging_frame_dir = None
+    if any(resource.delivery.type == "local_file" for resource in response.resources):
+        staging_frame_dir = Path(tempfile.mkdtemp(prefix=".frames-rebind-", dir=root))
+    for resource in response.resources:
+        delivery = resource.delivery
+        if delivery.type != "local_file" or not delivery.path:
+            rebound_resources.append(resource)
+            continue
+        source_path = Path(delivery.path).expanduser().resolve()
+        try:
+            relative = source_path.relative_to(root)
+        except ValueError:
+            raise PublicPageError(
+                "Completed local evidence is outside Envoy's material lease; reacquire it",
+                ErrorCode.EXPIRED_RESOURCE,
+            ) from None
+        if not relative.parts or not relative.parts[0].startswith("frames-mat-"):
+            raise PublicPageError(
+                "Completed local evidence is not an Envoy-managed frame lease; reacquire it",
+                ErrorCode.EXPIRED_RESOURCE,
+            )
+        if not source_path.is_file() or source_path.is_symlink():
+            raise PublicPageError(
+                "Completed local frame evidence expired or was evicted; reacquire it",
+                ErrorCode.EXPIRED_RESOURCE,
+            )
+        staged_target = staging_frame_dir / source_path.name
+        if not staged_target.exists():
+            shutil.copyfile(source_path, staged_target)
+            staged_target.chmod(0o600)
+        target = rebound_frame_dir / source_path.name
+        rebound_resources.append(resource.model_copy(update={
+            "delivery": delivery.model_copy(update={"path": str(target)}),
+        }))
+        stored_resources.append({
+            "resource_id": resource.resource_id,
+            "source_block_id": next((
+                str(item.get("source_block_id") or "")
+                for item in original.get("visual_resources", [])
+                if isinstance(item, dict)
+                and item.get("resource_id") == resource.resource_id
+            ), ""),
+            "source_url": str(response.blocks[0].locator.source_url)
+            if response.blocks and response.blocks[0].locator
+            else str(original.get("source_url") or ""),
+            "frame_path": str(target),
+        })
+    if stored_resources:
+        rebound_material["visual_resources"] = stored_resources
+    _store_material(rebound_id, rebound_material)
+    if staging_frame_dir is not None:
+        rebound_frame_dir.mkdir(mode=0o700, exist_ok=True)
+        for staged in staging_frame_dir.iterdir():
+            target = rebound_frame_dir / staged.name
+            if not target.exists():
+                os.replace(staged, target)
+        staging_frame_dir.rmdir()
+    return response.model_copy(update={
+        "request_id": request_id,
+        "session_id": session_id,
+        "material_id": rebound_id,
+        "resources": rebound_resources,
+    })
 
 
 def _store_material(material_id: str, data: dict) -> None:
@@ -3840,8 +4109,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     source_path = urlparse(source_url).path.lower()
     direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
+    direct_douyin_note = bool(re.match(r"^/note/[^/]+", source_path))
     if (
         not direct_video_path
+        and not direct_douyin_note
         and has_specialized_extractor(source_url)
     ):
         subtitle_result = extract_public_subtitles(
@@ -3871,7 +4142,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     dns_cache,
                 )
                 if browser_snapshot is not None:
-                    browser_snapshot_for_video = True
+                    browser_snapshot_for_video = _browser_page_has_video(
+                        browser_snapshot,
+                        request.source.kind.value,
+                    )
                 else:
                     error_code = _browser_read_failure_code(browser_error)
                     return _blocked(
@@ -4035,9 +4309,32 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     )
                 browser_used = True
                 final_url, html = browser_page.url, browser_page.html
+                browser_snapshot = browser_page
+                browser_snapshot_for_video = (
+                    _browser_page_has_video(browser_page, request.source.kind.value)
+                )
+        if (
+            browser_snapshot is None
+            and (request.source.kind.value == "video" or _url_is_video_page(final_url))
+        ):
+            browser_page, browser_error = _read_with_isolated_browser(
+                request,
+                final_url,
+                dns_cache,
+            )
+            browser_attempted = True
+            if browser_page is not None:
+                browser_used = True
+                final_url, html = browser_page.url, browser_page.html
+                browser_snapshot = browser_page
+                browser_snapshot_for_video = _browser_page_has_video(
+                    browser_page,
+                    request.source.kind.value,
+                )
+            else:
                 browser_snapshot_for_video = (
                     request.source.kind.value == "video"
-                    or bool(browser_page.media_urls)
+                    or _url_is_video_page(final_url)
                 )
         parser = _PageParser()
         parser.feed(html)
@@ -4055,9 +4352,9 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 if browser_page is not None:
                     browser_used = True
                     final_url, html = browser_page.url, browser_page.html
+                    browser_snapshot = browser_page
                     browser_snapshot_for_video = (
-                        request.source.kind.value == "video"
-                        or bool(browser_page.media_urls)
+                        _browser_page_has_video(browser_page, request.source.kind.value)
                     )
                     parser = _PageParser()
                     parser.feed(html)
@@ -4074,7 +4371,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                 action_required=True,
             )
-        if len(text) < 20:
+        if len(text) < 20 and not parser.images and not parser.video_urls:
             if not browser_attempted:
                 browser_page, browser_error = _read_with_isolated_browser(
                     request,
@@ -4085,9 +4382,9 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 if browser_page is not None:
                     browser_used = True
                     final_url, html = browser_page.url, browser_page.html
+                    browser_snapshot = browser_page
                     browser_snapshot_for_video = (
-                        request.source.kind.value == "video"
-                        or bool(browser_page.media_urls)
+                        _browser_page_has_video(browser_page, request.source.kind.value)
                     )
                     parser = _PageParser()
                     parser.feed(html)
@@ -4121,6 +4418,17 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     f"No readable public HTML text was found.{detail}",
                 )
         safe_source_url = _redact_url(final_url)
+        image_note_page = bool(re.match(
+            r"^/note/[^/]+",
+            urlparse(final_url).path,
+            re.IGNORECASE,
+        ))
+        image_note_total: int | None = None
+        if image_note_page:
+            parser.images, image_note_total = extract_douyin_note_gallery(
+                html,
+                final_url,
+            )
         title_block = MaterialBlock(
             id="blk-title",
             kind=MaterialKind.HEADING,
@@ -4144,7 +4452,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             }
             for index, image in enumerate(parser.images)
         ]
-        if goal_terms:
+        if goal_terms and not image_note_page:
             image_candidates.sort(key=lambda item: (-int(item["score"]), int(item["source_index"])))
         safe_image_catalog, skipped_sensitive_images = _safe_visual_candidates(
             image_candidates,
@@ -4324,7 +4632,12 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             )
             if len(resources) >= min(MAX_IMAGES, visual_budget):
                 break
-        image_partial = len(resources) < len(parser.images)
+        image_note_unknown_total = image_note_page and image_note_total is None
+        image_partial = (
+            len(resources) < len(parser.images)
+            or (image_note_total is not None and len(resources) < image_note_total)
+            or image_note_unknown_total
+        )
         response = ReadResponse(
             request_id=request.request_id,
             session_id=request.session_id,
@@ -4399,6 +4712,16 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                         extraction="partial" if image_partial else "complete",
                         unresolved=[
                             *(
+                                ["Image note album total was not exposed; discovered images may be incomplete"]
+                                if image_note_unknown_total
+                                else []
+                            ),
+                            *(
+                                ["The note album contains images that were not returned"]
+                                if image_note_total is not None and len(resources) < image_note_total
+                                else []
+                            ),
+                            *(
                                 ["Image input budget limited returned images"]
                                 if len(selected_images) < len(parser.images)
                                 else []
@@ -4410,14 +4733,15 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             ),
                             *(
                                 ["Some image resources could not be safely delivered"]
-                                if image_partial
+                                if len(resources) < len(parser.images)
                                 and not skipped_sensitive_images
                                 and len(selected_images) == len(parser.images)
                                 else []
                             ),
                         ],
-                        details=(
-                            {
+                        details={
+                            **(
+                                {
                                 "goal_terms": goal_terms,
                                 "goal_ranked": True,
                                 "selected_candidates": [
@@ -4429,9 +4753,27 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                                     for image in selected_images
                                 ],
                             }
-                            if goal_terms
-                            else {}
-                        ),
+                                if goal_terms and not image_note_page
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "item_type": "image_note",
+                                    "album_total": image_note_total,
+                                    "album_total_known": image_note_total is not None,
+                                    "discovered_image_count": len(parser.images),
+                                    "read_image_count": len(resources),
+                                    "uncovered_image_count": (
+                                        max(0, image_note_total - len(resources))
+                                        if image_note_total is not None
+                                        else None
+                                    ),
+                                    "image_order": [item.resource_id for item in resources],
+                                }
+                                if image_note_page
+                                else {}
+                            ),
+                        },
                     ),
                     **({"video": CoverageItem(
                         discovered=max(len(video_urls), 1),
@@ -4461,9 +4803,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         if browser_snapshot_for_video and browser_snapshot is not None:
             response = _attach_browser_video_evidence(
                 request,
-                source_url,
+                browser_snapshot.url,
                 list(browser_snapshot.media_urls),
                 response,
+                bound_media_urls=list(browser_snapshot.page_video_urls),
             )
         return response
     except PublicPageError as exc:
