@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -158,3 +159,175 @@ def test_asr_install_command_installs_engine_before_preparing_model(
     assert calls == [("install", "base"), ("prepare", "base")]
     assert payload["index_url"] == "https://mirror.example/simple/"
     assert payload["available"] is True
+
+
+def test_doctor_verifies_asr_only_when_explicitly_requested(monkeypatch, capsys):
+    from envoy_cli import cli
+
+    calls = []
+    monkeypatch.setattr(cli, "media_runtime_status", lambda *, verify_asr=False: (
+        calls.append(verify_asr)
+        or {
+            "asr_installed": True,
+            "asr_model": "base",
+            "asr_model_available": verify_asr,
+            "asr_operational": "verified" if verify_asr else "not_checked",
+        }
+    ))
+    monkeypatch.setattr(cli.browser_runtime, "browser_runtime_status", lambda: {})
+
+    assert cli.main(["doctor", "--json"]) == 0
+    assert cli.main(["doctor", "--json", "--verify-asr"]) == 0
+    assert calls == [False, True]
+    capsys.readouterr()
+
+
+def test_doctor_returns_failure_when_requested_asr_check_fails(monkeypatch, capsys):
+    from envoy_cli import cli
+
+    monkeypatch.setattr(cli, "media_runtime_status", lambda *, verify_asr=False: {
+        "asr_installed": True,
+        "asr_model": "base",
+        "asr_model_available": False,
+        "asr_operational": "failed",
+    })
+    monkeypatch.setattr(cli.browser_runtime, "browser_runtime_status", lambda: {})
+
+    assert cli.main(["doctor", "--json", "--verify-asr"]) == 2
+    assert json.loads(capsys.readouterr().out)["runtime"]["asr_operational"] == "failed"
+
+
+def test_asr_model_selection_persists_outside_replaceable_tool_environment(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    assert media.selected_asr_model() == "base"
+
+    checkpoint = tmp_path / "whisper" / "small.pt"
+    checkpoint.parent.mkdir()
+    checkpoint.write_bytes(b"selected checkpoint")
+    media.persist_asr_selection("small", media._sha256_file(checkpoint))
+    monkeypatch.setenv("ENVOY_ASR_MODEL", "tiny")
+
+    assert media.selected_asr_model() == "tiny"
+    monkeypatch.delenv("ENVOY_ASR_MODEL")
+    assert media.selected_asr_model() == "small"
+
+
+def test_media_status_distinguishes_configured_engine_and_model_file(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    (cache / "small.pt").write_bytes(b"fixture checkpoint")
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("small", media._sha256_file(cache / "small.pt"))
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+
+    status = media.media_runtime_status()
+
+    assert status["asr_configured"] is True
+    assert status["asr_installed"] is True
+    assert status["asr_model"] == "small"
+    assert status["asr_model_file_present"] is True
+    assert status["asr_model_verified"] is True
+    assert status["asr_model_available"] is True
+    assert status["asr_operational"] == "not_checked"
+
+
+def test_media_status_rejects_model_file_with_wrong_expected_digest(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    (cache / "small.pt").write_bytes(b"corrupt checkpoint")
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("small", "0" * 64)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+
+    status = media.media_runtime_status()
+
+    assert status["asr_model_file_present"] is True
+    assert status["asr_model_verified"] is False
+    assert status["asr_model_available"] is False
+    assert status["asr_operational"] == "not_checked"
+
+
+def test_media_status_load_checks_engine_and_verified_model(monkeypatch, tmp_path):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    (cache / "small.pt").write_bytes(b"checkpoint")
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("small")
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(media, "_model_expected_sha256", lambda _name: media._sha256_file(cache / "small.pt"))
+    monkeypatch.setattr(media, "_verify_whisper_inference", lambda _name: None)
+
+    status = media.media_runtime_status(verify_asr=True)
+
+    assert status["asr_model_verified"] is True
+    assert status["asr_model_available"] is True
+    assert status["asr_operational"] == "verified"
+    assert media._read_asr_config()["sha256"] == media._sha256_file(cache / "small.pt")
+
+
+def test_asr_operational_check_runs_short_transcription(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import media
+
+    observed = {}
+
+    class FakeModel:
+        def transcribe(self, audio, *, fp16):
+            observed["sample_count"] = len(audio)
+            observed["fp16"] = fp16
+            return {"text": ""}
+
+    monkeypatch.setitem(sys.modules, "numpy", SimpleNamespace(
+        float32="float32",
+        zeros=lambda size, dtype: [0] * size,
+    ))
+    monkeypatch.setattr(media, "_load_whisper_model", lambda _name: FakeModel())
+
+    media._verify_whisper_inference("base")
+
+    assert observed == {"sample_count": 16_000, "fp16": False}
+
+
+def test_doctor_reports_configured_asr_dependency_lost_after_tool_reinstall(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(tmp_path / "whisper"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("small")
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: None)
+
+    status = media.media_runtime_status()
+
+    assert status["asr_configured"] is True
+    assert status["asr_installed"] is False
+    assert status["asr_model"] == "small"
+    assert "rerun envoy asr install" in status["asr_next_step"]

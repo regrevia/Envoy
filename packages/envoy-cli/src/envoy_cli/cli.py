@@ -55,6 +55,11 @@ def _parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
+    doctor.add_argument(
+        "--verify-asr",
+        action="store_true",
+        help="verify the selected checkpoint and run a short Whisper inference (may take time and memory)",
+    )
     browser = subparsers.add_parser("browser", help="manage the isolated browser runtime")
     browser_commands = browser.add_subparsers(dest="browser_command", required=True)
     browser_commands.add_parser("setup", help="install the isolated Chromium browser")
@@ -105,7 +110,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             }, ensure_ascii=False))
             return 2
     if args.command == "doctor":
-        runtime = media_runtime_status()
+        runtime = media_runtime_status(verify_asr=args.verify_asr)
         runtime["browser"] = browser_runtime.browser_runtime_status()
         result = {
             "tool": "envoy",
@@ -130,6 +135,8 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "runtime": runtime,
         }
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
+        if args.verify_asr and runtime["asr_operational"] != "verified":
+            return 2
         return 0
     if args.command == "browser":
         return browser_runtime.setup_browser()

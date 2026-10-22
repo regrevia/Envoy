@@ -66,6 +66,19 @@ success. `envoy doctor --json` reports each optional capability separately.
 ## Update or remove
 
 Install the newer Envoy wheel with `uv tool install --force <wheel-path>`.
+If `envoy doctor --json` reports `runtime.asr_configured: true`, preserve the
+Whisper engine while replacing the uv tool environment:
+
+```bash
+uv tool install --force --python 3.11 \
+  --with 'openai-whisper==20250625' ./envoy_cli-<version>-py3-none-any.whl
+envoy doctor --json
+```
+
+The ASR model and selected model name remain in the user data directories; the
+Python engine is part of the replaceable tool environment. `doctor` flags a
+configured-but-missing engine and provides a recovery command. If the selected
+model is not available, rerun `envoy asr install --model <model>`.
 Remove the runtime with `uv tool uninstall envoy-cli`; remove the Skill using
 the Skills CLI's uninstall command or the selected agent's Skill manager.
 
@@ -81,6 +94,11 @@ Install local ASR support and prepare its default model with:
 envoy asr install --model base
 envoy doctor --json
 ```
+
+To explicitly test that Whisper can validate the selected local model and run
+a short local inference,
+run `envoy doctor --json --verify-asr`. This can take time and memory; routine
+doctor checks do not load the model.
 
 Envoy probes PyPI and regional indexes for both Whisper and PyTorch, chooses the
 fastest reachable index, and retries through other reachable indexes if an

@@ -58,6 +58,60 @@ SUPPORTED_ASR_MODELS = {
 }
 
 
+def _config_root() -> Path:
+    configured = os.getenv("ENVOY_CONFIG_DIR", "").strip()
+    root = Path(configured).expanduser() if configured else Path.home() / ".envoy"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        root.chmod(0o700)
+    except OSError:
+        pass
+    return root
+
+
+def _asr_config_path() -> Path:
+    return _config_root() / "asr.json"
+
+
+def selected_asr_model() -> str:
+    override = os.getenv("ENVOY_ASR_MODEL", "").strip()
+    if override:
+        return override
+    model = str(_read_asr_config().get("model") or "base")
+    return model if model in SUPPORTED_ASR_MODELS else "base"
+
+
+def _read_asr_config() -> dict[str, Any]:
+    try:
+        payload = json.loads(_asr_config_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def persist_asr_selection(model_name: str, sha256: str | None = None) -> None:
+    if model_name not in SUPPORTED_ASR_MODELS:
+        raise ValueError(f"Unsupported Whisper model name: {model_name}")
+    payload: dict[str, Any] = {"model": model_name, "enabled": True}
+    if sha256 and re.fullmatch(r"[0-9a-f]{64}", sha256):
+        payload["sha256"] = sha256
+    path = _asr_config_path()
+    descriptor, temporary = tempfile.mkstemp(prefix=".asr-", dir=str(path.parent))
+    try:
+        if os.name != "nt":
+            os.chmod(temporary, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(payload, output, ensure_ascii=False)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        if os.name != "nt":
+            path.chmod(0o600)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def _load_yt_dlp():
     try:
         from yt_dlp import YoutubeDL
@@ -423,7 +477,38 @@ def _version_tuple(value: str | None) -> tuple[int, ...]:
     return tuple(int(item) for item in numbers[:3])
 
 
-def media_runtime_status() -> dict[str, Any]:
+def _model_expected_sha256(model_name: str) -> str | None:
+    try:
+        import whisper
+        url = str(whisper._MODELS[model_name])
+        digest = urlsplit(url).path.rstrip("/").split("/")[-2]
+    except Exception:
+        return None
+    return digest if re.fullmatch(r"[0-9a-f]{64}", digest) else None
+
+
+def _load_whisper_model(model_name: str):
+    import whisper
+    return whisper.load_model(
+        model_name,
+        device="cpu",
+        download_root=str(asr_model_cache_dir()),
+    )
+
+
+def _verify_whisper_inference(model_name: str) -> None:
+    import numpy
+
+    model = _load_whisper_model(model_name)
+    result = model.transcribe(
+        numpy.zeros(16_000, dtype=numpy.float32),
+        fp16=False,
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+        raise MediaProcessingError("Whisper smoke inference returned an invalid result")
+
+
+def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
     try:
         asr_installed = importlib.util.find_spec("whisper") is not None
     except (ImportError, ValueError):
@@ -432,10 +517,47 @@ def media_runtime_status() -> dict[str, Any]:
         yt_dlp_version = version("yt-dlp")
     except PackageNotFoundError:
         yt_dlp_version = None
-    model_name = os.getenv("ENVOY_ASR_MODEL", "base")
-    model_available = False
-    if asr_installed and model_name in SUPPORTED_ASR_MODELS:
-        model_available = (asr_model_cache_dir() / f"{model_name}.pt").is_file()
+    model_name = selected_asr_model()
+    model_file_present = (
+        model_name in SUPPORTED_ASR_MODELS
+        and (asr_model_cache_dir() / f"{model_name}.pt").is_file()
+    )
+    asr_config = _read_asr_config()
+    configured_digest = (
+        str(asr_config.get("sha256") or "")
+        if asr_config.get("model") == model_name
+        else ""
+    )
+    model_verified: bool | None = None
+    if model_file_present and configured_digest:
+        model_verified = (
+            _sha256_file(asr_model_cache_dir() / f"{model_name}.pt")
+            == configured_digest
+        )
+    model_available = asr_installed and model_file_present and model_verified is True
+    operational = "not_checked"
+    if verify_asr and not asr_installed:
+        operational = "engine_missing"
+    elif verify_asr and not model_file_present:
+        operational = "model_missing"
+    elif verify_asr:
+        expected_sha256 = configured_digest or _model_expected_sha256(model_name)
+        model_verified = bool(
+            expected_sha256
+            and _sha256_file(asr_model_cache_dir() / f"{model_name}.pt")
+            == expected_sha256
+        )
+        if model_verified:
+            try:
+                _verify_whisper_inference(model_name)
+                operational = "verified"
+            except Exception:
+                operational = "failed"
+            else:
+                persist_asr_selection(model_name, expected_sha256)
+        else:
+            operational = "failed"
+        model_available = bool(model_verified and operational == "verified")
     return {
         "ffmpeg": shutil.which(os.getenv("FFMPEG_BIN", "ffmpeg")),
         "ffprobe": shutil.which(os.getenv("FFPROBE_BIN", "ffprobe")),
@@ -447,6 +569,19 @@ def media_runtime_status() -> dict[str, Any]:
         "asr_installed": asr_installed,
         "asr_model": model_name,
         "asr_model_available": model_available,
+        "asr_configured": bool(asr_config.get("enabled")) or bool(os.getenv("ENVOY_ASR_MODEL", "").strip()),
+        "asr_model_file_present": model_file_present,
+        "asr_model_verified": model_verified,
+        "asr_operational": operational,
+        "asr_next_step": (
+            "rerun envoy asr install --model <model>; runtime updates may replace injected media dependencies"
+            if bool(asr_config.get("enabled")) and not asr_installed
+            else "run envoy asr setup --model <model>"
+            if asr_installed and (not model_file_present or model_verified is False)
+            else "run envoy doctor --verify-asr"
+            if model_file_present and model_verified is None and operational == "not_checked"
+            else None
+        ),
     }
 
 
@@ -468,7 +603,7 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
 
     target = cache_dir / filename
     if target.is_file() and _sha256_file(target) == expected_sha256:
-        return {"downloaded_bytes": 0, "resumed": False}
+        return {"downloaded_bytes": 0, "resumed": False, "sha256": expected_sha256}
 
     partial = target.with_name(target.name + ".part")
     resumed = partial.is_file() and partial.stat().st_size > 0
@@ -512,6 +647,7 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
                 return {
                     "downloaded_bytes": target.stat().st_size,
                     "resumed": resumed,
+                    "sha256": expected_sha256,
                 }
             last_error = "downloaded model checksum does not match"
             resumed = True
@@ -544,6 +680,7 @@ def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
                 download_root=str(cache_dir),
             )
             del model
+        persist_asr_selection(model_name, str(download.get("sha256") or ""))
     except Exception as exc:
         raise MediaProcessingError(f"ASR model setup failed: {_safe_error(exc)}") from exc
     return {
