@@ -52,6 +52,13 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
         for key, value in os.environ.items()
         if key != "PYTHONPATH"
     }
+    source_status = subprocess.run(
+        ["git", "-C", str(ROOT), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    expected_dirty = source_status.returncode != 0 or bool(source_status.stdout.strip())
 
     result = subprocess.run(
         [
@@ -159,6 +166,6 @@ def test_cli_wheel_bundles_matching_core_for_github_install(tmp_path):
     assert response["core_version"] == PACKAGE_VERSION
     assert response["build"]["channel"] == "local-preview"
     assert response["build"]["source_revision"]
-    assert response["build"]["source_dirty"] is True
+    assert response["build"]["source_dirty"] is expected_dirty
     assert "source_checkout" not in response["build"]
     assert "direct_video_handoff" in json.dumps(response)
