@@ -1084,32 +1084,75 @@ def _material_root() -> Path:
         reverse=True,
     )
     valid_material_names = set()
-    for index, expiry_path in enumerate(expiry_paths):
+    for expiry_path in expiry_paths:
+        material_id = expiry_path.name.removesuffix(".expires")
+        if not re.fullmatch(r"mat-[a-f0-9]{24}", material_id):
+            continue
         try:
-            if expiry_path.is_symlink():
-                expiry_path.unlink(missing_ok=True)
-                continue
-            expires_at = float(expiry_path.read_text(encoding="ascii").strip())
-            material_path = expiry_path.with_suffix(".json")
-            if (
-                now >= expires_at
-                or index >= MAX_CACHED_MATERIALS
-                or material_path.is_symlink()
-                or not material_path.is_file()
+            with interprocess_file_lock(
+                root / f".material-{hashlib.sha256(material_id.encode()).hexdigest()[:2]}.lock",
+                max_wait_seconds=5,
+                busy_message="Material is being updated",
             ):
-                expiry_path.unlink(missing_ok=True)
-                material_path.unlink(missing_ok=True)
-                continue
-            valid_material_names.add(material_path.name)
-        except OSError:
+                if expiry_path.is_symlink():
+                    expiry_path.unlink(missing_ok=True)
+                    continue
+                expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+                material_path = expiry_path.with_suffix(".json")
+                ranked_materials = sorted(
+                    (
+                        (path.lstat().st_mtime, path.name)
+                        for path in root.glob("mat-*.expires")
+                        if not path.is_symlink()
+                    ),
+                    reverse=True,
+                )
+                rank = next(
+                    (
+                        position for position, (_, name) in enumerate(ranked_materials)
+                        if name == expiry_path.name
+                    ),
+                    MAX_CACHED_MATERIALS,
+                )
+                should_remove = (
+                    now >= expires_at
+                    or rank >= MAX_CACHED_MATERIALS
+                    or material_path.is_symlink()
+                    or not material_path.is_file()
+                )
+                if should_remove:
+                    expiry_path.unlink(missing_ok=True)
+                    material_path.unlink(missing_ok=True)
+                    continue
+                valid_material_names.add(material_path.name)
+        except (OSError, TimeoutError):
             continue
         except ValueError:
-            expiry_path.unlink(missing_ok=True)
+            try:
+                with interprocess_file_lock(
+                    root / f".material-{hashlib.sha256(material_id.encode()).hexdigest()[:2]}.lock",
+                    max_wait_seconds=5,
+                    busy_message="Material is being updated",
+                ):
+                    expiry_path.unlink(missing_ok=True)
+            except (OSError, TimeoutError):
+                continue
     for material_path in root.glob("mat-*.json"):
         if material_path.name not in valid_material_names:
+            material_id = material_path.stem
+            if not re.fullmatch(r"mat-[a-f0-9]{24}", material_id):
+                continue
             try:
-                material_path.unlink(missing_ok=True)
-            except OSError:
+                with interprocess_file_lock(
+                    root / f".material-{hashlib.sha256(material_id.encode()).hexdigest()[:2]}.lock",
+                    max_wait_seconds=5,
+                    busy_message="Material is being updated",
+                ):
+                    expiry_path = material_path.with_suffix(".expires")
+                    if expiry_path.is_file() and not expiry_path.is_symlink():
+                        continue
+                    material_path.unlink(missing_ok=True)
+            except (OSError, TimeoutError):
                 continue
     valid_material_ids = {
         name.removesuffix(".json")
@@ -1999,21 +2042,31 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 already_returned_matches += 1
             else:
                 preserve_line_context = stored.get("source_kind") == "video"
-                candidate_start = start if preserve_line_context else segments[0][0]
-                candidate_end = end if preserve_line_context else segments[0][1]
-                segment_text = total_text[candidate_start:candidate_end]
-                segment_score = _goal_score(segment_text, terms)
-                if not segment_score:
-                    already_returned_matches += 1
-                else:
-                    candidates.append({
+                candidate = None
+                for segment_start, segment_end in segments:
+                    segment_text = total_text[segment_start:segment_end]
+                    segment_score = _goal_score(segment_text, terms)
+                    if not segment_score:
+                        continue
+                    candidate_start = start if preserve_line_context else segment_start
+                    candidate_end = end if preserve_line_context else segment_end
+                    candidate_text = total_text[candidate_start:candidate_end]
+                    candidate = {
                         "start": candidate_start,
                         "end": candidate_end,
-                        "text": segment_text,
+                        "text": candidate_text,
                         "score": segment_score,
-                        "hit_offset": _search_hit_offset(segment_text, terms),
+                        "hit_offset": (
+                            segment_start - candidate_start
+                            + _search_hit_offset(segment_text, terms)
+                        ),
                         "unseen_segments": segments,
-                    })
+                    }
+                    break
+                if candidate is None:
+                    already_returned_matches += 1
+                else:
+                    candidates.append(candidate)
     candidates.sort(key=lambda item: (-item["score"], item["start"]))
     matches_found = lexical_matches
     new_matches = len(candidates)
@@ -2161,12 +2214,8 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 "unresolved": ["Lexical relevance is a retrieval hint, not semantic verification"],
             },
         ))
-        new_segments = _unseen_ranges(start, end, returned_ranges)
-        used_chars += sum(segment_end - segment_start for segment_start, segment_end in new_segments)
-        used_tokens += sum(
-            _estimated_tokens(total_text[segment_start:segment_end])
-            for segment_start, segment_end in new_segments
-        )
+        used_chars += len(content)
+        used_tokens += _estimated_tokens(content)
         if len(content) < len(candidate["text"]):
             truncated = True
             break
@@ -2180,17 +2229,15 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
     state["returned_chars"] = returned_chars + used_chars
     state["returned_tokens"] = returned_tokens + used_tokens
     search_ranges = returned_ranges.copy()
+    newly_covered_ranges = []
     for block in blocks:
-        search_ranges.extend(
-            [
-                [segment_start, segment_end]
-                for segment_start, segment_end in _unseen_ranges(
-                block.order,
-                block.order + len(block.content.text),
-                returned_ranges,
-                )
-            ]
+        uncovered = _unseen_ranges(
+            block.order,
+            block.order + len(block.content.text),
+            search_ranges,
         )
+        newly_covered_ranges.extend(uncovered)
+        search_ranges.extend([[start, end] for start, end in uncovered])
     state["returned_ranges"] = _merge_ranges(search_ranges)
     state["search_returned_ranges"] = state["returned_ranges"]
     stored["budget_state"] = state
@@ -2227,9 +2274,16 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                         "already_returned_matches": already_returned_matches,
                         "returned_chars": used_chars,
                         "returned_tokens": used_tokens,
+                        "newly_covered_chars": sum(
+                            end - start for start, end in newly_covered_ranges
+                        ),
+                        "newly_covered_tokens": sum(
+                            _estimated_tokens(total_text[start:end])
+                            for start, end in newly_covered_ranges
+                        ),
                         "match_offsets": [block.order for block in blocks],
                         "token_estimate_basis": "ascii4_nonascii1_v1",
-                        "token_estimate_scope": "returned_material_text_only",
+                        "token_estimate_scope": "all_returned_material_text_including_repeated_context",
                         "remaining_chars": max(0, max_total_chars - state["returned_chars"]),
                         "remaining_tokens": (
                             max(0, max_total_tokens - state["returned_tokens"])

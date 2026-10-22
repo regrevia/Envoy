@@ -763,3 +763,67 @@ def test_profile_discovery_uses_isolated_browser_when_ytdlp_does_not_support_pro
         "video",
     ]
     assert result["has_more"] is None
+
+
+def test_profile_discovery_browser_failure_after_metadata_without_entries_is_bounded(
+    monkeypatch,
+):
+    import contextlib
+    from envoy_cli import video
+
+    class Downloader:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            return {"title": "Creator profile"}
+
+    monkeypatch.setattr(video, "_load_yt_dlp", lambda: (Downloader, []))
+    monkeypatch.setattr("envoy_cli.media.public_network_guard", contextlib.nullcontext)
+    monkeypatch.setattr("envoy_cli.media.guard_yt_dlp_client", lambda _ydl: None)
+    monkeypatch.setattr(
+        "envoy_cli.browser.read_page",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("browser unavailable")),
+    )
+
+    with pytest.raises(collections.CollectionError, match="browser discovery failed"):
+        collections.discover_profile("https://www.douyin.com/user/creator")
+
+
+def test_profile_discovery_browser_page_without_candidates_is_bounded(
+    monkeypatch,
+):
+    import contextlib
+    from types import SimpleNamespace
+    from envoy_cli import video
+
+    class Downloader:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            return {"title": "Creator profile"}
+
+    monkeypatch.setattr(video, "_load_yt_dlp", lambda: (Downloader, []))
+    monkeypatch.setattr("envoy_cli.media.public_network_guard", contextlib.nullcontext)
+    monkeypatch.setattr("envoy_cli.media.guard_yt_dlp_client", lambda _ydl: None)
+    monkeypatch.setattr("envoy_cli.reader._is_public_http_url", lambda *_args: True)
+    monkeypatch.setattr("envoy_cli.browser.read_page", lambda *_args, **_kwargs: SimpleNamespace(
+        url="https://www.douyin.com/user/creator",
+        html="<html><body>No public candidates</body></html>",
+    ))
+
+    with pytest.raises(collections.CollectionError, match="No public profile candidates"):
+        collections.discover_profile("https://www.douyin.com/user/creator")

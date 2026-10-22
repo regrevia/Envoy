@@ -824,6 +824,42 @@ def test_mcp_bridge_invalid_json_is_reported_without_traceback():
     assert response["error"]["code"] == -32700
 
 
+def test_unexpected_tool_failure_returns_internal_error_and_keeps_stream_alive(
+    monkeypatch,
+):
+    from envoy_cli import mcp
+
+    monkeypatch.setattr(
+        mcp,
+        "discover_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("private diagnostic detail")),
+    )
+    incoming = io.StringIO("\n".join([
+        json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        }),
+        json.dumps({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {
+                "name": "envoy_discover",
+                "arguments": {"profile_url": "https://www.douyin.com/user/creator"},
+            },
+        }),
+        json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}),
+        "",
+    ]))
+    outgoing = io.StringIO()
+
+    assert mcp.run_stream(incoming, outgoing) == 0
+    responses = [json.loads(line) for line in outgoing.getvalue().splitlines()]
+
+    assert responses[1]["error"]["code"] == -32603
+    assert responses[1]["error"]["message"] == "Internal error while handling MCP tool call"
+    assert responses[2]["result"]["tools"]
+    assert all("private diagnostic detail" not in line for line in outgoing.getvalue().splitlines())
+
+
 def test_mcp_bridge_requires_initialize_for_legacy_requests():
     from envoy_cli import mcp
 

@@ -293,6 +293,61 @@ def test_material_cleanup_never_unlinks_an_active_lock_inode(tmp_path, monkeypat
         assert stale_lock.exists()
 
 
+def test_material_cleanup_waits_for_atomic_material_publication(tmp_path, monkeypatch):
+    from threading import Event, Thread
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "c" * 24
+    json_published = Event()
+    allow_writer = Event()
+    cleanup_finished = Event()
+    original_replace = reader.os.replace
+    errors = []
+
+    def pause_after_material_json(source, destination):
+        original_replace(source, destination)
+        if Path(destination).name == f"{material_id}.json":
+            json_published.set()
+            if not allow_writer.wait(timeout=5):
+                raise TimeoutError("test did not release material writer")
+
+    monkeypatch.setattr(reader.os, "replace", pause_after_material_json)
+
+    def write_material():
+        try:
+            reader._store_material(material_id, {
+                "source_kind": "text",
+                "source_url": "https://example.org/concurrent",
+                "source_revision": "c" * 64,
+                "text": "Newly published material must survive concurrent cleanup.",
+            })
+        except BaseException as exc:
+            errors.append(exc)
+
+    def cleanup_materials():
+        reader._material_root()
+        cleanup_finished.set()
+
+    writer = Thread(target=write_material)
+    cleaner = Thread(target=cleanup_materials)
+    writer.start()
+    assert json_published.wait(timeout=5)
+    cleaner.start()
+    try:
+        assert not cleanup_finished.wait(timeout=0.1)
+    finally:
+        allow_writer.set()
+        writer.join(timeout=5)
+        cleaner.join(timeout=5)
+
+    assert not writer.is_alive()
+    assert not cleaner.is_alive()
+    assert not errors
+    assert (tmp_path / f"{material_id}.json").is_file()
+    assert (tmp_path / f"{material_id}.expires").is_file()
+
+
 def test_concurrent_material_expansions_share_one_cumulative_budget(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     import json
@@ -2095,6 +2150,100 @@ def test_material_search_returns_window_around_match_in_long_single_line(tmp_pat
     assert len(result.blocks) == 1
     assert "NEEDLE=42" in result.blocks[0].content.text
     assert result.blocks[0].order > 5000
+
+
+def test_material_search_scans_all_unseen_segments_of_a_long_line(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "7" * 24
+    text = ("background " * 20) + "NEEDLE=first " + ("middle " * 30) + "NEEDLE=second " + ("tail " * 10)
+    first_hit = text.index("NEEDLE=first")
+    second_hit = text.index("NEEDLE=second")
+    returned_ranges = [
+        [0, first_hit + len("NEEDLE=first")],
+        [first_hit + len("NEEDLE=first") + 1, second_hit],
+    ]
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/long-line",
+        "source_revision": "7" * 64,
+        "title_text": "Long material",
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": 20_000,
+            "max_total_response_tokens": 5_000,
+            "max_expansion_rounds": 8,
+            "returned_chars": sum(end - start for start, end in returned_ranges),
+            "returned_tokens": sum(reader._estimated_tokens(text[start:end]) for start, end in returned_ranges),
+            "expansion_rounds": 1,
+            "returned_ranges": returned_ranges,
+        },
+    })
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "request_id": "search-later-unseen-hit",
+        "material_id": material_id,
+        "query": "NEEDLE",
+        "max_results": 5,
+        "max_chars": 2_000,
+    }))
+
+    assert result.blocks
+    assert any("NEEDLE=second" in block.content.text for block in result.blocks)
+    assert any(block.order <= second_hit < block.order + len(block.content.text) for block in result.blocks)
+
+
+def test_material_search_counts_repeated_context_against_response_token_budget(tmp_path, monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "8" * 24
+    lines = [
+        f"[00:{index:02d}.000] " + ("previously read context " * 7) + f" NEEDLE={index}"
+        for index in range(20)
+    ]
+    text = "\n".join(lines)
+    ranges = []
+    import re
+    for start, line in zip([match.start() for match in re.finditer(r"(?m)^", text)], lines):
+        end = start + line.index("NEEDLE")
+        ranges.append([start, end])
+    reader._store_material(material_id, {
+        "source_kind": "video",
+        "source_url": "https://example.org/video",
+        "source_revision": "8" * 64,
+        "title_text": "Video",
+        "text": text,
+        "transcript_source": "manual_subtitles",
+        "budget_state": {
+            "max_total_response_chars": 20_000,
+            "max_total_response_tokens": 5_000,
+            "max_expansion_rounds": 8,
+            "returned_chars": sum(end - start for start, end in ranges),
+            "returned_tokens": sum(reader._estimated_tokens(text[start:end]) for start, end in ranges),
+            "expansion_rounds": 1,
+            "returned_ranges": ranges,
+        },
+    })
+
+    result = reader.search_material(MaterialSearchRequest.model_validate({
+        "request_id": "search-repeated-context-budget",
+        "material_id": material_id,
+        "query": "NEEDLE",
+        "max_results": 20,
+        "max_chars": 10_000,
+        "max_response_tokens": 64,
+    }))
+    returned_text_tokens = sum(
+        reader._estimated_tokens(block.content.text)
+        for block in result.blocks
+    )
+
+    assert len(result.blocks) > 1
+    assert returned_text_tokens <= 64
+    assert result.coverage.modalities["text"].details["returned_tokens"] == returned_text_tokens
 
 
 def test_material_search_keeps_timestamp_context_when_match_line_was_partially_returned(tmp_path, monkeypatch):
