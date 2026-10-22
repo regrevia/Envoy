@@ -34,8 +34,17 @@ def _normalize_index(value: str) -> str:
     if not value:
         return ""
     parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Package index must be an HTTP(S) URL")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "Package index must be a credential-free HTTP(S) URL without query or fragment"
+        )
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/") + "/", "", ""))
 
 
@@ -56,12 +65,16 @@ def default_package_indexes() -> list[PackageIndex]:
 
 
 def _explicit_package_index() -> PackageIndex | None:
-    value = os.getenv("ENVOY_PYPI_INDEX_URL", "").strip()
-    if not value:
-        value = os.getenv("UV_INDEX_URL", "").strip()
-    if not value:
-        return None
-    return PackageIndex(_normalize_index(value), "explicit")
+    for variable in (
+        "ENVOY_PYPI_INDEX_URL",
+        "UV_INDEX_URL",
+        "UV_DEFAULT_INDEX",
+        "PIP_INDEX_URL",
+    ):
+        value = os.getenv(variable, "").strip()
+        if value:
+            return PackageIndex(_normalize_index(value), "explicit")
+    return None
 
 
 def _probe_index(
