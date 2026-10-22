@@ -41,6 +41,8 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         assert b"preview" not in install.lower()
         assert b"envoy-preview" not in install
         assert b"uv tool install --force" in install
+        assert b"envoy asr install --model base" in install
+        assert b"ENVOY_PYPI_INDEX_URL" in install
         host_readme = archive.read("hosts/README.md")
         assert b"Release wheel" not in host_readme
         skill = archive.read("SKILL.md")

@@ -326,11 +326,15 @@ are not currently processed by this runtime.
 To install the optional local ASR engine and prepare a model:
 
 ```bash
-# Install or update Envoy with local ASR support:
-uv tool install --with "openai-whisper==20250625" ./envoy_cli-<release-version>-py3-none-any.whl
-envoy asr setup --model base
+envoy asr install --model base
 envoy doctor --json
 ```
+
+`envoy asr install` probes PyPI and regional indexes for Whisper and PyTorch,
+chooses the fastest reachable index, and retries another reachable index after
+a failed install. Set `ENVOY_PYPI_INDEX_URL` to force one index or
+`ENVOY_PYPI_INDEXES` to set an ordered comma-separated fallback list. Explicit
+proxy environment variables are honored.
 
 Install FFmpeg and FFprobe with the operating system's package manager if they
 are not already available.
