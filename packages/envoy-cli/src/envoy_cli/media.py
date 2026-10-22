@@ -965,6 +965,42 @@ def probe_media_duration(
     return duration
 
 
+def probe_video_stream(
+    media_path: str | Path,
+    *,
+    max_work_seconds: int = 15,
+) -> bool:
+    ffprobe = shutil.which(os.getenv("FFPROBE_BIN", "ffprobe"))
+    if not ffprobe:
+        raise MediaCapabilityMissing("FFprobe is required to inspect local video input")
+    source = Path(media_path).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v", "error",
+                "-select_streams", "v",
+                "-show_entries", "stream=codec_type",
+                "-of", "json",
+                str(source),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=max(int(max_work_seconds), 1),
+            check=True,
+        )
+        payload = json.loads(result.stdout or "{}")
+    except Exception as exc:
+        raise MediaProcessingError(
+            f"Could not inspect local video streams ({type(exc).__name__})"
+        ) from exc
+    streams = payload.get("streams") if isinstance(payload, dict) else None
+    return any(
+        isinstance(stream, dict) and stream.get("codec_type") == "video"
+        for stream in streams or []
+    )
+
+
 _probe_duration = probe_media_duration
 
 

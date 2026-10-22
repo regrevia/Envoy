@@ -15,7 +15,7 @@ The bundled MCP configuration assumes the `envoy` command is available on
 }
 ```
 
-After installing the Release wheel, verify the runtime:
+After installing or updating Envoy, verify the runtime:
 
 ```bash
 envoy browser setup

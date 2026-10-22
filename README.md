@@ -89,16 +89,16 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"req_01","source":{
 pages are read headlessly; the Envoy browser window appears only when a page
 needs a user login or verification action.
 
-开发环境生成无凭据 Skill 包与带独立 `+preview` 标识的本地试用 wheel：
+开发环境可构建无凭据 Skill 包；日常开发通过当前源码运行和验收，不需要安装第二套 Envoy runtime：
 
 ```bash
 python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --json
-python scripts/build_envoy_cli_wheel.py --output-dir dist
+PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src envoy doctor --json
 ```
 
-正式 Release workflow 使用 `--channel release`，只允许从 clean source tree 构建，且产物版本严格匹配仓库版本。dirty worktree 只能构建带 `+preview` 标识的本地 wheel。不要把本地 preview wheel 当成 GitHub Release，也不要安装到正式 runtime 的同一工具目录。
-
 面向用户的安装步骤见 [`integrations/skills/envoy/INSTALL.md`](integrations/skills/envoy/INSTALL.md)。在 `main` 上同步提升 `envoy-cli` 和 `envoy-core` 版本后，GitHub Actions 会自动创建对应的 `v<version>` tag；tag 触发 Release workflow，发布 Skill ZIP、自包含 CLI wheel 和 `SHA256SUMS`。普通代码提交不会创建 Release，同一版本只发布一次。wheel 内含匹配的 `envoy-cli` 与 `envoy-core`。Skill 包不含 `.env`、API Key、Cookie、数据库、浏览器配置或下载素材。宿主 MCP 配置位于 `hosts/mcp.json`，默认调用 `envoy mcp`。
+
+用户侧始终使用同一个 `envoy` 命令和 MCP 服务。内部构建仍记录包版本、源码 revision、构建通道和 dirty 状态；正式发行只从干净源码和匹配版本构建，便于回溯具体产物来源。
 
 独立评测：
 
@@ -109,9 +109,9 @@ PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
 
 该固定样本测量字幕证据命中、时间定位、Envoy 调用数、返回字符/估算 token 和检索延迟；不运行宿主 LLM，所以不会虚报实际模型用量。若宿主能提供 usage JSON，可用 `--host-usage-file` 纳入实际输入/输出 token。
 
-宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。动态网页、平台视频下载/ASR/抽帧、OCR、浏览器恢复和长任务目前仍使用网站入口；独立 Skill 尚未支持扫描版 PDF OCR。
+宿主 Skill 文件位于 `integrations/skills/envoy/SKILL.md`。独立 runtime 提供公开抖音主页候选发现与集合检查点、用户选择的本地视频读取，以及动态网页、平台视频字幕/ASR/抽帧和隔离浏览器恢复。站点访问仍受公开可读性限制；独立 Skill 尚未支持扫描版 PDF OCR。
 
-支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_expand`、`envoy_search`、`envoy_doctor`、`envoy_observe_visual` 和 `envoy_visual_history`，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
+支持 stdio 的 MCP 宿主可以直接运行 `envoy mcp`，提供 `envoy_read`、`envoy_read_local_video`、`envoy_discover`、`envoy_collection_checkpoint`、`envoy_expand`、`envoy_search`、`envoy_doctor`、`envoy_observe_visual` 和 `envoy_visual_history`，返回格式与 CLI 相同。MCP bridge 支持 2026-07-28 无会话协议，并兼容旧式初始化协商：
 
 普通链接可直接按用户目标调用 `envoy_read`。`envoy_doctor` 提供版本化能力目录，仅在可选能力不明确时查询；模型根据覆盖信息决定是否续读或请求宿主检查图片，不按网站硬编码提示流程。
 

@@ -27,6 +27,9 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     assert lines[0]["result"]["protocolVersion"] == "2025-11-25"
     tools = {tool["name"]: tool for tool in lines[1]["result"]["tools"]}
     assert set(tools) == {
+        "envoy_discover",
+        "envoy_collection_checkpoint",
+        "envoy_read_local_video",
         "envoy_read",
         "envoy_expand",
         "envoy_search",
@@ -37,8 +40,170 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     assert "needs_host response is a handoff, not a terminal state" in tools["envoy_read"]["description"]
     assert "inspect every" in tools["envoy_read"]["description"]
     assert "one observation per inspected resource" in tools["envoy_observe_visual"]["description"]
+    assert "idempotency_key" in tools["envoy_read_local_video"]["inputSchema"]["required"]
 
 
+def test_mcp_local_video_read_forwards_selected_path_and_goal(monkeypatch, tmp_path, capsys):
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import (
+        ExecutionState,
+        ReadResponse,
+        ReadResult,
+    )
+
+    video_path = tmp_path / "user-selected.mp4"
+    video_path.write_bytes(b"fixture")
+    observed = {}
+
+    def read(request):
+        observed.update({
+            "path": request.path,
+            "goal": request.goal,
+            "idempotency_key": request.idempotency_key,
+        })
+        return ReadResponse(
+            request_id=request.request_id,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        )
+
+    monkeypatch.setattr(mcp, "read_local_video", read)
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_read_local_video",
+                "arguments": {
+                    "request_id": "mcp-local-video",
+                    "idempotency_key": "local-operation-1",
+                    "path": str(video_path),
+                    "goal": "Extract spoken product claims",
+                },
+            },
+        },
+    ])
+
+    response = [json.loads(line) for line in capsys.readouterr().out.splitlines()][1]
+    assert response["result"]["structuredContent"]["result"] == "partial"
+    assert observed == {
+        "path": str(video_path),
+        "goal": "Extract spoken product claims",
+        "idempotency_key": "local-operation-1",
+    }
+
+
+def test_mcp_collection_checkpoint_create_update_and_get(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_collection_checkpoint",
+                "arguments": {
+                    "action": "create",
+                    "collection_id": "mcp-collection",
+                    "run_id": "mcp-run",
+                    "profile_url": "https://www.douyin.com/user/creator",
+                    "operation_id": "create-op",
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_collection_checkpoint",
+                "arguments": {
+                    "action": "discovery_snapshot",
+                    "collection_id": "mcp-collection",
+                    "run_id": "mcp-run",
+                    "expected_revision": 1,
+                    "operation_id": "discovery-op",
+                    "usage": {"snapshot": {
+                        "discovery_revision": "d" * 20,
+                        "candidates": [{"candidate_id": "douyin-candidate"}],
+                    }},
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_collection_checkpoint",
+                "arguments": {
+                    "action": "select",
+                    "collection_id": "mcp-collection",
+                    "run_id": "mcp-run",
+                    "expected_revision": 2,
+                    "operation_id": "select-op",
+                    "candidate_ids": ["douyin-candidate"],
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_collection_checkpoint",
+                "arguments": {
+                    "action": "get",
+                    "collection_id": "mcp-collection",
+                    "run_id": "mcp-run",
+                },
+            },
+        },
+    ])
+
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    stored = responses[-1]["result"]["structuredContent"]
+    assert stored["manifest_revision"] == 3
+    assert stored["selected_candidate_ids"] == ["douyin-candidate"]
+    assert responses[3]["result"]["structuredContent"]["manifest_revision"] == 3
+
+
+def test_mcp_discover_forwards_bounded_request(monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    monkeypatch.setattr(mcp, "discover_profile", lambda url, **kwargs: {
+        "profile_url": url,
+        "discovery_revision": "a" * 20,
+        "candidates": [],
+        **kwargs,
+    })
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_discover",
+                "arguments": {
+                    "profile_url": "https://www.douyin.com/user/creator",
+                    "limit": 12,
+                    "max_work_seconds": 45,
+                },
+            },
+        },
+    ])
+
+    response = [json.loads(line) for line in capsys.readouterr().out.splitlines()][1]
+    payload = response["result"]["structuredContent"]
+    assert payload["limit"] == 12
+    assert payload["max_work_seconds"] == 45
+    assert "discovered 0 candidate" in response["result"]["content"][0]["text"]
 def test_mcp_bridge_hands_direct_video_to_native_video_host(monkeypatch, capsys):
     from envoy_cli import mcp, reader
 
@@ -107,6 +272,22 @@ def test_mcp_needs_host_visual_text_requires_observe_for_each_resource():
     assert "not a terminal state" in text
     assert "do not repeat envoy_read" in text
     assert "uninspected frames" in text
+
+
+def test_observation_source_url_accepts_content_addressed_local_video_source():
+    from envoy_cli.mcp import _observation_source_url
+
+    value = "envoy-local-video://sha256/" + "a" * 64 + "/clip.mp4"
+
+    assert _observation_source_url(value) == value
+
+
+def test_observation_source_url_rejects_malformed_local_video_identity():
+    import pytest
+    from envoy_cli.mcp import _observation_source_url
+
+    with pytest.raises(ValueError, match="content-addressed"):
+        _observation_source_url("envoy-local-video://sha256/not-a-hash/clip.mp4")
 
 
 def test_mcp_bridge_rejects_unlinked_visual_observation(capsys):
