@@ -52,6 +52,7 @@ def run_idempotent(
     *,
     fingerprint: str,
     execute: Callable[[], T],
+    should_cache: Callable[[T], bool] | None = None,
     ttl_seconds: int = 86_400,
 ) -> T:
     operation_id = str(operation_id or "").strip()
@@ -74,7 +75,9 @@ def run_idempotent(
         if isinstance(record, dict):
             if record.get("fingerprint") != fingerprint:
                 raise OperationConflict("operation_id was already used for different input")
-            if record.get("state") == "completed":
+            if record.get("state") == "completed" and (
+                should_cache is None or should_cache(record["result"])
+            ):
                 if float(record.get("expires_at") or 0) <= time.time():
                     raise OperationConflict(
                         "The completed operation has expired; choose a new operation_id"
@@ -104,13 +107,17 @@ def run_idempotent(
                 "expires_at": expires_at,
             })
             raise
-        _write(path, {
+        result_is_cacheable = should_cache(result) if should_cache else True
+        record = {
             "operation_id_hash": digest,
             "fingerprint": fingerprint,
-            "state": "completed",
+            "state": "completed" if result_is_cacheable else "retryable",
             "attempts": attempts,
-            "result": result,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "expires_at": expires_at,
-        })
+        }
+        if result_is_cacheable:
+            record["result"] = result
+            record["completed_at"] = record.pop("updated_at")
+        _write(path, record)
         return result

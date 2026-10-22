@@ -1,0 +1,10 @@
+Envoy
+Copyright 2026 Envoy contributors
+
+Envoy's original code and documentation are licensed under the Apache
+License, Version 2.0. See LICENSE.
+
+Third-party dependencies, browser binaries, external tools, and optional
+model weights retain their own licenses and notices. Envoy's license does
+not relicense those components or the source materials users process.
+Dependencies and optional media components are installed separately.

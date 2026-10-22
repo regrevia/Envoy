@@ -13,14 +13,23 @@ npx skills add regrevia/Envoy --skill envoy --global --yes
 
 ## 2. Install the runtime
 
-After the first Envoy release is published, download its
-`envoy_cli-*.whl` asset and install it with `uv`:
+Download the matching wheel and checksums from GitHub Release **v0.1.6**.
+With the GitHub CLI and `uv` already installed:
 
 ```bash
-uv tool install ./envoy_cli-<version>-py3-none-any.whl
+gh release download v0.1.6 --repo regrevia/Envoy --dir envoy-v0.1.6
+cd envoy-v0.1.6
+# macOS/Linux; on Windows compare Get-FileHash output with SHA256SUMS.
+shasum -a 256 -c SHA256SUMS
+uv tool install --python 3.11 ./envoy_cli-0.1.6-py3-none-any.whl
 envoy browser setup
 envoy doctor --json
 ```
+
+Without `gh`, download the same assets from
+https://github.com/regrevia/Envoy/releases/tag/v0.1.6 and verify `SHA256SUMS`
+before installation. Python 3.10+ is required; Python 3.11 is recommended.
+The Skill alone is not a complete runtime installation.
 
 The wheel contains the matching `envoy-cli` and `envoy-core` code. It does not
 contain user configuration, API keys, cookies, browser profiles, or source
@@ -40,6 +49,19 @@ confirm it can discover `envoy_read` and `envoy_doctor`.
 
 The Skill installer does not install the runtime or edit host MCP settings.
 Those steps are kept explicit so users can review what runs locally.
+Use an absolute path to the installed `envoy` executable if the host does not
+inherit the terminal's PATH. Verify the newly connected MCP's `envoy_doctor`
+version after reloading; an old connection can keep running the old process.
+
+## 4. Check the first read
+
+```bash
+printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","source":{"url":"https://example.org/"}}' | envoy read --request-json -
+```
+
+This checks public HTML/network access, not video/ASR readiness. Network or
+source restrictions must be reported rather than interpreted as an install
+success. `envoy doctor --json` reports each optional capability separately.
 
 ## Update or remove
 
@@ -84,6 +106,25 @@ or access policy. Chromium and yt-dlp use the system HTTP(S) proxy when present;
 set `ENVOY_BROWSER_PROXY` to an unauthenticated proxy URL to override Chromium's
 proxy selection. Proxy credentials are not passed in browser command-line
 arguments.
+Only use configured or user-approved trusted proxies. Never search for or use
+public proxy lists. A 404 alone does not establish deletion, region blocking,
+or a proxy problem: ask whether the user can open the link, then diagnose.
+
+## Scope and license
+
+Envoy extracts evidence; the host model selects, interprets, and produces the
+answer. Sparse frames, chapter summaries, and missing ASR never imply full video
+coverage. Xiaohongshu image-note routing is experimental and depends on a
+publicly readable note/gallery; it is not a promise of platform-wide access.
+Douyin discovery is experimental: canonical `/user/...` URLs, up to 100 saved
+candidates, snapshot pagination, and no date-range filter. Whole-batch budgets
+still require host checkpoint accounting; they are not an atomic reservation.
+
+Envoy's original code and Skill are Apache-2.0; see `LICENSE` and `NOTICE`.
+Third-party dependencies and optional model weights retain their own licenses.
+Report installation or reading failures at https://github.com/regrevia/Envoy/issues
+with version, host/OS, stage, error code, and redacted diagnostics. Never attach
+cookies, credentials, private files, signed media URLs, or browser profiles.
 
 Whisper model downloads are checksum-verified before `doctor` reports a model
 ready. An interrupted download stays in a `.part` checkpoint and

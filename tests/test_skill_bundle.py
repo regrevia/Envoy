@@ -29,6 +29,8 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
             "hosts/mcp.json",
             "hosts/README.md",
             "INSTALL.md",
+            "LICENSE",
+            "NOTICE",
             "references/protocol.md",
             "SKILL.md",
         ]
@@ -37,7 +39,10 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         assert manifest["installation"] == "INSTALL.md"
         assert b"API Key" not in archive.read("SKILL.md")
         install = archive.read("INSTALL.md")
-        assert b"first Envoy release" in install
+        assert b"GitHub Release" in install
+        assert manifest["license"] == "Apache-2.0"
+        for filename in ("LICENSE", "NOTICE"):
+            assert archive.read(filename) == (ROOT / filename).read_bytes()
         assert b"preview" not in install.lower()
         assert b"envoy-preview" not in install
         assert b"uv tool install --force" in install
@@ -53,6 +58,9 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
             b"envoy_collection_checkpoint",
         ):
             assert tool_name in skill
+        assert b"Xiaohongshu Notes" in skill
+        assert b"Common Video Links" in skill
+        assert b"Album totals may be unknown" in skill
         host_config = json.loads(archive.read("hosts/mcp.json"))
         assert host_config["mcpServers"]["envoy"]["args"] == ["mcp"]
 

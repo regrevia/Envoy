@@ -8,6 +8,38 @@ Envoy 正在演进为面向 AI Agent 的通用链接读取与材料处理引擎�
 
 ## 快速开始
 
+### Agent Skill + MCP（推荐）
+
+Envoy 已发布独立 Skill/MCP：为 Agent 提取公开链接和用户指定本地视频的材料、
+时间戳、字幕及可选 ASR/视频帧。Envoy 提供证据，宿主模型负责理解与交付。
+
+```bash
+npx skills add regrevia/Envoy --skill envoy --global --yes
+gh release download v0.1.6 --repo regrevia/Envoy --dir envoy-v0.1.6
+cd envoy-v0.1.6
+shasum -a 256 -c SHA256SUMS
+uv tool install --python 3.11 ./envoy_cli-0.1.6-py3-none-any.whl
+envoy browser setup
+envoy doctor --json
+```
+
+要求已有 Node.js、GitHub CLI 和 uv；Windows 用 `Get-FileHash` 核对校验和。
+接着把 `envoy mcp` 加入宿主的 stdio MCP 配置并重载连接。
+**安装 Skill 不等于安装 runtime 或配置 MCP。** 完整步骤、无 `gh` 安装方式、
+首读检查、可选 FFmpeg/ASR 和更新说明见
+[安装文档](integrations/skills/envoy/INSTALL.md)。
+
+支持 macOS、Linux、Windows；浏览器默认 headless，必要的登录/验证才请求用户操作。
+单链接与本地视频是主要使用路径。小红书图文适配、抖音主页集合为实验能力，
+不承诺任意分享链接、全量作品或日期范围扫描；按[真实验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)判断平台状态。
+批量预算仍需宿主记账，不等同于全批次原子预算保证。
+
+[版本更新](CHANGELOG.md) · [安装或读取问题反馈](https://github.com/regrevia/Envoy/issues/new/choose)
+
+### 网站部署（可选）
+
+以下 Docker 和前后端步骤用于运行完整网站，不是安装 Agent Skill 的前置条件。
+
 ### Docker Desktop
 
 ```bash
@@ -74,7 +106,7 @@ npm run dev
 
 任务详情页支持查看进度、错误、断点、重试和浏览器接管。公开页面能力仍在扩展；登录、验证码、地区限制或 DRM 来源不会被承诺绕过。
 
-### 独立 Skill（开发版）
+### 独立 Skill 与开发
 
 当前 `dev` 包含独立 Skill/MCP 运行包，支持公开静态/动态 HTML、PDF 文本层、纯文本类链接、图片视觉交接，以及公开视频字幕、受预算约束的本地媒体下载/Whisper ASR 和宿主请求的视频帧。页面读取、媒体下载、字幕/ASR 和帧是不同证据层；`envoy_doctor` 会返回构建来源与本机能力，`envoy_read` 会明确标记缺少的证据。平台覆盖按真实验收矩阵跟踪，不把 extractor 可识别等同于站点已验收。
 
@@ -197,11 +229,16 @@ cd frontend && npm run build
 
 当前开发版已通过一条抖音公开图文的真实链路验收：提取正文与 4 张配图，生成 OCR 语义、Markdown/HTML 和 ZIP 产物。单个样本不代表所有网站均已适配。
 
-扫描版 PDF OCR、视频/音频独立 Skill 路径、微信公众号专项验收以及多用户 Worker 隔离仍在开发中，尚未发布。Skill ZIP 已可由仓库脚本生成；实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
+独立 Skill/MCP 已通过 GitHub Release 发布，包含视频字幕、可选 Whisper ASR 和有限帧交接；缺失模态时明确返回 partial。扫描版 PDF OCR、微信公众号专项验收以及多用户 Worker 隔离仍未完成。实施范围、验收门槛与状态见[产品架构方案](docs/product/agent-link-reader-v1.md)和[执行状态](docs/architecture/agent-link-reader-status.md)。
 
 OCR 默认使用 `balanced` 档位，用户可在高级设置中选择 `fast / balanced / quality / pro`；其中 `pro` 使用 PP-OCRv6 medium，是当前 Envoy 的最高通用精度档，代价是更慢、更占资源。Skill/MCP 请求也可以传入 `ocr_profile`。切换档位时按需下载对应模型，不把全部模型预装进镜像。OCR 属于 Envoy 的派生材料，网站产物可以记录 OCR 文本及来源关系；Skill/MCP 默认不把所有 OCR 原文一次性塞进 Agent 上下文，而是按目标和材料范围逐步读取。
 
 来源访问取决于网站权限和网络条件；遇到登录、验证码、失效内容或 DRM 时应明确报告实际状态。
+
+## 许可证
+
+Envoy 原创代码及文档采用 [Apache License 2.0](LICENSE)，声明见 [NOTICE](NOTICE)。
+依赖、浏览器、外部工具、模型权重与用户处理的源材料保留各自许可。
 
 ---
 
@@ -216,6 +253,13 @@ Envoy is evolving into a general link-reading and material-processing engine for
 [中文](#envoy)
 
 ## Quick Start
+
+For Agent Skill/MCP installation (no Docker required), follow
+[INSTALL.md](integrations/skills/envoy/INSTALL.md). Releases include a
+self-contained CLI wheel, Skill ZIP, and checksums. Installing the Skill alone
+does not install the runtime or configure the host MCP. ASR/FFmpeg are optional.
+Envoy's original code is Apache-2.0; dependencies retain their own licenses.
+The following instructions run the optional full website.
 
 ### Docker Desktop
 

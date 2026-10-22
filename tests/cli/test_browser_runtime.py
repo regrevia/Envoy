@@ -487,6 +487,42 @@ def test_read_idempotency_key_replays_material_without_fetching_twice(monkeypatc
     assert replayed_material is not None
 
 
+def test_temporary_blocked_read_result_is_retryable_but_needs_host_is_cacheable():
+    from envoy_core.schemas.read_v1 import ErrorCode, ReadError, ReadRequest
+
+    temporary = reader._blocked(
+        ReadRequest.model_validate({
+            "request_id": "temporary-network",
+            "source": {"url": "https://example.org"},
+        }),
+        ErrorCode.NETWORK_ERROR,
+        "temporary network issue",
+    )
+    needs_host = ReadResponse(
+        request_id="visual-handoff",
+        execution_state=ExecutionState.WAITING_FOR_HOST,
+        result=ReadResult.NEEDS_HOST,
+    )
+    permanent = reader._blocked(
+        ReadRequest.model_validate({
+            "request_id": "permanent-invalid",
+            "source": {"url": "https://example.org"},
+        }),
+        ErrorCode.INVALID_REQUEST,
+        "invalid request",
+    )
+
+    assert reader._read_operation_result_is_cacheable(
+        temporary.model_dump(mode="json")
+    ) is False
+    assert reader._read_operation_result_is_cacheable(
+        needs_host.model_dump(mode="json")
+    ) is True
+    assert reader._read_operation_result_is_cacheable(
+        permanent.model_dump(mode="json")
+    ) is True
+
+
 def test_cached_frame_replay_rebinds_resource_lease_to_new_session(
     monkeypatch,
     tmp_path,

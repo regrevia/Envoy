@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 
-SKILL_VERSION = "0.1.5"
+SKILL_VERSION = "0.1.6"
 REQUIRED_FILES = (
     "SKILL.md",
     "INSTALL.md",
@@ -57,6 +57,7 @@ def build_bundle(repo_root: Path, output: Path, version: str = SKILL_VERSION) ->
     manifest = {
         "schema_version": "envoy.skill.bundle/1",
         "name": "envoy",
+        "license": "Apache-2.0",
         "version": version,
         "entrypoint": "SKILL.md",
         "installation": "INSTALL.md",
