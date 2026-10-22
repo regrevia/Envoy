@@ -3963,6 +3963,9 @@ def _attach_video_frames(
             blocks = list(response.blocks)
             resources = list(response.resources)
             visual_records = []
+            ocr_blocks = []
+            ocr_unresolved = []
+            ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
             frame_pixels = 0
             for index, frame in enumerate(extracted_frames[:len(timestamps)], start=1):
                 source_frame = Path(frame["path"]).resolve()
@@ -4019,6 +4022,51 @@ def _attach_video_frames(
                         tz=timezone.utc,
                     ),
                 ))
+                if request.ocr_profile:
+                    try:
+                        ocr_result = _read_cached_image_ocr(
+                            destination,
+                            str(frame["sha256"]),
+                            profile=request.ocr_profile,
+                            language=ocr_language,
+                        )
+                        for region_index, region in enumerate(
+                            ocr_result.get("regions") or [], start=1
+                        ):
+                            text_value = str(region.get("text") or "").strip()
+                            bbox = region.get("bbox")
+                            if not text_value or not isinstance(bbox, list) or len(bbox) != 4:
+                                continue
+                            ocr_blocks.append(MaterialBlock(
+                                id=f"{block_id}-ocr-{region_index:03d}",
+                                kind=MaterialKind.OCR,
+                                content=TextContent(type="text", text=text_value),
+                                origin=MaterialOrigin.OCR,
+                                locator=ImageRegionLocator(
+                                    type="image_region",
+                                    resource_id=resource_id,
+                                    coordinate_system="normalized_top_left",
+                                    bbox=[float(value) for value in bbox],
+                                ),
+                                parent_id=block_id,
+                                order=len(blocks) + len(ocr_blocks),
+                                relations=[Relation(
+                                    type="derived_from",
+                                    target_id=block_id,
+                                    basis="extraction",
+                                )],
+                                quality=Quality(
+                                    engine=f"{ocr_result.get('backend', 'ocr')}-{request.ocr_profile}",
+                                    engine_score=float(region.get("confidence") or 0),
+                                    unresolved=[
+                                        f"OCR region belongs to video frame at {timestamp:.3f}s"
+                                    ],
+                                ),
+                            ))
+                    except (OSError, ValueError, PublicPageError, MediaBudgetExceeded, RuntimeError) as exc:
+                        ocr_unresolved.append(
+                            f"OCR skipped for frame {frame_name} ({type(exc).__name__})"
+                        )
                 visual_records.append({
                     "resource_id": resource_id,
                     "source_block_id": block_id,
@@ -4026,6 +4074,7 @@ def _attach_video_frames(
                     "frame_path": str(destination),
                     "timestamp": timestamp,
                 })
+            blocks.extend(ocr_blocks)
     except MediaBudgetExceeded as exc:
         video_coverage = video_coverage.model_copy(update={
             "extraction": "partial",
@@ -4146,7 +4195,7 @@ def _attach_video_frames(
         "frame_count": len(visual_records),
         "frame_pixels": frame_pixels,
     })
-    return response.model_copy(update={
+    updated_response = response.model_copy(update={
         "material_id": material_id,
         "blocks": blocks,
         "resources": resources,
@@ -4164,6 +4213,28 @@ def _attach_video_frames(
         ),
         "usage": response.usage.model_copy(update={"local": updated_usage}),
     })
+    if request.ocr_profile:
+        updated_response = updated_response.model_copy(update={
+            "coverage": updated_response.coverage.model_copy(update={
+                "modalities": {
+                    **updated_response.coverage.modalities,
+                    "ocr": CoverageItem(
+                        discovered=len(visual_records),
+                        extracted=len(ocr_blocks),
+                        returned=len(ocr_blocks),
+                        extraction="complete" if not ocr_unresolved else "partial",
+                        unresolved=ocr_unresolved,
+                        details={
+                            "profile": request.ocr_profile,
+                            "language": ocr_language,
+                            "timestamp_source": "parent_video_frame_locator",
+                            "frame_timestamps": [item["timestamp"] for item in visual_records],
+                        },
+                    ),
+                },
+            }),
+        })
+    return updated_response
 
 
 def _read_video_source(request: ReadRequest, source: dict) -> ReadResponse:
