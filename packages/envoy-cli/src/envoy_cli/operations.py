@@ -53,6 +53,8 @@ def run_idempotent(
     fingerprint: str,
     execute: Callable[[], T],
     should_cache: Callable[[T], bool] | None = None,
+    recover: Callable[[dict], T | None] | None = None,
+    recovery_metadata: dict | None = None,
     ttl_seconds: int = 86_400,
 ) -> T:
     operation_id = str(operation_id or "").strip()
@@ -83,6 +85,31 @@ def run_idempotent(
                         "The completed operation has expired; choose a new operation_id"
                     )
                 return record["result"]
+            if record.get("state") in {"running", "retryable"} and recover is not None:
+                try:
+                    recovered = recover(record)
+                except Exception:
+                    recovered = None
+                if recovered is not None:
+                    result_is_cacheable = (
+                        should_cache(recovered) if should_cache else True
+                    )
+                    recovered_record = {
+                        "operation_id_hash": digest,
+                        "fingerprint": fingerprint,
+                        "state": "completed" if result_is_cacheable else "retryable",
+                        "attempts": int(record.get("attempts") or 1),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "expires_at": max(
+                            float(record.get("expires_at") or 0),
+                            time.time() + max(int(ttl_seconds), 0),
+                        ),
+                    }
+                    if result_is_cacheable:
+                        recovered_record["result"] = recovered
+                        recovered_record["completed_at"] = recovered_record.pop("updated_at")
+                    _write(path, recovered_record)
+                    return recovered
         attempts = int(record.get("attempts") or 0) + 1 if isinstance(record, dict) else 1
         now = datetime.now(timezone.utc).isoformat()
         expires_at = time.time() + max(int(ttl_seconds), 0)
@@ -91,6 +118,7 @@ def run_idempotent(
             "fingerprint": fingerprint,
             "state": "running",
             "attempts": attempts,
+            "recovery_metadata": recovery_metadata or {},
             "started_at": now,
             "expires_at": expires_at,
         })
@@ -102,6 +130,7 @@ def run_idempotent(
                 "fingerprint": fingerprint,
                 "state": "retryable",
                 "attempts": attempts,
+                "recovery_metadata": recovery_metadata or {},
                 "last_error": type(exc).__name__,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "expires_at": expires_at,

@@ -241,6 +241,104 @@ def test_public_read_same_key_recovers_after_network_failure(monkeypatch, tmp_pa
     assert len(calls) == 2
 
 
+def test_public_read_recovers_persisted_response_without_refetching(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    calls = []
+    source_url = "https://example.org/article"
+    material_id = "mat-" + "a" * 24
+    source_revision = "b" * 64
+
+    response = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "public-crash-first",
+        "session_id": "public-crash-session",
+        "material_id": material_id,
+        "source_revision": source_revision,
+        "execution_state": "completed",
+        "result": "partial",
+        "blocks": [],
+        "resources": [],
+        "coverage": {},
+        "needs": [],
+        "errors": [],
+        "usage": {},
+    }
+
+    def fetch(url, *_args, **_kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            reader._store_material(material_id, {
+                "source_url": source_url,
+                "source_revision": source_revision,
+                "session_id": "public-crash-session",
+                "operation_response": response,
+                "operation_metadata": {"source_url": source_url},
+            })
+            raise KeyboardInterrupt("crash after material persistence")
+        raise AssertionError("retry must recover the persisted public response")
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", fetch)
+    request = ReadRequest.model_validate({
+        "request_id": "public-crash-first",
+        "idempotency_key": "public-crash-operation",
+        "session_id": "public-crash-session",
+        "source": {"url": source_url},
+    })
+
+    with pytest.raises(KeyboardInterrupt):
+        reader.read_public_page(request)
+
+    recovered = reader.read_public_page(
+        request.model_copy(update={"request_id": "public-crash-retry"})
+    )
+
+    assert recovered.material_id == material_id
+    assert recovered.request_id == "public-crash-retry"
+    assert calls == [source_url]
+
+
+def test_public_read_operation_metadata_redacts_source_credentials(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    source_url = "https://user:password@example.org/article"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args, **_kwargs: (
+            source_url,
+            "<html><title>Article</title><p>Public article text with enough content.</p></html>",
+        ),
+    )
+
+    request = ReadRequest.model_validate({
+        "request_id": "metadata-redaction",
+        "idempotency_key": "metadata-redaction-operation",
+        "session_id": "metadata-redaction-session",
+        "source": {"url": source_url},
+    })
+    response = reader.read_public_page(request)
+    material_path = tmp_path / "materials" / f"{response.material_id}.json"
+    stored = material_path.read_text(encoding="utf-8")
+
+    assert "operation_metadata" in stored
+    assert "example.org/article" in stored
+    assert "user@" not in stored
+    assert "password" not in stored
+
+
 def test_xhs_parser_marks_unknown_album_total():
     from envoy_cli.platforms import extract_xhs_note_images
 

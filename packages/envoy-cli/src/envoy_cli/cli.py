@@ -209,9 +209,14 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             response = read_local_video(operation_request)
         elif args.command == "observe-visual":
             observation_request = VisualObservationRequest.model_validate_json(payload)
+            source_url = (
+                mcp.validate_observation_source_url(observation_request.source_url)
+                if observation_request.source_url
+                else None
+            )
             persistence = record_visual_observation(
                 observation_request.material_id,
-                observation_request.source_url,
+                source_url,
                 observation_request.resource_id,
                 observation_request.source_block_id,
                 observation_request.observation,

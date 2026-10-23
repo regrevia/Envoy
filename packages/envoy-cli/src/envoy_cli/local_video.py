@@ -250,7 +250,9 @@ def read_local_video(request: LocalVideoReadRequest) -> ReadResponse:
 
     def execute():
         response = _process_local_video(internal, path, source_url, digest)
-        return response.model_dump(mode="json")
+        payload = response.model_dump(mode="json")
+        reader.persist_operation_response(response.material_id, payload)
+        return payload
 
     if request.idempotency_key:
         try:
@@ -259,6 +261,18 @@ def read_local_video(request: LocalVideoReadRequest) -> ReadResponse:
                 fingerprint=fingerprint,
                 execute=execute,
                 should_cache=reader._read_operation_result_is_cacheable,
+                recover=lambda _record: reader.recover_operation_response(
+                    internal,
+                    source_url,
+                    original_request_id=str(
+                        (_record.get("recovery_metadata") or {}).get("request_id") or ""
+                    ),
+                ),
+                recovery_metadata={
+                    "source_url": source_url,
+                    "session_id": request.session_id,
+                    "request_id": request.request_id,
+                },
                 ttl_seconds=request.retention.derived_ttl_seconds,
             )
             response = ReadResponse.model_validate(payload)

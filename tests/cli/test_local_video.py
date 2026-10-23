@@ -174,6 +174,115 @@ def test_local_video_rejects_audio_only_file_before_asr(tmp_path, monkeypatch):
     assert response.errors[0].code.value == "unsupported_source"
 
 
+def test_local_video_reuses_response_persisted_before_operation_commit(
+    tmp_path,
+    monkeypatch,
+):
+    from envoy_cli import reader
+    from envoy_cli.local_video import _as_read_request, _source_url
+    from envoy_core.schemas.read_v1 import LocalVideoReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    video_file = tmp_path / "clip.mp4"
+    video_file.write_bytes(b"recoverable-video")
+    digest = hashlib.sha256(video_file.read_bytes()).hexdigest()
+    source_url = _source_url(video_file, digest)
+    request = LocalVideoReadRequest.model_validate({
+        "request_id": "recover-request",
+        "session_id": "recover-session",
+        "path": str(video_file),
+    })
+    internal = _as_read_request(request, source_url)
+    material_id = "mat-" + "d" * 24
+    source_revision = "e" * 64
+    response = {
+        "protocol_version": "envoy.read/1",
+        "request_id": request.request_id,
+        "session_id": request.session_id,
+        "material_id": material_id,
+        "source_revision": source_revision,
+        "execution_state": "completed",
+        "result": "partial",
+        "blocks": [],
+        "operation_response": None,
+    }
+    response["operation_response"] = {
+        **response,
+        "operation_response": None,
+    }
+    reader._store_material(material_id, {
+        "source_url": source_url,
+        "source_revision": source_revision,
+        "session_id": request.session_id,
+        "operation_response": response["operation_response"],
+    })
+
+    recovered = reader.recover_operation_response(internal, source_url)
+
+    assert recovered == response["operation_response"]
+
+
+def test_local_video_retry_recovers_material_without_reprocessing(
+    tmp_path,
+    monkeypatch,
+):
+    from envoy_cli import local_video, reader
+    from envoy_core.schemas.read_v1 import LocalVideoReadRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    video_file = tmp_path / "clip.mp4"
+    video_file.write_bytes(b"recoverable-video")
+    calls = []
+
+    def interrupted_process(request, _path, source_url, _digest):
+        calls.append("process")
+        response = {
+            "protocol_version": "envoy.read/1",
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "material_id": "mat-" + "f" * 24,
+            "source_revision": "a" * 64,
+            "execution_state": "completed",
+            "result": "partial",
+            "blocks": [],
+            "resources": [],
+            "coverage": {},
+            "needs": [],
+            "errors": [],
+            "usage": {},
+        }
+        reader._store_material(response["material_id"], {
+            "source_url": source_url,
+            "source_revision": response["source_revision"],
+            "session_id": request.session_id,
+            "operation_response": response,
+        })
+        raise KeyboardInterrupt("crash after material persistence")
+
+    monkeypatch.setattr(local_video, "_process_local_video", interrupted_process)
+    first = LocalVideoReadRequest.model_validate({
+        "request_id": "local-crash-first",
+        "idempotency_key": "local-crash-operation",
+        "session_id": "local-crash-session",
+        "path": str(video_file),
+    })
+
+    with pytest.raises(KeyboardInterrupt):
+        local_video.read_local_video(first)
+
+    def unexpected_process(*_args):
+        calls.append("unexpected-repeat")
+        raise AssertionError("retry must recover the persisted response")
+
+    monkeypatch.setattr(local_video, "_process_local_video", unexpected_process)
+    retry = first.model_copy(update={"request_id": "local-crash-retry"})
+    response = local_video.read_local_video(retry)
+
+    assert response.material_id == "mat-" + "f" * 24
+    assert response.request_id == "local-crash-retry"
+    assert calls == ["process"]
+
+
 def test_local_video_cli_accepts_protocol_request_and_returns_json(
     monkeypatch,
     capsys,
@@ -277,3 +386,34 @@ def test_cli_observe_visual_rejects_wrong_protocol_version(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert code == 1
     assert payload["error"] == "invalid_request"
+
+
+def test_cli_observe_visual_rejects_credential_bearing_source_url(
+    monkeypatch,
+    capsys,
+):
+    import json
+    from envoy_cli import cli
+
+    monkeypatch.setattr(
+        cli,
+        "record_visual_observation",
+        lambda *_args: pytest.fail("invalid source URLs must be rejected before persistence"),
+    )
+
+    code = cli.main(
+        ["observe-visual", "--request-json", "-"],
+        stdin=json.dumps({
+            "protocol_version": "envoy.observe/1",
+            "request_id": "credential-source",
+            "source_url": "https://user:secret@example.org/video",
+            "resource_id": "resource-1",
+            "source_block_id": "block-1",
+            "observation": "A frame observation.",
+        }),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["error"] == "invalid_request"
+    assert "credential-free" in payload["message"]

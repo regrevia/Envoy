@@ -319,6 +319,29 @@ def test_mcp_needs_host_visual_text_requires_observe_for_each_resource():
     assert "uninspected frames" in text
 
 
+def test_mcp_visual_tool_description_explains_needs_index_mapping(capsys):
+    from envoy_cli import mcp
+
+    mcp.run_lines([
+        {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        },
+        {"jsonrpc": "2.0", "id": "tools", "method": "tools/list", "params": {}},
+    ])
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    tools = {tool["name"]: tool for tool in lines[1]["result"]["tools"]}
+    description = tools["envoy_observe_visual"]["description"]
+    assert "resource_ids" in description
+    assert "source_block_ids" in description
+    assert "same index" in description
+    assert "action_id" in description
+    assert "purpose" in description
+
+
 def test_observation_source_url_accepts_content_addressed_local_video_source():
     from envoy_cli.mcp import _observation_source_url
 
