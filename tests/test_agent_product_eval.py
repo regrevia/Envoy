@@ -258,6 +258,41 @@ def test_agent_product_eval_reports_source_class_strata(tmp_path):
         ["input_token_savings_fraction"]["estimate"]
         == report["paired_bootstrap"]["metrics"]["input_token_savings_fraction"]["estimate"]
     )
+    markdown = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--markdown"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert markdown.returncode == 0, markdown.stderr
+    assert "| douyin_video | 10 | 20 | 16.67% |" in markdown.stdout
+    assert "| bilibili_video | 10 | 20 | 16.67% |" in markdown.stdout
+
+
+def test_agent_product_eval_marks_small_source_class_ci_unavailable(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    rewritten = [lines[0]]
+    for line in lines[1:]:
+        item = json.loads(line)
+        if item["record_type"] == "source":
+            source_index = int(item["source_id"].split("-")[1])
+            item["source_class"] = "small_group" if source_index == 0 else "large_group"
+        rewritten.append(json.dumps(item))
+    records.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["stratified_bootstrap"]["small_group"]["cluster_count"] == 1
+    assert report["stratified_bootstrap"]["small_group"]["metrics"]["input_token_savings_fraction"] is None
 
 
 def test_agent_product_eval_withholds_savings_if_answer_quality_drops(tmp_path):
