@@ -437,6 +437,8 @@ def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
     for sample in (
         "2026-10-23-mdn-404-codex-release-0.1.6.jsonl",
         "2026-10-23-mdn-410-codex-release-0.1.6.jsonl",
+        "2026-10-23-mdn-429-codex-release-0.1.6.jsonl",
+        "2026-10-23-python-json-codex-release-0.1.6.jsonl",
     ):
         records = ROOT / "benchmarks" / "pilots" / sample
         result = subprocess.run(
@@ -465,8 +467,8 @@ def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
         assert report["input_token_savings_fraction"] is None
 
 
-def test_combined_mdn_pilots_are_one_incomplete_three_source_run():
-    records = ROOT / "benchmarks" / "pilots" / "2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl"
+def test_combined_public_documentation_pilots_are_incomplete():
+    records = ROOT / "benchmarks" / "pilots" / "2026-10-23-public-docs-codex-release-0.1.6.jsonl"
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
         capture_output=True,
@@ -476,8 +478,8 @@ def test_combined_mdn_pilots_are_one_incomplete_three_source_run():
     report = json.loads(result.stdout)
     assert result.returncode == 0, result.stderr
     assert report["validation_status"] == "passed"
-    assert report["source_count"] == 4
-    assert report["task_count"] == 8
+    assert report["source_count"] == 5
+    assert report["task_count"] == 10
     assert report["gate_status"] == "incomplete"
     assert report["fact_recall"] == 1.0
     assert report["followup_reuse_rate"] == 1.0
