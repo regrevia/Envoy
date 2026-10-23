@@ -37,3 +37,25 @@ python3 benchmarks/agent_product_eval.py \
   --records benchmarks/pilots/2026-10-23-mdn-404-codex-release-0.1.6.jsonl \
   --allow-incomplete
 ```
+
+## MDN 410 / Codex / Envoy Release 0.1.6
+
+`2026-10-23-mdn-410-codex-release-0.1.6.jsonl` is a second independent MDN
+source under the same connected release MCP:
+
+- Initial read returned the 410 definition and permanence statement with page
+  locators.
+- Follow-up search for the client behavior returned `empty` because that
+  statement was already in the first returned body. The follow-up reused the
+  retained material; it is counted as a second task but not as a second
+  download.
+- The Envoy-side pilot rubric marked the fact and citation correct. Baseline,
+  provider usage and latency are unavailable and remain `null`.
+
+Recreate the machine report with:
+
+```bash
+python3 benchmarks/agent_product_eval.py \
+  --records benchmarks/pilots/2026-10-23-mdn-410-codex-release-0.1.6.jsonl \
+  --allow-incomplete
+```

@@ -434,28 +434,32 @@ def test_mixed_reviewed_and_unknown_tasks_keep_quality_and_savings_unscored(tmp_
 
 
 def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
-    records = ROOT / "benchmarks" / "pilots" / "2026-10-23-mdn-404-codex-release-0.1.6.jsonl"
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    report = json.loads(result.stdout)
-    assert result.returncode == 0, result.stderr
-    assert report["source_count"] == 1
-    assert report["task_count"] == 2
-    assert report["gate_status"] == "incomplete"
-    assert report["answer_accuracy"] == 1.0
-    assert report["answer_reviewed_task_count"] == 2
-    assert report["citation_accuracy"] == 1.0
-    assert report["citation_reviewed_task_count"] == 2
-    assert report["baseline_answer_accuracy"] is None
-    assert report["baseline_answer_reviewed_task_count"] == 0
-    assert report["fact_recall"] == 1.0
-    assert report["baseline_fact_recall"] is None
-    assert report["citation_support_rate"] == 1.0
-    assert report["baseline_citation_support_rate"] is None
-    assert report["median_total_elapsed_ms"] is None
-    assert report["envoy_actual_input_tokens"] is None
-    assert report["input_token_savings_fraction"] is None
+    for sample in (
+        "2026-10-23-mdn-404-codex-release-0.1.6.jsonl",
+        "2026-10-23-mdn-410-codex-release-0.1.6.jsonl",
+    ):
+        records = ROOT / "benchmarks" / "pilots" / sample
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        report = json.loads(result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert report["source_count"] == 1
+        assert report["task_count"] == 2
+        assert report["gate_status"] == "incomplete"
+        assert report["answer_accuracy"] == 1.0
+        assert report["answer_reviewed_task_count"] == 2
+        assert report["citation_accuracy"] == 1.0
+        assert report["citation_reviewed_task_count"] == 2
+        assert report["baseline_answer_accuracy"] is None
+        assert report["baseline_answer_reviewed_task_count"] == 0
+        assert report["fact_recall"] == 1.0
+        assert report["baseline_fact_recall"] is None
+        assert report["citation_support_rate"] == 1.0
+        assert report["baseline_citation_support_rate"] is None
+        assert report["median_total_elapsed_ms"] is None
+        assert report["envoy_actual_input_tokens"] is None
+        assert report["input_token_savings_fraction"] is None
