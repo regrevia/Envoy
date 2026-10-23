@@ -5,10 +5,10 @@ benchmarks. Run them with `--allow-incomplete`; they must retain
 `gate_status: incomplete` until the strict 20-source/40-task paired evaluation
 is populated.
 
-`2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl` combines the three
-independent MDN 404, 410, and 429 sources (six questions) into one pilot run.
+`2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl` combines the four
+independent MDN 201, 404, 410, and 429 sources (eight questions) into one pilot run.
 Its generated summary is `2026-10-23-mdn-http-status-codex-release-0.1.6.report.json`.
-This is still only 3/20 sources and 6/40 tasks and has no paired baseline or
+This is still only 4/20 sources and 8/40 tasks and has no paired baseline or
 provider usage; it is not a comparative product result.
 
 ## MDN 404 / Codex / Envoy Release 0.1.6
