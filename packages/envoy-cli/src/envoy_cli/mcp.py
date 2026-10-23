@@ -221,6 +221,12 @@ TOOLS = [
                     "type": ["string", "null"],
                     "enum": ["fast", "balanced", "quality", "pro", None],
                 },
+                "ocr_language": {
+                    "type": ["string", "null"],
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                },
                 "video_subtitle_language": {"type": ["string", "null"]},
                 "budget": {
                     "type": "object",

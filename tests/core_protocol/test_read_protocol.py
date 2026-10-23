@@ -89,6 +89,34 @@ def test_video_visual_scope_requires_explicit_host_frame_and_time_range():
     assert request.host_capabilities.video_input == "frames"
 
 
+def test_read_protocol_accepts_request_scoped_ocr_language():
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    request = ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "ocr-language",
+        "source": {"url": "https://example.org/note.png", "kind": "image"},
+        "ocr_profile": "balanced",
+        "ocr_language": "chi_sim",
+    })
+
+    assert request.ocr_language == "chi_sim"
+    assert ReadRequest.model_validate_json(request.model_dump_json()).ocr_language == "chi_sim"
+
+
+def test_read_protocol_rejects_unsafe_or_unbounded_ocr_language():
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    base = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "ocr-language-invalid",
+        "source": {"url": "https://example.org/note.png", "kind": "image"},
+    }
+    for language in ("x", "../eng", "eng;--psm 0", "a" * 33):
+        with pytest.raises(ValidationError):
+            ReadRequest.model_validate({**base, "ocr_language": language})
+
+
 def test_video_visual_scope_rejects_incomplete_or_reversed_ranges():
     from envoy_core.schemas.read_v1 import ReadRequest
 

@@ -338,6 +338,43 @@ def test_direct_image_source_includes_local_ocr_and_visual_handoff(monkeypatch, 
     assert any("zero confidence" in item for item in searched.blocks[0].quality.unresolved)
 
 
+def test_request_ocr_language_overrides_environment_default(monkeypatch, tmp_path):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    image = tmp_path / "source.jpg"
+    image.write_bytes(b"image")
+    source_url = "https://images.example.org/source.jpg"
+    captured = {}
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    monkeypatch.setenv("ENVOY_OCR_LANG", "eng")
+    monkeypatch.setattr(reader, "_fetch_source", lambda *_args: {
+        "url": source_url,
+        "mime_type": "image/jpeg",
+        "size_bytes": 5,
+    })
+    monkeypatch.setattr(reader, "_download_image_for_ocr", lambda *_args, **_kwargs: (
+        image,
+        "a" * 64,
+    ))
+
+    def read_cached(_path, _digest, *, profile, language):
+        captured.update(profile=profile, language=language)
+        return {"backend": "tesseract", "regions": []}
+
+    monkeypatch.setattr(reader, "_read_cached_image_ocr", read_cached)
+    request = ReadRequest.model_validate({
+        "request_id": "request-ocr-language",
+        "source": {"url": source_url, "kind": "image"},
+        "ocr_profile": "balanced",
+        "ocr_language": "chi_sim",
+    })
+
+    reader._read_image_source(request, source_url, {})
+
+    assert captured == {"profile": "balanced", "language": "chi_sim"}
+
+
 def test_direct_image_ocr_works_without_host_image_capability(monkeypatch, tmp_path):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ReadRequest
