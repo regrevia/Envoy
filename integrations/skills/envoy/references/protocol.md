@@ -157,6 +157,37 @@ same `material_id` and the new query. It returns a small number of source-locate
 matching passages and consumes the same cumulative character/token budget as
 expansion, without sequentially returning unrelated source ranges.
 
+For a new host session that has a retained material reference, use
+`envoy_replay` with the material's `source_revision`:
+
+```json
+{
+  "protocol_version": "envoy.read/1",
+  "request_id": "replay-session-b",
+  "material_id": "mat-0123456789abcdef01234567",
+  "source_revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "source_session_id": "session-a",
+  "session_id": "session-b",
+  "max_chars": 4000,
+  "max_visual_inputs": 2,
+  "include_visual": true,
+  "host_capabilities": {
+    "image_input": "local_file"
+  }
+}
+```
+
+Replay is a bounded evidence delivery operation. It does not mutate the
+material's old returned-range ledger, and it does not repeat network download,
+ASR, or OCR work. It creates a new material ID scoped to the target session
+and a fresh response ledger. It returns an explicit `expired_resource` or
+`invalid_request` error when the material is unavailable, the source session or
+revision does not match, or the target session already has a replay material.
+Visual files are copied into a new lease only when `include_visual` is true
+and `host_capabilities.image_input` matches their delivery type. Only
+unobserved visual resources are returned; use `envoy_visual_history` for
+observations already submitted in the source session.
+
 When a host inspected an image resource, submit only the concise observation
 through `envoy_observe_visual`; keep the original URL, resource ID, source
 block ID, and pass `material_id` when available. Envoy stores a bounded derived

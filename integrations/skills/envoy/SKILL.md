@@ -356,6 +356,16 @@ retry the same key and unchanged input to execute again. Legacy cached failures
 are also re-evaluated. Completed `partial` and `needs_host` evidence still replays;
 finish its handoff/continuation, or choose a new key for an intentional fresh read.
 
+When a new host session has a retained `material_id` and `source_revision`, use
+`envoy_replay` (or `envoy replay --request-json -`) instead of repeating the
+source read. Replay uses a new bounded character/token/visual budget, does not
+reuse the old session's returned-range ledger, and never re-downloads or
+re-runs ASR. It reports expired, missing, or mismatched material as a structured
+error. Previously submitted visual observations remain source-linked; resources
+that are no longer available are not presented as complete evidence. Replay
+returns only unobserved visual resources; use `envoy_visual_history` for
+observations already submitted in the source session.
+
 Do not expand solely to make the response appear complete. Expand only when the
 remaining coverage can affect the user's requested answer, and state material
 gaps when relevant evidence is unavailable.
@@ -440,8 +450,8 @@ envoy mcp
 ```
 
 The bridge exposes `envoy_read`, `envoy_read_local_video`, `envoy_discover`,
-`envoy_collection_checkpoint`, `envoy_expand`, `envoy_search`, `envoy_doctor`,
-`envoy_observe_visual`, and `envoy_visual_history`. Discover
+`envoy_collection_checkpoint`, `envoy_expand`, `envoy_replay`, `envoy_search`,
+`envoy_doctor`, `envoy_observe_visual`, and `envoy_visual_history`. Discover
 the catalog once, choose a tool from the user's goal and returned coverage, and
 do not assume a capability that is absent from the catalog. The bridge supports
 stateless per-request MCP metadata and retains the legacy initialize handshake

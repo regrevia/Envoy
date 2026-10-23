@@ -63,6 +63,7 @@ from envoy_core.schemas.read_v1 import (
     MaterialBlock,
     MaterialKind,
     MaterialOrigin,
+    MaterialReplayRequest,
     ReadError,
     ReadRequest,
     ReadResponse,
@@ -1613,6 +1614,384 @@ def _cached_material_read_response(
     )
 
 
+def replay_material(request: MaterialReplayRequest) -> ReadResponse:
+    """Replay retained evidence into a fresh host session without mutating its ledger."""
+    root = _material_root()
+    source_path = root / f"{request.material_id}.json"
+    expiry_path = root / f"{request.material_id}.expires"
+    if source_path.is_symlink() or expiry_path.is_symlink():
+        raise PublicPageError("Material is unavailable", ErrorCode.EXPIRED_RESOURCE)
+    try:
+        stored = json.loads(source_path.read_text(encoding="utf-8"))
+        expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+    except (FileNotFoundError, OSError, ValueError, TypeError) as exc:
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+    if expires_at <= time.time():
+        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+    if str(stored.get("source_revision") or "") != request.source_revision:
+        raise PublicPageError("Material source revision does not match", ErrorCode.INVALID_REQUEST)
+    if stored.get("session_id") != request.source_session_id:
+        raise PublicPageError("Material source session does not match", ErrorCode.INVALID_REQUEST)
+    if request.session_id == request.source_session_id:
+        raise PublicPageError(
+            "Replay requires a new session_id distinct from source_session_id",
+            ErrorCode.INVALID_REQUEST,
+        )
+
+    source_url = _redact_url(str(stored.get("source_url") or ""))
+    replay_id = _material_id(
+        source_url,
+        request.source_revision,
+        request.session_id,
+        request.request_id,
+    )
+    replay_path = root / f"{replay_id}.json"
+    replay_expiry = root / f"{replay_id}.expires"
+    frame_dir = root / f"frames-{replay_id}"
+    if (
+        replay_path.is_symlink()
+        or replay_expiry.is_symlink()
+        or frame_dir.is_symlink()
+        or (frame_dir.exists() and not frame_dir.is_dir())
+    ):
+        raise PublicPageError("Replay material path is not a regular Envoy path", ErrorCode.INVALID_REQUEST)
+    if _load_matching_material(replay_id, request.source_revision, request.session_id):
+        raise PublicPageError(
+            "Material was already replayed to this session; continue with envoy_search or envoy_expand",
+            ErrorCode.INVALID_REQUEST,
+            details={
+                "material_id": replay_id,
+                "source_revision": request.source_revision,
+                "next_action": "continue the existing replay material instead of resetting its budget",
+            },
+        )
+
+    original_title = str(stored.get("title_text") or "Cached material")
+    token_limits = [
+        value for value in (
+            request.max_response_tokens,
+            request.max_total_response_tokens,
+        )
+        if value is not None
+    ]
+    title_token_budget = max(0, min(token_limits) - 64) if token_limits else None
+    title, _title_end = _take_text_budgeted(
+        original_title,
+        0,
+        min(256, request.max_chars // 4),
+        title_token_budget,
+    )
+    title_block = (
+        MaterialBlock(
+            id="blk-title",
+            kind=MaterialKind.HEADING,
+            content=TextContent(type="text", text=title),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=WebLocator(
+                type="web",
+                source_url=source_url,
+                block_id="blk-title",
+                quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
+            order=0,
+        )
+        if title
+        else None
+    )
+
+    expiry = min(expires_at, float(stored.get("expires_at") or expires_at))
+    replayed = {
+        **stored,
+        "session_id": request.session_id,
+        "expires_at": expiry,
+        "budget_state": {
+            "max_total_response_chars": request.max_total_response_chars,
+            "max_total_response_tokens": request.max_total_response_tokens,
+            "max_expansion_rounds": request.max_expansion_rounds,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    }
+    old_visual_resources = stored.get("visual_resources")
+    old_visual_resources = old_visual_resources if isinstance(old_visual_resources, list) else []
+    new_visual_resources = []
+    staged_frames: list[tuple[Path, Path]] = []
+    staging_dir = Path(tempfile.mkdtemp(prefix=".replay-frames-", dir=root))
+    for item in old_visual_resources:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        frame_path = str(item.get("frame_path") or "")
+        if frame_path:
+            source_frame = Path(frame_path)
+            if source_frame.is_symlink() or not source_frame.is_file():
+                copied.pop("frame_path", None)
+                copied["unavailable"] = True
+            else:
+                resolved_frame = source_frame.resolve()
+                try:
+                    relative = resolved_frame.relative_to(root.resolve())
+                except ValueError:
+                    copied.pop("frame_path", None)
+                    copied["unavailable"] = True
+                else:
+                    if not relative.parts or not relative.parts[0].startswith("frames-mat-"):
+                        copied.pop("frame_path", None)
+                        copied["unavailable"] = True
+                    else:
+                        target = frame_dir / resolved_frame.name
+                        staged = staging_dir / resolved_frame.name
+                        try:
+                            if not staged.exists():
+                                shutil.copyfile(resolved_frame, staged)
+                                staged.chmod(0o600)
+                        except OSError:
+                            copied.pop("frame_path", None)
+                            copied["unavailable"] = True
+                        else:
+                            copied["frame_path"] = str(target)
+                            staged_frames.append((staged, target))
+        new_visual_resources.append(copied)
+    if old_visual_resources:
+        replayed["visual_resources"] = new_visual_resources
+    try:
+        with _material_transaction(replay_id):
+            if replay_path.exists() or replay_expiry.exists():
+                raise PublicPageError(
+                    "Material was already replayed to this session; continue with envoy_search or envoy_expand",
+                    ErrorCode.INVALID_REQUEST,
+                    details={
+                        "material_id": replay_id,
+                        "source_revision": request.source_revision,
+                        "next_action": "continue the existing replay material instead of resetting its budget",
+                    },
+                )
+            _store_material_unlocked(replay_id, replayed, merge=False)
+            if staged_frames:
+                frame_dir.mkdir(mode=0o700, exist_ok=True)
+                for staged, target in staged_frames:
+                    if not target.exists():
+                        os.replace(staged, target)
+                    else:
+                        staged.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+    title_tokens = _estimated_tokens(title)
+    body_token_limit = (
+        max(0, request.max_response_tokens - title_tokens)
+        if request.max_response_tokens is not None
+        else None
+    )
+    total_token_limit = (
+        max(64, request.max_total_response_tokens - title_tokens)
+        if request.max_total_response_tokens is not None
+        else None
+    )
+    body_char_limit = max(128, request.max_chars - len(title))
+    text_response = expand_material(ExpandRequest.model_validate({
+        "request_id": request.request_id,
+        "material_id": replay_id,
+        "session_id": request.session_id,
+        "offset": 0,
+        "max_chars": body_char_limit,
+        "max_response_tokens": body_token_limit,
+        "max_total_response_tokens": total_token_limit,
+        "max_total_response_chars": request.max_total_response_chars,
+        "max_expansion_rounds": request.max_expansion_rounds,
+    }))
+    body_blocks = [
+        block.model_copy(update={"order": block.order + (1 if title_block else 0)})
+        for block in text_response.blocks
+        if block.id != "blk-title"
+    ]
+    blocks = ([title_block] if title_block else []) + body_blocks
+
+    resources: list[ResourceRef] = []
+    visual_blocks = []
+    unavailable_visual_count = sum(
+        1 for item in new_visual_resources
+        if isinstance(item, dict) and item.get("unavailable")
+    )
+    visual_candidates = [
+        item for item in new_visual_resources
+        if isinstance(item, dict)
+        and not item.get("unavailable")
+        and str(item.get("resource_id") or "") not in {
+            str(observation.get("resource_id") or "")
+            for observation in (stored.get("visual_observations") or [])
+            if isinstance(observation, dict)
+        }
+    ]
+    stored_visual_observation_count = sum(
+        1
+        for item in (stored.get("visual_observations") or [])
+        if isinstance(item, dict)
+    )
+    host_image_capability = request.host_capabilities.image_input
+    if request.include_visual:
+        for index, item in enumerate(visual_candidates[:request.max_visual_inputs], start=1):
+            resource_id = str(item.get("resource_id") or "")
+            source_block_id = str(item.get("source_block_id") or f"blk-image-{index:04d}")
+            image_url = _redact_url(str(item.get("source_url") or source_url))
+            frame_path = str(item.get("frame_path") or "")
+            if frame_path:
+                if host_image_capability != ImageInputCapability.LOCAL_FILE:
+                    continue
+                resources.append(ResourceRef(
+                    resource_id=resource_id,
+                    mime_type="image/jpeg",
+                    delivery=HostDelivery(type="local_file", path=frame_path),
+                    delivery_evidence="generated_only",
+                    expires_at=datetime.fromtimestamp(expiry, tz=timezone.utc),
+                ))
+                timestamp = float(item.get("timestamp") or 0)
+                visual_blocks.append(MaterialBlock(
+                    id=source_block_id,
+                    kind=MaterialKind.VIDEO_FRAME,
+                    content=ImageContent(
+                        type="image",
+                        resource_id=resource_id,
+                        alt_text=f"Video frame at {_format_video_time(timestamp)}",
+                        mime_type="image/jpeg",
+                    ),
+                    origin=MaterialOrigin.SOURCE_VIDEO,
+                    locator=VideoLocator(
+                        type="video_time",
+                        source_url=image_url,
+                        start_seconds=timestamp,
+                        end_seconds=timestamp + 0.001,
+                        frame_id=Path(frame_path).name,
+                    ),
+                    order=len(blocks) + len(visual_blocks),
+                    quality=Quality(
+                        engine="envoy_material_replay",
+                        unresolved=["Sparse frame sample; not full-video visual coverage"],
+                    ),
+                ))
+            else:
+                image_uri = str(item.get("source_url") or "")
+                if not image_uri or host_image_capability != ImageInputCapability.URI:
+                    continue
+                resources.append(ResourceRef(
+                    resource_id=resource_id,
+                    mime_type=mimetypes.guess_type(urlparse(image_uri).path)[0] or "image/jpeg",
+                    delivery=HostDelivery(type="uri", uri=image_uri),
+                    delivery_evidence="unverified",
+                    expires_at=datetime.fromtimestamp(expiry, tz=timezone.utc),
+                ))
+                visual_blocks.append(MaterialBlock(
+                    id=source_block_id,
+                    kind=MaterialKind.IMAGE,
+                    content=ImageContent(
+                        type="image",
+                        resource_id=resource_id,
+                        alt_text=str(item.get("alt") or ""),
+                        mime_type=mimetypes.guess_type(urlparse(image_uri).path)[0] or "image/jpeg",
+                    ),
+                    origin=MaterialOrigin.SOURCE_IMAGE,
+                    locator=WebLocator(
+                        type="web",
+                        source_url=image_uri,
+                        block_id=source_block_id,
+                    ),
+                    order=len(blocks) + len(visual_blocks),
+                ))
+    blocks.extend(visual_blocks)
+    unresolved = [
+        *text_response.coverage.unresolved,
+        *(
+            ["Stored visual resources were omitted because include_visual was false"]
+            if visual_candidates and not request.include_visual
+            else []
+        ),
+        *(
+            ["Host image input capability was not declared or does not match the replayed resource delivery type"]
+            if request.include_visual and len(visual_candidates) > len(resources)
+            else []
+        ),
+        *(
+            ["Some stored visual resources were unavailable under their original lease"]
+            if unavailable_visual_count
+            else []
+        ),
+        *(
+            ["Some stored visual resources were unavailable or exceeded the new visual budget"]
+            if len(visual_candidates) > len(resources)
+            else []
+        ),
+    ]
+    needs = []
+    needs_host = bool(request.include_visual and resources)
+    if needs_host:
+        resource_ids = [resource.resource_id for resource in resources]
+        block_ids = [block.id for block in visual_blocks]
+        needs = [Need(
+            action_id=f"inspect-replay-{hashlib.sha256(replay_id.encode()).hexdigest()[:12]}",
+            type="inspect_visual",
+            purpose="Inspect replayed source visual evidence relevant to the user's goal",
+            resource_ids=resource_ids,
+            source_block_ids=block_ids,
+            reason="Host inspection is required for the replayed visual resources.",
+            max_resources=len(resources),
+        )]
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=replay_id,
+        source_revision=request.source_revision,
+        execution_state=(
+            ExecutionState.WAITING_FOR_HOST if needs_host else ExecutionState.COMPLETED
+        ),
+        result=(
+            ReadResult.NEEDS_HOST if needs_host
+            else ReadResult.PARTIAL if unresolved or text_response.result == ReadResult.PARTIAL
+            else ReadResult.READY
+        ),
+        blocks=blocks,
+        resources=resources,
+        needs=needs,
+        coverage=Coverage(
+            modalities={
+                "text": (
+                    text_response.coverage.modalities.get("text")
+                    or CoverageItem(
+                        discovered=1,
+                        extracted=1,
+                        returned=0,
+                        extraction="unknown",
+                    )
+                ),
+                "replay": CoverageItem(
+                    discovered=1,
+                    extracted=1,
+                    returned=len(blocks),
+                    delivered=len(resources),
+                    extraction="partial" if unresolved or text_response.result == ReadResult.PARTIAL else "complete",
+                    unresolved=list(dict.fromkeys(unresolved)),
+                    details={
+                        "new_session": request.session_id,
+                        "returned_chars": sum(
+                            len(block.content.text)
+                            for block in body_blocks
+                            if block.content.type == "text"
+                        ),
+                        "available_chars": len(str(stored.get("text") or "")),
+                        "source_ledger_unchanged": True,
+                        "source_material_id": request.material_id,
+                        "replayed_material_id": replay_id,
+                        "stored_visual_observation_count": stored_visual_observation_count,
+                    },
+                )
+            },
+            unresolved=list(dict.fromkeys(unresolved)),
+        ),
+        expires_at=datetime.fromtimestamp(expiry, tz=timezone.utc),
+    )
+
+
 def _rebind_cached_response_session(
     response: ReadResponse,
     session_id: str | None,
@@ -1726,12 +2105,12 @@ def _rebind_cached_response_session(
     })
 
 
-def _store_material(material_id: str, data: dict) -> None:
+def _store_material(material_id: str, data: dict, *, merge: bool = True) -> None:
     with _material_transaction(material_id):
-        _store_material_unlocked(material_id, data)
+        _store_material_unlocked(material_id, data, merge=merge)
 
 
-def _store_material_unlocked(material_id: str, data: dict) -> None:
+def _store_material_unlocked(material_id: str, data: dict, *, merge: bool = True) -> None:
     root = _material_root()
     target = root / f"{material_id}.json"
     expiry_target = root / f"{material_id}.expires"
@@ -1739,7 +2118,7 @@ def _store_material_unlocked(material_id: str, data: dict) -> None:
         **data,
         "expires_at": float(data.get("expires_at") or time.time() + MATERIAL_TTL_SECONDS),
     }
-    if target.is_file() and not target.is_symlink():
+    if merge and target.is_file() and not target.is_symlink():
         try:
             previous = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, ValueError):

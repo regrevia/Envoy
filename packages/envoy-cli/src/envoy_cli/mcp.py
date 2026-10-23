@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from envoy_core.schemas.read_v1 import (
     ExpandRequest,
     LocalVideoReadRequest,
+    MaterialReplayRequest,
     MaterialSearchRequest,
     ReadRequest,
     PROTOCOL_VERSION,
@@ -39,6 +40,7 @@ from .reader import (
     expand_material,
     read_public_page,
     record_visual_observation,
+    replay_material,
     read_visual_observations,
     search_material,
 )
@@ -292,6 +294,15 @@ TOOLS = [
             "continuation_available and next_offset; do not repeat returned ranges."
         ),
         "inputSchema": ExpandRequest.model_json_schema(),
+    },
+    {
+        "name": "envoy_replay",
+        "description": (
+            "Replay retained source-located evidence into a new host session "
+            "under a fresh bounded response budget. Does not re-download or "
+            "reuse the previous session's returned-range ledger."
+        ),
+        "inputSchema": MaterialReplayRequest.model_json_schema(),
     },
     {
         "name": "envoy_search",
@@ -606,6 +617,9 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
         elif name == "envoy_expand":
             response = expand_material(ExpandRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_replay":
+            response = replay_material(MaterialReplayRequest.model_validate(arguments))
+            payload = _read_payload(response, compact=modern_request)
         elif name == "envoy_search":
             response = search_material(MaterialSearchRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
@@ -727,7 +741,11 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
             "request_id": arguments.get("request_id", "mcp"),
             "execution_state": "completed",
             "result": "blocked",
-            "errors": [{"code": exc.code.value, "message": str(exc)}],
+            "errors": [{
+                "code": exc.code.value,
+                "message": str(exc),
+                **({"details": exc.details} if exc.details else {}),
+            }],
         }
     except (TypeError, ValueError, CollectionRevisionConflict) as exc:
         return _error(request_id, -32602, str(exc))

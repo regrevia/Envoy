@@ -32,6 +32,7 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
         "envoy_read_local_video",
         "envoy_read",
         "envoy_expand",
+        "envoy_replay",
         "envoy_search",
         "envoy_doctor",
         "envoy_observe_visual",
@@ -41,6 +42,50 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     assert "inspect every" in tools["envoy_read"]["description"]
     assert "one observation per inspected resource" in tools["envoy_observe_visual"]["description"]
     assert "idempotency_key" in tools["envoy_read_local_video"]["inputSchema"]["required"]
+
+
+def test_mcp_replay_dispatches_bounded_request_to_new_session(monkeypatch, capsys):
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ExecutionState, ReadResponse, ReadResult
+
+    observed = {}
+
+    def replay(request):
+        observed.update(request.model_dump())
+        return ReadResponse(
+            request_id=request.request_id,
+            session_id=request.session_id,
+            material_id="mat-" + "a" * 24,
+            source_revision=request.source_revision,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        )
+
+    monkeypatch.setattr(mcp, "replay_material", replay)
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_replay",
+                "arguments": {
+                    "request_id": "mcp-replay-1",
+                    "material_id": "mat-" + "b" * 24,
+                    "source_revision": "c" * 64,
+                    "source_session_id": "session-old",
+                    "session_id": "session-new",
+                    "max_chars": 1000,
+                },
+            },
+        },
+    ])
+
+    response = [json.loads(line) for line in capsys.readouterr().out.splitlines()][1]
+    assert response["result"]["structuredContent"]["result"] == "partial"
+    assert observed["source_session_id"] == "session-old"
+    assert observed["session_id"] == "session-new"
 
 
 def test_mcp_local_video_read_forwards_selected_path_and_goal(monkeypatch, tmp_path, capsys):

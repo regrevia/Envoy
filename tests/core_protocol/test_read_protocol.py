@@ -164,6 +164,32 @@ def test_visual_observation_request_can_bind_source_from_retained_material():
     })
 
     assert request.source_url is None
+
+
+def test_material_replay_request_requires_distinct_session_and_bounded_budget():
+    from pydantic import ValidationError
+    from envoy_core.schemas.read_v1 import MaterialReplayRequest
+
+    request = MaterialReplayRequest.model_validate({
+        "request_id": "replay-01",
+        "material_id": "mat-" + "a" * 24,
+        "source_revision": "b" * 64,
+        "source_session_id": "session-a",
+        "session_id": "session-b",
+        "max_chars": 2000,
+        "max_total_response_chars": 4000,
+        "include_visual": True,
+        "max_visual_inputs": 2,
+    })
+    assert request.protocol_version == "envoy.read/1"
+    assert request.session_id != request.source_session_id
+
+    with pytest.raises(ValidationError):
+        MaterialReplayRequest.model_validate({
+            **request.model_dump(),
+            "max_chars": 4001,
+            "max_total_response_chars": 4000,
+        })
 def test_total_token_budget_may_be_lower_than_per_response_ceiling():
     from envoy_core.schemas.read_v1 import Budget
 

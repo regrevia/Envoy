@@ -57,12 +57,12 @@
 
 ## Task 4: Idempotent Reads And Evidence Replay
 
-- [ ] Add failing tests proving a repeated operation ID does not download/transcribe twice and a fresh host context can receive evidence again within a new bounded budget.
+- [x] Add failing tests proving a repeated operation ID does not download/transcribe twice and a fresh host context can receive evidence again within a new bounded budget.
 - [ ] Persist a pending operation before expensive download/ASR/frame work, then atomically persist its material reference and terminal operation result.
 - [ ] On retry, return the completed operation result before starting network or media processing.
-- [ ] Add a bounded material replay operation that returns source-located cached blocks/resources while charging the new response budget, without reusing the old session's returned-range ledger.
-- [ ] Report expired, evicted, missing, or session-unavailable evidence explicitly; never call stale evidence reusable completion.
-- [ ] Preserve frame resource IDs and already submitted host observations; return only unobserved resources on continuation.
+- [x] Add a bounded material replay operation that returns source-located cached blocks/resources while charging the new response budget, without reusing the old session's returned-range ledger.
+- [x] Report expired, evicted, missing, or session-unavailable evidence explicitly; never call stale evidence reusable completion.
+- [x] Preserve frame resource IDs and already submitted host observations; return only unobserved resources on continuation.
 - [ ] Exercise process exit after material completion but before host checkpoint and confirm retry recovers the material without repeating ASR.
 
 ## Task 5: Multi-Image Note Evidence
