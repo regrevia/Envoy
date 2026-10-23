@@ -396,6 +396,12 @@ def validate_records(
             if task.get("task_role") == "followup"
         ):
             errors.append(f"{source_id}: followup question must differ from the initial task")
+        for task in source_tasks:
+            if task.get("task_role") == "initial" and (
+                task.get("reused_material") is True
+                or task.get("baseline_reused_material") is True
+            ):
+                errors.append(f"{task.get('task_id')}: initial task cannot count as followup material reuse")
     if require_minimum and len(sources) < MIN_SOURCES:
         errors.append(f"minimum source gate is {MIN_SOURCES}; got {len(sources)}")
     if require_minimum and len(tasks) < MIN_TASKS:
@@ -450,6 +456,7 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
     envoy_input_tokens = sum(task["input_tokens"] for task in usage_actual)
     baseline_input_tokens = sum(task["baseline_input_tokens"] for task in usage_actual)
     savings_eligible = len(usage_actual) == len(tasks) and quality_non_inferior
+    followups = [task for task in tasks if task.get("task_role") == "followup"]
     return {
         "schema_version": SCHEMA_VERSION,
         "evaluation_scope": "real sources and host-agent tasks supplied by evaluator",
@@ -481,7 +488,14 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "total_baseline_visual_inputs": sum(task["baseline_visual_inputs"] for task in tasks),
         "total_repeated_downloads": sum(task["repeated_downloads"] for task in tasks),
         "total_baseline_repeated_downloads": sum(task["baseline_repeated_downloads"] for task in tasks),
-        "followup_reuse_rate": sum(bool(task["reused_material"]) for task in tasks) / len(tasks) if tasks else None,
+        "followup_reuse_rate": (
+            sum(bool(task["reused_material"]) for task in followups) / len(followups)
+            if followups else None
+        ),
+        "baseline_followup_reuse_rate": (
+            sum(bool(task["baseline_reused_material"]) for task in followups) / len(followups)
+            if followups else None
+        ),
         "actual_usage_status": "paired_actual" if len(usage_actual) == len(tasks) else "incomplete",
         "actual_usage_task_count": len(usage_actual),
         "envoy_actual_input_tokens": envoy_input_tokens if len(usage_actual) == len(tasks) else None,
