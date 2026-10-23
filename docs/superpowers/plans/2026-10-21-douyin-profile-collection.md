@@ -47,7 +47,7 @@
 
 - [x] Add tests for run identity isolation, expected-revision conflicts, duplicate operation IDs, state transitions, atomic persistence, and cumulative budget exhaustion.
 - [x] Implement owner-only collection state storage with atomic JSON replacement and symlink/path checks.
-- [ ] Separate `collection_id`, `run_id`, `discovery_revision`, `selection_plan_revision`, `manifest_revision`, and `operation_id`.
+- [x] Separate `collection_id`, `run_id`, `discovery_revision`, `selection_plan_revision`, `manifest_revision`, and `operation_id`.
 - [x] Add bounded incremental checkpoint operations: get, discovery snapshot, select, item state, evidence, usage, and cursor. Require `expected_revision` for mutations.
 - [x] Make repeated mutation operation IDs return the original result without double-counting usage.
 - [x] Track per-item work state separately from evidence availability, retaining material ID, source revision, expiry and availability.
@@ -58,12 +58,12 @@
 ## Task 4: Idempotent Reads And Evidence Replay
 
 - [x] Add failing tests proving a repeated operation ID does not download/transcribe twice and a fresh host context can receive evidence again within a new bounded budget.
-- [ ] Persist a pending operation before expensive download/ASR/frame work, then atomically persist its material reference and terminal operation result.
-- [ ] On retry, return the completed operation result before starting network or media processing.
+- [x] Persist a pending operation before expensive download/ASR/frame work, then atomically persist its material reference and terminal operation result.
+- [x] On retry, return the completed operation result before starting network or media processing.
 - [x] Add a bounded material replay operation that returns source-located cached blocks/resources while charging the new response budget, without reusing the old session's returned-range ledger.
 - [x] Report expired, evicted, missing, or session-unavailable evidence explicitly; never call stale evidence reusable completion.
 - [x] Preserve frame resource IDs and already submitted host observations; return only unobserved resources on continuation.
-- [ ] Exercise process exit after material completion but before host checkpoint and confirm retry recovers the material without repeating ASR.
+- [x] Exercise process exit after material completion but before host checkpoint and confirm retry recovers the material without repeating ASR (local video and public read paths).
 
 ## Task 5: Multi-Image Note Evidence
 

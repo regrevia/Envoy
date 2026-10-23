@@ -91,8 +91,10 @@ the host can inspect Envoy's leased local image files:
 The response returns bounded frames with actual `video_time` locators and
 leased `local_file` resources. For every `inspect_visual` need, inspect each
 listed resource the host can access before its `expires_at` lease and submit
-one `envoy_observe_visual` call per inspected frame. Pair `resource_ids` and
-`source_block_ids` by index; pass the original `material_id` and `session_id`,
+one `envoy_observe_visual` call per inspected frame. The need's `action_id`
+identifies the handoff and `purpose` explains why it was requested. Pair
+`resource_ids[i]` and `source_block_ids[i]` at the same index; pass the
+original `material_id` and `session_id`,
 and a unique request ID. `source_url` may be omitted when the retained
 material, resource, and block IDs identify the delivered resource; Envoy
 derives and validates the URL from that binding. `observation` must be a

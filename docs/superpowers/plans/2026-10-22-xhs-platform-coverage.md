@@ -15,7 +15,7 @@
 Implemented platform routing, bounded source-note JSON/gallery parsing, retryable
 operation results (including legacy completed failures), HTTP 404 diagnostics,
 and Skill/capability guidance. The standalone/protocol/distribution suite passes
-250 tests. Source-bound gallery tests reject avatars, unrelated state, and
+310 tests in the current checkout. Source-bound gallery tests reject avatars, unrelated state, and
 recommendation videos. No new live-platform acceptance was obtained for this
 release; Xiaohongshu remains experimental, and the existing acceptance matrix
 must not be interpreted as new acceptance evidence. The checklists below retain
@@ -27,10 +27,10 @@ the original plan, including live verification work not yet completed.
 - Create: `packages/envoy-cli/src/envoy_cli/platforms.py`
 - Test: `tests/cli/test_platforms.py`
 
-- [ ] Write failing tests for Xiaohongshu `/explore/<id>`, `/discovery/item/<id>`, `xhslink.com` redirects, common video paths, and ordered XHS image extraction excluding avatars/recommendations.
-- [ ] Run the focused tests and confirm the missing module/functions fail.
-- [ ] Implement canonical URL predicates, common video-page predicates, and an XHS parser that reads structured JSON/script image URLs plus DOM images without returning credentials or signed media parameters.
-- [ ] Run the focused tests and confirm they pass.
+- [x] Write failing tests for Xiaohongshu `/explore/<id>`, `/discovery/item/<id>`, `xhslink.com` redirects, common video paths, and ordered XHS image extraction excluding avatars/recommendations.
+- [x] Run the focused tests and confirm the missing module/functions fail.
+- [x] Implement canonical URL predicates, common video-page predicates, and an XHS parser that reads structured JSON/script image URLs plus DOM images without returning credentials or signed media parameters.
+- [x] Run the focused tests and confirm they pass.
 
 ### Task 2: Reader routing for XHS notes and broader video pages
 
@@ -39,10 +39,10 @@ the original plan, including live verification work not yet completed.
 - Test: `tests/cli/test_platforms.py`
 - Test: `tests/cli/test_browser_runtime.py`
 
-- [ ] Add failing tests proving XHS notes bypass the single-video subtitle extractor, preserve image order, return `image_note` coverage, and do not run ASR.
-- [ ] Add failing tests for `/reel/`, `/shorts/`, `/status/`, Dailymotion `/video/`, Vimeo numeric pages, and XHS final URLs entering browser fallback when content is dynamic.
-- [ ] Implement routing through the shared predicates and XHS gallery extractor; keep signed/session-only URLs local and mark incomplete albums partial.
-- [ ] Run focused reader/browser tests and confirm they pass.
+- [x] Add failing tests proving XHS notes bypass the single-video subtitle extractor, preserve image order, return `image_note` coverage, and do not run ASR.
+- [x] Add failing tests for `/reel/`, `/shorts/`, `/status/`, Dailymotion `/video/`, Vimeo numeric pages, and XHS final URLs entering browser fallback when content is dynamic.
+- [x] Implement routing through the shared predicates and XHS gallery extractor; keep signed/session-only URLs local and mark incomplete albums partial.
+- [x] Run focused reader/browser tests and confirm they pass.
 
 ### Task 3: Capability and Skill guidance
 
@@ -52,9 +52,9 @@ the original plan, including live verification work not yet completed.
 - Modify: `README.md`
 - Test: `tests/test_skill_bundle.py`
 
-- [ ] Add explicit capability language for public XHS image notes and common extractor-first video URLs.
-- [ ] Document that platform names indicate routing candidates, not guaranteed live acceptance; explain `partial`, `blocked`, and challenge boundaries.
-- [ ] Test the Skill bundle contains XHS and common-video workflow guidance.
+- [x] Add explicit capability language for public XHS image notes and common extractor-first video URLs.
+- [x] Document that platform names indicate routing candidates, not guaranteed live acceptance; explain `partial`, `blocked`, and challenge boundaries.
+- [x] Test the Skill bundle contains XHS and common-video workflow guidance.
 
 ### Task 4: Verification and acceptance record
 

@@ -384,13 +384,23 @@ def _video_handoff_url_is_safe(value: str) -> bool:
 
 def _redact_url(value: str) -> str:
     parsed = urlparse(value)
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = host
+    if port is not None:
+        netloc = f"{netloc}:{port}"
     safe_query = [
         (key, "[REDACTED]" if _is_sensitive_query_key(key) else item)
         for key, item in parse_qsl(parsed.query, keep_blank_values=True)
     ]
     return urlunparse((
         parsed.scheme,
-        parsed.netloc,
+        netloc,
         parsed.path,
         parsed.params,
         urlencode(safe_query),
@@ -1377,6 +1387,75 @@ def _load_matching_material(material_id: str, source_revision: str, session_id: 
     return data
 
 
+def persist_operation_response(
+    material_id: str | None,
+    response: dict,
+    *,
+    metadata: dict | None = None,
+) -> None:
+    """Persist the final response before the idempotency ledger is completed."""
+    if not material_id:
+        return
+    root = _material_root()
+    path = root / f"{material_id}.json"
+    if path.is_symlink() or not path.is_file():
+        return
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(stored, dict):
+        return
+    stored["operation_response"] = response
+    if metadata:
+        stored["operation_metadata"] = metadata
+    _store_material(material_id, stored, merge=False)
+
+
+def recover_operation_response(
+    request: ReadRequest,
+    source_url: str,
+    *,
+    original_request_id: str = "",
+) -> dict | None:
+    """Find a response persisted before a process exited during ledger commit."""
+    root = _material_root()
+    safe_source_url = _redact_url(source_url)
+    for path in sorted(root.glob("mat-*.json")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        material_id = path.stem
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(stored, dict):
+            continue
+        stored_sources = {str(stored.get("source_url") or "")}
+        operation_metadata = stored.get("operation_metadata")
+        if isinstance(operation_metadata, dict) and operation_metadata.get("source_url"):
+            stored_sources.add(_redact_url(str(operation_metadata["source_url"])))
+        if safe_source_url not in stored_sources:
+            continue
+        if stored.get("session_id") != request.session_id:
+            continue
+        operation_response = stored.get("operation_response")
+        if not isinstance(operation_response, dict):
+            continue
+        if request.session_id is None and (
+            not original_request_id
+            or str(operation_response.get("request_id") or "") != original_request_id
+        ):
+            continue
+        source_revision = str(stored.get("source_revision") or "")
+        if not re.fullmatch(r"[a-f0-9]{64}", source_revision):
+            continue
+        if _load_matching_material(material_id, source_revision, request.session_id) is None:
+            continue
+        return operation_response
+    return None
+
+
 def _source_coverage_unresolved(stored: dict) -> list[str]:
     values = stored.get("source_coverage_unresolved")
     if not isinstance(values, list):
@@ -1496,12 +1575,39 @@ def _serialize_read_request(function):
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode()).hexdigest()
+
+                def execute_payload():
+                    response = execute()
+                    payload = response.model_dump(mode="json")
+                    persist_operation_response(
+                        response.material_id,
+                        payload,
+                        metadata={
+                            "source_url": _redact_url(request.source.url),
+                            "session_id": request.session_id,
+                            "request_id": request.request_id,
+                        },
+                    )
+                    return payload
+
                 try:
                     payload = run_idempotent(
                         request.idempotency_key,
                         fingerprint=fingerprint,
-                        execute=lambda: execute().model_dump(mode="json"),
+                        execute=execute_payload,
                         should_cache=_read_operation_result_is_cacheable,
+                        recover=lambda record: recover_operation_response(
+                            request,
+                            request.source.url,
+                            original_request_id=str(
+                                (record.get("recovery_metadata") or {}).get("request_id") or ""
+                            ),
+                        ),
+                        recovery_metadata={
+                            "source_url": _redact_url(request.source.url),
+                            "session_id": request.session_id,
+                            "request_id": request.request_id,
+                        },
                         ttl_seconds=min(
                             request.retention.derived_ttl_seconds,
                             MATERIAL_TTL_SECONDS,

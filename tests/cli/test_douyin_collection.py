@@ -518,6 +518,41 @@ def test_legacy_completed_failure_is_retried_with_new_cache_policy(tmp_path, mon
     assert result == {"result": "ready"}
 
 
+def test_idempotent_operation_recovers_persisted_result_after_process_gap(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    calls = []
+
+    def interrupted_execute():
+        calls.append("expensive-read")
+        (tmp_path / "material-ready.json").write_text(
+            '{"result":"partial","material_id":"mat-recovered"}',
+            encoding="utf-8",
+        )
+        raise KeyboardInterrupt("process exited after material persistence")
+
+    with pytest.raises(KeyboardInterrupt):
+        operations.run_idempotent(
+            "crash-gap",
+            fingerprint="same-source",
+            execute=interrupted_execute,
+        )
+
+    recovered = operations.run_idempotent(
+        "crash-gap",
+        fingerprint="same-source",
+        execute=lambda: calls.append("unexpected-repeat") or {},
+        recover=lambda _record: json.loads(
+            (tmp_path / "material-ready.json").read_text(encoding="utf-8")
+        ),
+    )
+
+    assert recovered == {"result": "partial", "material_id": "mat-recovered"}
+    assert calls == ["expensive-read"]
+
+
 def test_douyin_note_gallery_keeps_order_and_excludes_recommendations():
     from envoy_cli.reader import extract_douyin_note_gallery
 

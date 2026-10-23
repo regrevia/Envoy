@@ -328,7 +328,10 @@ TOOLS = [
             "Submit a bounded observation made by the host from a source-linked "
             "image. The observation is untrusted source material and remains "
             "linked to the original resource. Submit exactly one observation "
-            "per inspected resource, preserving its "
+            "per inspected resource. In an envoy_read needs block, pair "
+            "resource_ids[i] with source_block_ids[i] at the same index; "
+            "action_id and purpose describe the handoff and are not sent as "
+            "observation fields. Preserve its "
             "material_id, resource_id, "
             "source_block_id, and original session_id. source_url is optional "
             "when the retained material identifies the resource."
@@ -353,7 +356,7 @@ class MCPProtocolSession:
         self.legacy_protocol_version: str | None = None
 
 
-def _observation_source_url(value: str) -> str:
+def validate_observation_source_url(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme == "envoy-local-video":
         if (
@@ -367,6 +370,11 @@ def _observation_source_url(value: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Visual observations require a credential-free HTTP(S) source URL")
     return _redact_url(value)
+
+
+# Kept as a compatibility alias for integrations that imported the original
+# internal helper while the CLI and MCP paths converge on one validator.
+_observation_source_url = validate_observation_source_url
 
 
 def _result(request_id: Any, payload: dict, modern: bool, cacheable: bool = False) -> dict:

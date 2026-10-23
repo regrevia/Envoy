@@ -158,9 +158,12 @@ omitted, the runtime default remains in effect.
 - `needs_host`: complete each requested host action before finalizing. For an
   `inspect_visual` need, inspect every listed resource that the host can
   access before its `expires_at` lease. Then call `envoy_observe_visual` once
-  per inspected resource, pairing `resource_id` and `source_block_id` from the
-  need. Pass the top-level `material_id`, original `session_id`, and a unique
-  request ID. `source_url` is optional when the retained material is supplied:
+  per inspected resource. The need's `action_id` identifies the handoff and
+  `purpose` explains why it was requested; do not send either field in the
+  observation request. pairing `resource_ids[i]` with `source_block_ids[i]`
+  from the need at the same index is required. Pass the top-level `material_id`, original
+  `session_id`, and a unique request ID. `source_url` is optional when the
+  retained material is supplied:
   Envoy derives it from the delivered resource binding. Use an `observation`
   string, not an object. The request protocol is `envoy.observe/1`. `needs_host`
   is a handoff, not
@@ -350,6 +353,10 @@ the user's request calls for comparison or synthesis. Retry a long read with
 the same `idempotency_key`; Envoy replays completed evidence within its
 retention lease rather than repeating ASR. If the evidence lease has expired,
 Envoy reports that and the host may begin a new read with a new operation key.
+If the process stopped after material persistence but before the operation
+ledger was finalized, the same key lets Envoy recover that material without
+re-fetching or re-running local ASR. Do not rotate the key merely because the
+host did not receive a response.
 Recoverable `blocked` results (network, missing capability, login or challenge)
 are not completed evidence: after the environment or user action is resolved,
 retry the same key and unchanged input to execute again. Legacy cached failures
