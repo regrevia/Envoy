@@ -438,7 +438,9 @@ def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
         "2026-10-23-mdn-404-codex-release-0.1.6.jsonl",
         "2026-10-23-mdn-410-codex-release-0.1.6.jsonl",
         "2026-10-23-mdn-429-codex-release-0.1.6.jsonl",
+        "2026-10-23-mdn-201-codex-release-0.1.6.jsonl",
         "2026-10-23-python-json-codex-release-0.1.6.jsonl",
+        "2026-10-23-rfc9110-codex-release-0.1.6.jsonl",
     ):
         records = ROOT / "benchmarks" / "pilots" / sample
         result = subprocess.run(
@@ -478,8 +480,8 @@ def test_combined_public_documentation_pilots_are_incomplete():
     report = json.loads(result.stdout)
     assert result.returncode == 0, result.stderr
     assert report["validation_status"] == "passed"
-    assert report["source_count"] == 5
-    assert report["task_count"] == 10
+    assert report["source_count"] == 6
+    assert report["task_count"] == 12
     assert report["gate_status"] == "incomplete"
     assert report["fact_recall"] == 1.0
     assert report["followup_reuse_rate"] == 1.0
