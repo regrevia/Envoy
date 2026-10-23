@@ -151,6 +151,19 @@ def test_visual_observation_request_is_bounded_and_roundtrips():
     assert VisualObservationRequest.model_validate_json(request.model_dump_json()).protocol_version == "envoy.observe/1"
 
 
+def test_visual_observation_request_can_bind_source_from_retained_material():
+    from envoy_core.schemas.read_v1 import VisualObservationRequest
+
+    request = VisualObservationRequest.model_validate({
+        "protocol_version": "envoy.observe/1",
+        "request_id": "observe-material-bound",
+        "material_id": "mat-" + "a" * 24,
+        "resource_id": "resource-frame",
+        "source_block_id": "blk-frame",
+        "observation": "The frame shows a three-column diagram.",
+    })
+
+    assert request.source_url is None
 def test_total_token_budget_may_be_lower_than_per_response_ceiling():
     from envoy_core.schemas.read_v1 import Budget
 

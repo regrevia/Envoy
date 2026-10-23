@@ -56,6 +56,7 @@ REQUIRED_RUN_FIELDS = {
     "model",
     "rubric_version",
     "quality_review_method",
+    "cache_isolation_status",
 }
 REQUIRED_TASK_FIELDS = {
     "task_id",
@@ -86,6 +87,23 @@ REQUIRED_TASK_FIELDS = {
     "reused_material",
     "baseline_reused_material",
     "baseline_method",
+}
+
+USAGE_BREAKDOWN_FIELDS = {
+    "envoy": (
+        "usage_breakdown_status",
+        "uncached_input_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "input_tokens",
+    ),
+    "baseline": (
+        "baseline_usage_breakdown_status",
+        "baseline_uncached_input_tokens",
+        "baseline_cache_read_input_tokens",
+        "baseline_cache_creation_input_tokens",
+        "baseline_input_tokens",
+    ),
 }
 
 
@@ -243,6 +261,19 @@ def _complete_median(items: list[dict], field: str) -> float | None:
     return _median(values)
 
 
+def _complete_percentile(items: list[dict], field: str, probability: float) -> float | None:
+    values = [item.get(field) for item in items]
+    if not values or any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+        for value in values
+    ):
+        return None
+    return round(_percentile(sorted(float(value) for value in values), probability), 3)
+
+
 def validate_records(
     run: dict,
     sources: list[dict],
@@ -256,6 +287,10 @@ def validate_records(
     if missing_run and not allow_unknown_usage:
         errors.append(f"run: missing fields {sorted(missing_run)}")
     unknown_markers = {"unknown", "draft", "not exposed"}
+    task_package_schema_version = run.get("task_package_schema_version")
+    if task_package_schema_version not in {None, "envoy.task-package/1"}:
+        errors.append("run: unsupported task_package_schema_version")
+    package_schema = task_package_schema_version == "envoy.task-package/1"
     for field in ("envoy_version", "envoy_commit", "host_agent", "host_agent_version", "operating_system", "python_version"):
         raw_value = run.get(field)
         value = str(raw_value or "").strip().lower()
@@ -279,6 +314,19 @@ def validate_records(
         errors.append("run: quality_review_method must identify how answers and citations were reviewed")
     elif quality_review_method is None and not allow_unknown_usage:
         errors.append("run: quality_review_method must identify how answers and citations were reviewed")
+    cache_isolation_status = run.get("cache_isolation_status")
+    if cache_isolation_status is None and not allow_unknown_usage:
+        errors.append("run: cache_isolation_status is required for a strict evaluation")
+    elif cache_isolation_status is not None and cache_isolation_status not in {
+        "verified_disabled",
+        "verified_isolated",
+        "cache_confounded",
+        "unknown",
+    }:
+        errors.append(
+            "run: cache_isolation_status must be verified_disabled, "
+            "verified_isolated, cache_confounded, or unknown"
+        )
     for field in ("provider", "model"):
         raw_value = run.get(field)
         value = str(raw_value or "").strip().lower()
@@ -360,6 +408,7 @@ def validate_records(
 
     task_ids = set()
     tasks_by_source: dict[str, list[dict]] = defaultdict(list)
+    tasks_by_package: dict[str, list[dict]] = defaultdict(list)
     run_identity = (str(run.get("provider") or ""), str(run.get("model") or ""))
     for task in tasks:
         task_id = str(task.get("task_id") or "<unknown-task>")
@@ -371,6 +420,19 @@ def validate_records(
         task_ids.add(task_id)
         source_id = str(task.get("source_id") or "")
         tasks_by_source[source_id].append(task)
+        if package_schema:
+            package_id = str(task.get("package_id") or "")
+            tasks_by_package[package_id].append(task)
+            declared_sources = task.get("source_ids")
+            if not _valid_id_list(declared_sources) or len(declared_sources) < 2:
+                errors.append(
+                    f"{task_id}: package source_ids must list at least two unique source IDs"
+                )
+                declared_sources = []
+            elif not set(declared_sources).issubset(source_ids):
+                errors.append(f"{task_id}: package source_ids contains an unknown source")
+            if source_id and source_id not in set(declared_sources):
+                errors.append(f"{task_id}: source_id must be included in package source_ids")
         goal = str(task.get("goal") or "").strip()
         if task.get("goal") is not None and not goal:
             errors.append(f"{task_id}: goal must be a concrete task question")
@@ -538,6 +600,45 @@ def validate_records(
                 _require_non_negative(
                     task, field, task_id
                 )
+        for arm, fields in USAGE_BREAKDOWN_FIELDS.items():
+            status_field, uncached_field, cache_read_field, cache_creation_field, total_field = fields
+            breakdown_status = task.get(status_field, "unknown")
+            if breakdown_status not in {"reported", "not_exposed", "unknown"}:
+                errors.append(
+                    f"{task_id}: {status_field} must be reported, not_exposed, or unknown"
+                )
+                continue
+            component_fields = (
+                uncached_field,
+                cache_read_field,
+                cache_creation_field,
+            )
+            component_values = [task.get(field) for field in component_fields]
+            if breakdown_status == "reported":
+                if task.get(
+                    "usage_status" if arm == "envoy" else "baseline_usage_status"
+                ) != "actual":
+                    errors.append(f"{task_id}: {status_field}=reported requires actual usage")
+                for field in component_fields:
+                    _require_non_negative(task, field, task_id)
+                if all(
+                    isinstance(value, int) and not isinstance(value, bool)
+                    for value in component_values
+                ):
+                    reported_total = sum(component_values)
+                    total_input = task.get(total_field)
+                    if (
+                        isinstance(total_input, int)
+                        and not isinstance(total_input, bool)
+                        and reported_total != total_input
+                    ):
+                        errors.append(
+                            f"{task_id}: {status_field} categories must sum to {total_field}"
+                        )
+            elif any(value is not None for value in component_values):
+                errors.append(
+                    f"{task_id}: {status_field}={breakdown_status} cannot include token categories"
+                )
         evidence_locators = task.get("evidence_locators")
         if evidence_locators is not None and not isinstance(evidence_locators, list):
             errors.append(f"{task_id}: evidence_locators must be a list")
@@ -552,6 +653,8 @@ def validate_records(
             errors.append(f"{task_id}: reused_material must be boolean")
 
     for source_id in source_ids:
+        if package_schema:
+            continue
         source_tasks = tasks_by_source.get(source_id, [])
         roles = [task.get("task_role") for task in source_tasks]
         if (roles.count("initial") != 1 or roles.count("followup") < 1) and not allow_unknown_usage:
@@ -575,6 +678,69 @@ def validate_records(
                 or task.get("baseline_reused_material") is True
             ):
                 errors.append(f"{task.get('task_id')}: initial task cannot count as followup material reuse")
+    if package_schema:
+        if not tasks_by_package:
+            errors.append("task package schema requires package_id on every task")
+        for package_id, package_tasks in tasks_by_package.items():
+            if not package_id:
+                errors.append("task package schema requires non-empty package_id")
+                continue
+            source_ids_in_package = {
+                str(task.get("source_id") or "")
+                for task in package_tasks
+            }
+            declared_source_ids = set()
+            for task in package_tasks:
+                raw = task.get("source_ids")
+                if not isinstance(raw, list):
+                    errors.append(f"{package_id}: source_ids must be a list")
+                    continue
+                declared_source_ids.update(str(item) for item in raw)
+            if len(source_ids_in_package | declared_source_ids) < 2:
+                errors.append(f"{package_id} requires at least two distinct source_ids")
+            roles = [task.get("task_role") for task in package_tasks]
+            if roles.count("initial") != 1 or roles.count("followup") != 2:
+                errors.append(
+                    f"{package_id} requires exactly one initial and two followup tasks"
+                )
+            if len(package_tasks) != 3:
+                errors.append(f"{package_id} requires exactly three scripted turns")
+            source_lists = {
+                tuple(sorted(str(item) for item in task.get("source_ids", [])))
+                for task in package_tasks
+                if isinstance(task.get("source_ids"), list)
+            }
+            if len(source_lists) > 1:
+                errors.append(f"{package_id}: source_ids must remain fixed across its three turns")
+            for task in package_tasks:
+                task_id = str(task.get("task_id") or "<unknown-task>")
+                for field in ("envoy_task_outcome", "baseline_task_outcome"):
+                    if task.get(field) not in {"completed", "partial", "blocked", "failed"}:
+                        errors.append(
+                            f"{task_id}: {field} must be completed, partial, blocked, or failed"
+                        )
+                for field in (
+                    "human_interventions",
+                    "baseline_human_interventions",
+                    "human_intervention_minutes",
+                    "baseline_human_intervention_minutes",
+                ):
+                    _require_non_negative(task, field, task_id)
+                for arm, status_field, cost_field in (
+                    ("Envoy", "server_cost_status", "server_reported_cost"),
+                    ("baseline", "baseline_server_cost_status", "baseline_server_reported_cost"),
+                ):
+                    cost_status = task.get(status_field)
+                    if cost_status not in {"reported", "not_exposed", "unknown"}:
+                        errors.append(
+                            f"{task_id}: {status_field} must be reported, not_exposed, or unknown"
+                        )
+                    elif cost_status == "reported":
+                        _require_non_negative(task, cost_field, task_id)
+                    elif task.get(cost_field) is not None:
+                        errors.append(
+                            f"{task_id}: {status_field}={cost_status} cannot include {cost_field}"
+                        )
     if require_minimum and len(sources) < MIN_SOURCES:
         errors.append(f"minimum source gate is {MIN_SOURCES}; got {len(sources)}")
     if require_minimum and len(tasks) < MIN_TASKS:
@@ -634,6 +800,45 @@ def _bootstrap_metric_values(tasks: list[dict]) -> dict[str, float | None]:
     else:
         values["input_token_savings_fraction"] = None
 
+    if tasks and all(
+        task.get("usage_status") == "actual"
+        and task.get("baseline_usage_status") == "actual"
+        and task.get("usage_breakdown_status") == "reported"
+        and task.get("baseline_usage_breakdown_status") == "reported"
+        and all(
+            isinstance(task.get(field), int)
+            and not isinstance(task.get(field), bool)
+            for field in (
+                "uncached_input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "baseline_uncached_input_tokens",
+                "baseline_cache_read_input_tokens",
+                "baseline_cache_creation_input_tokens",
+            )
+        )
+        for task in tasks
+    ):
+        envoy_exposure = sum(
+            task["uncached_input_tokens"]
+            + task["cache_read_input_tokens"]
+            + task["cache_creation_input_tokens"]
+            for task in tasks
+        )
+        baseline_exposure = sum(
+            task["baseline_uncached_input_tokens"]
+            + task["baseline_cache_read_input_tokens"]
+            + task["baseline_cache_creation_input_tokens"]
+            for task in tasks
+        )
+        values["input_exposure_savings_fraction"] = (
+            (baseline_exposure - envoy_exposure) / baseline_exposure
+            if baseline_exposure > 0
+            else None
+        )
+    else:
+        values["input_exposure_savings_fraction"] = None
+
     for name, envoy_field, baseline_field in (
         ("first_evidence_reduction_fraction", "first_evidence_ms", "baseline_first_evidence_ms"),
         ("total_elapsed_reduction_fraction", "total_elapsed_ms", "baseline_total_elapsed_ms"),
@@ -663,16 +868,17 @@ def _paired_cluster_bootstrap(
     tasks: list[dict],
     *,
     repetitions: int = 2000,
+    cluster_field: str = "source_id",
 ) -> dict[str, Any]:
     clusters: dict[str, list[dict]] = defaultdict(list)
     for task in tasks:
-        clusters[str(task.get("source_id") or "")].append(task)
+        clusters[str(task.get(cluster_field) or "")].append(task)
     cluster_ids = sorted(key for key in clusters if key)
     observed = _bootstrap_metric_values(tasks)
     output: dict[str, Any] = {}
     if len(cluster_ids) < 2:
         return {
-            "cluster_unit": "source_id",
+            "cluster_unit": cluster_field,
             "cluster_count": len(cluster_ids),
             "replicates": repetitions,
             "confidence_level": 0.95,
@@ -713,7 +919,7 @@ def _paired_cluster_bootstrap(
             else None
         )
     return {
-        "cluster_unit": "source_id",
+        "cluster_unit": cluster_field,
         "cluster_count": len(cluster_ids),
         "replicates": repetitions,
         "confidence_level": 0.95,
@@ -722,6 +928,88 @@ def _paired_cluster_bootstrap(
 
 
 def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
+    package_schema = run.get("task_package_schema_version") == "envoy.task-package/1"
+    cluster_field = "package_id" if package_schema else "source_id"
+    if package_schema:
+        packages: dict[str, list[dict]] = defaultdict(list)
+        for task in tasks:
+            packages[str(task.get("package_id") or "")].append(task)
+        envoy_package_outcomes = [
+            all(task.get("envoy_task_outcome") == "completed" for task in package_tasks)
+            for package_tasks in packages.values()
+        ]
+        baseline_package_outcomes = [
+            all(task.get("baseline_task_outcome") == "completed" for task in package_tasks)
+            for package_tasks in packages.values()
+        ]
+        envoy_package_completion_rate = (
+            sum(envoy_package_outcomes) / len(envoy_package_outcomes)
+            if envoy_package_outcomes else None
+        )
+        baseline_package_completion_rate = (
+            sum(baseline_package_outcomes) / len(baseline_package_outcomes)
+            if baseline_package_outcomes else None
+        )
+        human_intervention_task_count = sum(
+            int(task["human_interventions"]) > 0 for task in tasks
+        )
+        baseline_human_intervention_task_count = sum(
+            int(task["baseline_human_interventions"]) > 0 for task in tasks
+        )
+        human_intervention_package_count = sum(
+            any(int(task["human_interventions"]) > 0 for task in package_tasks)
+            for package_tasks in packages.values()
+        )
+        baseline_human_intervention_package_count = sum(
+            any(int(task["baseline_human_interventions"]) > 0 for task in package_tasks)
+            for package_tasks in packages.values()
+        )
+        total_human_intervention_minutes = sum(
+            float(task["human_intervention_minutes"]) for task in tasks
+        )
+        baseline_total_human_intervention_minutes = sum(
+            float(task["baseline_human_intervention_minutes"]) for task in tasks
+        )
+        envoy_cost_tasks = [
+            task for task in tasks if task.get("server_cost_status") == "reported"
+        ]
+        baseline_cost_tasks = [
+            task for task in tasks if task.get("baseline_server_cost_status") == "reported"
+        ]
+        envoy_server_reported_cost = (
+            _complete_sum(envoy_cost_tasks, "server_reported_cost")
+            if len(envoy_cost_tasks) == len(tasks) and tasks else None
+        )
+        baseline_server_reported_cost = (
+            _complete_sum(baseline_cost_tasks, "baseline_server_reported_cost")
+            if len(baseline_cost_tasks) == len(tasks) and tasks else None
+        )
+        cost_status_values = [
+            task.get("server_cost_status") for task in tasks
+        ] + [
+            task.get("baseline_server_cost_status") for task in tasks
+        ]
+        if all(value == "reported" for value in cost_status_values) and tasks:
+            server_cost_status = "reported"
+        elif any(value == "reported" for value in cost_status_values):
+            server_cost_status = "partial"
+        elif cost_status_values and all(value == "not_exposed" for value in cost_status_values):
+            server_cost_status = "not_exposed"
+        else:
+            server_cost_status = "unknown"
+    else:
+        packages = defaultdict(list)
+        envoy_package_completion_rate = None
+        baseline_package_completion_rate = None
+        human_intervention_task_count = None
+        baseline_human_intervention_task_count = None
+        human_intervention_package_count = None
+        baseline_human_intervention_package_count = None
+        total_human_intervention_minutes = None
+        baseline_total_human_intervention_minutes = None
+        envoy_server_reported_cost = None
+        baseline_server_reported_cost = None
+        server_cost_status = "unknown"
     usage_actual = [
         task for task in tasks
         if task.get("usage_status") == "actual"
@@ -780,7 +1068,11 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         )
     envoy_input_tokens = _complete_sum(usage_actual, "input_tokens")
     baseline_input_tokens = _complete_sum(usage_actual, "baseline_input_tokens")
-    paired_bootstrap = _paired_cluster_bootstrap(run, tasks)
+    paired_bootstrap = _paired_cluster_bootstrap(
+        run,
+        tasks,
+        cluster_field=cluster_field,
+    )
     source_class_by_id = {
         str(source["source_id"]): str(source["source_class"])
         for source in sources
@@ -791,7 +1083,11 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         if source_class:
             stratified_tasks[source_class].append(task)
     stratified_bootstrap = {
-        source_class: _paired_cluster_bootstrap(run, class_tasks)
+        source_class: _paired_cluster_bootstrap(
+            run,
+            class_tasks,
+            cluster_field=cluster_field,
+        )
         for source_class, class_tasks in sorted(stratified_tasks.items())
     }
     source_class_task_counts = {
@@ -799,16 +1095,112 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         for source_class, class_tasks in sorted(stratified_tasks.items())
     }
     token_savings_interval = paired_bootstrap["metrics"]["input_token_savings_fraction"]
+    exposure_savings_interval = paired_bootstrap["metrics"]["input_exposure_savings_fraction"]
+    cache_isolation_verified = run.get("cache_isolation_status") in {
+        "verified_disabled",
+        "verified_isolated",
+    }
     savings_eligible = (
         len(usage_actual) == len(tasks)
         and quality_non_inferior is True
         and envoy_input_tokens is not None
         and baseline_input_tokens is not None
+        and cache_isolation_verified
+    )
+    usage_breakdown_tasks = [
+        task for task in tasks
+        if task.get("usage_status") == "actual"
+        and task.get("baseline_usage_status") == "actual"
+        and task.get("usage_breakdown_status") == "reported"
+        and task.get("baseline_usage_breakdown_status") == "reported"
+    ]
+    usage_breakdown_complete = bool(tasks) and len(usage_breakdown_tasks) == len(tasks)
+    envoy_uncached_tokens = (
+        _complete_sum(usage_breakdown_tasks, "uncached_input_tokens")
+        if usage_breakdown_complete else None
+    )
+    envoy_cache_read_tokens = (
+        _complete_sum(usage_breakdown_tasks, "cache_read_input_tokens")
+        if usage_breakdown_complete else None
+    )
+    envoy_cache_creation_tokens = (
+        _complete_sum(usage_breakdown_tasks, "cache_creation_input_tokens")
+        if usage_breakdown_complete else None
+    )
+    baseline_uncached_tokens = (
+        _complete_sum(usage_breakdown_tasks, "baseline_uncached_input_tokens")
+        if usage_breakdown_complete else None
+    )
+    baseline_cache_read_tokens = (
+        _complete_sum(usage_breakdown_tasks, "baseline_cache_read_input_tokens")
+        if usage_breakdown_complete else None
+    )
+    baseline_cache_creation_tokens = (
+        _complete_sum(usage_breakdown_tasks, "baseline_cache_creation_input_tokens")
+        if usage_breakdown_complete else None
+    )
+    envoy_input_exposure = (
+        envoy_uncached_tokens + envoy_cache_read_tokens + envoy_cache_creation_tokens
+        if usage_breakdown_complete else None
+    )
+    baseline_input_exposure = (
+        baseline_uncached_tokens + baseline_cache_read_tokens + baseline_cache_creation_tokens
+        if usage_breakdown_complete else None
+    )
+    breakdown_statuses = [
+        task.get("usage_breakdown_status", "unknown")
+        for task in tasks
+    ] + [
+        task.get("baseline_usage_breakdown_status", "unknown")
+        for task in tasks
+    ]
+    if usage_breakdown_complete:
+        usage_breakdown_status = "reported"
+    elif any(status == "reported" for status in breakdown_statuses):
+        usage_breakdown_status = "partial"
+    elif breakdown_statuses and all(status == "not_exposed" for status in breakdown_statuses):
+        usage_breakdown_status = "not_exposed"
+    else:
+        usage_breakdown_status = "unknown"
+    input_exposure_savings = (
+        exposure_savings_interval["estimate"]
+        if (
+            savings_eligible
+            and usage_breakdown_complete
+            and exposure_savings_interval is not None
+            and exposure_savings_interval["lower"] > 0
+        )
+        else None
     )
     followups = [task for task in tasks if task.get("task_role") == "followup"]
     return {
         "schema_version": SCHEMA_VERSION,
         "evaluation_scope": "real sources and host-agent tasks supplied by evaluator",
+        "task_package_schema_version": (
+            run.get("task_package_schema_version")
+            if package_schema else None
+        ),
+        "package_count": (
+            len({str(task.get("package_id") or "") for task in tasks})
+            if package_schema else None
+        ),
+        "envoy_package_completion_rate": envoy_package_completion_rate,
+        "baseline_package_completion_rate": baseline_package_completion_rate,
+        "human_intervention_task_count": human_intervention_task_count,
+        "baseline_human_intervention_task_count": baseline_human_intervention_task_count,
+        "human_intervention_package_rate": (
+            human_intervention_package_count / len(packages)
+            if human_intervention_package_count is not None and packages else None
+        ),
+        "baseline_human_intervention_package_rate": (
+            baseline_human_intervention_package_count / len(packages)
+            if baseline_human_intervention_package_count is not None and packages else None
+        ),
+        "total_human_intervention_minutes": total_human_intervention_minutes,
+        "baseline_total_human_intervention_minutes": baseline_total_human_intervention_minutes,
+        "server_cost_status": server_cost_status,
+        "envoy_server_reported_cost": envoy_server_reported_cost,
+        "baseline_server_reported_cost": baseline_server_reported_cost,
         "run": run,
         "source_count": len(sources),
         "task_count": len(tasks),
@@ -836,12 +1228,34 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "source_class_task_counts": source_class_task_counts,
         "input_token_savings_ci_support": bool(
             token_savings_interval is not None
+            and cache_isolation_verified
             and token_savings_interval["lower"] > 0
         ),
+        "token_savings_eligible": savings_eligible,
+        "cache_isolation_verified": cache_isolation_verified,
+        "input_exposure_savings_ci_support": bool(
+            exposure_savings_interval is not None
+            and cache_isolation_verified
+            and exposure_savings_interval["lower"] > 0
+        ),
+        "cache_isolation_status": run.get("cache_isolation_status", "unknown"),
+        "usage_breakdown_status": usage_breakdown_status,
+        "usage_breakdown_task_count": len(usage_breakdown_tasks),
+        "envoy_uncached_input_tokens": envoy_uncached_tokens if usage_breakdown_complete else None,
+        "envoy_cache_read_input_tokens": envoy_cache_read_tokens if usage_breakdown_complete else None,
+        "envoy_cache_creation_input_tokens": envoy_cache_creation_tokens if usage_breakdown_complete else None,
+        "baseline_uncached_input_tokens": baseline_uncached_tokens if usage_breakdown_complete else None,
+        "baseline_cache_read_input_tokens": baseline_cache_read_tokens if usage_breakdown_complete else None,
+        "baseline_cache_creation_input_tokens": baseline_cache_creation_tokens if usage_breakdown_complete else None,
+        "envoy_input_exposure_tokens": envoy_input_exposure,
+        "baseline_input_exposure_tokens": baseline_input_exposure,
+        "input_exposure_savings_fraction": input_exposure_savings,
         "median_first_evidence_ms": _complete_median(tasks, "first_evidence_ms"),
         "baseline_median_first_evidence_ms": _complete_median(tasks, "baseline_first_evidence_ms"),
         "median_total_elapsed_ms": _complete_median(tasks, "total_elapsed_ms"),
         "baseline_median_total_elapsed_ms": _complete_median(tasks, "baseline_total_elapsed_ms"),
+        "p90_total_elapsed_ms": _complete_percentile(tasks, "total_elapsed_ms", 0.9),
+        "baseline_p90_total_elapsed_ms": _complete_percentile(tasks, "baseline_total_elapsed_ms", 0.9),
         "total_envoy_tool_calls": _complete_sum(tasks, "envoy_tool_calls"),
         "total_baseline_tool_calls": _complete_sum(tasks, "baseline_tool_calls"),
         "total_visual_inputs": _complete_sum(tasks, "visual_inputs"),
@@ -922,7 +1336,7 @@ def _markdown_count_change(baseline: Any, envoy: Any) -> str:
     ):
         return "N/A"
     delta = int(envoy) - int(baseline)
-    return f"{delta:+,}"
+    return "0" if delta == 0 else f"{delta:+,}"
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -931,10 +1345,20 @@ def render_markdown(report: dict[str, Any]) -> str:
         ("答案正确率", "baseline_answer_accuracy", "answer_accuracy", "quality"),
         ("事实召回", "baseline_fact_recall", "fact_recall", "quality"),
         ("引用支持率", "baseline_citation_support_rate", "citation_support_rate", "quality"),
+        ("成功完成 package", "baseline_package_completion_rate", "envoy_package_completion_rate", "quality"),
         ("输入 token", "baseline_actual_input_tokens", "envoy_actual_input_tokens", "efficiency"),
+        ("输入 token 暴露量", "baseline_input_exposure_tokens", "envoy_input_exposure_tokens", "exposure"),
+        ("未缓存输入 token", "baseline_uncached_input_tokens", "envoy_uncached_input_tokens", "efficiency"),
+        ("缓存读取 token", "baseline_cache_read_input_tokens", "envoy_cache_read_input_tokens", "count"),
+        ("缓存创建 token", "baseline_cache_creation_input_tokens", "envoy_cache_creation_input_tokens", "count"),
         ("输出 token", "baseline_actual_output_tokens", "envoy_actual_output_tokens", "efficiency"),
+        ("服务端报告成本", "baseline_server_reported_cost", "envoy_server_reported_cost", "efficiency"),
         ("首次证据耗时中位数", "baseline_median_first_evidence_ms", "median_first_evidence_ms", "efficiency"),
         ("总耗时中位数", "baseline_median_total_elapsed_ms", "median_total_elapsed_ms", "efficiency"),
+        ("总耗时 p90", "baseline_p90_total_elapsed_ms", "p90_total_elapsed_ms", "efficiency"),
+        ("人工介入任务数", "baseline_human_intervention_task_count", "human_intervention_task_count", "count"),
+        ("人工介入 package 比例", "baseline_human_intervention_package_rate", "human_intervention_package_rate", "quality"),
+        ("人工介入分钟", "baseline_total_human_intervention_minutes", "total_human_intervention_minutes", "count"),
         ("视觉输入数", "total_baseline_visual_inputs", "total_visual_inputs", "count"),
         ("重复下载数", "total_baseline_repeated_downloads", "total_repeated_downloads", "count"),
     ]
@@ -956,8 +1380,23 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {label} | {_markdown_number(baseline)} "
                 f"| {_markdown_number(envoy)} | {_markdown_count_change(baseline, envoy)} |"
             )
+        elif kind == "exposure":
+            change = (
+                _markdown_reduction(baseline, envoy)
+                if strict_gate
+                and report.get("input_exposure_savings_fraction") is not None
+                else "N/A"
+            )
+            lines.append(
+                f"| {label} | {_markdown_number(baseline)} "
+                f"| {_markdown_number(envoy)} | {change} |"
+            )
         else:
-            change = _markdown_reduction(baseline, envoy) if strict_gate else "N/A"
+            change = (
+                _markdown_reduction(baseline, envoy)
+                if strict_gate and report.get("token_savings_eligible")
+                else "N/A"
+            )
             lines.append(
                 f"| {label} | {_markdown_number(baseline)} "
                 f"| {_markdown_number(envoy)} | {change} |"
@@ -973,7 +1412,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             + (
                 f"[{report['paired_bootstrap']['metrics']['input_token_savings_fraction']['lower'] * 100:.2f}%, "
                 f"{report['paired_bootstrap']['metrics']['input_token_savings_fraction']['upper'] * 100:.2f}%]"
-                if report.get("paired_bootstrap", {}).get("metrics", {}).get("input_token_savings_fraction")
+                if report.get("token_savings_eligible")
+                and report.get("paired_bootstrap", {}).get("metrics", {}).get("input_token_savings_fraction")
                 else "N/A"
             )
         ),
@@ -981,6 +1421,12 @@ def render_markdown(report: dict[str, Any]) -> str:
             "实际 paired usage："
             f"{report.get('actual_usage_task_count', 0)}/{report.get('task_count', 0)}；"
             f"质量非劣：{report.get('quality_non_inferior')}"
+        ),
+        (
+            "服务端缓存策略："
+            f"{report.get('cache_isolation_status', 'unknown')}；"
+            f"缓存分项：{report.get('usage_breakdown_status', 'unknown')} "
+            f"({report.get('usage_breakdown_task_count', 0)}/{report.get('task_count', 0)} tasks)"
         ),
     ])
     if not strict_gate:

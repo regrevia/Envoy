@@ -27,6 +27,7 @@ def _write_records(path: Path, source_count: int = 20, tasks_per_source: int = 2
             "model": "test-model",
             "rubric_version": "rubric-1",
             "quality_review_method": "reference_rubric",
+            "cache_isolation_status": "verified_disabled",
         }) + "\n")
         for source_index in range(source_count):
             source_id = f"source-{source_index:02d}"
@@ -142,6 +143,136 @@ def test_agent_product_eval_can_render_a_concise_markdown_comparison(tmp_path):
     assert "配对任务：40；来源：20；门槛：passed" in result.stdout
 
 
+def test_agent_product_eval_reports_cache_token_exposure_only_when_complete(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for line in lines:
+        item = json.loads(line)
+        if item["record_type"] == "run":
+            item["cache_isolation_status"] = "verified_disabled"
+        elif item["record_type"] == "task":
+            item.update({
+                "usage_breakdown_status": "reported",
+                "uncached_input_tokens": 800,
+                "cache_read_input_tokens": 150,
+                "cache_creation_input_tokens": 50,
+                "baseline_usage_breakdown_status": "reported",
+                "baseline_uncached_input_tokens": 1000,
+                "baseline_cache_read_input_tokens": 150,
+                "baseline_cache_creation_input_tokens": 50,
+            })
+        rewritten.append(json.dumps(item))
+    records.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    report = json.loads(subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout)
+    markdown = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--markdown"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert report["cache_isolation_status"] == "verified_disabled"
+    assert report["usage_breakdown_status"] == "reported"
+    assert report["envoy_uncached_input_tokens"] == 32_000
+    assert report["envoy_cache_read_input_tokens"] == 6_000
+    assert report["envoy_cache_creation_input_tokens"] == 2_000
+    assert report["envoy_input_exposure_tokens"] == 40_000
+    assert report["baseline_input_exposure_tokens"] == 48_000
+    interval = report["paired_bootstrap"]["metrics"]["input_exposure_savings_fraction"]
+    assert abs(interval["estimate"] - 1 / 6) < 0.000001
+    assert abs(report["input_exposure_savings_fraction"] - 1 / 6) < 0.000001
+    assert markdown.returncode == 0, markdown.stderr
+    assert "| 未缓存输入 token | 40,000 | 32,000 | 减少 20.00% |" in markdown.stdout
+    assert "| 缓存读取 token | 6,000 | 6,000 | 0 |" in markdown.stdout
+    assert "| 缓存创建 token | 2,000 | 2,000 | 0 |" in markdown.stdout
+    assert "服务端缓存策略：verified_disabled" in markdown.stdout
+
+
+def test_agent_product_eval_does_not_infer_missing_cache_breakdown(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["usage_breakdown_status"] == "unknown"
+    assert report["envoy_input_exposure_tokens"] is None
+    assert report["baseline_input_exposure_tokens"] is None
+    assert report["input_exposure_savings_fraction"] is None
+
+
+def test_agent_product_eval_rejects_negative_cache_token_counts(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    task = json.loads(lines[2])
+    task.update({
+        "usage_breakdown_status": "reported",
+        "uncached_input_tokens": -1,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "baseline_usage_breakdown_status": "not_exposed",
+    })
+    lines[2] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "uncached_input_tokens must be a non-negative number" in result.stderr
+
+
+def test_agent_product_eval_withholds_savings_when_cache_is_confounded(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    run = json.loads(lines[0])
+    run["cache_isolation_status"] = "cache_confounded"
+    lines[0] = json.dumps(run)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    markdown = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--markdown"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert report["gate_status"] == "incomplete"
+    assert report["input_token_savings_fraction"] is None
+    assert report["input_token_savings_ci_support"] is False
+    assert report["token_savings_eligible"] is False
+    assert markdown.returncode == 0, markdown.stderr
+    assert "| 输入 token | 48,000 | 40,000 | N/A |" in markdown.stdout
+    assert "服务端缓存策略：cache_confounded" in markdown.stdout
+
+
 def test_agent_product_eval_markdown_withholds_incomplete_savings(tmp_path):
     records = tmp_path / "records.jsonl"
     _write_records(records)
@@ -195,6 +326,180 @@ def test_agent_product_eval_reports_reproducible_source_clustered_intervals(tmp_
     assert interval["lower"] > 0
     assert interval["upper"] > 0
     assert report["input_token_savings_fraction"] == interval["estimate"]
+
+
+def test_task_package_schema_uses_package_cluster_and_accepts_multi_source_three_turn_tasks(
+    tmp_path,
+):
+    records = tmp_path / "package-records.jsonl"
+    _write_records(records, source_count=20, tasks_per_source=2)
+    lines = [json.loads(line) for line in records.read_text(encoding="utf-8").splitlines()]
+    run = lines[0]
+    run["task_package_schema_version"] = "envoy.task-package/1"
+    source_templates = [item for item in lines if item["record_type"] == "source"]
+    sources = []
+    old_tasks = [item for item in lines if item["record_type"] == "task"]
+    package_sources = {}
+    for index in range(20):
+        package_id = f"package-{index:02d}"
+        pair = [f"source-{index:02d}-a", f"source-{index:02d}-b"]
+        package_sources[package_id] = pair
+        for source_offset, source_id in enumerate(pair):
+            source_template = source_templates[(index * 2 + source_offset) % len(source_templates)]
+            source = dict(source_template)
+            source["source_id"] = source_id
+            source["url"] = f"https://{source_id}.public.net/item"
+            sources.append(source)
+    tasks = []
+    for package_id, source_ids in package_sources.items():
+        for turn_index in range(3):
+            task = dict(old_tasks[(int(package_id[-2:]) * 2 + turn_index) % len(old_tasks)])
+            task.update({
+                "task_id": f"{package_id}-turn-{turn_index + 1}",
+                "package_id": package_id,
+                "source_ids": source_ids,
+                "source_id": source_ids[0] if turn_index < 2 else source_ids[1],
+                "task_role": "initial" if turn_index == 0 else "followup",
+                "goal": (
+                    f"Initial question for {package_id}"
+                    if turn_index == 0
+                    else f"Follow-up {turn_index} for {package_id}"
+                ),
+                "envoy_task_outcome": "completed",
+                "baseline_task_outcome": "completed",
+                "human_interventions": 0,
+                "baseline_human_interventions": 0,
+                "human_intervention_minutes": 0,
+                "baseline_human_intervention_minutes": 0,
+                "server_cost_status": "not_exposed",
+                "baseline_server_cost_status": "not_exposed",
+            })
+            tasks.append(task)
+    records.write_text(
+        "\n".join(json.dumps(item) for item in [run, *sources, *tasks]) + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["task_package_schema_version"] == "envoy.task-package/1"
+    assert report["package_count"] == 20
+    assert report["envoy_package_completion_rate"] == 1.0
+    assert report["baseline_package_completion_rate"] == 1.0
+    assert report["human_intervention_task_count"] == 0
+    assert report["envoy_server_reported_cost"] is None
+    assert report["paired_bootstrap"]["cluster_unit"] == "package_id"
+    assert report["paired_bootstrap"]["cluster_count"] == 20
+
+
+def test_task_package_completion_and_human_intervention_are_intention_to_treat(tmp_path):
+    records = tmp_path / "package-outcomes.jsonl"
+    _write_records(records, source_count=20, tasks_per_source=2)
+    lines = [json.loads(line) for line in records.read_text(encoding="utf-8").splitlines()]
+    run = lines[0]
+    run["task_package_schema_version"] = "envoy.task-package/1"
+    sources = [item for item in lines if item["record_type"] == "source"]
+    old_tasks = [item for item in lines if item["record_type"] == "task"]
+    new_sources = []
+    tasks = []
+    for package_index in range(20):
+        package_id = f"package-{package_index:02d}"
+        source_ids = [f"{package_id}-source-a", f"{package_id}-source-b"]
+        for source_index, source_id in enumerate(source_ids):
+            source = dict(sources[(package_index * 2 + source_index) % len(sources)])
+            source["source_id"] = source_id
+            source["url"] = f"https://{source_id}.public.net/item"
+            new_sources.append(source)
+        for turn_index in range(3):
+            task = dict(old_tasks[(package_index * 2 + turn_index) % len(old_tasks)])
+            task.update({
+                "task_id": f"{package_id}-turn-{turn_index}",
+                "package_id": package_id,
+                "source_ids": source_ids,
+                "source_id": source_ids[turn_index % 2],
+                "task_role": "initial" if turn_index == 0 else "followup",
+                "goal": f"Question {turn_index} for {package_id}",
+                "envoy_task_outcome": "completed",
+                "baseline_task_outcome": "completed",
+                "human_interventions": 0,
+                "baseline_human_interventions": 0,
+                "human_intervention_minutes": 0,
+                "baseline_human_intervention_minutes": 0,
+                "server_cost_status": "not_exposed",
+                "baseline_server_cost_status": "not_exposed",
+            })
+            tasks.append(task)
+    tasks[0]["envoy_task_outcome"] = "blocked"
+    tasks[0]["human_interventions"] = 1
+    tasks[0]["human_intervention_minutes"] = 4
+    tasks[0]["server_cost_status"] = "reported"
+    tasks[0]["server_reported_cost"] = 0.25
+    tasks[0]["baseline_server_cost_status"] = "reported"
+    tasks[0]["baseline_server_reported_cost"] = 0.2
+    records.write_text(
+        "\n".join(json.dumps(item) for item in [run, *new_sources, *tasks]) + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["envoy_package_completion_rate"] == 0.95
+    assert report["baseline_package_completion_rate"] == 1.0
+    assert report["human_intervention_task_count"] == 1
+    assert report["human_intervention_package_rate"] == 0.05
+    assert report["total_human_intervention_minutes"] == 4
+    assert report["envoy_server_reported_cost"] is None
+    assert report["server_cost_status"] == "partial"
+
+
+def test_task_package_schema_requires_three_turns_and_multiple_sources(tmp_path):
+    records = tmp_path / "package-invalid.jsonl"
+    _write_records(records, source_count=20, tasks_per_source=2)
+    lines = [json.loads(line) for line in records.read_text(encoding="utf-8").splitlines()]
+    lines[0]["task_package_schema_version"] = "envoy.task-package/1"
+    task_lines = [item for item in lines if item["record_type"] == "task"]
+    for task in task_lines:
+        task["package_id"] = "package-one"
+        task["source_id"] = "source-00"
+        task["source_ids"] = ["source-00"]
+        task.update({
+            "envoy_task_outcome": "completed",
+            "baseline_task_outcome": "completed",
+            "human_interventions": 0,
+            "baseline_human_interventions": 0,
+            "human_intervention_minutes": 0,
+            "baseline_human_intervention_minutes": 0,
+            "server_cost_status": "not_exposed",
+            "baseline_server_cost_status": "not_exposed",
+        })
+    records.write_text(
+        "\n".join(json.dumps(item) for item in lines) + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "package-one requires at least two distinct source_ids" in result.stdout
 
 
 def test_agent_product_eval_withholds_savings_when_cluster_interval_crosses_zero(tmp_path):

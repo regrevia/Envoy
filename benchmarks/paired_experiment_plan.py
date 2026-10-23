@@ -14,6 +14,15 @@ from typing import Any
 
 SCHEMA_VERSION = "envoy.paired-experiment-plan/1"
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]+")
+_SOURCE_CLASSES = {
+    "bilibili",
+    "douyin",
+    "xiaohongshu",
+    "wechat",
+    "cross_platform",
+    "robustness",
+    "qasper",
+}
 
 
 def _safe_component(value: str, field: str) -> str:
@@ -52,10 +61,18 @@ def _load_packages(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"Line {line_number}: each package needs at least two source_ids")
         if len(normalized_sources) != len(set(normalized_sources)):
             raise ValueError(f"Line {line_number}: duplicate source_id within package {package_id!r}")
+        source_class = item.get("source_class", "unclassified")
+        if source_class not in _SOURCE_CLASSES | {"unclassified"}:
+            raise ValueError("source_class must be one of the supported benchmark strata")
+        task_manifest_id = item.get("task_manifest_id", f"manifest-{package_id}")
+        if not isinstance(task_manifest_id, str) or not task_manifest_id.strip():
+            raise ValueError("task_manifest_id must be a non-empty string")
         seen_packages.add(package_id)
         packages.append({
             "package_id": package_id,
             "source_ids": normalized_sources,
+            "source_class": source_class,
+            "task_manifest_id": _safe_component(task_manifest_id, "task_manifest_id"),
         })
     if not packages:
         raise ValueError("packages input contains no packages")
@@ -80,6 +97,8 @@ def build_plan(packages: list[dict[str, Any]], seed: int) -> dict[str, Any]:
             "sequence": index,
             "package_id": package["package_id"],
             "source_ids": package["source_ids"],
+            "source_class": package["source_class"],
+            "task_manifest_id": package["task_manifest_id"],
             "first_arm": first_arm,
             "arms": [first_arm, "envoy" if first_arm == "baseline" else "baseline"],
             "profiles": profiles,

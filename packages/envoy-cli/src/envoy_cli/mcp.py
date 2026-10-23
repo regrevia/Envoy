@@ -170,8 +170,10 @@ TOOLS = [
             "An envoy_read needs_host response is a handoff, not a terminal state. "
             "For inspect_visual, inspect every "
             "listed resource, call envoy_observe_visual once per inspected resource "
-            "using its matching material_id, resource_id, source_block_id and source "
-            "URL, then answer from those observations plus text evidence. Report any "
+            "using its matching material_id, resource_id, source_block_id and original "
+            "session_id. source_url is optional when the material is retained; Envoy "
+            "derives and verifies it from the delivered resource. Then answer from "
+            "those observations plus text evidence. Report any "
             "uninspected resources; do not repeat envoy_read merely to clear the "
             "original status, and sparse frames never imply full-video coverage. "
             "Request frames only when needed with scope.include_visual=true and "
@@ -317,7 +319,8 @@ TOOLS = [
             "linked to the original resource. Submit exactly one observation "
             "per inspected resource, preserving its "
             "material_id, resource_id, "
-            "source_block_id, source_url, and original session_id."
+            "source_block_id, and original session_id. source_url is optional "
+            "when the retained material identifies the resource."
         ),
         "inputSchema": VisualObservationRequest.model_json_schema(),
     },
@@ -409,8 +412,10 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
                 "Envoy read needs_host is a handoff, not a terminal state: inspect "
                 "each listed resource before its lease expires, then call "
                 "envoy_observe_visual once per inspected resource with its matching "
-                "material_id, resource_id, source_block_id, source URL, and original "
-                "session_id. Continue answering from the returned observations and "
+                "material_id, resource_id, source_block_id, and original session_id. "
+                "source URL may be omitted when the material is retained because "
+                "Envoy derives it from the resource binding. Continue "
+                "answering from the returned observations and "
                 "ASR/chapter evidence; do not repeat envoy_read just to clear the "
                 "original needs_host status. Report uninspected frames and do not "
                 "imply full-video coverage."
@@ -627,7 +632,11 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
             }
         elif name == "envoy_observe_visual":
             request = VisualObservationRequest.model_validate(arguments)
-            source_url = _observation_source_url(request.source_url)
+            source_url = (
+                _observation_source_url(request.source_url)
+                if request.source_url
+                else None
+            )
             persistence = record_visual_observation(
                 request.material_id,
                 source_url,
@@ -646,7 +655,7 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                     else "invalid_request"
                 )
                 payload = {
-                    "protocol_version": "envoy.read/1",
+                    "protocol_version": "envoy.observe/1",
                     "request_id": request.request_id,
                     "session_id": request.session_id,
                     "material_id": request.material_id,
@@ -663,8 +672,9 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
                     "observation_persistence": persistence,
                 }
             else:
+                source_url = str(persistence["source_url"])
                 payload = {
-                    "protocol_version": "envoy.read/1",
+                    "protocol_version": "envoy.observe/1",
                     "request_id": request.request_id,
                     "session_id": request.session_id,
                     "material_id": request.material_id,
