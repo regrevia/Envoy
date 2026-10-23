@@ -63,7 +63,7 @@ jobs:
                   )
                   previous.append(tomllib.loads(content)["project"]["version"])
           if previous and previous[0] == current[0] and previous[1] == current[1]:
-          print(f"包版本未变化 {version} / Package version unchanged; no release tag needed.")
+              print(f"包版本未变化 {version} / Package version unchanged; no release tag needed.")
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                   output.write("release=false\n")
               raise SystemExit(0)
