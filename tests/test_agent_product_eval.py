@@ -124,6 +124,52 @@ def test_agent_product_eval_requires_real_scale_and_reports_actual_usage(tmp_pat
     assert report["followup_reuse_rate"] == 1.0
 
 
+def test_agent_product_eval_can_render_a_concise_markdown_comparison(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--markdown"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "| 指标 | Native baseline | Envoy | 变化 |" in result.stdout
+    assert "| 输入 token | 48,000 | 40,000 | 减少 16.67% |" in result.stdout
+    assert "| 事实召回 | 100.00% | 100.00% | +0.00 个百分点 |" in result.stdout
+    assert "| 视觉输入数 | 40 | 0 | -40 |" in result.stdout
+    assert "配对任务：40；来源：20；门槛：passed" in result.stdout
+
+
+def test_agent_product_eval_markdown_withholds_incomplete_savings(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    task = json.loads(lines[3])
+    task["usage_status"] = "unknown"
+    task["baseline_usage_status"] = "unknown"
+    lines[3] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--records",
+            str(records),
+            "--allow-incomplete",
+            "--markdown",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "| 输入 token | N/A | N/A | N/A |" in result.stdout
+    assert "门槛：incomplete" in result.stdout
+
+
 def test_agent_product_eval_withholds_savings_if_answer_quality_drops(tmp_path):
     records = tmp_path / "records.jsonl"
     _write_records(records, source_count=20, tasks_per_source=2)

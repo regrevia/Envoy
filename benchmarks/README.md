@@ -116,6 +116,12 @@ python3 benchmarks/agent_product_eval.py \
   --records /path/to/real-agent-eval.jsonl
 ```
 
+Add `--markdown` to render a concise paired comparison table for sharing.
+Efficiency change rates are shown only after the strict evaluation gate passes;
+quality percentages and count deltas remain visible when reviewed data is
+available. Incomplete usage is rendered as `N/A`, never inferred from Envoy's
+own token estimate.
+
 The command exits nonzero for incomplete or placeholder records. Use
 `--allow-incomplete` only while preparing a draft; draft output must not be
 used as a release or token-savings claim. See
