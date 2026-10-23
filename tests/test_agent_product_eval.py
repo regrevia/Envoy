@@ -170,6 +170,65 @@ def test_agent_product_eval_markdown_withholds_incomplete_savings(tmp_path):
     assert "门槛：incomplete" in result.stdout
 
 
+def test_agent_product_eval_reports_reproducible_source_clustered_intervals(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    first = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    second = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert first.returncode == 0, first.stderr
+    report = json.loads(first.stdout)
+    assert first.stdout == second.stdout
+    interval = report["paired_bootstrap"]["metrics"]["input_token_savings_fraction"]
+    assert report["paired_bootstrap"]["cluster_unit"] == "source_id"
+    assert report["paired_bootstrap"]["cluster_count"] == 20
+    assert interval["lower"] > 0
+    assert interval["upper"] > 0
+    assert report["input_token_savings_fraction"] == interval["estimate"]
+
+
+def test_agent_product_eval_withholds_savings_when_cluster_interval_crosses_zero(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    rewritten = [lines[0]]
+    for line in lines[1:]:
+        item = json.loads(line)
+        if item["record_type"] == "task":
+            source_index = int(item["source_id"].split("-")[1])
+            if source_index < 16:
+                item["input_tokens"] = 1100
+            else:
+                item["input_tokens"] = 1500
+        rewritten.append(json.dumps(item))
+    records.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    interval = report["paired_bootstrap"]["metrics"]["input_token_savings_fraction"]
+    assert interval["estimate"] > 0
+    assert interval["lower"] < 0
+    assert report["input_token_savings_fraction"] is None
+    assert report["quality_non_inferior"] is True
+
+
 def test_agent_product_eval_withholds_savings_if_answer_quality_drops(tmp_path):
     records = tmp_path / "records.jsonl"
     _write_records(records, source_count=20, tasks_per_source=2)

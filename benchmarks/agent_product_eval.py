@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+import hashlib
 import ipaddress
 import json
 import math
 from pathlib import Path
+import random
 import re
 import sys
 from datetime import datetime
@@ -580,6 +582,145 @@ def validate_records(
     return errors
 
 
+def _bootstrap_metric_values(tasks: list[dict]) -> dict[str, float | None]:
+    values: dict[str, float | None] = {}
+
+    def paired_mean_delta(envoy_field: str, baseline_field: str) -> float | None:
+        pairs = [(task.get(envoy_field), task.get(baseline_field)) for task in tasks]
+        if not pairs or any(not isinstance(a, bool) or not isinstance(b, bool) for a, b in pairs):
+            return None
+        return sum(int(a) - int(b) for a, b in pairs) / len(pairs)
+
+    for name, envoy_field, baseline_field in (
+        ("answer_accuracy_delta", "answer_correct", "baseline_answer_correct"),
+        ("citation_accuracy_delta", "citation_correct", "baseline_citation_correct"),
+    ):
+        delta = paired_mean_delta(envoy_field, baseline_field)
+        values[name] = delta * 100 if delta is not None else None
+
+    fact_pairs = [
+        (_arm_fact_metrics(task, "envoy"), _arm_fact_metrics(task, "baseline"))
+        for task in tasks
+    ]
+    for name, metric_index in (
+        ("fact_recall_delta", 0),
+        ("fact_precision_delta", 1),
+        ("citation_support_delta", 2),
+    ):
+        if fact_pairs and all(envoy is not None and baseline is not None for envoy, baseline in fact_pairs):
+            values[name] = (
+                sum(envoy[metric_index] - baseline[metric_index] for envoy, baseline in fact_pairs)
+                / len(fact_pairs)
+                * 100
+            )
+        else:
+            values[name] = None
+
+    if tasks and all(
+        task.get("usage_status") == "actual"
+        and task.get("baseline_usage_status") == "actual"
+        and isinstance(task.get("input_tokens"), int)
+        and not isinstance(task.get("input_tokens"), bool)
+        and isinstance(task.get("baseline_input_tokens"), int)
+        and not isinstance(task.get("baseline_input_tokens"), bool)
+        for task in tasks
+    ):
+        baseline_tokens = sum(task["baseline_input_tokens"] for task in tasks)
+        values["input_token_savings_fraction"] = (
+            (baseline_tokens - sum(task["input_tokens"] for task in tasks)) / baseline_tokens
+            if baseline_tokens > 0
+            else None
+        )
+    else:
+        values["input_token_savings_fraction"] = None
+
+    for name, envoy_field, baseline_field in (
+        ("first_evidence_reduction_fraction", "first_evidence_ms", "baseline_first_evidence_ms"),
+        ("total_elapsed_reduction_fraction", "total_elapsed_ms", "baseline_total_elapsed_ms"),
+    ):
+        envoy_median = _complete_median(tasks, envoy_field)
+        baseline_median = _complete_median(tasks, baseline_field)
+        values[name] = (
+            (baseline_median - envoy_median) / baseline_median
+            if envoy_median is not None and baseline_median is not None and baseline_median > 0
+            else None
+        )
+    return values
+
+
+def _percentile(sorted_values: list[float], probability: float) -> float:
+    position = (len(sorted_values) - 1) * probability
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return sorted_values[lower]
+    weight = position - lower
+    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+
+
+def _paired_cluster_bootstrap(
+    run: dict,
+    tasks: list[dict],
+    *,
+    repetitions: int = 2000,
+) -> dict[str, Any]:
+    clusters: dict[str, list[dict]] = defaultdict(list)
+    for task in tasks:
+        clusters[str(task.get("source_id") or "")].append(task)
+    cluster_ids = sorted(key for key in clusters if key)
+    observed = _bootstrap_metric_values(tasks)
+    output: dict[str, Any] = {}
+    if len(cluster_ids) < 2:
+        return {
+            "cluster_unit": "source_id",
+            "cluster_count": len(cluster_ids),
+            "replicates": repetitions,
+            "confidence_level": 0.95,
+            "metrics": {
+                name: None
+                for name in observed
+            },
+        }
+
+    seed_material = f"{run.get('run_id', '')}\0{run.get('envoy_commit', '')}".encode()
+    seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+    rng = random.Random(seed)
+    distributions: dict[str, list[float]] = {name: [] for name in observed}
+    for _ in range(repetitions):
+        selected = [
+            cluster_ids[rng.randrange(len(cluster_ids))]
+            for _ in cluster_ids
+        ]
+        sampled_tasks = [
+            task
+            for cluster_id in selected
+            for task in clusters[cluster_id]
+        ]
+        sample_values = _bootstrap_metric_values(sampled_tasks)
+        for name, value in sample_values.items():
+            if value is not None:
+                distributions[name].append(value)
+    for name, estimate in observed.items():
+        draws = sorted(distributions[name])
+        output[name] = (
+            {
+                "estimate": round(estimate, 6),
+                "lower": round(_percentile(draws, 0.025), 6),
+                "upper": round(_percentile(draws, 0.975), 6),
+                "valid_replicates": len(draws),
+            }
+            if estimate is not None and len(draws) == repetitions
+            else None
+        )
+    return {
+        "cluster_unit": "source_id",
+        "cluster_count": len(cluster_ids),
+        "replicates": repetitions,
+        "confidence_level": 0.95,
+        "metrics": output,
+    }
+
+
 def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
     usage_actual = [
         task for task in tasks
@@ -639,6 +780,8 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         )
     envoy_input_tokens = _complete_sum(usage_actual, "input_tokens")
     baseline_input_tokens = _complete_sum(usage_actual, "baseline_input_tokens")
+    paired_bootstrap = _paired_cluster_bootstrap(run, tasks)
+    token_savings_interval = paired_bootstrap["metrics"]["input_token_savings_fraction"]
     savings_eligible = (
         len(usage_actual) == len(tasks)
         and quality_non_inferior is True
@@ -671,6 +814,11 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "citation_support_rate": envoy_citation_support,
         "baseline_citation_support_rate": baseline_citation_support,
         "quality_non_inferior": quality_non_inferior,
+        "paired_bootstrap": paired_bootstrap,
+        "input_token_savings_ci_support": bool(
+            token_savings_interval is not None
+            and token_savings_interval["lower"] > 0
+        ),
         "median_first_evidence_ms": _complete_median(tasks, "first_evidence_ms"),
         "baseline_median_first_evidence_ms": _complete_median(tasks, "baseline_first_evidence_ms"),
         "median_total_elapsed_ms": _complete_median(tasks, "total_elapsed_ms"),
@@ -802,6 +950,15 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"门槛：{report.get('gate_status', 'incomplete')}"
         ),
         (
+            "输入 token 节省 95% CI："
+            + (
+                f"[{report['paired_bootstrap']['metrics']['input_token_savings_fraction']['lower'] * 100:.2f}%, "
+                f"{report['paired_bootstrap']['metrics']['input_token_savings_fraction']['upper'] * 100:.2f}%]"
+                if report.get("paired_bootstrap", {}).get("metrics", {}).get("input_token_savings_fraction")
+                else "N/A"
+            )
+        ),
+        (
             "实际 paired usage："
             f"{report.get('actual_usage_task_count', 0)}/{report.get('task_count', 0)}；"
             f"质量非劣：{report.get('quality_non_inferior')}"
@@ -834,6 +991,7 @@ def main(argv: list[str] | None = None) -> int:
             and len(tasks) >= MIN_TASKS
             and report["actual_usage_status"] == "paired_actual"
             and report["quality_non_inferior"]
+            and report["input_token_savings_ci_support"]
             and run.get("quality_review_method") in {"dual_human", "reference_rubric"}
         )
         report["gate_status"] = "passed" if release_eval_ready else "incomplete"
