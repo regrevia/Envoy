@@ -20,11 +20,20 @@ currently connected Envoy MCP and one follow-up search:
   material. The answer therefore reuses the original returned evidence and
   locator; no second download occurred.
 - Under the pilot's manually reviewed three-fact rubric, Envoy returned all
-  three facts with supporting locators (observed pilot fact recall, precision,
-  and citation support: 1.0). This is one source and two questions, not a
-  quality estimate for Envoy generally; there is no comparison arm.
+  three facts with supporting locators (observed Envoy-arm fact recall,
+  precision, and citation support: 1.0). These are descriptive results for
+  one source and two questions, not a comparative quality estimate.
 - The MCP host did not expose provider/model, actual usage, wall-clock request
   timing, host agent version, or Python version. Those fields remain `null`.
-  There is no baseline arm. Accordingly paired quality, fact metrics, timings,
-  usage, and token-savings fields remain null; the pilot is not comparative
-  evidence and cannot support a savings claim.
+  There is no baseline arm. Baseline metrics, paired quality, timings, usage,
+  and token-savings fields remain `null`; the pilot is not comparative evidence
+  and cannot support a savings claim.
+
+The machine-generated, explicitly incomplete summary is
+`2026-10-23-mdn-404-codex-release-0.1.6.report.json`. Recreate it with:
+
+```bash
+python3 benchmarks/agent_product_eval.py \
+  --records benchmarks/pilots/2026-10-23-mdn-404-codex-release-0.1.6.jsonl \
+  --allow-incomplete
+```
