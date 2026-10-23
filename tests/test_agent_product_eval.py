@@ -408,6 +408,31 @@ def test_incomplete_draft_serializes_unmeasured_metrics_as_null(tmp_path):
     assert report["input_token_savings_fraction"] is None
 
 
+def test_mixed_reviewed_and_unknown_tasks_keep_quality_and_savings_unscored(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=20, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    task = json.loads(lines[3])
+    task["answer_correct"] = None
+    task["citation_correct"] = None
+    task["baseline_answer_correct"] = None
+    task["baseline_citation_correct"] = None
+    lines[3] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert report["validation_status"] == "passed"
+    assert report["answer_reviewed_task_count"] < report["task_count"]
+    assert report["quality_non_inferior"] is None
+    assert report["input_token_savings_fraction"] is None
+
+
 def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
     records = ROOT / "benchmarks" / "pilots" / "2026-10-23-mdn-404-codex-release-0.1.6.jsonl"
     result = subprocess.run(
