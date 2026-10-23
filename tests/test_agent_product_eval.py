@@ -229,6 +229,37 @@ def test_agent_product_eval_withholds_savings_when_cluster_interval_crosses_zero
     assert report["quality_non_inferior"] is True
 
 
+def test_agent_product_eval_reports_source_class_strata(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    rewritten = [lines[0]]
+    for line in lines[1:]:
+        item = json.loads(line)
+        if item["record_type"] == "source":
+            source_index = int(item["source_id"].split("-")[1])
+            item["source_class"] = "douyin_video" if source_index < 10 else "bilibili_video"
+        rewritten.append(json.dumps(item))
+    records.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert set(report["stratified_bootstrap"]) == {"bilibili_video", "douyin_video"}
+    assert report["stratified_bootstrap"]["douyin_video"]["cluster_count"] == 10
+    assert (
+        report["stratified_bootstrap"]["douyin_video"]["metrics"]
+        ["input_token_savings_fraction"]["estimate"]
+        == report["paired_bootstrap"]["metrics"]["input_token_savings_fraction"]["estimate"]
+    )
+
+
 def test_agent_product_eval_withholds_savings_if_answer_quality_drops(tmp_path):
     records = tmp_path / "records.jsonl"
     _write_records(records, source_count=20, tasks_per_source=2)
