@@ -716,10 +716,107 @@ def _median(values) -> float | None:
     return round((values[midpoint - 1] + values[midpoint]) / 2, 3)
 
 
+def _markdown_number(value: Any, *, percent: bool = False) -> str:
+    if value is None:
+        return "N/A"
+    if percent:
+        return f"{float(value) * 100:.2f}%"
+    if isinstance(value, float) and not value.is_integer():
+        return f"{value:,.2f}"
+    return f"{int(value):,}"
+
+
+def _markdown_reduction(baseline: Any, envoy: Any) -> str:
+    if (
+        not isinstance(baseline, (int, float))
+        or isinstance(baseline, bool)
+        or baseline <= 0
+        or not isinstance(envoy, (int, float))
+        or isinstance(envoy, bool)
+    ):
+        return "N/A"
+    delta = (baseline - envoy) / baseline * 100
+    return f"减少 {delta:.2f}%" if delta >= 0 else f"增加 {abs(delta):.2f}%"
+
+
+def _markdown_pp_change(baseline: Any, envoy: Any) -> str:
+    if not isinstance(baseline, (int, float)) or not isinstance(envoy, (int, float)):
+        return "N/A"
+    delta = (envoy - baseline) * 100
+    return f"{delta:+.2f} 个百分点"
+
+
+def _markdown_count_change(baseline: Any, envoy: Any) -> str:
+    if (
+        not isinstance(baseline, (int, float))
+        or isinstance(baseline, bool)
+        or not isinstance(envoy, (int, float))
+        or isinstance(envoy, bool)
+    ):
+        return "N/A"
+    delta = int(envoy) - int(baseline)
+    return f"{delta:+,}"
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    strict_gate = report.get("gate_status") == "passed"
+    rows = [
+        ("答案正确率", "baseline_answer_accuracy", "answer_accuracy", "quality"),
+        ("事实召回", "baseline_fact_recall", "fact_recall", "quality"),
+        ("引用支持率", "baseline_citation_support_rate", "citation_support_rate", "quality"),
+        ("输入 token", "baseline_actual_input_tokens", "envoy_actual_input_tokens", "efficiency"),
+        ("输出 token", "baseline_actual_output_tokens", "envoy_actual_output_tokens", "efficiency"),
+        ("首次证据耗时中位数", "baseline_median_first_evidence_ms", "median_first_evidence_ms", "efficiency"),
+        ("总耗时中位数", "baseline_median_total_elapsed_ms", "median_total_elapsed_ms", "efficiency"),
+        ("视觉输入数", "total_baseline_visual_inputs", "total_visual_inputs", "count"),
+        ("重复下载数", "total_baseline_repeated_downloads", "total_repeated_downloads", "count"),
+    ]
+    lines = [
+        "| 指标 | Native baseline | Envoy | 变化 |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for label, baseline_key, envoy_key, kind in rows:
+        baseline = report.get(baseline_key)
+        envoy = report.get(envoy_key)
+        if kind == "quality":
+            change = _markdown_pp_change(baseline, envoy)
+            lines.append(
+                f"| {label} | {_markdown_number(baseline, percent=True)} "
+                f"| {_markdown_number(envoy, percent=True)} | {change} |"
+            )
+        elif kind == "count":
+            lines.append(
+                f"| {label} | {_markdown_number(baseline)} "
+                f"| {_markdown_number(envoy)} | {_markdown_count_change(baseline, envoy)} |"
+            )
+        else:
+            change = _markdown_reduction(baseline, envoy) if strict_gate else "N/A"
+            lines.append(
+                f"| {label} | {_markdown_number(baseline)} "
+                f"| {_markdown_number(envoy)} | {change} |"
+            )
+    lines.extend([
+        "",
+        (
+            f"配对任务：{report.get('task_count', 0)}；来源：{report.get('source_count', 0)}；"
+            f"门槛：{report.get('gate_status', 'incomplete')}"
+        ),
+        (
+            "实际 paired usage："
+            f"{report.get('actual_usage_task_count', 0)}/{report.get('task_count', 0)}；"
+            f"质量非劣：{report.get('quality_non_inferior')}"
+        ),
+    ])
+    if not strict_gate:
+        lines.append("当前数据未通过正式评测门槛，效率变化率不作结论。")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", type=Path, required=True)
     parser.add_argument("--allow-incomplete", action="store_true")
+    parser.add_argument("--markdown", action="store_true", help="render a concise comparison table")
     args = parser.parse_args(argv)
     try:
         run, sources, tasks = _load_records(args.records)
@@ -757,7 +854,10 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "validation_status": "failed", "validation_errors": [str(exc)]}, ensure_ascii=False), file=sys.stderr)
         return 2
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.markdown:
+        print(render_markdown(report), end="")
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if not errors else 2
 
 
