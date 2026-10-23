@@ -121,6 +121,7 @@ def test_agent_product_eval_requires_real_scale_and_reports_actual_usage(tmp_pat
     assert report["fact_recall"] == 1.0
     assert report["baseline_fact_recall"] == 1.0
     assert report["citation_support_rate"] == 1.0
+    assert report["followup_reuse_rate"] == 1.0
 
 
 def test_agent_product_eval_withholds_savings_if_answer_quality_drops(tmp_path):
