@@ -1,0 +1,95 @@
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "benchmarks" / "paired_experiment_plan.py"
+
+
+def _run(tmp_path, records, *args):
+    input_path = tmp_path / "packages.jsonl"
+    input_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n",
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--packages",
+            str(input_path),
+            "--seed",
+            "20261023",
+            *args,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=os.environ.copy(),
+    )
+
+
+def test_plan_is_deterministic_balanced_and_profile_isolated(tmp_path):
+    records = [
+        {"package_id": f"pkg-{index}", "source_ids": [f"src-{index}", f"src-{index}-b"]}
+        for index in range(6)
+    ]
+
+    first = _run(tmp_path, records)
+    second = _run(tmp_path, records)
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert first.stdout == second.stdout
+
+    plan = json.loads(first.stdout)
+    assert plan["schema_version"] == "envoy.paired-experiment-plan/1"
+    assert plan["seed"] == 20261023
+    assert plan["package_count"] == 6
+    assert plan["a_first_count"] == 3
+    assert plan["b_first_count"] == 3
+    assert all(item["arms"][0] == item["first_arm"] for item in plan["packages"])
+    assert all(set(item["arms"]) == {"baseline", "envoy"} for item in plan["packages"])
+    assert all(
+        item["first_arm"] in {"baseline", "envoy"}
+        and item["profiles"]["baseline"] != item["profiles"]["envoy"]
+        for item in plan["packages"]
+    )
+
+
+def test_plan_rejects_duplicate_package_ids_and_duplicate_sources_within_package(tmp_path):
+    duplicate_package = _run(tmp_path, [
+        {"package_id": "same", "source_ids": ["src-a", "src-b"]},
+        {"package_id": "same", "source_ids": ["src-c", "src-d"]},
+    ])
+    assert duplicate_package.returncode == 2
+    assert "duplicate package_id" in duplicate_package.stderr.lower()
+
+    duplicate_source = _run(tmp_path, [
+        {"package_id": "pkg-a", "source_ids": ["src-a", "src-a"]},
+    ])
+    assert duplicate_source.returncode == 2
+    assert "duplicate source_id within package" in duplicate_source.stderr.lower()
+
+
+def test_source_may_be_reused_across_task_packages(tmp_path):
+    result = _run(tmp_path, [
+        {"package_id": "pkg-a", "source_ids": ["src-shared", "src-a"]},
+        {"package_id": "pkg-b", "source_ids": ["src-shared", "src-b"]},
+    ])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["package_count"] == 2
+
+
+def test_plan_requires_two_sources_per_package(tmp_path):
+    result = _run(tmp_path, [
+        {"package_id": "pkg-a", "source_ids": ["src-a"]},
+    ])
+
+    assert result.returncode == 2
+    assert "at least two source_ids" in result.stderr

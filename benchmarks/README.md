@@ -83,6 +83,23 @@ It defines the four priority Chinese platforms, baseline tool inventory,
 randomized per-package A/B order, isolated CLI profiles, authoritative
 inference-server token accounting, and the cache-confounded reporting rule.
 
+Generate an auditable per-package order before launching the host agent:
+
+```bash
+python3 benchmarks/paired_experiment_plan.py \
+  --packages /path/to/packages.jsonl \
+  --seed 20261023 \
+  --output /path/to/plan.json
+```
+
+Each package must contain at least two source IDs. The generated `arms` list
+is the actual order to run, and the two profile paths are intentionally
+different. The planner does not launch Claude Code or alter credentials; the
+server-side runner must create the profiles, tag model requests with the
+package/arm/session IDs, and record whether inference-server cache reuse was
+disabled or isolated. If that cannot be verified, report the batch as
+cache-confounded.
+
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, and the provider/model used for both arms.
 Each source records when it was revalidated and the SHA-256 source revision
