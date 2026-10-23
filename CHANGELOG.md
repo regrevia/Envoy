@@ -1,27 +1,46 @@
-# Changelog
+# 更新日志 / Changelog
 
 ## 0.1.6 - 2026-10-22
 
-- Adopt Apache-2.0 for original code and documentation; include LICENSE and
-  NOTICE in the repository, Skill, and Python distributions.
-- Retry recoverable blocked reads with the same operation key after network,
-  dependency, login, or verification recovery. Migrate old cached failures;
-  preserve completed evidence and visual handoffs without repeating costly work.
-- Add experimental Xiaohongshu image-note/share routing with source-bound album
-  extraction, ordering, and explicit unknown-total coverage.
-- Expand common platform URL routing and headless fallback. Routing support
-  does not imply real-world platform acceptance or bypass site restrictions.
-- Return structured HTTP 404 diagnostics without assuming deletion or blocking.
-  Only configured/user-approved trusted proxies may be used.
-- Put Agent installation first, clarify separate Skill/runtime/MCP steps, and
+### 中文
+
+- 原创代码与文档采用 Apache-2.0；发行包包含 `LICENSE` 和 `NOTICE`。
+- 网络、依赖、登录或验证恢复后，允许使用同一 operation key 重试可恢复的读取；已完成材料与视觉交接可复用。
+- 增加实验性小红书图文/分享链接路由，保留图集来源、顺序，并明确未知总量。
+- 扩展常见平台 URL 路由与 headless 回退；路由可识别不代表平台已真实验收，也不代表绕过站点限制。
+- 结构化报告 HTTP 404，不将其直接推断为删除或封锁；仅使用用户配置或明确认可的可信代理。
+- 将 Agent 安装入口前置，说明 Skill、runtime、MCP 的分步配置，并增加注意脱敏的反馈表单。
+
+**已知边界**
+
+- Whisper 与 FFmpeg 为可选依赖；缺少 ASR 或只有稀疏帧时，不能视为完整视频证据。本版未新增平台真实验收声明。
+- 抖音主页发现为实验能力：规范作者主页、最多保存 100 个候选、快照内分页；不支持日期范围检索，批量预算由宿主记账。
+- 独立 runtime 暂不支持扫描版 PDF OCR。
+- v1.0 前仍需重复验证全新安装和真实链接、ASR 恢复流程，并完成宿主实际用量对比。
+
+### English
+
+- Adopt Apache-2.0 for original code and documentation; include `LICENSE` and
+  `NOTICE` in distributions.
+- Retry recoverable reads with the same operation key after network,
+  dependency, login, or verification recovery; reuse completed materials and
+  visual handoffs.
+- Add experimental Xiaohongshu image-note/share routing with source-bound
+  ordering and explicit unknown-total coverage.
+- Expand common platform URL routing and headless fallback. URL routing does
+  not imply real-world acceptance or bypass site restrictions.
+- Return structured HTTP 404 diagnostics without assuming deletion or
+  blocking. Use only configured or explicitly approved trusted proxies.
+- Put Agent installation first, clarify separate Skill/runtime/MCP setup, and
   add redaction-aware feedback forms.
 
-### Known Boundaries
+**Known boundaries**
 
-- Whisper and FFmpeg are optional; absent ASR or sparse frames are not full
-  video evidence. No new real-platform acceptance is claimed by this release.
-- Douyin discovery is experimental: canonical author URLs, at most 100 saved
-  candidates, snapshot cursors, no date-range query, host-accounted batch budget.
-- Scan-only PDF OCR is not available in the standalone runtime.
-- v1.0 readiness requires repeatable fresh-install and real-link acceptance,
-  optional ASR recovery validation, and measured host usage comparisons.
+- Whisper and FFmpeg are optional. Missing ASR or sparse frames are not full
+  video evidence. This release adds no new real-platform acceptance claims.
+- Douyin discovery is experimental: canonical author URLs, up to 100 saved
+  candidates, snapshot pagination, no date-range query, and host-accounted
+  batch budgets.
+- Scan-only PDF OCR is unavailable in the standalone runtime.
+- v1.0 readiness still requires repeatable fresh-install and real-link
+  acceptance, ASR recovery validation, and measured host-usage comparisons.

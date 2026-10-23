@@ -1,30 +1,30 @@
-name: Link Reading Failure or Missing Evidence
-description: Report unreadable sources or incomplete material
+name: 链接读取失败或材料缺失 / Reading failure or missing evidence
+description: 报告无法读取的来源或不完整材料 / Report an unreadable source or incomplete material
 body:
   - type: markdown
     attributes:
-      value: "Share only public URLs without tokens/signatures. Never attach credentials, cookies, profiles, or private media."
+      value: "仅分享公开且不含 token/签名参数的链接。请勿提交凭据、Cookie、浏览器配置或私有媒体。 / Share only public URLs without tokens or signatures. Never include credentials, cookies, browser profiles, or private media."
   - type: input
     id: environment
     attributes:
-      label: Envoy version, host agent, OS
+      label: Envoy 版本、宿主 Agent 和系统 / Envoy version, host agent, and OS
     validations:
       required: true
   - type: input
     id: stage
     attributes:
-      label: Stage, result state, error code
+      label: 阶段、结果状态和错误码 / Stage, result state, and error code
     validations:
       required: true
   - type: textarea
     id: behavior
     attributes:
-      label: Public source, steps, expected result, actual evidence
-      description: Describe the source without a URL if the URL contains sensitive parameters.
+      label: 公开来源、操作步骤、预期结果和实际材料 / Public source, steps, expected result, and actual material
+      description: 若链接含敏感参数，请描述来源而不要粘贴链接。 / If the URL contains sensitive parameters, describe the source without posting it.
     validations:
       required: true
   - type: textarea
     id: diagnostics
     attributes:
-      label: Redacted diagnostics and browser accessibility
-      description: Can you open it normally? Is a configured trusted proxy used? Do not disclose proxy credentials.
+      label: 脱敏诊断与正常浏览器访问情况 / Redacted diagnostics and normal browser access
+      description: 你能否正常打开？是否配置了可信代理？请勿披露代理凭据。 / Can you open it normally? Is a trusted proxy configured? Do not disclose proxy credentials.

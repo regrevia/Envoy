@@ -1,4 +1,59 @@
-# Install Envoy
+# 安装 Envoy
+
+Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.6`。
+
+## 1. 安装 Skill
+
+```bash
+npx skills add regrevia/Envoy --skill envoy --global --yes
+```
+
+## 2. 安装本地 runtime
+
+从 GitHub Release 下载与版本匹配的 wheel 和校验文件。以下以 `v0.1.6` 为例：
+
+```bash
+gh release download v0.1.6 --repo regrevia/Envoy --dir envoy-v0.1.6
+cd envoy-v0.1.6
+# macOS/Linux
+shasum -a 256 -c SHA256SUMS
+# Windows PowerShell: 使用 Get-FileHash 对照 SHA256SUMS
+uv tool install --python 3.11 ./envoy_cli-0.1.6-py3-none-any.whl
+envoy browser setup
+envoy doctor --json
+```
+
+需要预先安装 GitHub CLI 和 `uv`。没有 `gh` 时，可从
+[GitHub Releases](https://github.com/regrevia/Envoy/releases/tag/v0.1.6)
+下载相同文件并核对 `SHA256SUMS`。Python 3.10+ 可用，推荐 Python 3.11。
+只安装 Skill 不包含 runtime，也不会自动修改宿主配置。
+
+## 3. 连接 MCP
+
+将 `hosts/mcp.json` 中的配置合并到所用 Agent 的 MCP 设置。命令为 `envoy`，参数为 `mcp`。重启或重载 Agent 后，确认其能发现 `envoy_read` 和 `envoy_doctor`。
+
+若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后检查 `envoy_doctor` 报告的版本；旧 MCP 进程可能仍在运行。
+
+## 4. 验证首次读取
+
+```bash
+printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","source":{"url":"https://example.org/"}}' | envoy read --request-json -
+```
+
+此检查只验证公开网页/网络读取，不代表视频或 ASR 已就绪。按需启用 ASR、FFmpeg 或 OCR：
+
+```bash
+envoy asr install --model base
+envoy doctor --json --verify-asr
+```
+
+浏览器默认 headless。只有页面需要正常登录或用户验证时，才会打开隔离浏览器请用户接管。Envoy 不读取个人浏览器 Cookie，也不绕过 CAPTCHA、登录或反爬限制。仅使用用户配置或明确认可的可信代理，不搜索或使用公共代理。
+
+更新时从 Release 获取新 wheel，再运行 `uv tool install --force <wheel-path>`。Whisper/ASR 是可选依赖，更新时需按指南保留已配置的 ASR engine。
+
+Envoy 负责提取有来源定位的证据；宿主模型负责筛选、理解和最终交付。稀疏视频帧或缺少 ASR 时，结果会明确标为不完整。小红书图文与抖音主页发现仍属实验能力，具体边界见[验收矩阵](../../docs/acceptance/platform-coverage-matrix-2026-10-21.md)。
+
+## English
 
 Envoy has two install parts: the Skill instructions and the local MCP runtime.
 The runtime keeps link fetching and material processing on the user's machine.

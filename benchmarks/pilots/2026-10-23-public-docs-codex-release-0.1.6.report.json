@@ -45,7 +45,7 @@
   "baseline_median_total_elapsed_ms": null,
   "total_envoy_tool_calls": 18,
   "total_baseline_tool_calls": null,
-  "total_visual_inputs": 0,
+  "total_visual_inputs": null,
   "total_baseline_visual_inputs": null,
   "total_repeated_downloads": 0,
   "total_baseline_repeated_downloads": null,

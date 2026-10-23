@@ -1,30 +1,30 @@
-name: Installation or Update Failure
-description: Report a Skill, runtime, browser, or MCP installation problem
+name: 安装或更新失败 / Installation or update failure
+description: 报告 Skill、runtime、浏览器或 MCP 安装问题 / Report a Skill, runtime, browser, or MCP installation issue
 body:
   - type: markdown
     attributes:
-      value: "Never include credentials, cookies, signed URLs, browser profiles, or private files."
+      value: "请勿提交密码、Cookie、签名链接、浏览器配置或私有文件。 / Never include passwords, cookies, signed URLs, browser profiles, or private files."
   - type: input
     id: environment
     attributes:
-      label: Envoy version, host agent, OS, Python version
+      label: Envoy 版本、宿主 Agent、系统和 Python 版本 / Envoy version, host agent, OS, and Python version
     validations:
       required: true
   - type: input
     id: stage
     attributes:
-      label: Failure stage and error code
-      description: Skill, wheel, browser, MCP, ASR, or update
+      label: 失败阶段与错误码 / Failure stage and error code
+      description: Skill、wheel、浏览器、MCP、ASR 或更新。 / Skill, wheel, browser, MCP, ASR, or update.
     validations:
       required: true
   - type: textarea
     id: behavior
     attributes:
-      label: Steps, expected result, actual result
+      label: 操作步骤、预期结果和实际结果 / Steps, expected result, and actual result
     validations:
       required: true
   - type: textarea
     id: diagnostics
     attributes:
-      label: Redacted diagnostics
-      description: Review doctor output and logs before attaching them.
+      label: 脱敏后的诊断信息 / Redacted diagnostics
+      description: 附加前请检查 doctor 输出与日志并移除敏感信息。 / Review doctor output and logs and remove sensitive data before attaching.
