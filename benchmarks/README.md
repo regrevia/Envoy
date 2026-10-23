@@ -120,7 +120,9 @@ Add `--markdown` to render a concise paired comparison table for sharing.
 Efficiency change rates are shown only after the strict evaluation gate passes;
 quality percentages and count deltas remain visible when reviewed data is
 available. Incomplete usage is rendered as `N/A`, never inferred from Envoy's
-own token estimate.
+own token estimate. The JSON and Markdown reports also include a deterministic
+source-clustered paired bootstrap 95% interval; a token-saving claim is
+withheld when that interval crosses zero.
 
 The command exits nonzero for incomplete or placeholder records. Use
 `--allow-incomplete` only while preparing a draft; draft output must not be
