@@ -618,6 +618,8 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys)
     read_schema = next(tool for tool in first["result"]["tools"] if tool["name"] == "envoy_read")["inputSchema"]
     assert len(json.dumps(read_schema)) < 2700
     assert "idempotency_key" in read_schema["properties"]
+    assert "ocr_language" in read_schema["properties"]
+    assert read_schema["properties"]["ocr_language"]["pattern"] == "^[A-Za-z0-9_-]+$"
     assert "max_response_chars" in read_schema["properties"]["budget"]["properties"]
     assert "max_total_response_tokens" in read_schema["properties"]["budget"]["properties"]
     assert "max_total_response_chars" in read_schema["properties"]["budget"]["properties"]

@@ -3313,6 +3313,10 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
     )
 
 
+def _requested_ocr_language(request: ReadRequest) -> str:
+    return request.ocr_language or os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
+
+
 def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
     can_handoff_image = request.host_capabilities.image_input == ImageInputCapability.URI
     if not can_handoff_image and not request.ocr_profile:
@@ -3338,7 +3342,7 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
     returned_chars = 0
     returned_tokens = 0
     ocr_result = {}
-    ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
+    ocr_language = _requested_ocr_language(request)
     if request.ocr_profile:
         try:
             image_path, image_sha256 = _download_image_for_ocr(
@@ -4268,7 +4272,7 @@ def _attach_video_frames(
             ocr_blocks = []
             ocr_unresolved = []
             zero_confidence_regions = 0
-            ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
+            ocr_language = _requested_ocr_language(request)
             frame_pixels = 0
             for index, frame in enumerate(extracted_frames[:len(timestamps)], start=1):
                 source_frame = Path(frame["path"]).resolve()
@@ -5264,7 +5268,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         ocr_unresolved = []
         zero_confidence_regions = 0
         ocr_profile = request.ocr_profile
-        ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
+        ocr_language = _requested_ocr_language(request)
         for item in safe_images:
             image = item["image"]
             image_url = item["image_url"]

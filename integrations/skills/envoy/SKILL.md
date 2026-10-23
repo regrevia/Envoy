@@ -141,6 +141,11 @@ interpretation. Use the source image and `envoy_observe_visual` for layout,
 charts, ambiguous text, or low-confidence regions. If no OCR backend is
 available, report the `missing_capability`/partial gap and do not invent text.
 
+Set `ocr_language` per read request when the source language is known, such as
+`chi_sim`, `chi_tra`, `eng`, `japan`, or `korean`. This request value
+overrides the runtime `ENVOY_OCR_LANG` default for that read only. When it is
+omitted, the runtime default remains in effect.
+
 ## Interpret the response
 
 - `ready`: use the returned blocks and resources for the user's task.
