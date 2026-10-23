@@ -529,16 +529,21 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
         else ""
     )
     model_verified: bool | None = None
-    registry_digest = _model_expected_sha256(model_name) if model_file_present else None
-    trusted_digests = {
-        digest for digest in (configured_digest, registry_digest) if digest
-    }
     checkpoint_digest = None
-    if model_file_present and trusted_digests:
+    if model_file_present and configured_digest:
         checkpoint_digest = _sha256_file(
             asr_model_cache_dir() / f"{model_name}.pt"
         )
-        model_verified = checkpoint_digest in trusted_digests
+        model_verified = checkpoint_digest == configured_digest
+        if not model_verified and asr_installed:
+            model_verified = checkpoint_digest == _model_expected_sha256(model_name)
+    elif model_file_present and verify_asr and asr_installed:
+        registry_digest = _model_expected_sha256(model_name)
+        if registry_digest:
+            checkpoint_digest = _sha256_file(
+                asr_model_cache_dir() / f"{model_name}.pt"
+            )
+            model_verified = checkpoint_digest == registry_digest
     model_available = asr_installed and model_file_present and model_verified is True
     operational = "not_checked"
     if verify_asr and not asr_installed:
