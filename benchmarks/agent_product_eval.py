@@ -110,8 +110,18 @@ def _load_records(path: Path) -> tuple[dict, list[dict], list[dict]]:
     return runs[0], sources, tasks
 
 
-def _require_non_negative(item: dict, field: str, record_id: str) -> None:
+def _require_non_negative(
+    item: dict,
+    field: str,
+    record_id: str,
+    *,
+    allow_unknown: bool = False,
+) -> None:
     value = item.get(field)
+    if value is None:
+        if not allow_unknown:
+            raise ValueError(f"{record_id}: {field} is required for a strict evaluation")
+        return
     if not isinstance(value, (int, float)) or value < 0:
         raise ValueError(f"{record_id}: {field} must be a non-negative number")
 
@@ -149,18 +159,27 @@ def _valid_id_list(value) -> bool:
     )
 
 
-def _arm_fact_metrics(task: dict, arm: str) -> tuple[float, float, float]:
+def _arm_fact_metrics(task: dict, arm: str) -> tuple[float, float, float] | None:
     facts = task.get("reference_facts")
     gold = set(facts) if isinstance(facts, dict) else set()
     raw_claimed = task.get(f"{arm}_claimed_fact_ids")
     raw_supported = task.get(f"{arm}_supported_fact_ids")
+    raw_citations = task.get(f"{arm}_citations")
+    if (
+        not gold
+        or not _valid_id_list(raw_claimed)
+        or not _valid_id_list(raw_supported)
+        or not isinstance(raw_citations, list)
+        or task.get("answer_correct") is None
+        or task.get("citation_correct") is None
+    ):
+        return None
     claimed = set(raw_claimed) if isinstance(raw_claimed, list) else set()
     supported = set(raw_supported) if isinstance(raw_supported, list) else set()
     true_claims = len(claimed & supported & gold)
     recall = true_claims / len(gold) if gold else 0.0
     precision = true_claims / len(claimed) if claimed else 0.0
-    citations = task.get(f"{arm}_citations")
-    citations = citations if isinstance(citations, list) else []
+    citations = raw_citations
     citation_rate = (
         sum(
             bool(item.get("supports_fact"))
@@ -177,39 +196,77 @@ def _mean(values) -> float | None:
     return round(sum(values) / len(values), 6) if values else None
 
 
+def _reviewed_accuracy(items: list[dict], field: str) -> float | None:
+    values = [item.get(field) for item in items]
+    if not values or any(not isinstance(value, bool) for value in values):
+        return None
+    return sum(values) / len(values)
+
+
+def _reviewed_count(items: list[dict], field: str) -> int:
+    return sum(isinstance(item.get(field), bool) for item in items)
+
+
+def _complete_sum(items: list[dict], field: str) -> int | float | None:
+    values = [item.get(field) for item in items]
+    if not values or any(not isinstance(value, (int, float)) or value < 0 for value in values):
+        return None
+    return sum(values)
+
+
+def _complete_median(items: list[dict], field: str) -> float | None:
+    values = [item.get(field) for item in items]
+    if not values or any(not isinstance(value, (int, float)) or value < 0 for value in values):
+        return None
+    return _median(values)
+
+
 def validate_records(
     run: dict,
     sources: list[dict],
     tasks: list[dict],
     *,
     require_minimum: bool = True,
+    allow_unknown_usage: bool = False,
 ) -> list[str]:
     errors: list[str] = []
     missing_run = REQUIRED_RUN_FIELDS - run.keys()
-    if missing_run:
+    if missing_run and not allow_unknown_usage:
         errors.append(f"run: missing fields {sorted(missing_run)}")
     for field in ("envoy_version", "envoy_commit", "host_agent", "host_agent_version", "operating_system", "python_version"):
         value = str(run.get(field) or "").strip().lower()
-        if not value or value.startswith("replace-with") or value in {"unknown", "draft"}:
+        if not value or value.startswith("replace-with") or value in {"unknown", "draft", "not exposed"}:
+            if allow_unknown_usage:
+                continue
             errors.append(f"run: {field} must identify the actual evaluation runtime")
-    if not re.fullmatch(r"[0-9a-f]{7,40}", str(run.get("envoy_commit") or "").lower()):
+    if (
+        run.get("envoy_commit")
+        and str(run.get("envoy_commit")).lower() not in {"unknown", "not exposed"}
+        and not re.fullmatch(r"[0-9a-f]{7,40}", str(run.get("envoy_commit") or "").lower())
+    ):
         errors.append("run: envoy_commit must be a Git commit hash")
-    if run.get("quality_review_method") not in {"dual_human", "single_human", "reference_rubric"}:
+    if run.get("quality_review_method") not in {"dual_human", "single_human", "reference_rubric"} and not allow_unknown_usage:
         errors.append("run: quality_review_method must identify how answers and citations were reviewed")
+    if not allow_unknown_usage and any(
+        str(run.get(field) or "").strip().lower() in {"", "unknown", "replace-with-provider", "replace-with-model"}
+        for field in ("provider", "model")
+    ):
+        errors.append("run: strict evaluation requires the actual provider and model")
     try:
         started_at = datetime.fromisoformat(str(run.get("started_at") or "").replace("Z", "+00:00"))
         if started_at.utcoffset() is None:
             raise ValueError("timezone required")
     except ValueError:
-        errors.append("run: started_at must be an ISO-8601 timestamp with timezone")
+        if not allow_unknown_usage:
+            errors.append("run: started_at must be an ISO-8601 timestamp with timezone")
     source_ids = set()
     source_urls = set()
     for source in sources:
         missing = REQUIRED_SOURCE_FIELDS - source.keys()
         source_id = str(source.get("source_id") or "<unknown-source>")
-        if missing:
+        if missing and not allow_unknown_usage:
             errors.append(f"{source_id}: missing source fields {sorted(missing)}")
-        if source_id in source_ids:
+        if source_id in source_ids and not allow_unknown_usage:
             errors.append(f"{source_id}: duplicate source_id")
         source_ids.add(source_id)
         parsed = urlparse(str(source.get("url") or ""))
@@ -219,41 +276,42 @@ def validate_records(
             or parsed.username is not None
             or parsed.password is not None
             or not _is_public_hostname(parsed.hostname)
-        ):
+        ) and not allow_unknown_usage:
             errors.append(f"{source_id}: url must be a public HTTP(S) URL")
         elif (
             parsed.hostname.lower() in PLACEHOLDER_HOSTS
             or parsed.hostname.lower().endswith(PLACEHOLDER_SUFFIXES)
-        ):
+        ) and not allow_unknown_usage:
             errors.append(f"{source_id}: placeholder URL is not real acceptance evidence")
         else:
             canonical = _canonical_source_url(str(source.get("url") or ""))
-            if canonical in source_urls:
+            if canonical in source_urls and not allow_unknown_usage:
                 errors.append(f"{source_id}: duplicate source URL does not count as a new source")
             source_urls.add(canonical)
             query_keys = {
                 key.lower()
                 for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
             }
-            if query_keys & SENSITIVE_QUERY_KEYS:
+            if query_keys & SENSITIVE_QUERY_KEYS and not allow_unknown_usage:
                 errors.append(f"{source_id}: source URL contains sensitive query parameters")
         if source.get("accepted_state") not in {
             "accepted", "partial", "blocked", "unverified", "failed"
-        }:
+        } and not allow_unknown_usage:
             errors.append(
                 f"{source_id}: accepted_state must describe the observed source"
             )
         revision = source.get("source_revision")
         if revision is not None and (
             not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision.lower())
-        ):
+        ) and not allow_unknown_usage:
             errors.append(f"{source_id}: source_revision must be a SHA-256 hex digest or null if unavailable")
         try:
             revalidated_at = datetime.fromisoformat(str(source.get("revalidated_at") or "").replace("Z", "+00:00"))
             if revalidated_at.utcoffset() is None:
                 raise ValueError("timezone required")
         except ValueError:
-            errors.append(f"{source_id}: revalidated_at must be an ISO-8601 timestamp with timezone")
+            if not allow_unknown_usage:
+                errors.append(f"{source_id}: revalidated_at must be an ISO-8601 timestamp with timezone")
 
     task_ids = set()
     tasks_by_source: dict[str, list[dict]] = defaultdict(list)
@@ -261,63 +319,70 @@ def validate_records(
     for task in tasks:
         task_id = str(task.get("task_id") or "<unknown-task>")
         missing = REQUIRED_TASK_FIELDS - task.keys()
-        if missing:
+        if missing and not allow_unknown_usage:
             errors.append(f"{task_id}: missing task fields {sorted(missing)}")
-        if task_id in task_ids:
+        if task_id in task_ids and not allow_unknown_usage:
             errors.append(f"{task_id}: duplicate task_id")
         task_ids.add(task_id)
         source_id = str(task.get("source_id") or "")
         tasks_by_source[source_id].append(task)
         goal = str(task.get("goal") or "").strip()
-        if not goal:
+        if not goal and not allow_unknown_usage:
             errors.append(f"{task_id}: goal must be a concrete task question")
-        if task.get("task_role") not in {"initial", "followup"}:
+        if task.get("task_role") not in {"initial", "followup"} and not allow_unknown_usage:
             errors.append(f"{task_id}: task_role must be initial or followup")
-        if source_id not in source_ids:
+        if source_id not in source_ids and not allow_unknown_usage:
             errors.append(f"{task_id}: references unknown source_id {source_id}")
-        if not isinstance(task.get("answer_correct"), bool):
+        if not isinstance(task.get("answer_correct"), bool) and not allow_unknown_usage:
             errors.append(f"{task_id}: answer_correct must be boolean")
-        if not isinstance(task.get("citation_correct"), bool):
+        if not isinstance(task.get("citation_correct"), bool) and not allow_unknown_usage:
             errors.append(f"{task_id}: citation_correct must be boolean")
         reference_facts = task.get("reference_facts")
-        if (
+        if task.get("reference_facts") is not None and (
             not isinstance(reference_facts, dict)
             or not reference_facts
             or any(not str(key).strip() or not str(value).strip() for key, value in (reference_facts or {}).items())
-        ):
+        ) and not allow_unknown_usage:
             errors.append(f"{task_id}: reference_facts must map fact IDs to non-empty reviewed claims")
         for arm in ("envoy", "baseline"):
             claimed = task.get(f"{arm}_claimed_fact_ids")
             supported = task.get(f"{arm}_supported_fact_ids")
             citations = task.get(f"{arm}_citations")
-            if not _valid_id_list(claimed):
+            if not _valid_id_list(claimed) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {arm}_claimed_fact_ids must be a unique list of fact IDs")
                 claimed = []
-            if not _valid_id_list(supported):
+            elif not _valid_id_list(claimed):
+                claimed = []
+            if not _valid_id_list(supported) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {arm}_supported_fact_ids must be a unique list of fact IDs")
                 supported = []
-            if not set(supported).issubset(set(claimed)):
+            elif not _valid_id_list(supported):
+                supported = []
+            if not set(supported).issubset(set(claimed)) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {arm} supported facts must be among claimed facts")
             reference_facts = task.get("reference_facts")
             known_fact_ids = set(reference_facts) if isinstance(reference_facts, dict) else set()
-            if not set(supported).issubset(known_fact_ids):
+            if not set(supported).issubset(known_fact_ids) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {arm} supported facts must be in the reference fact set")
-            if not isinstance(citations, list):
+            if not isinstance(citations, list) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {arm}_citations must be a list")
+                citations = []
+            elif not isinstance(citations, list):
                 citations = []
             for citation in citations:
                 if not isinstance(citation, dict):
-                    errors.append(f"{task_id}: {arm} citation record must be an object")
+                    if not allow_unknown_usage:
+                        errors.append(f"{task_id}: {arm} citation record must be an object")
                     continue
                 fact_id = citation.get("fact_id")
                 locator = citation.get("locator")
-                if fact_id not in set(claimed):
+                if fact_id not in set(claimed) and not allow_unknown_usage:
                     errors.append(f"{task_id}: {arm} citation references an unclaimed fact")
-                if not isinstance(locator, (str, dict)) or not locator:
+                if (not isinstance(locator, (str, dict)) or not locator) and not allow_unknown_usage:
                     errors.append(f"{task_id}: {arm} citation locator must be non-empty")
-                if not isinstance(citation.get("supports_fact"), bool):
+                if not isinstance(citation.get("supports_fact"), bool) and not allow_unknown_usage:
                     errors.append(f"{task_id}: {arm} citation supports_fact must be reviewed boolean")
-                if citation.get("supports_fact") and fact_id not in set(supported):
+                if citation.get("supports_fact") and fact_id not in set(supported) and not allow_unknown_usage:
                     errors.append(f"{task_id}: {arm} supporting citation must map to a supported fact")
             arm_citation_correct = task.get(
                 "citation_correct" if arm == "envoy" else "baseline_citation_correct"
@@ -327,14 +392,14 @@ def validate_records(
                 and item.get("supports_fact") is True
                 and str(item.get("locator") or "").strip()
                 for item in citations
-            ):
+            ) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {arm} citation_correct requires a reviewed supporting locator")
         for field in (
             "baseline_answer_correct",
             "baseline_citation_correct",
             "baseline_reused_material",
         ):
-            if not isinstance(task.get(field), bool):
+            if not isinstance(task.get(field), bool) and not allow_unknown_usage:
                 errors.append(f"{task_id}: {field} must be boolean")
         for field in (
             "first_evidence_ms",
@@ -348,40 +413,55 @@ def validate_records(
             "repeated_downloads",
             "baseline_repeated_downloads",
         ):
-            _require_non_negative(task, field, task_id)
+            if task.get(field) is None and allow_unknown_usage:
+                continue
+            _require_non_negative(
+                task, field, task_id, allow_unknown=allow_unknown_usage
+            )
         if task.get("baseline_method") not in {
             "direct_host_read",
             "host_read_with_fair_cache",
             "host_native_media",
-        }:
+        } and not allow_unknown_usage:
             errors.append(f"{task_id}: baseline_method must identify the comparison path")
         provider = str(task.get("provider") or "")
         model = str(task.get("model") or "")
         baseline_provider = str(task.get("baseline_provider") or "")
         baseline_model = str(task.get("baseline_model") or "")
         if (provider, model) != run_identity or (baseline_provider, baseline_model) != run_identity:
-            errors.append(f"{task_id}: Envoy and baseline must match run provider/model")
-        if task.get("usage_status") != "actual":
+            if not allow_unknown_usage or all((provider, model, baseline_provider, baseline_model)):
+                errors.append(f"{task_id}: Envoy and baseline must match run provider/model")
+        usage_status = task.get("usage_status")
+        if usage_status not in {"actual", "unknown"} and not allow_unknown_usage:
+            errors.append(f"{task_id}: usage_status must be actual or unknown")
+        if usage_status != "actual" and not allow_unknown_usage:
             errors.append(f"{task_id}: Envoy arm requires actual provider usage")
-        if task.get("usage_status") == "actual":
+        if usage_status == "actual":
             for field in ("input_tokens", "output_tokens"):
-                _require_non_negative(task, field, task_id)
-        if task.get("baseline_usage_status") != "actual":
+                _require_non_negative(
+                    task, field, task_id, allow_unknown=allow_unknown_usage
+                )
+        baseline_usage_status = task.get("baseline_usage_status")
+        if baseline_usage_status not in {"actual", "unknown"} and not allow_unknown_usage:
+            errors.append(f"{task_id}: baseline_usage_status must be actual or unknown")
+        if baseline_usage_status != "actual" and not allow_unknown_usage:
             errors.append(f"{task_id}: baseline_usage_status must be actual")
-        if task.get("baseline_usage_status") == "actual":
+        if baseline_usage_status == "actual":
             for field in ("baseline_input_tokens", "baseline_output_tokens"):
-                _require_non_negative(task, field, task_id)
-        if not isinstance(task.get("evidence_locators"), list):
+                _require_non_negative(
+                    task, field, task_id, allow_unknown=allow_unknown_usage
+                )
+        if not isinstance(task.get("evidence_locators"), list) and not allow_unknown_usage:
             errors.append(f"{task_id}: evidence_locators must be a list")
-        elif task.get("citation_correct") and not task["evidence_locators"]:
+        elif task.get("citation_correct") is True and not task.get("evidence_locators"):
             errors.append(f"{task_id}: a correct citation requires at least one evidence locator")
-        if not isinstance(task.get("reused_material"), bool):
+        if not isinstance(task.get("reused_material"), bool) and not allow_unknown_usage:
             errors.append(f"{task_id}: reused_material must be boolean")
 
     for source_id in source_ids:
         source_tasks = tasks_by_source.get(source_id, [])
         roles = [task.get("task_role") for task in source_tasks]
-        if roles.count("initial") != 1 or roles.count("followup") < 1:
+        if (roles.count("initial") != 1 or roles.count("followup") < 1) and not allow_unknown_usage:
             errors.append(
                 f"{source_id}: requires exactly one initial task and at least one followup task"
             )
@@ -394,7 +474,7 @@ def validate_records(
             str(task.get("goal") or "").strip().casefold() in initial_goals
             for task in source_tasks
             if task.get("task_role") == "followup"
-        ):
+        ) and not allow_unknown_usage:
             errors.append(f"{source_id}: followup question must differ from the initial task")
         for task in source_tasks:
             if task.get("task_role") == "initial" and (
@@ -415,22 +495,10 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         if task.get("usage_status") == "actual"
         and task.get("baseline_usage_status") == "actual"
     ]
-    answer_accuracy = (
-        sum(bool(item["answer_correct"]) for item in tasks) / len(tasks)
-        if tasks else None
-    )
-    baseline_answer_accuracy = (
-        sum(bool(item["baseline_answer_correct"]) for item in tasks) / len(tasks)
-        if tasks else None
-    )
-    citation_accuracy = (
-        sum(bool(item["citation_correct"]) for item in tasks) / len(tasks)
-        if tasks else None
-    )
-    baseline_citation_accuracy = (
-        sum(bool(item["baseline_citation_correct"]) for item in tasks) / len(tasks)
-        if tasks else None
-    )
+    answer_accuracy = _reviewed_accuracy(tasks, "answer_correct")
+    baseline_answer_accuracy = _reviewed_accuracy(tasks, "baseline_answer_correct")
+    citation_accuracy = _reviewed_accuracy(tasks, "citation_correct")
+    baseline_citation_accuracy = _reviewed_accuracy(tasks, "baseline_citation_correct")
     envoy_fact_metrics = [
         _arm_fact_metrics(task, "envoy")
         for task in tasks
@@ -439,23 +507,52 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         _arm_fact_metrics(task, "baseline")
         for task in tasks
     ]
-    envoy_fact_recall = _mean(item[0] for item in envoy_fact_metrics)
-    baseline_fact_recall = _mean(item[0] for item in baseline_fact_metrics)
-    envoy_fact_precision = _mean(item[1] for item in envoy_fact_metrics)
-    baseline_fact_precision = _mean(item[1] for item in baseline_fact_metrics)
-    envoy_citation_support = _mean(item[2] for item in envoy_fact_metrics)
-    baseline_citation_support = _mean(item[2] for item in baseline_fact_metrics)
-    quality_non_inferior = bool(tasks) and all(
-        (not task.get("baseline_answer_correct") or task.get("answer_correct"))
-        and (not task.get("baseline_citation_correct") or task.get("citation_correct"))
-        and envoy_fact_metrics[index][0] >= baseline_fact_metrics[index][0]
-        and envoy_fact_metrics[index][1] >= baseline_fact_metrics[index][1]
-        and envoy_fact_metrics[index][2] >= baseline_fact_metrics[index][2]
-        for index, task in enumerate(tasks)
+    metric_pairs = list(zip(envoy_fact_metrics, baseline_fact_metrics))
+    metrics_complete = bool(metric_pairs) and all(
+        envoy is not None and baseline is not None
+        for envoy, baseline in metric_pairs
     )
-    envoy_input_tokens = sum(task["input_tokens"] for task in usage_actual)
-    baseline_input_tokens = sum(task["baseline_input_tokens"] for task in usage_actual)
-    savings_eligible = len(usage_actual) == len(tasks) and quality_non_inferior
+    envoy_available = [item for item in envoy_fact_metrics if item is not None]
+    baseline_available = [item for item in baseline_fact_metrics if item is not None]
+    envoy_metrics_complete = len(envoy_available) == len(tasks) and bool(tasks)
+    baseline_metrics_complete = len(baseline_available) == len(tasks) and bool(tasks)
+    envoy_fact_recall = _mean(item[0] for item in envoy_available) if envoy_metrics_complete else None
+    baseline_fact_recall = _mean(item[0] for item in baseline_available) if baseline_metrics_complete else None
+    envoy_fact_precision = _mean(item[1] for item in envoy_available) if envoy_metrics_complete else None
+    baseline_fact_precision = _mean(item[1] for item in baseline_available) if baseline_metrics_complete else None
+    envoy_citation_support = _mean(item[2] for item in envoy_available) if envoy_metrics_complete else None
+    baseline_citation_support = _mean(item[2] for item in baseline_available) if baseline_metrics_complete else None
+    quality_reviewed_tasks = [
+        task for task in tasks
+        if isinstance(task.get("answer_correct"), bool)
+        and isinstance(task.get("citation_correct"), bool)
+        and isinstance(task.get("baseline_answer_correct"), bool)
+        and isinstance(task.get("baseline_citation_correct"), bool)
+    ]
+    quality_inputs_complete = (
+        bool(quality_reviewed_tasks)
+        and metrics_complete
+    )
+    quality_non_inferior = None
+    if quality_inputs_complete:
+        quality_non_inferior = all(
+            task["answer_correct"] >= task["baseline_answer_correct"]
+            and task["citation_correct"] >= task["baseline_citation_correct"]
+            and envoy_fact_metrics[index] is not None
+            and baseline_fact_metrics[index] is not None
+            and envoy_fact_metrics[index][0] >= baseline_fact_metrics[index][0]
+            and envoy_fact_metrics[index][1] >= baseline_fact_metrics[index][1]
+            and envoy_fact_metrics[index][2] >= baseline_fact_metrics[index][2]
+            for index, task in enumerate(tasks)
+        )
+    envoy_input_tokens = _complete_sum(usage_actual, "input_tokens")
+    baseline_input_tokens = _complete_sum(usage_actual, "baseline_input_tokens")
+    savings_eligible = (
+        len(usage_actual) == len(tasks)
+        and quality_non_inferior is True
+        and envoy_input_tokens is not None
+        and baseline_input_tokens is not None
+    )
     followups = [task for task in tasks if task.get("task_role") == "followup"]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -467,10 +564,14 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "minimum_task_gate": MIN_TASKS,
         "scale_gate_status": "passed" if len(sources) >= MIN_SOURCES and len(tasks) >= MIN_TASKS else "incomplete",
         "gate_status": "pending_validation",
-        "answer_accuracy": answer_accuracy,
-        "baseline_answer_accuracy": baseline_answer_accuracy,
-        "citation_accuracy": citation_accuracy,
-        "baseline_citation_accuracy": baseline_citation_accuracy,
+        "answer_accuracy": answer_accuracy if run.get("quality_review_method") else None,
+        "answer_reviewed_task_count": _reviewed_count(tasks, "answer_correct"),
+        "baseline_answer_accuracy": baseline_answer_accuracy if run.get("quality_review_method") else None,
+        "baseline_answer_reviewed_task_count": _reviewed_count(tasks, "baseline_answer_correct"),
+        "citation_accuracy": citation_accuracy if run.get("quality_review_method") else None,
+        "citation_reviewed_task_count": _reviewed_count(tasks, "citation_correct"),
+        "baseline_citation_accuracy": baseline_citation_accuracy if run.get("quality_review_method") else None,
+        "baseline_citation_reviewed_task_count": _reviewed_count(tasks, "baseline_citation_correct"),
         "fact_recall": envoy_fact_recall,
         "baseline_fact_recall": baseline_fact_recall,
         "fact_precision": envoy_fact_precision,
@@ -478,30 +579,36 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "citation_support_rate": envoy_citation_support,
         "baseline_citation_support_rate": baseline_citation_support,
         "quality_non_inferior": quality_non_inferior,
-        "median_first_evidence_ms": _median(task["first_evidence_ms"] for task in tasks),
-        "baseline_median_first_evidence_ms": _median(task["baseline_first_evidence_ms"] for task in tasks),
-        "median_total_elapsed_ms": _median(task["total_elapsed_ms"] for task in tasks),
-        "baseline_median_total_elapsed_ms": _median(task["baseline_total_elapsed_ms"] for task in tasks),
-        "total_envoy_tool_calls": sum(task["envoy_tool_calls"] for task in tasks),
-        "total_baseline_tool_calls": sum(task["baseline_tool_calls"] for task in tasks),
-        "total_visual_inputs": sum(task["visual_inputs"] for task in tasks),
-        "total_baseline_visual_inputs": sum(task["baseline_visual_inputs"] for task in tasks),
-        "total_repeated_downloads": sum(task["repeated_downloads"] for task in tasks),
-        "total_baseline_repeated_downloads": sum(task["baseline_repeated_downloads"] for task in tasks),
-        "followup_reuse_rate": (
-            sum(bool(task["reused_material"]) for task in followups) / len(followups)
-            if followups else None
-        ),
+        "median_first_evidence_ms": _complete_median(tasks, "first_evidence_ms"),
+        "baseline_median_first_evidence_ms": _complete_median(tasks, "baseline_first_evidence_ms"),
+        "median_total_elapsed_ms": _complete_median(tasks, "total_elapsed_ms"),
+        "baseline_median_total_elapsed_ms": _complete_median(tasks, "baseline_total_elapsed_ms"),
+        "total_envoy_tool_calls": _complete_sum(tasks, "envoy_tool_calls"),
+        "total_baseline_tool_calls": _complete_sum(tasks, "baseline_tool_calls"),
+        "total_visual_inputs": _complete_sum(tasks, "visual_inputs"),
+        "total_baseline_visual_inputs": _complete_sum(tasks, "baseline_visual_inputs"),
+        "total_repeated_downloads": _complete_sum(tasks, "repeated_downloads"),
+        "total_baseline_repeated_downloads": _complete_sum(tasks, "baseline_repeated_downloads"),
+        "followup_reuse_rate": _reviewed_accuracy(followups, "reused_material"),
         "baseline_followup_reuse_rate": (
-            sum(bool(task["baseline_reused_material"]) for task in followups) / len(followups)
-            if followups else None
+            _reviewed_accuracy(followups, "baseline_reused_material")
         ),
         "actual_usage_status": "paired_actual" if len(usage_actual) == len(tasks) else "incomplete",
         "actual_usage_task_count": len(usage_actual),
-        "envoy_actual_input_tokens": envoy_input_tokens if len(usage_actual) == len(tasks) else None,
-        "envoy_actual_output_tokens": sum(task["output_tokens"] for task in usage_actual) if len(usage_actual) == len(tasks) else None,
-        "baseline_actual_input_tokens": baseline_input_tokens if len(usage_actual) == len(tasks) else None,
-        "baseline_actual_output_tokens": sum(task["baseline_output_tokens"] for task in usage_actual) if len(usage_actual) == len(tasks) else None,
+        "envoy_actual_input_tokens": (
+            envoy_input_tokens if len(usage_actual) == len(tasks) else None
+        ),
+        "envoy_actual_output_tokens": (
+            _complete_sum(usage_actual, "output_tokens")
+            if len(usage_actual) == len(tasks) else None
+        ),
+        "baseline_actual_input_tokens": (
+            baseline_input_tokens if len(usage_actual) == len(tasks) else None
+        ),
+        "baseline_actual_output_tokens": (
+            _complete_sum(usage_actual, "baseline_output_tokens")
+            if len(usage_actual) == len(tasks) else None
+        ),
         "input_token_savings_fraction": None,
         "source_classes": dict(Counter(str(source["source_class"]) for source in sources)),
     }
@@ -529,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
             sources,
             tasks,
             require_minimum=not args.allow_incomplete,
+            allow_unknown_usage=args.allow_incomplete,
         )
         report = summarize(run, sources, tasks)
         release_eval_ready = (
