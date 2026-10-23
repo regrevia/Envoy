@@ -24,6 +24,9 @@ class CollectionRevisionConflict(CollectionError):
     pass
 
 
+_PROFILE_WORKS_ERROR_MARKERS = ("服务异常，重新刷新拉取数据",)
+
+
 def _operation_fingerprint(**payload) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -49,9 +52,11 @@ class _DouyinCandidateParser(HTMLParser):
             str(attrs_map.get(name) or "")
             for name in ("class", "id", "data-e2e", "data-testid")
         ).lower()
-        excluded = any(marker in markers for marker in (
-            "recommend", "related", "avatar", "comment", "search", "hot-list",
-        ))
+        excluded = tag.lower() not in self._void_tags and any(
+            marker in markers for marker in (
+                "recommend", "related", "avatar", "comment", "search", "hot-list",
+            )
+        )
         profile = any(marker in markers for marker in self._profile_markers)
         if tag.lower() not in self._void_tags:
             self._stack.append((profile, excluded))
@@ -346,6 +351,11 @@ def discover_profile(
             ) from exc
         if not _is_public_http_url(page.url, {}):
             raise CollectionError("The isolated browser resolved the profile to a non-public address")
+        page_text = str(getattr(page, "text", "") or "")
+        if any(marker in page_text for marker in _PROFILE_WORKS_ERROR_MARKERS):
+            raise CollectionError(
+                "Douyin profile works list reported a service error; no candidate list is trusted"
+            )
         parser = _DouyinCandidateParser(page.url)
         parser.feed(page.html)
         parser.close()

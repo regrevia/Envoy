@@ -765,6 +765,77 @@ def test_profile_discovery_uses_isolated_browser_when_ytdlp_does_not_support_pro
     assert result["has_more"] is None
 
 
+def test_profile_parser_does_not_let_void_search_input_hide_author_posts():
+    parser = collections._DouyinCandidateParser(
+        "https://www.douyin.com/user/creator"
+    )
+    parser.feed("""
+        <header><input class="searchbar-input"></header>
+        <main class="userNewUi">
+          <a href="/video/101">Creator post</a>
+          <a href="/note/202">Creator image note</a>
+        </main>
+        <section class="related-list-item-in-small-card">
+          <a href="/video/303">Recommended post</a>
+        </section>
+    """)
+    parser.close()
+
+    assert [row["url"] for row in parser.rows] == [
+        "https://www.douyin.com/video/101",
+        "https://www.douyin.com/note/202",
+    ]
+
+
+def test_profile_discovery_rejects_stale_links_when_works_list_reports_error(
+    monkeypatch,
+    tmp_path,
+):
+    import contextlib
+    from types import SimpleNamespace
+    from envoy_cli import video
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+
+    class Downloader:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            raise RuntimeError("Unsupported URL")
+
+    page = SimpleNamespace(
+        url="https://www.douyin.com/user/creator",
+        title="Creator profile",
+        text="作品 396 服务异常，重新刷新拉取数据",
+        html="""
+        <main class="userNewUi">
+          <a href="/video/101?source=Baiduspider">Unrelated recommendation</a>
+        </main>
+        """,
+    )
+    monkeypatch.setattr(video, "_load_yt_dlp", lambda: (Downloader, []))
+    monkeypatch.setattr(
+        "envoy_cli.media.public_network_guard",
+        contextlib.nullcontext,
+    )
+    monkeypatch.setattr("envoy_cli.media.guard_yt_dlp_client", lambda _ydl: None)
+    monkeypatch.setattr("envoy_cli.browser.read_page", lambda *_args, **_kwargs: page)
+    monkeypatch.setattr("envoy_cli.reader._is_public_http_url", lambda *_args: True)
+
+    with pytest.raises(collections.CollectionError, match="works list reported a service error"):
+        collections.discover_profile(
+            "https://www.douyin.com/user/creator",
+            limit=5,
+        )
+
+
 def test_profile_discovery_browser_failure_after_metadata_without_entries_is_bounded(
     monkeypatch,
 ):

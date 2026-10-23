@@ -25,6 +25,30 @@ are available. Browser fixture tests do not count as live-platform acceptance.
 | Public articles and WeChat articles | Static HTML first | Headless rendering, dismissible login dialogs, then user-action escalation | Existing browser regression coverage; live WeChat challenge remains unaccepted | Partial; normal verification must not be bypassed |
 | Public PDF | Existing bounded PDF reader | Browser fallback only when the URL serves a readable page rather than a PDF response | Existing PDF test coverage | Supported by document path, independent of video browser behavior |
 
+## 2026-10-23 Live Douyin Profile Discovery Recheck
+
+The test profile was resolved from the creator link on the previously used
+public Douyin video page, then checked with the clean local preview runtime
+`0.1.6+preview.g7068e37b7166.20261023135154` (source `7068e37b7166`,
+`source_dirty: false`). No cookies or external browser profile were supplied.
+
+| Check | Result |
+| --- | --- |
+| `yt-dlp` profile enumeration | `DownloadError` / unsupported profile URL |
+| Isolated Chromium profile page | Profile title and creator header loaded, but the works area displayed “service error, refresh and retry” |
+| Candidate attribution | No author-owned video/note candidates could be verified; unrelated trending/recommendation links were not returned as creator works |
+| Initial browser fallback | A void global-search `<input>` incorrectly left the parser's exclusion depth active, hiding all later candidates; after fixing that parser accounting bug, the works service error was visible |
+| Bounded `envoy_discover` after parser fix | Returned `Douyin profile works list reported a service error; no candidate list is trusted`; requested limit was 5 and work budget 30 seconds. The page also contained unrelated `Baiduspider` video links, which were not treated as the creator's works |
+| MCP process recovery | In the same local preview MCP process, `tools/list` succeeded after the discovery error and returned all 9 tools; process exit code was 0 |
+| Connected Codex MCP | Still reported Release `0.1.6` from `872fea695d75`, not the local preview; its discovery attempt also returned no candidates |
+
+This verifies that a real discovery failure is contained and does not terminate
+the MCP stream, and that the browser fallback refuses a stale/unavailable works
+list instead of returning recommendation links. It does **not** accept live
+Douyin profile enumeration: the site did not expose a trustworthy works list
+during this run. The multi-image note path also remains unaccepted on a real
+note page. Do not infer that a profile has no works from this result.
+
 ## Video Popup Behavior
 
 Many video pages show a login prompt over otherwise public playback. Envoy now
