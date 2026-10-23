@@ -18,6 +18,29 @@ def test_ocr_cache_key_changes_with_profile_language_and_backend():
     assert base != ocr_cache_key("a" * 64, profile="balanced", language="eng", backend="tesseract")
 
 
+def test_downloaded_ocr_image_keeps_backend_supported_extension(tmp_path):
+    import hashlib
+    from envoy_cli.reader import _download_image_response
+
+    payload = b"\x89PNG\r\n\x1a\nfixture"
+
+    class FakeResponse:
+        headers = {"content-type": "image/png; charset=binary"}
+
+        def raise_for_status(self):
+            pass
+
+        def iter_bytes(self, chunk_size):
+            assert chunk_size > 0
+            yield payload
+
+    image_path, image_sha256 = _download_image_response(FakeResponse(), tmp_path, 1024)
+
+    assert image_path.suffix == ".png"
+    assert image_path.read_bytes() == payload
+    assert image_sha256 == hashlib.sha256(payload).hexdigest()
+
+
 def test_tesseract_tsv_parser_preserves_order_bbox_and_confidence():
     from envoy_cli.ocr import _parse_tesseract_tsv
 
@@ -74,6 +97,92 @@ def test_extract_image_ocr_prefers_paddle_when_available(monkeypatch, tmp_path):
     assert result["backend"] == "paddleocr"
     assert result["text"] == "岗位"
     assert result["regions"][0]["bbox"] == [0.1, 0.2, 0.4, 0.3]
+
+
+def test_paddle_ocr_maps_tesseract_simplified_chinese_language_tag(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import ocr
+
+    image = tmp_path / "image.png"
+    image.write_bytes(b"fixture")
+    captured = {}
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def predict(self, _path):
+            return []
+
+    monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PaddleOCR=FakePaddleOCR))
+    monkeypatch.setattr(ocr, "_image_size", lambda _path: (100, 100))
+
+    ocr._run_paddle(image, language="chi_sim", profile="balanced")
+
+    assert captured["lang"] == "ch"
+
+
+def test_paddle_ocr_maps_tesseract_traditional_chinese_language_tag(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import ocr
+
+    image = tmp_path / "image.png"
+    image.write_bytes(b"fixture")
+    captured = {}
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def predict(self, _path):
+            return []
+
+    monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PaddleOCR=FakePaddleOCR))
+    monkeypatch.setattr(ocr, "_image_size", lambda _path: (100, 100))
+
+    ocr._run_paddle(image, language="chi_tra", profile="balanced")
+
+    assert captured["lang"] == "chinese_cht"
+
+
+def test_paddle_ocr_unwraps_paddlex_ocr_result_json(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import ocr
+
+    image = tmp_path / "image.png"
+    image.write_bytes(b"fixture")
+
+    class FakePaddleOCR:
+        def __init__(self, **_kwargs):
+            pass
+
+        def predict(self, _path):
+            return [SimpleNamespace(json={
+                "res": {
+                    "rec_texts": ["简体中文"],
+                    "rec_scores": [0.97],
+                    "rec_polys": [[
+                        [10, 20],
+                        [60, 20],
+                        [60, 40],
+                        [10, 40],
+                    ]],
+                },
+            })]
+
+    monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PaddleOCR=FakePaddleOCR))
+    monkeypatch.setattr(ocr, "_image_size", lambda _path: (100, 100))
+
+    result = ocr._run_paddle(image, language="chi_sim", profile="balanced")
+
+    assert result == [{
+        "text": "简体中文",
+        "bbox": [0.1, 0.2, 0.6, 0.4],
+        "confidence": 0.97,
+    }]
 
 
 def test_extract_image_ocr_reports_missing_backend(monkeypatch, tmp_path):

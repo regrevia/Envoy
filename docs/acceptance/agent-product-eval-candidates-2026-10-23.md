@@ -19,6 +19,8 @@ full-media acceptance.
 | `https://www.dailymotion.com/video/x75iqs7` | Dailymotion video | `network_error` | TLS EOF during metadata request | Candidate only; ask user whether their trusted proxy is needed if they can open it |
 | `https://upload.wikimedia.org/wikipedia/commons/8/8e/Tear_down_this_wall.ogv` | Direct OGV video | `metadata` | Generic extractor resolves title; duration absent | Candidate only; historical bounded ASR must be repeated |
 | `https://developer.mozilla.org/shared-assets/videos/flower.mp4` | Direct MP4 video | `metadata` | Generic extractor resolves title; duration absent | Candidate only; historical frame extraction must be repeated |
+| `https://upload.wikimedia.org/wikipedia/commons/4/46/SimChinesetexttest.png` | Simplified Chinese text image | `partial` | Preview wheel `0.1.6+preview.g82b8add3025a`, Tesseract `chi_sim`, 32 regions / 1 zero-confidence region; PaddleOCR 3.7.0 returned 0 regions on this layout; source revision recorded | Candidate only; printed text needs independent transcription and paired host task before acceptance |
+| `https://upload.wikimedia.org/wikipedia/commons/9/9a/100-most-used-chinese-characters.png` | Chinese character chart | `partial` | Preview wheel `0.1.6+preview.g82b8add3025a`, Tesseract `chi_sim`, 196 regions / 12 zero-confidence; PaddleOCR 3.7.0 returned 55 regions / 0 zero-confidence but mixed character rows with pinyin and had OCR noise | Candidate only; dense visual layout is a boundary sample, not accepted text OCR |
 
 The probe used the current checkout's declared yt-dlp inside the isolated uv
 environment, with no cookies, no browser profile, no TLS bypass, and no public

@@ -510,9 +510,17 @@ def _download_image_response(response, root: Path, max_bytes: int) -> tuple[Path
             f"OCR source returned unsupported content type: {content_type or 'unknown'}",
             ErrorCode.UNSUPPORTED_SOURCE,
         )
+    extension = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+        "image/gif": ".gif",
+    }.get(content_type, ".img")
     digest = hashlib.sha256()
     temporary = tempfile.NamedTemporaryFile(
-        prefix=".ocr-", suffix=".img", dir=root, delete=False
+        prefix=".ocr-", suffix=extension, dir=root, delete=False
     )
     total = 0
     try:
@@ -525,7 +533,13 @@ def _download_image_response(response, root: Path, max_bytes: int) -> tuple[Path
                 temporary.write(chunk)
             temporary.flush()
             os.fsync(temporary.fileno())
-        target = root / f"{digest.hexdigest()}.img"
+        target = root / f"{digest.hexdigest()}{extension}"
+        legacy_target = root / f"{digest.hexdigest()}.img"
+        if not target.exists() and legacy_target.is_file():
+            try:
+                legacy_target.rename(target)
+            except OSError:
+                target = legacy_target
         if not target.exists():
             os.replace(temporary.name, target)
         else:
@@ -4355,6 +4369,14 @@ def _attach_video_frames(
                                     ],
                                 ),
                             ))
+                        if not any(
+                            block.parent_id == block_id
+                            and block.kind == MaterialKind.OCR
+                            for block in ocr_blocks
+                        ):
+                            ocr_unresolved.append(
+                                f"OCR returned no valid text regions for frame {frame_name}"
+                            )
                     except (OSError, ValueError, PublicPageError, MediaBudgetExceeded, RuntimeError) as exc:
                         ocr_unresolved.append(
                             f"OCR skipped for frame {frame_name} ({type(exc).__name__})"
@@ -5317,6 +5339,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                                 ],
                             ),
                         ))
+                    if not any(
+                        block.parent_id == item["block_id"]
+                        and block.kind == MaterialKind.OCR
+                        for block in ocr_blocks
+                    ):
+                        ocr_unresolved.append(
+                            f"OCR returned no valid text regions for {item['resource_id']}"
+                        )
                 except (OSError, ValueError, PublicPageError, MediaBudgetExceeded, RuntimeError) as exc:
                     ocr_unresolved.append(
                         f"OCR skipped for {item['resource_id']} ({type(exc).__name__})"
@@ -5326,6 +5356,28 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     f"{zero_confidence_regions} OCR regions have zero confidence and need visual review"
                 )
             blocks.extend(ocr_blocks)
+        ocr_visual_resources = [
+            item for item in safe_images
+            if any(resource.resource_id == item["resource_id"] for resource in resources)
+        ]
+        ocr_visual_need = (
+            [Need(
+                action_id="inspect-image-ocr-fallback",
+                type="inspect_visual",
+                purpose=request.goal or "Inspect the source images because local OCR is incomplete",
+                resource_ids=[item["resource_id"] for item in ocr_visual_resources],
+                source_block_ids=[item["block_id"] for item in ocr_visual_resources],
+                reason="Local OCR returned no readable regions or unresolved low-confidence regions; inspect the delivered source images directly.",
+                max_resources=len(ocr_visual_resources),
+            )]
+            if (
+                ocr_profile
+                and ocr_unresolved
+                and ocr_visual_resources
+                and request.host_capabilities.image_input == ImageInputCapability.URI
+            )
+            else []
+        )
         image_note_unknown_total = image_note_page and image_note_total is None
         image_partial = (
             len(resources) < len(parser.images)
@@ -5341,6 +5393,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video or ocr_unresolved else ReadResult.READY,
             blocks=blocks,
             resources=resources,
+            needs=ocr_visual_need,
             coverage=Coverage(
                 modalities={
                     "text": CoverageItem(
