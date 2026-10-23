@@ -78,6 +78,6 @@
 - [x] Add `envoy_discover` and `envoy_collection_checkpoint` to MCP tools/list schema and tools/call dispatch; add JSON CLI discovery.
 - [x] Update the Skill to ask only material clarification questions, filter titles as hints, select IDs explicitly, checkpoint each item, resume from evidence state, and compose the requested artifact itself.
 - [ ] Add host guidance that title matches are not content evidence and collection output must state its discovered/selected coverage.
-- [ ] Run focused and full standalone Skill/protocol suites, clean wheel build/install smoke, skill bundle tests, and Windows CI.
+- [x] Run focused and full standalone Skill/protocol suites, clean wheel build/install smoke, skill bundle tests, and Windows CI.
 - [ ] Run a live public profile and one video plus one multi-image note against the exact installed runtime; record build identity, runtime capability, candidate/page counts, work, recovery behavior and access boundaries.
 - [ ] Do not claim real-platform acceptance from fixtures; if the site blocks enumeration or the network fails, report the exact unverified acceptance item.
