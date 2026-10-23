@@ -57,6 +57,34 @@ def test_platform_page_browser_fallback_reads_content_without_assuming_video(
     assert "video" not in response.coverage.modalities
 
 
+def test_embedded_video_diagnostics_only_expose_media_origin(monkeypatch, tmp_path):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_url = "https://example.org/article"
+    html = (
+        "<html><title>Article</title><body>"
+        "<p>Public article content with enough text to be extracted safely.</p>"
+        '<video src="https://cdn.example.org/private/path.mp4?sign=secret&uifid=proof"></video>'
+        "</body></html>"
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (source_url, html))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "embedded-video-url-redaction",
+        "source": {"url": source_url},
+    }))
+
+    video_details = response.coverage.modalities["video"].details
+    assert video_details["urls"] == ["https://cdn.example.org"]
+    serialized = response.model_dump_json()
+    assert "private/path.mp4" not in serialized
+    assert "secret" not in serialized
+    assert "proof" not in serialized
+
+
 def test_http_404_returns_user_check_and_proxy_diagnostics(monkeypatch):
     import httpx
     from envoy_cli import reader

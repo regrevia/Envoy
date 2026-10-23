@@ -529,11 +529,20 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
         else ""
     )
     model_verified: bool | None = None
-    if model_file_present and configured_digest:
-        model_verified = (
-            _sha256_file(asr_model_cache_dir() / f"{model_name}.pt")
-            == configured_digest
+    checkpoint_digest = (
+        _sha256_file(asr_model_cache_dir() / f"{model_name}.pt")
+        if model_file_present
+        else None
+    )
+    if checkpoint_digest:
+        configured_match = bool(
+            configured_digest and checkpoint_digest == configured_digest
         )
+        registry_digest = _model_expected_sha256(model_name)
+        registry_match = bool(
+            registry_digest and checkpoint_digest == registry_digest
+        )
+        model_verified = configured_match or registry_match
     model_available = asr_installed and model_file_present and model_verified is True
     operational = "not_checked"
     if verify_asr and not asr_installed:
@@ -541,12 +550,6 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
     elif verify_asr and not model_file_present:
         operational = "model_missing"
     elif verify_asr:
-        expected_sha256 = configured_digest or _model_expected_sha256(model_name)
-        model_verified = bool(
-            expected_sha256
-            and _sha256_file(asr_model_cache_dir() / f"{model_name}.pt")
-            == expected_sha256
-        )
         if model_verified:
             try:
                 _verify_whisper_inference(model_name)
@@ -554,7 +557,7 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
             except Exception:
                 operational = "failed"
             else:
-                persist_asr_selection(model_name, expected_sha256)
+                persist_asr_selection(model_name, checkpoint_digest)
         else:
             operational = "failed"
         model_available = bool(model_verified and operational == "verified")

@@ -267,6 +267,32 @@ def test_media_status_rejects_model_file_with_wrong_expected_digest(
     assert status["asr_operational"] == "not_checked"
 
 
+def test_media_status_accepts_current_registry_digest_after_runtime_upgrade(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    checkpoint = cache / "base.pt"
+    checkpoint.write_bytes(b"checkpoint matching current Whisper registry")
+    actual_digest = media._sha256_file(checkpoint)
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("base", "0" * 64)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(media, "_model_expected_sha256", lambda _name: actual_digest)
+
+    status = media.media_runtime_status()
+
+    assert status["asr_model_file_present"] is True
+    assert status["asr_model_verified"] is True
+    assert status["asr_model_available"] is True
+    assert media._read_asr_config()["sha256"] == "0" * 64
+
+
 def test_media_status_load_checks_engine_and_verified_model(monkeypatch, tmp_path):
     from envoy_cli import media
 
