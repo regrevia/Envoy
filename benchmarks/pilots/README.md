@@ -5,6 +5,12 @@ benchmarks. Run them with `--allow-incomplete`; they must retain
 `gate_status: incomplete` until the strict 20-source/40-task paired evaluation
 is populated.
 
+`2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl` combines the three
+independent MDN 404, 410, and 429 sources (six questions) into one pilot run.
+Its generated summary is `2026-10-23-mdn-http-status-codex-release-0.1.6.report.json`.
+This is still only 3/20 sources and 6/40 tasks and has no paired baseline or
+provider usage; it is not a comparative product result.
+
 ## MDN 404 / Codex / Envoy Release 0.1.6
 
 `2026-10-23-mdn-404-codex-release-0.1.6.jsonl` records a real call to the
@@ -57,5 +63,27 @@ Recreate the machine report with:
 ```bash
 python3 benchmarks/agent_product_eval.py \
   --records benchmarks/pilots/2026-10-23-mdn-410-codex-release-0.1.6.jsonl \
+  --allow-incomplete
+```
+
+## MDN 429 / Codex / Envoy Release 0.1.6
+
+`2026-10-23-mdn-429-codex-release-0.1.6.jsonl` is a third independent MDN
+source:
+
+- Initial read returned the 429 meaning and the Retry-After header purpose
+  with exact page locators.
+- Follow-up asked for the value in MDN's example. `envoy_search` returned
+  `empty` because the exact 3600-second example had already been returned in
+  the first body; no second download was recorded.
+- The manually reviewed Envoy-side facts and locators are recorded. The
+  connected MCP still provides no baseline, actual provider usage, or latency,
+  so comparative fields remain null.
+
+Recreate the machine report with:
+
+```bash
+python3 benchmarks/agent_product_eval.py \
+  --records benchmarks/pilots/2026-10-23-mdn-429-codex-release-0.1.6.jsonl \
   --allow-incomplete
 ```
