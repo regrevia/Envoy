@@ -55,6 +55,13 @@ second task measures material reuse and follow-up behavior. The strict gate
 requires at least 20 sources and 40 tasks, one provider/model identity, source
 locators, answer and citation review, first-evidence and total latency, Envoy
 calls, visual inputs, repeated downloads, and actual host usage.
+
+For the planned self-hosted Claude Code CLI comparison, follow the
+[multi-link paired experiment protocol](../docs/superpowers/specs/2026-10-23-envoy-agent-benchmark-design.md).
+It defines the four priority Chinese platforms, baseline tool inventory,
+randomized per-package A/B order, isolated CLI profiles, authoritative
+inference-server token accounting, and the cache-confounded reporting rule.
+
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, and the provider/model used for both arms.
 Each source records when it was revalidated and the SHA-256 source revision

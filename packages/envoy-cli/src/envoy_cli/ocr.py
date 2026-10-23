@@ -13,6 +13,10 @@ from typing import Any
 
 OCR_PROFILES = {"fast", "balanced", "quality", "pro"}
 OCR_PIPELINE_REVISION = "tesseract-tsv-page-dimensions-v2"
+PADDLE_LANGUAGE_ALIASES = {
+    "chi_sim": "ch",
+    "chi_tra": "chinese_cht",
+}
 
 
 def ocr_cache_key(
@@ -154,23 +158,28 @@ def _run_paddle(path: Path, *, language: str, profile: str) -> list[dict[str, An
     except ImportError as exc:
         raise RuntimeError("PaddleOCR is not installed") from exc
     width, height = _image_size(path)
-    kwargs = {"lang": language}
+    paddle_language = PADDLE_LANGUAGE_ALIASES.get(language, language)
+    kwargs = {"lang": paddle_language}
     if profile in {"quality", "pro"}:
         kwargs.update({"use_doc_orientation_classify": False, "use_doc_unwarping": False})
     try:
         engine = PaddleOCR(**kwargs)
         result = engine.predict(str(path))
     except AttributeError:
-        engine = PaddleOCR(lang=language)
+        engine = PaddleOCR(lang=paddle_language)
         result = engine.ocr(str(path), cls=True)
     regions: list[dict[str, Any]] = []
     for page in result or []:
-        if isinstance(page, dict):
-            boxes = page.get("rec_polys") or page.get("dt_polys") or page.get("boxes") or []
-            texts = page.get("rec_texts") or page.get("texts") or []
-            scores = page.get("rec_scores") or page.get("scores") or []
-        else:
-            boxes, texts, scores = [], [], []
+        payload = page if isinstance(page, dict) else getattr(page, "json", None)
+        if callable(payload):
+            payload = payload()
+        if isinstance(payload, dict) and isinstance(payload.get("res"), dict):
+            payload = payload["res"]
+        if not isinstance(payload, dict):
+            continue
+        boxes = payload.get("rec_polys") or payload.get("dt_polys") or payload.get("boxes") or []
+        texts = payload.get("rec_texts") or payload.get("texts") or []
+        scores = payload.get("rec_scores") or payload.get("scores") or []
         for box, text, score in zip(boxes, texts, scores):
             points = [(float(item[0]), float(item[1])) for item in box]
             if not points or not str(text).strip():

@@ -15,7 +15,10 @@ into token-savings claims.
 ## Scope
 
 The primary product experiment compares two arms using the same Claude Code
-CLI build and the same self-hosted DeepSeek checkpoint:
+CLI build and the same self-hosted DeepSeek checkpoint. The planned first
+confirmatory batch uses the operator's deployed DeepSeek-V4.1-Flash-1017
+model, subject to recording the checkpoint and tokenizer actually loaded by
+the inference server:
 
 - **A, native read:** Envoy Skill and MCP are absent. The host may use only
   native reading tools that are actually installed and enabled on the server.
@@ -44,7 +47,9 @@ within an arm stay in that arm's session so both configurations may reuse their
 own material. No prompts, answers, extracted material, or caches cross from A
 to B or B to A.
 
-The product corpus contains 100 task packages, 20 per stratum:
+The product corpus contains 100 task packages, 20 per stratum. The four
+priority Chinese platforms are Bilibili, Douyin, Xiaohongshu, and WeChat
+Official Accounts; cross-platform packages test synthesis across them:
 
 | Stratum | Packages | Focus |
 | --- | ---: | --- |
@@ -69,6 +74,12 @@ network failures, and partial media. These results report state classification,
 recoverability, retries, and human-intervention time. They are excluded from
 the denominator for successful-read token savings, but remain visible in the
 overall task-completion rate.
+
+Record platform coverage by source URL and task package. Do not count several
+URLs from one package as independent task successes. Stratify the main report
+by the four priority platforms and cross-platform synthesis; publish an
+overall figure only alongside these strata so a strong result on one platform
+cannot hide failures on another.
 
 ## Standard Long-Document Calibration
 
@@ -111,26 +122,72 @@ Before the first task, archive the effective Claude Code settings and each
 arm's discovered tool list, with secrets removed.
 
 Randomize A/B order within each task package using a recorded seed, balancing
-the total number of A-first and B-first pairs. Run pairs sequentially on the
-same host to avoid GPU contention, with a fixed warm-up procedure that is
-excluded from measurements. Keep the inference server, checkpoint, tokenizer,
-quantization, sampling settings, concurrency, and resource allocation fixed
-throughout a batch.
+the total number of A-first and B-first pairs. A single controller selects
+the arm by launching one of two isolated Claude Code CLI profiles; it does
+not switch modes inside a conversation. Each package starts two fresh
+sessions, and its scripted follow-up turns stay within their respective
+session. Run pairs sequentially on the same host to avoid GPU contention,
+with a fixed warm-up procedure excluded from measurements. Keep the inference
+server, checkpoint, tokenizer, quantization, sampling settings, concurrency,
+and resource allocation fixed throughout a batch.
 
-The primary token experiment disables server-side prefix/KV caching if the
-serving stack supports it. If it cannot be disabled, use separate cache
-namespaces or isolated server replicas with identical weights and settings.
-If neither is possible, label the primary result cache-confounded, record
-cache-hit and cache-write token counts, and do not claim unconfounded token
-savings. A secondary production-mode batch may enable normal caching; report
-it separately.
+The operator may first run a baseline-only instrumentation pilot to inventory
+the server's native reading tools and validate usage capture. Keep that pilot
+out of the confirmatory results. For the confirmatory batch, use paired,
+randomized A/B runs under the same controller and frozen task manifest. Do
+not run the entire baseline corpus first and the entire Envoy corpus later:
+time, source changes, model-server changes, and operational drift would be
+confounded with the treatment.
 
-Envoy's own per-arm cache remains enabled within the three-turn package to
-measure the intended follow-up reuse behavior. It is cleared between packages.
-The native arm receives the same opportunity to retain its own session
-context. No shared browser profile, personal cookies, private account, or
-unapproved proxy may be used. Normal user authentication or verification is
-handled by the user and counted as intervention.
+The primary cold-cache comparison disables cross-request server prefix/KV
+cache reuse when supported, and starts each session with empty Claude Code
+conversation and local cache state. It must not clear or reset another
+operator's shared service state. If server caching cannot be disabled, isolate
+each arm in separate cache namespaces or equivalent replicas, and record
+cache-read/cache-write usage. If isolation cannot be verified, classify the
+batch as cache-confounded rather than claiming a cold-cache result.
+
+Envoy's material cache and each arm's conversation context remain available
+within the three-turn package to measure intended follow-up reuse. Clear
+package-scoped material and local state between packages. A separate
+production-cache condition may measure normal warm-cache behavior; report it
+as a distinct condition and never mix it with cold-cache results. No shared
+browser profile, personal cookies, private account, or unapproved proxy may
+be used. Normal user authentication or verification is handled by the user
+and counted as intervention.
+
+### Operator Run Sequence
+
+1. Run a baseline-only instrumentation pilot on 10 packages. Inventory the
+   native tools available to Claude Code on the benchmark server, verify
+   request-to-run correlation and token reconciliation, and test that the
+   Envoy profile is absent from arm A. Exclude this pilot from all confirmatory
+   statistics.
+2. Freeze the task packages, reference facts, scoring rubric, runtime
+   identities, cache policy, and randomization seed before the confirmatory
+   batch. Prepare two launch profiles: A has no Envoy Skill, MCP, or
+   Envoy-derived material; B pins the selected Envoy Skill, Release, and MCP
+   configuration.
+3. Use one controller as the switch. For each package, it randomly chooses
+   whether to run A or B first, launches a new isolated CLI process/profile
+   for each arm, and sends the exact same three scripted turns to each.
+   Complete that package's pair before moving to the next package. Do not
+   switch arms within a session and do not run the entire A corpus before B.
+4. Reset package-local session, workspace, and material state between
+   packages. Preserve follow-up reuse within each arm's package. Apply the
+   preregistered server-cache policy; if neither cache disablement nor
+   verifiable namespace/replica isolation is available, label the batch
+   cache-confounded and report cache counters instead of calling it
+   cold-cache.
+5. Reconcile every model request with authoritative inference-server usage
+   before scoring. Missing request/token records stay missing; do not fill
+   them from Claude Code estimates or Envoy's estimated token counts.
+
+This design intentionally uses randomized paired runs rather than a single
+global mode toggle between two corpus-sized phases. The controller-level
+switch makes the assignment auditable while separate sessions and profiles
+prevent prompts, tool access, retained materials, and local caches from
+crossing between arms.
 
 ## Model and Runtime Identity
 
@@ -141,6 +198,9 @@ The batch manifest records:
   reading tools.
 - Inference server implementation/version, API protocol, server configuration
   digest, tokenizer identity, quantization, and checkpoint revision/hash.
+  For the planned DeepSeek-V4.1-Flash-1017 run, record the exact served model
+  identifier and loaded checkpoint/revision; do not infer model identity from
+  a Claude Code model alias or a requested configuration value.
 - Envoy Release version, source commit, wheel SHA-256, Skill commit, and MCP
   tool inventory for B.
 - Cache policy, session-isolation procedure, network/proxy policy, concurrency,
@@ -179,7 +239,14 @@ Every model request is tagged with `run_id`, `package_id`, `arm`,
 
 Do not store API keys, authorization headers, cookies, full prompts, or full
 answers in the metrics collector. Save only redacted metadata and task
-identifiers. Review the host and inference server logs before export.
+identifiers. Review the host and inference server logs before export. Because
+Claude Code is connected to a self-hosted model rather than relying on
+Anthropic-hosted usage telemetry, the controller must reconcile each run's
+request IDs against authoritative inference-server token records. If native
+logs lack correlation fields, a local adapter may add run/package/arm/session
+metadata without reading, retaining, or changing prompt and response bodies.
+If usage cannot be reconciled, mark those pairs missing; do not substitute
+Claude Code's estimates or Envoy's token estimate.
 
 ## Quality Review
 
@@ -238,6 +305,15 @@ The one-page public summary must include:
 | Output tokens and measured cost | | | relative change |
 | End-to-end p50 / p90 time | | | relative change |
 | Human-intervention rate and minutes | | | absolute change |
+
+Keep the public result concise, but show quality next to efficiency so a
+headline such as "70% fewer input tokens" cannot stand alone. For example,
+report input-token reduction, supported-fact recall, omission-rate reduction,
+unsupported-claim rate, and completion rate together. Define reduction
+relative to A as `(A - B) / A`; show absolute percentage-point changes for
+quality rates. Mark a metric "N/A" when its baseline denominator is zero.
+Include the paired sample count and confidence interval in a note or linked
+technical appendix.
 
 Publish two token views: (1) intention-to-treat input/output usage and measured
 cost per assigned package, including failed attempts and retries; (2)

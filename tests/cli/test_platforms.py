@@ -346,3 +346,65 @@ def test_public_image_note_can_return_source_bound_ocr_regions(monkeypatch, tmp_
     assert ocr[0].locator.type == "image_region"
     assert ocr[0].locator.resource_id == "resource-image-1"
     assert response.coverage.modalities["ocr"].details["region_count"] == 1
+
+
+def test_public_image_note_marks_empty_ocr_as_partial_for_visual_review(
+    monkeypatch,
+    tmp_path,
+):
+    from types import SimpleNamespace
+    from envoy_cli import browser, reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_url = "https://www.xiaohongshu.com/explore/65abc123"
+    image_url = "https://sns.example/no-readable-text.png"
+    html = f"""
+    <html><head><title>图文笔记</title></head><body>
+      <main class="note-container"><div class="note-image">
+        <img src="{image_url}">
+      </div></main></body></html>
+    """
+    page = SimpleNamespace(
+        url=source_url,
+        title="图文笔记",
+        text="",
+        html=html,
+        media_urls=(),
+        page_video_urls=(),
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (source_url, html))
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+    monkeypatch.setattr(
+        reader,
+        "_download_image_for_ocr",
+        lambda *_args, **_kwargs: (tmp_path / "note.png", "a" * 64),
+    )
+    monkeypatch.setattr(reader, "_read_cached_image_ocr", lambda *_args, **_kwargs: {
+        "backend": "paddleocr",
+        "regions": [],
+    })
+    monkeypatch.setattr(reader, "_safe_visual_candidates", lambda candidates, *_args: (
+        [{
+            "image": item,
+            "image_url": item["url"],
+            "block_id": f"blk-image-{index:04d}",
+            "resource_id": f"resource-image-{index}",
+        } for index, item in enumerate(candidates, start=1)],
+        0,
+    ))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "xhs-ocr-empty",
+        "source": {"url": source_url},
+        "ocr_profile": "balanced",
+        "host_capabilities": {"image_input": "uri"},
+    }))
+
+    ocr_coverage = response.coverage.modalities["ocr"]
+    assert not [block for block in response.blocks if block.kind.value == "ocr"]
+    assert ocr_coverage.extraction == "partial"
+    assert any("no valid text regions" in item for item in ocr_coverage.unresolved)
+    assert any(resource.resource_id == "resource-image-1" for resource in response.resources)
+    assert response.needs and response.needs[0].type == "inspect_visual"
