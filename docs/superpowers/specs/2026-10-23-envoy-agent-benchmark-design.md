@@ -265,6 +265,21 @@ metadata without reading, retaining, or changing prompt and response bodies.
 If usage cannot be reconciled, mark those pairs missing; do not substitute
 Claude Code's estimates or Envoy's token estimate.
 
+The standalone `benchmarks/usage_ledger.py` validator accepts a redacted
+two-record JSONL contract: a `turn_summary` for every planned turn (including
+turns that fail before any model request) and a `request_usage` row for every
+server-issued request ID. It verifies each request's package, arm, session,
+and turn-correlation mapping against the frozen plan, aggregates multiple
+requests into one turn only after checking cache-token sums, and fails on
+missing turns, undeclared/orphan request IDs, duplicate IDs, unknown fields,
+or prompt/response/credential fields. Turn summaries retain failure outcome,
+wall interval, human intervention, visual inputs, and repeated downloads. A
+turn with no model request is retained as `no_model_request`, never treated as
+zero-token successful usage. The operator must assert that the authoritative
+server export is complete before using the validated turn totals to populate
+the main evaluator JSONL. A missing server row must not be turned into a
+zero-token observation.
+
 The run record must declare `cache_isolation_status` as
 `verified_disabled`, `verified_isolated`, `cache_confounded`, or `unknown`.
 Strict claims require one of the first two states. When the inference server

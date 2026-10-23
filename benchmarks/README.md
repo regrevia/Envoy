@@ -113,6 +113,31 @@ planning signal: it is true when the plan has at least 20 packages, 40 scripted
 turns, and 20 unique source IDs; it does not prove that sources were reachable
 or that either arm completed.
 
+Validate the redacted inference-server usage ledger before converting it into
+the evaluator's per-turn JSONL:
+
+```bash
+python3 benchmarks/usage_ledger.py \
+  --plan /path/to/plan.json \
+  --ledger /path/to/server-usage-ledger.jsonl \
+  --server-export-complete \
+  --output /path/to/usage-ledger-report.json
+```
+
+See `usage-ledger-records.example.jsonl` for the strict record shape. The
+ledger has two record types: one `turn_summary` for every planned
+package/arm/turn (including outcome, elapsed interval, intervention and visual
+counts), and one `request_usage` record for every actual server request. A turn
+may have multiple request records or zero requests when it fails before model
+invocation. The validator checks server-issued request ID uniqueness, frozen
+session/turn mapping, complete turn coverage, exact request-ID reconciliation,
+cache-token category sums, and allowed fields; arbitrary payload fields are
+rejected to avoid prompt/response/credential leakage. Its output must be valid
+before the operator aggregates request rows into token and cache breakdown
+fields in the main evaluator records. `--server-export-complete` must only be
+passed after verifying the authoritative log export is complete for the whole
+run window.
+
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, the provider/model used for both arms, and
 `cache_isolation_status`: `verified_disabled`, `verified_isolated`,
