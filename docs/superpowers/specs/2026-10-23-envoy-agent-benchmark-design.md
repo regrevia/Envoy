@@ -70,7 +70,11 @@ Each package contains multiple links; package counts must not be reported as
 URL counts. Require at least two distinct public source URLs per package and
 target at least 200 unique URLs overall. The run manifest records both counts
 and URL deduplication; an intentionally reused URL counts once in the unique
-URL total.
+URL total. The paired planner additionally freezes a deterministic
+`run_id`, package-manifest SHA-256, per-arm session IDs, and request IDs for
+all three turns. Keep this plan beside the JSONL results and use those IDs for
+inference-server correlation; planner minimum status does not establish source
+availability or successful execution.
 Within a package, all links and all three turns are fixed before execution.
 Any needed clarification is pre-authored and delivered identically to both
 arms. The operator must not improvise one-sided hints.
@@ -136,7 +140,9 @@ sessions, and its scripted follow-up turns stay within their respective
 session. Run pairs sequentially on the same host to avoid GPU contention,
 with a fixed warm-up procedure excluded from measurements. Keep the inference
 server, checkpoint, tokenizer, quantization, sampling settings, concurrency,
-and resource allocation fixed throughout a batch.
+and resource allocation fixed throughout a batch. Pass the planner's
+package/arm/session/request IDs through the server's correlation metadata for
+every model request; do not synthesize new IDs during execution.
 
 The operator may first run a baseline-only instrumentation pilot to inventory
 the server's native reading tools and validate usage capture. Keep that pilot

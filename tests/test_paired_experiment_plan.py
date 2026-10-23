@@ -61,6 +61,86 @@ def test_plan_is_deterministic_balanced_and_profile_isolated(tmp_path):
     )
 
 
+def test_plan_freezes_run_identity_and_server_request_correlation(tmp_path):
+    records = [
+        {
+            "package_id": f"pkg-{index}",
+            "source_ids": [f"src-{index}", f"shared-{index % 2}"],
+            "source_class": "douyin",
+            "task_manifest_id": f"manifest-{index}",
+        }
+        for index in range(20)
+    ]
+
+    result = _run(tmp_path, records)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["run_id"].startswith("envoy-ab-")
+    assert len(plan["package_manifest_sha256"]) == 64
+    assert plan["task_count"] == 60
+    assert plan["unique_source_count"] == 22
+    assert plan["confirmatory_minimum_met"] is True
+    item = plan["packages"][0]
+    assert set(item["session_ids"]) == {"baseline", "envoy"}
+    assert item["session_ids"]["baseline"] != item["session_ids"]["envoy"]
+    assert set(item["request_ids"]) == {"baseline", "envoy"}
+    for arm in ("baseline", "envoy"):
+        assert set(item["request_ids"][arm]) == {
+            "initial",
+            "followup-1",
+            "followup-2",
+        }
+        for request_id in item["request_ids"][arm].values():
+            assert item["package_id"] in request_id
+            assert arm in request_id
+
+
+def test_plan_marks_underpowered_pilot_without_promoting_it_to_confirmatory(tmp_path):
+    result = _run(tmp_path, [
+        {"package_id": "pilot-a", "source_ids": ["source-a", "source-b"]},
+        {"package_id": "pilot-b", "source_ids": ["source-c", "source-d"]},
+    ])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["package_count"] == 2
+    assert plan["task_count"] == 6
+    assert plan["unique_source_count"] == 4
+    assert plan["confirmatory_minimum_met"] is False
+
+
+def test_plan_records_cache_policy_and_platform_strata(tmp_path):
+    records = [
+        {
+            "package_id": "bili-1",
+            "source_ids": ["bili-a", "bili-b"],
+            "source_class": "bilibili",
+        },
+        {
+            "package_id": "wechat-1",
+            "source_ids": ["wechat-a", "wechat-b"],
+            "source_class": "wechat",
+        },
+    ]
+
+    result = _run(tmp_path, records, "--cache-isolation-status", "verified_isolated")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["cache_isolation_status"] == "verified_isolated"
+    assert plan["source_class_package_counts"] == {"bilibili": 1, "wechat": 1}
+
+
+def test_plan_rejects_unknown_cache_policy(tmp_path):
+    result = _run(tmp_path, [
+        {"package_id": "pkg-a", "source_ids": ["source-a", "source-b"]},
+    ], "--cache-isolation-status", "definitely-cold")
+
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr
+
+
 def test_plan_rejects_duplicate_package_ids_and_duplicate_sources_within_package(tmp_path):
     duplicate_package = _run(tmp_path, [
         {"package_id": "same", "source_ids": ["src-a", "src-b"]},

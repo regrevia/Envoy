@@ -89,6 +89,7 @@ Generate an auditable per-package order before launching the host agent:
 python3 benchmarks/paired_experiment_plan.py \
   --packages /path/to/packages.jsonl \
   --seed 20261023 \
+  --cache-isolation-status unknown \
   --output /path/to/plan.json
 ```
 
@@ -97,8 +98,18 @@ is the actual order to run, and the two profile paths are intentionally
 different. The planner does not launch Claude Code or alter credentials; the
 server-side runner must create the profiles, tag model requests with the
 package/arm/session IDs, and record whether inference-server cache reuse was
-disabled or isolated. If that cannot be verified, report the batch as
-cache-confounded.
+disabled or isolated. Pass `verified_disabled` or `verified_isolated` only
+after the server-side operator has verified it; otherwise use `unknown` during
+planning and later classify the executed batch as `cache-confounded`.
+
+The generated plan also freezes a deterministic `run_id`,
+`package_manifest_sha256`, `session_ids`, and three request IDs per arm
+(`initial`, `followup-1`, `followup-2`). The controller must pass those IDs
+through its inference-server correlation metadata and retain the plan beside
+the result JSONL. `confirmatory_minimum_met` is only a planning signal: it is
+true when the plan has at least 20 packages, 40 scripted turns, and 20 unique
+source IDs; it does not prove that sources were reachable or that either arm
+completed.
 
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, the provider/model used for both arms, and
