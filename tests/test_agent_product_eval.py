@@ -288,3 +288,149 @@ def test_agent_product_eval_deduplicates_tracking_parameter_variants(tmp_path):
     report = json.loads(result.stdout)
     assert result.returncode == 2
     assert any("duplicate source URL" in error for error in report["validation_errors"])
+
+
+def test_incomplete_pilot_allows_unknown_usage_but_never_reports_savings(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=1, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    run = json.loads(lines[0])
+    run["provider"] = "unknown"
+    run["model"] = "unknown"
+    lines[0] = json.dumps(run)
+    for index in (2, 3):
+        task = json.loads(lines[index])
+        task.update({
+            "provider": "unknown",
+            "model": "unknown",
+            "baseline_provider": "unknown",
+            "baseline_model": "unknown",
+            "usage_status": "unknown",
+            "baseline_usage_status": "unknown",
+        })
+        task.pop("input_tokens", None)
+        task.pop("output_tokens", None)
+        task.pop("baseline_input_tokens", None)
+        task.pop("baseline_output_tokens", None)
+        lines[index] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    draft = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(draft.stdout)
+    assert draft.returncode == 0
+    assert report["validation_status"] == "passed"
+    assert report["gate_status"] == "incomplete"
+    assert report["actual_usage_status"] == "incomplete"
+    assert report["input_token_savings_fraction"] is None
+
+    strict = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert strict.returncode == 2
+
+
+def test_incomplete_draft_serializes_unmeasured_metrics_as_null(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=1, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    run = json.loads(lines[0])
+    run.update({
+        "envoy_version": "0.1.6",
+        "envoy_commit": "872fea695d75",
+        "provider": "not exposed",
+        "model": "not exposed",
+    })
+    lines[0] = json.dumps(run)
+    for line_index in (2, 3):
+        task = json.loads(lines[line_index])
+        for field in (
+            "answer_correct",
+            "citation_correct",
+            "baseline_answer_correct",
+            "baseline_citation_correct",
+            "first_evidence_ms",
+            "baseline_first_evidence_ms",
+            "total_elapsed_ms",
+            "baseline_total_elapsed_ms",
+            "envoy_claimed_fact_ids",
+            "envoy_supported_fact_ids",
+            "baseline_claimed_fact_ids",
+            "baseline_supported_fact_ids",
+            "envoy_citations",
+            "baseline_citations",
+        ):
+            task[field] = None
+        task["usage_status"] = "unknown"
+        task["baseline_usage_status"] = "unknown"
+        task["usage_provider"] = None
+        task["provider"] = None
+        task["model"] = None
+        task["baseline_provider"] = None
+        task["baseline_model"] = None
+        task["reference_facts"] = None
+        task["evidence_locators"] = None
+        task["reused_material"] = None
+        task["baseline_reused_material"] = None
+        for field in (
+            "envoy_tool_calls",
+            "baseline_tool_calls",
+            "visual_inputs",
+            "baseline_visual_inputs",
+            "repeated_downloads",
+            "baseline_repeated_downloads",
+        ):
+            task[field] = None
+        task["baseline_method"] = None
+        lines[line_index] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report["gate_status"] == "incomplete"
+    assert report["answer_accuracy"] is None
+    assert report["fact_recall"] is None
+    assert report["median_first_evidence_ms"] is None
+    assert report["total_envoy_tool_calls"] is None
+    assert report["envoy_actual_input_tokens"] is None
+    assert report["input_token_savings_fraction"] is None
+
+
+def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
+    records = ROOT / "benchmarks" / "pilots" / "2026-10-23-mdn-404-codex-release-0.1.6.jsonl"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report["source_count"] == 1
+    assert report["task_count"] == 2
+    assert report["gate_status"] == "incomplete"
+    assert report["answer_accuracy"] == 1.0
+    assert report["answer_reviewed_task_count"] == 2
+    assert report["citation_accuracy"] == 1.0
+    assert report["citation_reviewed_task_count"] == 2
+    assert report["baseline_answer_accuracy"] is None
+    assert report["baseline_answer_reviewed_task_count"] == 0
+    assert report["fact_recall"] == 1.0
+    assert report["baseline_fact_recall"] is None
+    assert report["citation_support_rate"] == 1.0
+    assert report["baseline_citation_support_rate"] is None
+    assert report["median_total_elapsed_ms"] is None
+    assert report["envoy_actual_input_tokens"] is None
+    assert report["input_token_savings_fraction"] is None
