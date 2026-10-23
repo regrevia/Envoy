@@ -138,6 +138,14 @@ fields in the main evaluator records. `--server-export-complete` must only be
 passed after verifying the authoritative log export is complete for the whole
 run window.
 
+The report's `paired_usage_rows` can be joined to the preregistered task
+records by `(package_id, turn_role)`. Copy actual usage, elapsed/outcome,
+intervention, visual, repeated-download, and cache-breakdown values from those
+rows; keep answer facts and citations from the blinded review record. Copy
+`baseline_server_reported_cost` and `server_reported_cost` only when the ledger
+reports a shared currency for the pair. The ledger report itself is an audit
+artifact and is not a replacement for the evaluator JSONL.
+
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, the provider/model used for both arms, and
 `cache_isolation_status`: `verified_disabled`, `verified_isolated`,
