@@ -77,6 +77,70 @@ def test_tesseract_tsv_uses_reported_page_size_when_image_dimensions_unavailable
     }]
 
 
+def test_tesseract_input_composites_transparent_png_on_white_background(
+    monkeypatch,
+    tmp_path,
+):
+    import sys
+    from types import SimpleNamespace
+    from envoy_cli import ocr
+
+    image = tmp_path / "transparent.png"
+    image.write_bytes(b"source-png")
+    observed = {}
+
+    class FakeImage:
+        mode = "RGBA"
+        size = (20, 10)
+        info = {}
+
+        def getbands(self):
+            return ("R", "G", "B", "A")
+
+        def convert(self, mode):
+            observed.setdefault("convert", []).append(mode)
+            return self
+
+        def save(self, target, format):
+            observed["save_format"] = format
+            target.write(b"white-background-png")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=SimpleNamespace(
+        open=lambda _source: FakeImage(),
+        new=lambda *_args: FakeImage(),
+        alpha_composite=lambda _background, _foreground: FakeImage(),
+    )))
+    monkeypatch.setattr(ocr, "_image_size", lambda _path: (20, 10))
+    monkeypatch.setattr(ocr, "_tesseract_command", lambda _language: ["tesseract"])
+
+    class Completed:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    monkeypatch.setattr(
+        ocr.subprocess,
+        "run",
+        lambda command, *, input, capture_output, check, timeout: (
+            observed.update({"input": input}) or Completed()
+        ),
+    )
+
+    ocr._run_tesseract(image, language="chi_sim")
+
+    assert observed == {
+        "convert": ["RGBA", "RGB"],
+        "save_format": "PNG",
+        "input": b"white-background-png",
+    }
+
+
 def test_extract_image_ocr_prefers_paddle_when_available(monkeypatch, tmp_path):
     from envoy_cli import ocr
 

@@ -46,6 +46,27 @@ retained material only when the baseline is given an equivalent fair cache
 opportunity. Never compare Envoy's estimated tokenizer-independent count with
 the provider's actual count as if they were the same metric.
 
+## OCR Recognition Quality
+
+Use `benchmarks/ocr_quality_eval.py` to score OCR text against independently
+transcribed references. Each JSONL line contains `sample_id`, `source_id`,
+`backend`, the source image's SHA-256, `reference_text`, and `recognized_text`.
+The report contains sample-level and backend-level character error rate (CER)
+and whitespace-token word error rate (WER), but never emits either text field.
+References containing CJK characters have WER set to `null`; use CER for
+those samples. Empty OCR output is scored as an error, not omitted.
+
+```bash
+python3 benchmarks/ocr_quality_eval.py --records /path/to/ocr-review.jsonl
+```
+
+Transcribe the source independently of the OCR output, freeze the reference
+before comparing backends, and keep the source hash and backend/version with
+the run record. Synthetic images are useful for pipeline tests, not real-source
+accuracy claims. CER/WER measure transcription only; they do not establish
+source attribution, region ordering, locator correctness, visual handoff, or
+host-agent task quality.
+
 ## Real Agent Product Evaluation
 
 Use `benchmarks/agent_product_eval.py` for the versioned end-to-end

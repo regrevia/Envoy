@@ -135,9 +135,29 @@ def _image_size(path: Path) -> tuple[int, int]:
 def _run_tesseract(path: Path, *, language: str) -> list[dict[str, Any]]:
     width, height = _image_size(path)
     command = _tesseract_command(language)
+    image_bytes = path.read_bytes()
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            has_transparency = (
+                "A" in image.getbands()
+                or "transparency" in image.info
+            )
+            if has_transparency:
+                rgba = image.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                composited = Image.alpha_composite(background, rgba).convert("RGB")
+                with io.BytesIO() as encoded:
+                    composited.save(encoded, format="PNG")
+                    image_bytes = encoded.getvalue()
+    except ImportError:
+        pass
+    except Exception as exc:
+        raise RuntimeError(f"Could not preprocess transparent OCR image ({type(exc).__name__})") from exc
     completed = subprocess.run(
         command,
-        input=path.read_bytes(),
+        input=image_bytes,
         capture_output=True,
         check=False,
         timeout=60,
