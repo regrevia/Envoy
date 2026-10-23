@@ -1127,6 +1127,10 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
     monkeypatch,
     tmp_path,
 ):
+    signed_media_url = (
+        "https://cdn.example.test/video.mp4?"
+        "sign=short-lived&biz_sign=playback&uifid=session-proof"
+    )
     request = ReadRequest.model_validate({
         "request_id": "browser-video-signed-source",
         "source": {
@@ -1183,15 +1187,17 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
     result = reader._attach_browser_video_evidence(
         request,
         request.source.url,
-        ["https://cdn.example.test/video.mp4?token=secret"],
+        [signed_media_url],
         response,
         duration_seconds=None,
-        bound_media_urls=["https://cdn.example.test/video.mp4?token=secret"],
+        bound_media_urls=[signed_media_url],
     )
 
     assert result.result == ReadResult.PARTIAL
-    assert downloaded["url"].endswith("token=secret")
-    assert "token=secret" not in result.model_dump_json()
+    assert downloaded["url"] == signed_media_url
+    serialized = result.model_dump_json()
+    for secret in ("short-lived", "playback", "session-proof"):
+        assert secret not in serialized
     assert not any(
         "video page only" in item or "video resources were discovered but not processed" in item
         for item in result.coverage.unresolved
@@ -1200,8 +1206,8 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
         "have not been extracted" in item
         for item in result.coverage.modalities["video"].unresolved
     )
-    assert result.coverage.modalities["video"].details["browser_media_url"].endswith(
-        "token=%5BREDACTED%5D"
+    assert result.coverage.modalities["video"].details["browser_media_url"] == (
+        "https://cdn.example.test"
     )
     assert any(block.id == "page-summary" for block in result.blocks)
 

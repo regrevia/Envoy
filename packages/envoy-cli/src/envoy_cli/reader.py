@@ -397,6 +397,21 @@ def _redact_url(value: str) -> str:
     ))
 
 
+def _media_origin(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    host = parsed.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        return f"{parsed.scheme}://{host}"
+    netloc = f"{host}:{port}" if port is not None else host
+    return f"{parsed.scheme}://{netloc}"
+
+
 def _visual_source_identity(value: str) -> str:
     parsed = urlparse(value)
     safe_query = [
@@ -1108,7 +1123,7 @@ def _attach_browser_video_evidence(
                 "unresolved": list(dict.fromkeys(unresolved)),
                 "details": {
                     **video_coverage.details,
-                    "browser_media_url": _redact_url(selected_url),
+                    "browser_media_url": _media_origin(selected_url),
                     "media_downloaded_bytes": downloaded_bytes,
                     "duration_seconds": duration or None,
                     "transcript_source": transcript_source,
@@ -1175,7 +1190,7 @@ def _attach_browser_video_evidence(
             "unresolved": list(dict.fromkeys(unresolved)),
             "details": {
                 **video_coverage.details,
-                "browser_media_url": _redact_url(selected_url),
+                "browser_media_url": _media_origin(selected_url),
                 "transcript_source": "unavailable",
                 "visual_inspection": "not_performed",
             },
@@ -5144,10 +5159,11 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         text_is_partial = returned_end < len(text)
         image_only = len(text) < 20 and bool(parser.images)
         video_urls = [
-            _redact_url(urljoin(final_url, item))
+            _media_origin(urljoin(final_url, item))
             for item in parser.video_urls
             if _is_public_http_url(urljoin(final_url, item), dns_cache)
         ]
+        video_urls = list(dict.fromkeys(url for url in video_urls if url))
         text_goal_candidates = _goal_candidates(text, goal_terms)
         source_revision = hashlib.sha256(html.encode("utf-8", errors="replace")).hexdigest()
         material_id = _material_id(
