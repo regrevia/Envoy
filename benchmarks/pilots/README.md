@@ -5,12 +5,14 @@ benchmarks. Run them with `--allow-incomplete`; they must retain
 `gate_status: incomplete` until the strict 20-source/40-task paired evaluation
 is populated.
 
-`2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl` combines the four
-independent MDN 201, 404, 410, and 429 sources (eight questions) into one pilot run.
-Its generated summary is `2026-10-23-mdn-http-status-codex-release-0.1.6.report.json`.
-This is still only 5/20 sources and 10/40 tasks and has no paired baseline or
-provider usage; it is not a comparative product result. The Python docs page
-was `partial`; only the returned JSON examples are scored, not the whole page.
+`2026-10-23-public-docs-codex-release-0.1.6.jsonl` combines five MDN HTTP
+status pages and the Python JSON library documentation (six distinct source
+URLs, twelve questions) into one pilot run.
+Its generated summary is `2026-10-23-public-docs-codex-release-0.1.6.report.json`.
+This is still only 6/20 sources and 12/40 tasks and has no paired baseline or
+provider usage; it is not a comparative product result. The RFC 9110 and
+Python docs pages were `partial`; each task is scoped to returned, located text,
+not full-document coverage.
 
 ## MDN 404 / Codex / Envoy Release 0.1.6
 
