@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "envoy.paired-experiment-plan/1"
+SCHEMA_VERSION = "envoy.paired-experiment-plan/2"
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]+")
 _SOURCE_CLASSES = {
     "bilibili",
@@ -126,7 +126,7 @@ def build_plan(
                 arm: f"{run_id}-{batch_component}-{arm}-session"
                 for arm in ("baseline", "envoy")
             },
-            "request_ids": {
+            "turn_correlation_ids": {
                 arm: {
                     role: f"{run_id}-{batch_component}-{arm}-{role}"
                     for role in ("initial", "followup-1", "followup-2")

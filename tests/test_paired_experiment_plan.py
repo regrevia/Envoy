@@ -47,7 +47,7 @@ def test_plan_is_deterministic_balanced_and_profile_isolated(tmp_path):
     assert first.stdout == second.stdout
 
     plan = json.loads(first.stdout)
-    assert plan["schema_version"] == "envoy.paired-experiment-plan/1"
+    assert plan["schema_version"] == "envoy.paired-experiment-plan/2"
     assert plan["seed"] == 20261023
     assert plan["package_count"] == 6
     assert plan["a_first_count"] == 3
@@ -84,16 +84,16 @@ def test_plan_freezes_run_identity_and_server_request_correlation(tmp_path):
     item = plan["packages"][0]
     assert set(item["session_ids"]) == {"baseline", "envoy"}
     assert item["session_ids"]["baseline"] != item["session_ids"]["envoy"]
-    assert set(item["request_ids"]) == {"baseline", "envoy"}
+    assert set(item["turn_correlation_ids"]) == {"baseline", "envoy"}
     for arm in ("baseline", "envoy"):
-        assert set(item["request_ids"][arm]) == {
+        assert set(item["turn_correlation_ids"][arm]) == {
             "initial",
             "followup-1",
             "followup-2",
         }
-        for request_id in item["request_ids"][arm].values():
-            assert item["package_id"] in request_id
-            assert arm in request_id
+        for turn_id in item["turn_correlation_ids"][arm].values():
+            assert item["package_id"] in turn_id
+            assert arm in turn_id
 
 
 def test_plan_marks_underpowered_pilot_without_promoting_it_to_confirmatory(tmp_path):
@@ -193,7 +193,7 @@ def test_plan_accepts_explicit_platform_stratum_and_task_manifest_reference(tmp_
 
     assert result.returncode == 0, result.stdout + result.stderr
     plan = json.loads(result.stdout)
-    assert plan["schema_version"] == "envoy.paired-experiment-plan/1"
+    assert plan["schema_version"] == "envoy.paired-experiment-plan/2"
     planned = {item["package_id"]: item for item in plan["packages"]}
     assert planned["douyin-cross-platform-001"]["source_class"] == "cross_platform"
     assert (
