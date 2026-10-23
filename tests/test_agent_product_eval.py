@@ -476,8 +476,8 @@ def test_combined_mdn_pilots_are_one_incomplete_three_source_run():
     report = json.loads(result.stdout)
     assert result.returncode == 0, result.stderr
     assert report["validation_status"] == "passed"
-    assert report["source_count"] == 3
-    assert report["task_count"] == 6
+    assert report["source_count"] == 4
+    assert report["task_count"] == 8
     assert report["gate_status"] == "incomplete"
     assert report["fact_recall"] == 1.0
     assert report["followup_reuse_rate"] == 1.0
