@@ -10,6 +10,7 @@ from envoy_core import __version__ as core_version
 from envoy_core.schemas.read_v1 import (
     ExpandRequest,
     LocalVideoReadRequest,
+    MaterialReplayRequest,
     MaterialSearchRequest,
     ReadRequest,
     VisualObservationRequest,
@@ -28,6 +29,7 @@ from .local_video import read_local_video
 from .reader import (
     PublicPageError,
     expand_material,
+    replay_material,
     read_public_page,
     record_visual_observation,
     search_material,
@@ -61,6 +63,9 @@ def _parser() -> argparse.ArgumentParser:
 
     expand = subparsers.add_parser("expand", help="read the next range from a local material")
     expand.add_argument("--request-json", required=True, help="read an expansion request from this path or '-' for stdin")
+
+    replay = subparsers.add_parser("replay", help="replay retained evidence into a new host session")
+    replay.add_argument("--request-json", required=True, help="read an envoy.read/1 replay request from this path or '-' for stdin")
 
     search = subparsers.add_parser("search", help="find relevant passages in a local material")
     search.add_argument("--request-json", required=True, help="read an envoy.search/1 request from this path or '-' for stdin")
@@ -193,6 +198,9 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             expand_request = ExpandRequest.model_validate_json(payload)
             response = expand_material(expand_request)
             operation_request = expand_request
+        elif args.command == "replay":
+            operation_request = MaterialReplayRequest.model_validate_json(payload)
+            response = replay_material(operation_request)
         elif args.command == "search":
             operation_request = MaterialSearchRequest.model_validate_json(payload)
             response = search_material(operation_request)
@@ -232,7 +240,11 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "request_id": operation_request.request_id if "operation_request" in locals() else "read",
             "execution_state": "completed",
             "result": "blocked",
-            "errors": [{"code": exc.code.value, "message": str(exc)}],
+            "errors": [{
+                "code": exc.code.value,
+                "message": str(exc),
+                **({"details": exc.details} if exc.details else {}),
+            }],
         }, ensure_ascii=False))
         return 2
     except (OSError, ValueError) as exc:

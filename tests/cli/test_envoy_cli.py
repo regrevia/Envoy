@@ -1964,6 +1964,344 @@ def test_retained_material_followup_without_session_id_remains_compatible(tmp_pa
     assert response.blocks[0].content.text == "A legacy client can continue this material."
 
 
+def test_material_replay_returns_cached_evidence_to_a_new_session_without_reusing_ranges(
+    tmp_path,
+    monkeypatch,
+):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ExpandRequest, MaterialReplayRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "4" * 24
+    source_revision = "4" * 64
+    stored_text = (
+        "First source paragraph. " * 18
+        + "\n\n"
+        + "Second source paragraph. " * 18
+    )
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/replay",
+        "source_revision": source_revision,
+        "session_id": "old-agent",
+        "text": stored_text,
+        "title_text": "Replayable material",
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": len(stored_text),
+            "returned_tokens": 20,
+            "expansion_rounds": 1,
+            "returned_ranges": [[0, len(stored_text)]],
+        },
+        "source_coverage_unresolved": [],
+    })
+
+    response = reader.replay_material(MaterialReplayRequest.model_validate({
+        "request_id": "replay-new-session",
+        "material_id": material_id,
+        "source_revision": source_revision,
+        "source_session_id": "old-agent",
+        "session_id": "new-agent",
+        "max_chars": 256,
+        "max_total_response_chars": 1000,
+    }))
+
+    assert response.result.value == "partial"
+    assert response.session_id == "new-agent"
+    assert response.material_id != material_id
+    assert any(
+        block.content.type == "text" and block.content.text
+        for block in response.blocks
+    )
+    text_coverage = response.coverage.modalities["text"]
+    assert text_coverage.details["continuation_available"] is True
+    assert text_coverage.details["next_offset"] > 0
+    original = reader._load_matching_material(material_id, source_revision, "old-agent")
+    replayed = reader._load_matching_material(
+        response.material_id,
+        source_revision,
+        "new-agent",
+    )
+    assert original is not None
+    assert replayed is not None
+    assert original["budget_state"]["returned_ranges"] == [[0, len(stored_text)]]
+    assert replayed["budget_state"]["returned_ranges"] != original["budget_state"]["returned_ranges"]
+    continuation = reader.expand_material(ExpandRequest.model_validate({
+        "request_id": "replay-new-session-expand",
+        "material_id": response.material_id,
+        "session_id": "new-agent",
+        "offset": text_coverage.details["next_offset"],
+        "max_chars": 512,
+        "max_total_response_chars": 1000,
+    }))
+    assert continuation.result.value in {"ready", "partial"}
+    assert any(
+        block.content.type == "text" and "Second source paragraph." in block.content.text
+        for block in continuation.blocks
+    )
+
+
+def test_material_replay_cli_accepts_versioned_replay_request(monkeypatch, capsys):
+    import json
+    from envoy_cli import cli
+    from envoy_core.schemas.read_v1 import ExecutionState, ReadResponse, ReadResult
+
+    observed = {}
+
+    def replay(request):
+        observed.update(request.model_dump())
+        return ReadResponse(
+            request_id=request.request_id,
+            session_id=request.session_id,
+            material_id="mat-" + "a" * 24,
+            source_revision=request.source_revision,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        )
+
+    monkeypatch.setattr(cli, "replay_material", replay)
+    code = cli.main(
+        ["replay", "--request-json", "-"],
+        stdin=json.dumps({
+            "protocol_version": "envoy.read/1",
+            "request_id": "cli-replay-1",
+            "material_id": "mat-" + "b" * 24,
+            "source_revision": "c" * 64,
+            "source_session_id": "session-old",
+            "session_id": "session-new",
+            "max_chars": 1200,
+        }),
+    )
+
+    response = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert response["result"] == "partial"
+    assert observed["session_id"] == "session-new"
+    assert observed["source_session_id"] == "session-old"
+
+
+def test_material_replay_rejects_wrong_source_session_and_repeated_target_session(
+    tmp_path,
+    monkeypatch,
+):
+    import pytest
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialReplayRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "5" * 24
+    source_revision = "5" * 64
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/replay-session",
+        "source_revision": source_revision,
+        "session_id": "source-session",
+        "text": "Evidence bound to the source session.",
+        "title_text": "Session-bound source",
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    request = {
+        "request_id": "replay-session-check",
+        "material_id": material_id,
+        "source_revision": source_revision,
+        "source_session_id": "wrong-session",
+        "session_id": "target-session",
+    }
+
+    with pytest.raises(reader.PublicPageError, match="source session does not match"):
+        reader.replay_material(MaterialReplayRequest.model_validate(request))
+
+    request["source_session_id"] = "source-session"
+    first = reader.replay_material(MaterialReplayRequest.model_validate(request))
+    replayed_material = reader._load_matching_material(
+        first.material_id,
+        source_revision,
+        "target-session",
+    )
+    assert replayed_material is not None
+    replayed_material["budget_state"]["returned_ranges"] = [[0, 8]]
+    reader._store_material(first.material_id, replayed_material, merge=False)
+
+    with pytest.raises(reader.PublicPageError, match="already replayed") as exc_info:
+        reader.replay_material(MaterialReplayRequest.model_validate({
+            **request,
+            "request_id": "replay-session-check-again",
+        }))
+    assert exc_info.value.details["material_id"] == first.material_id
+
+
+def test_material_replay_honors_minimum_token_budget_without_expand_schema_error(
+    tmp_path,
+    monkeypatch,
+):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialReplayRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "7" * 24
+    source_revision = "7" * 64
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/replay-budget",
+        "source_revision": source_revision,
+        "session_id": "budget-source",
+        "text": "技术内容 " * 80,
+        "title_text": "A very long technical title " * 20,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+
+    response = reader.replay_material(MaterialReplayRequest.model_validate({
+        "request_id": "replay-budget-target",
+        "material_id": material_id,
+        "source_revision": source_revision,
+        "source_session_id": "budget-source",
+        "session_id": "budget-target",
+        "max_chars": 256,
+        "max_total_response_chars": 256,
+        "max_response_tokens": 64,
+        "max_total_response_tokens": 64,
+    }))
+
+    returned_text = " ".join(
+        block.content.text
+        for block in response.blocks
+        if block.content.type == "text"
+    )
+    assert reader._estimated_tokens(returned_text) <= 64
+    assert response.result.value == "partial"
+
+
+def test_material_replay_copies_leased_frames_and_preserves_host_observations(
+    tmp_path,
+    monkeypatch,
+):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialReplayRequest, VisualObservationHistoryRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "6" * 24
+    source_revision = "6" * 64
+    source_url = "https://example.org/video"
+    source_frame = tmp_path / f"frames-{material_id}" / "frame-001.jpg"
+    second_source_frame = tmp_path / f"frames-{material_id}" / "frame-002.jpg"
+    reader._store_material(material_id, {
+        "source_url": source_url,
+        "source_revision": source_revision,
+        "session_id": "video-session-a",
+        "source_kind": "video",
+        "text": "[00:01.000] A speaker describes the diagram.",
+        "title_text": "Technical talk",
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+        "visual_resources": [],
+    })
+    source_frame.parent.mkdir()
+    source_frame.write_bytes(b"jpeg-frame")
+    second_source_frame.write_bytes(b"jpeg-frame-2")
+    reader._store_material(material_id, {
+        "source_url": source_url,
+        "source_revision": source_revision,
+        "session_id": "video-session-a",
+        "source_kind": "video",
+        "text": "[00:01.000] A speaker describes the diagram.",
+        "title_text": "Technical talk",
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+        "visual_resources": [
+            {
+                "resource_id": "resource-frame-001",
+                "source_block_id": "blk-video-frame-001",
+                "source_url": source_url,
+                "frame_path": str(source_frame),
+                "timestamp": 1.0,
+            },
+            {
+                "resource_id": "resource-frame-002",
+                "source_block_id": "blk-video-frame-002",
+                "source_url": source_url,
+                "frame_path": str(second_source_frame),
+                "timestamp": 2.0,
+            },
+        ],
+    })
+    observation = reader.record_visual_observation(
+        material_id,
+        None,
+        "resource-frame-001",
+        "blk-video-frame-001",
+        "The slide shows a three-column architecture diagram.",
+        "00:01.000",
+        "video-session-a",
+    )
+    assert observation["persisted"] is True
+
+    replay = reader.replay_material(MaterialReplayRequest.model_validate({
+        "request_id": "replay-video-session-b",
+        "material_id": material_id,
+        "source_revision": source_revision,
+        "source_session_id": "video-session-a",
+        "session_id": "video-session-b",
+        "include_visual": True,
+        "host_capabilities": {"image_input": "local_file"},
+    }))
+
+    assert replay.resources, replay.model_dump()
+    assert replay.result.value == "needs_host"
+    assert len(replay.resources) == 1
+    assert replay.resources[0].resource_id == "resource-frame-002"
+    assert replay.coverage.modalities["replay"].details["stored_visual_observation_count"] == 1
+    replay_frame = Path(replay.resources[0].delivery.path)
+    assert replay_frame != second_source_frame
+    assert replay_frame.read_bytes() == second_source_frame.read_bytes()
+    history = reader.read_visual_observations(VisualObservationHistoryRequest.model_validate({
+        "request_id": "replayed-observation-history",
+        "material_id": replay.material_id,
+        "session_id": "video-session-b",
+        "resource_id": "resource-frame-001",
+    }))
+    assert any(
+        block.content.type == "text"
+        and "three-column architecture" in block.content.text
+        for block in history.blocks
+    )
+
+    (tmp_path / f"{material_id}.json").unlink()
+    (tmp_path / f"{material_id}.expires").unlink()
+    reader._material_root()
+    assert not source_frame.exists()
+    assert not second_source_frame.exists()
+    assert replay_frame.is_file()
+
+
 def test_material_search_consumes_shared_cumulative_token_budget(tmp_path, monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import MaterialSearchRequest

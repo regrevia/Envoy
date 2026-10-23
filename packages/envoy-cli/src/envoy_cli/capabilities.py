@@ -106,6 +106,10 @@ def capability_catalog() -> dict:
                 "use": "Continue only when read coverage reports more material and a continuation offset.",
             },
             {
+                "tool": "envoy_replay",
+                "use": "Replay retained source evidence into a new host session under a fresh bounded budget without re-downloading or re-running local extraction.",
+            },
+            {
                 "tool": "envoy_search",
                 "use": "Find goal-relevant source passages in a retained material without sequential expansion.",
             },

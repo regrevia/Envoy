@@ -206,6 +206,29 @@ class ExpandRequest(ContractModel):
     max_expansion_rounds: Optional[int] = Field(default=None, ge=0, le=100)
 
 
+class MaterialReplayRequest(ContractModel):
+    protocol_version: Literal["envoy.read/1"] = PROTOCOL_VERSION
+    request_id: str = Field(min_length=1, max_length=128)
+    material_id: str = Field(pattern=r"^mat-[a-f0-9]{24}$")
+    source_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_session_id: Optional[str] = Field(default=None, max_length=128)
+    session_id: str = Field(min_length=1, max_length=128)
+    max_chars: int = Field(default=12_000, ge=256, le=100_000)
+    max_response_tokens: Optional[int] = Field(default=None, ge=64, le=25_000)
+    max_total_response_chars: int = Field(default=48_000, ge=256, le=5_000_000)
+    max_total_response_tokens: Optional[int] = Field(default=None, ge=64, le=1_000_000)
+    max_expansion_rounds: int = Field(default=3, ge=0, le=100)
+    include_visual: bool = False
+    max_visual_inputs: int = Field(default=12, ge=0, le=10_000)
+    host_capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
+
+    @model_validator(mode="after")
+    def validate_total_budget(self):
+        if self.max_total_response_chars < self.max_chars:
+            raise ValueError("max_total_response_chars must be >= max_chars")
+        return self
+
+
 class VisualObservationRequest(ContractModel):
     protocol_version: Literal["envoy.observe/1"] = "envoy.observe/1"
     request_id: str = Field(min_length=1, max_length=128)
