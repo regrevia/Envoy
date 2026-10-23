@@ -8,8 +8,9 @@ is populated.
 `2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl` combines the four
 independent MDN 201, 404, 410, and 429 sources (eight questions) into one pilot run.
 Its generated summary is `2026-10-23-mdn-http-status-codex-release-0.1.6.report.json`.
-This is still only 4/20 sources and 8/40 tasks and has no paired baseline or
-provider usage; it is not a comparative product result.
+This is still only 5/20 sources and 10/40 tasks and has no paired baseline or
+provider usage; it is not a comparative product result. The Python docs page
+was `partial`; only the returned JSON examples are scored, not the whole page.
 
 ## MDN 404 / Codex / Envoy Release 0.1.6
 
@@ -85,5 +86,28 @@ Recreate the machine report with:
 ```bash
 python3 benchmarks/agent_product_eval.py \
   --records benchmarks/pilots/2026-10-23-mdn-429-codex-release-0.1.6.jsonl \
+  --allow-incomplete
+```
+
+## Python JSON / Codex / Envoy Release 0.1.6
+
+`2026-10-23-python-json-codex-release-0.1.6.jsonl` records a technical
+documentation pilot using the same connected release MCP:
+
+- `envoy_read` returned the Python JSON encoder/decoder examples but reported
+  `partial` because the long page exceeded the response budget.
+- Follow-up `envoy_search` calls reused retained material. Their snippets were
+  fragmented; the recorded tasks are limited to the `loads` example present in
+  the initial returned block, not claims about the whole documentation page.
+- The page returned one logo image URI. It was not visually inspected and is
+  not counted as a model visual input. No second source download was recorded.
+- Provider usage and request duration were unavailable, so those remain null
+  and the pilot cannot contribute a comparative or savings result.
+
+Recreate the report with:
+
+```bash
+python3 benchmarks/agent_product_eval.py \
+  --records benchmarks/pilots/2026-10-23-python-json-codex-release-0.1.6.jsonl \
   --allow-incomplete
 ```
