@@ -337,6 +337,153 @@ def test_incomplete_pilot_allows_unknown_usage_but_never_reports_savings(tmp_pat
     assert strict.returncode == 2
 
 
+def test_incomplete_mode_still_rejects_known_private_or_placeholder_source(tmp_path):
+    for invalid_url in (
+        "http://127.0.0.1/private",
+        "https://example.invalid/page",
+    ):
+        records = tmp_path / "records.jsonl"
+        _write_records(records, source_count=1, tasks_per_source=2)
+        lines = records.read_text(encoding="utf-8").splitlines()
+        source = json.loads(lines[1])
+        source["url"] = invalid_url
+        lines[1] = json.dumps(source)
+        records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        report = json.loads(result.stdout)
+        assert result.returncode == 2
+        assert any(
+            "public HTTP(S)" in error or "placeholder URL" in error
+            for error in report["validation_errors"]
+        )
+
+
+def test_incomplete_mode_still_rejects_mismatched_known_provider_identity(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=1, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    task = json.loads(lines[2])
+    task["provider"] = "different-provider"
+    lines[2] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 2
+    assert any("must match run provider/model" in error for error in report["validation_errors"])
+
+
+def test_incomplete_mode_rejects_duplicate_source_and_task_ids(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=2, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    duplicate_source = json.loads(lines[4])
+    duplicate_source["source_id"] = "source-00"
+    lines[4] = json.dumps(duplicate_source)
+    duplicate_task = json.loads(lines[3])
+    duplicate_task["task_id"] = json.loads(lines[2])["task_id"]
+    lines[3] = json.dumps(duplicate_task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 2
+    assert any("duplicate source_id" in error for error in report["validation_errors"])
+    assert any("duplicate task_id" in error for error in report["validation_errors"])
+
+
+def test_incomplete_mode_rejects_known_invalid_task_role_and_usage_state(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=1, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    task = json.loads(lines[2])
+    task["task_role"] = "maybe"
+    task["usage_status"] = "estimated"
+    lines[2] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 2
+    assert any("task_role" in error for error in report["validation_errors"])
+    assert any("usage_status" in error for error in report["validation_errors"])
+
+
+def test_incomplete_mode_rejects_non_finite_measurements(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=1, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    task = json.loads(lines[2])
+    task["total_elapsed_ms"] = float("nan")
+    lines[2] = json.dumps(task)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    report = json.loads(result.stderr)
+    assert any("total_elapsed_ms" in error for error in report["validation_errors"])
+
+
+def test_incomplete_mode_allows_unknown_markers_but_strict_mode_rejects_them(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records, source_count=1, tasks_per_source=2)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    run = json.loads(lines[0])
+    run.update({
+        "envoy_version": "unknown",
+        "envoy_commit": "unknown",
+        "host_agent": "unknown",
+        "host_agent_version": "unknown",
+        "operating_system": "unknown",
+        "python_version": "unknown",
+        "provider": "unknown",
+        "model": "unknown",
+    })
+    lines[0] = json.dumps(run)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    draft = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert draft.returncode == 0, draft.stderr
+    strict = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert strict.returncode == 2
+    report = json.loads(strict.stdout)
+    assert any("actual evaluation runtime" in error for error in report["validation_errors"])
+
+
 def test_incomplete_draft_serializes_unmeasured_metrics_as_null(tmp_path):
     records = tmp_path / "records.jsonl"
     _write_records(records, source_count=1, tasks_per_source=2)

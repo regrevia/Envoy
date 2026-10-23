@@ -13,6 +13,7 @@ import argparse
 from collections import Counter, defaultdict
 import ipaddress
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -122,7 +123,12 @@ def _require_non_negative(
         if not allow_unknown:
             raise ValueError(f"{record_id}: {field} is required for a strict evaluation")
         return
-    if not isinstance(value, (int, float)) or value < 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
         raise ValueError(f"{record_id}: {field} must be a non-negative number")
 
 
@@ -170,8 +176,8 @@ def _arm_fact_metrics(task: dict, arm: str) -> tuple[float, float, float] | None
         or not _valid_id_list(raw_claimed)
         or not _valid_id_list(raw_supported)
         or not isinstance(raw_citations, list)
-        or task.get("answer_correct") is None
-        or task.get("citation_correct") is None
+        or task.get("answer_correct" if arm == "envoy" else "baseline_answer_correct") is None
+        or task.get("citation_correct" if arm == "envoy" else "baseline_citation_correct") is None
     ):
         return None
     claimed = set(raw_claimed) if isinstance(raw_claimed, list) else set()
@@ -211,14 +217,26 @@ def _reviewed_count(items: list[dict], field: str) -> int | None:
 
 def _complete_sum(items: list[dict], field: str) -> int | float | None:
     values = [item.get(field) for item in items]
-    if not values or any(not isinstance(value, (int, float)) or value < 0 for value in values):
+    if not values or any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+        for value in values
+    ):
         return None
     return sum(values)
 
 
 def _complete_median(items: list[dict], field: str) -> float | None:
     values = [item.get(field) for item in items]
-    if not values or any(not isinstance(value, (int, float)) or value < 0 for value in values):
+    if not values or any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+        for value in values
+    ):
         return None
     return _median(values)
 
@@ -235,26 +253,47 @@ def validate_records(
     missing_run = REQUIRED_RUN_FIELDS - run.keys()
     if missing_run and not allow_unknown_usage:
         errors.append(f"run: missing fields {sorted(missing_run)}")
+    unknown_markers = {"unknown", "draft", "not exposed"}
     for field in ("envoy_version", "envoy_commit", "host_agent", "host_agent_version", "operating_system", "python_version"):
-        value = str(run.get(field) or "").strip().lower()
-        if (not value or value.startswith("replace-with") or value in {"unknown", "draft", "not exposed"}) and not allow_unknown_usage:
+        raw_value = run.get(field)
+        value = str(raw_value or "").strip().lower()
+        if raw_value is not None and (
+            not value
+            or value.startswith("replace-with")
+            or (value in unknown_markers and not allow_unknown_usage)
+        ):
+            errors.append(f"run: {field} must identify the actual evaluation runtime")
+        elif raw_value is None and not allow_unknown_usage:
             errors.append(f"run: {field} must identify the actual evaluation runtime")
     commit = str(run.get("envoy_commit") or "").lower()
-    if commit and commit not in {"unknown", "not exposed"} and not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+    if commit and commit in unknown_markers and not allow_unknown_usage:
         errors.append("run: envoy_commit must be a Git commit hash or null when not exposed")
-    if run.get("quality_review_method") not in {"dual_human", "single_human", "reference_rubric"} and not allow_unknown_usage:
+    elif commit and commit not in unknown_markers and not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+        errors.append("run: envoy_commit must be a Git commit hash or null when not exposed")
+    quality_review_method = run.get("quality_review_method")
+    if quality_review_method is not None and quality_review_method not in {
+        "dual_human", "single_human", "reference_rubric"
+    }:
         errors.append("run: quality_review_method must identify how answers and citations were reviewed")
-    if not allow_unknown_usage and any(
-        str(run.get(field) or "").strip().lower() in {"", "unknown", "replace-with-provider", "replace-with-model"}
-        for field in ("provider", "model")
-    ):
-        errors.append("run: strict evaluation requires the actual provider and model")
+    elif quality_review_method is None and not allow_unknown_usage:
+        errors.append("run: quality_review_method must identify how answers and citations were reviewed")
+    for field in ("provider", "model"):
+        raw_value = run.get(field)
+        value = str(raw_value or "").strip().lower()
+        if raw_value is not None and (
+            not value
+            or value.startswith("replace-with")
+            or (value in unknown_markers and not allow_unknown_usage)
+        ):
+            errors.append(f"run: {field} must identify the actual evaluation runtime")
+        elif raw_value is None and not allow_unknown_usage:
+            errors.append("run: strict evaluation requires the actual provider and model")
     try:
         started_at = datetime.fromisoformat(str(run.get("started_at") or "").replace("Z", "+00:00"))
         if started_at.utcoffset() is None:
             raise ValueError("timezone required")
     except ValueError:
-        if not allow_unknown_usage:
+        if run.get("started_at") is not None or not allow_unknown_usage:
             errors.append("run: started_at must be an ISO-8601 timestamp with timezone")
     source_ids = set()
     source_urls = set()
@@ -263,51 +302,58 @@ def validate_records(
         source_id = str(source.get("source_id") or "<unknown-source>")
         if missing and not allow_unknown_usage:
             errors.append(f"{source_id}: missing source fields {sorted(missing)}")
-        if source_id in source_ids and not allow_unknown_usage:
+        if source_id in source_ids:
             errors.append(f"{source_id}: duplicate source_id")
         source_ids.add(source_id)
-        parsed = urlparse(str(source.get("url") or ""))
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or not _is_public_hostname(parsed.hostname)
-        ) and not allow_unknown_usage:
-            errors.append(f"{source_id}: url must be a public HTTP(S) URL")
-        elif (
-            parsed.hostname.lower() in PLACEHOLDER_HOSTS
-            or parsed.hostname.lower().endswith(PLACEHOLDER_SUFFIXES)
-        ) and not allow_unknown_usage:
-            errors.append(f"{source_id}: placeholder URL is not real acceptance evidence")
+        source_url = source.get("url")
+        if source_url is None or source_url == "":
+            if not allow_unknown_usage:
+                errors.append(f"{source_id}: url is required for a strict evaluation")
         else:
-            canonical = _canonical_source_url(str(source.get("url") or ""))
-            if canonical in source_urls and not allow_unknown_usage:
+            parsed = urlparse(str(source_url))
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or not _is_public_hostname(parsed.hostname)
+            ):
+                errors.append(f"{source_id}: url must be a public HTTP(S) URL")
+            elif (
+                parsed.hostname.lower() in PLACEHOLDER_HOSTS
+                or parsed.hostname.lower().endswith(PLACEHOLDER_SUFFIXES)
+            ):
+                errors.append(f"{source_id}: placeholder URL is not real acceptance evidence")
+            canonical = _canonical_source_url(str(source_url))
+            if canonical in source_urls:
                 errors.append(f"{source_id}: duplicate source URL does not count as a new source")
             source_urls.add(canonical)
             query_keys = {
                 key.lower()
                 for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
             }
-            if query_keys & SENSITIVE_QUERY_KEYS and not allow_unknown_usage:
+            if query_keys & SENSITIVE_QUERY_KEYS:
                 errors.append(f"{source_id}: source URL contains sensitive query parameters")
-        if source.get("accepted_state") not in {
+        accepted_state = source.get("accepted_state")
+        if accepted_state is not None and accepted_state not in {
             "accepted", "partial", "blocked", "unverified", "failed"
-        } and not allow_unknown_usage:
-            errors.append(
-                f"{source_id}: accepted_state must describe the observed source"
-            )
+        }:
+            errors.append(f"{source_id}: accepted_state must describe the observed source")
+        if accepted_state is None and not allow_unknown_usage:
+            errors.append(f"{source_id}: accepted_state is required for a strict evaluation")
         revision = source.get("source_revision")
         if revision is not None and (
             not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision.lower())
-        ) and not allow_unknown_usage:
+        ):
             errors.append(f"{source_id}: source_revision must be a SHA-256 hex digest or null if unavailable")
+        if revision is None and not allow_unknown_usage:
+            errors.append(f"{source_id}: source_revision is required for a strict evaluation")
         try:
             revalidated_at = datetime.fromisoformat(str(source.get("revalidated_at") or "").replace("Z", "+00:00"))
             if revalidated_at.utcoffset() is None:
                 raise ValueError("timezone required")
         except ValueError:
-            if not allow_unknown_usage:
+            if source.get("revalidated_at") is not None or not allow_unknown_usage:
                 errors.append(f"{source_id}: revalidated_at must be an ISO-8601 timestamp with timezone")
 
     task_ids = set()
@@ -318,68 +364,86 @@ def validate_records(
         missing = REQUIRED_TASK_FIELDS - task.keys()
         if missing and not allow_unknown_usage:
             errors.append(f"{task_id}: missing task fields {sorted(missing)}")
-        if task_id in task_ids and not allow_unknown_usage:
+        if task_id in task_ids:
             errors.append(f"{task_id}: duplicate task_id")
         task_ids.add(task_id)
         source_id = str(task.get("source_id") or "")
         tasks_by_source[source_id].append(task)
         goal = str(task.get("goal") or "").strip()
-        if not goal and not allow_unknown_usage:
+        if task.get("goal") is not None and not goal:
             errors.append(f"{task_id}: goal must be a concrete task question")
-        if task.get("task_role") not in {"initial", "followup"} and not allow_unknown_usage:
+        if task.get("goal") is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: goal must be a concrete task question")
+        task_role = task.get("task_role")
+        if task_role is not None and task_role not in {"initial", "followup"}:
             errors.append(f"{task_id}: task_role must be initial or followup")
-        if source_id not in source_ids and not allow_unknown_usage:
+        if task_role is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: task_role must be initial or followup")
+        if task.get("source_id") is not None and source_id not in source_ids:
             errors.append(f"{task_id}: references unknown source_id {source_id}")
-        if not isinstance(task.get("answer_correct"), bool) and not allow_unknown_usage:
+        if task.get("source_id") is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: references unknown source_id {source_id}")
+        if task.get("answer_correct") is not None and not isinstance(task.get("answer_correct"), bool):
             errors.append(f"{task_id}: answer_correct must be boolean")
-        if not isinstance(task.get("citation_correct"), bool) and not allow_unknown_usage:
+        if task.get("answer_correct") is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: answer_correct is required for a strict evaluation")
+        if task.get("citation_correct") is not None and not isinstance(task.get("citation_correct"), bool):
             errors.append(f"{task_id}: citation_correct must be boolean")
+        if task.get("citation_correct") is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: citation_correct is required for a strict evaluation")
         reference_facts = task.get("reference_facts")
-        if task.get("reference_facts") is not None and (
+        if reference_facts is not None and (
             not isinstance(reference_facts, dict)
             or not reference_facts
             or any(not str(key).strip() or not str(value).strip() for key, value in (reference_facts or {}).items())
-        ) and not allow_unknown_usage:
+        ):
             errors.append(f"{task_id}: reference_facts must map fact IDs to non-empty reviewed claims")
+        if reference_facts is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: reference_facts is required for a strict evaluation")
         for arm in ("envoy", "baseline"):
             claimed = task.get(f"{arm}_claimed_fact_ids")
             supported = task.get(f"{arm}_supported_fact_ids")
             citations = task.get(f"{arm}_citations")
-            if not _valid_id_list(claimed) and not allow_unknown_usage:
+            if claimed is not None and not _valid_id_list(claimed):
                 errors.append(f"{task_id}: {arm}_claimed_fact_ids must be a unique list of fact IDs")
                 claimed = []
-            elif not _valid_id_list(claimed):
+            elif claimed is None:
+                if not allow_unknown_usage:
+                    errors.append(f"{task_id}: {arm}_claimed_fact_ids is required for a strict evaluation")
                 claimed = []
-            if not _valid_id_list(supported) and not allow_unknown_usage:
+            if supported is not None and not _valid_id_list(supported):
                 errors.append(f"{task_id}: {arm}_supported_fact_ids must be a unique list of fact IDs")
                 supported = []
-            elif not _valid_id_list(supported):
+            elif supported is None:
+                if not allow_unknown_usage:
+                    errors.append(f"{task_id}: {arm}_supported_fact_ids is required for a strict evaluation")
                 supported = []
-            if not set(supported).issubset(set(claimed)) and not allow_unknown_usage:
+            if not set(supported).issubset(set(claimed)):
                 errors.append(f"{task_id}: {arm} supported facts must be among claimed facts")
             reference_facts = task.get("reference_facts")
             known_fact_ids = set(reference_facts) if isinstance(reference_facts, dict) else set()
-            if not set(supported).issubset(known_fact_ids) and not allow_unknown_usage:
+            if not set(supported).issubset(known_fact_ids):
                 errors.append(f"{task_id}: {arm} supported facts must be in the reference fact set")
-            if not isinstance(citations, list) and not allow_unknown_usage:
+            if citations is not None and not isinstance(citations, list):
                 errors.append(f"{task_id}: {arm}_citations must be a list")
                 citations = []
-            elif not isinstance(citations, list):
+            elif citations is None:
+                if not allow_unknown_usage:
+                    errors.append(f"{task_id}: {arm}_citations is required for a strict evaluation")
                 citations = []
             for citation in citations:
                 if not isinstance(citation, dict):
-                    if not allow_unknown_usage:
-                        errors.append(f"{task_id}: {arm} citation record must be an object")
+                    errors.append(f"{task_id}: {arm} citation record must be an object")
                     continue
                 fact_id = citation.get("fact_id")
                 locator = citation.get("locator")
-                if fact_id not in set(claimed) and not allow_unknown_usage:
+                if fact_id not in set(claimed):
                     errors.append(f"{task_id}: {arm} citation references an unclaimed fact")
-                if (not isinstance(locator, (str, dict)) or not locator) and not allow_unknown_usage:
+                if not isinstance(locator, (str, dict)) or not locator:
                     errors.append(f"{task_id}: {arm} citation locator must be non-empty")
-                if not isinstance(citation.get("supports_fact"), bool) and not allow_unknown_usage:
+                if not isinstance(citation.get("supports_fact"), bool):
                     errors.append(f"{task_id}: {arm} citation supports_fact must be reviewed boolean")
-                if citation.get("supports_fact") and fact_id not in set(supported) and not allow_unknown_usage:
+                if citation.get("supports_fact") and fact_id not in set(supported):
                     errors.append(f"{task_id}: {arm} supporting citation must map to a supported fact")
             arm_citation_correct = task.get(
                 "citation_correct" if arm == "envoy" else "baseline_citation_correct"
@@ -389,14 +453,17 @@ def validate_records(
                 and item.get("supports_fact") is True
                 and str(item.get("locator") or "").strip()
                 for item in citations
-            ) and not allow_unknown_usage:
+            ) and arm_citation_correct is True:
                 errors.append(f"{task_id}: {arm} citation_correct requires a reviewed supporting locator")
         for field in (
             "baseline_answer_correct",
             "baseline_citation_correct",
             "baseline_reused_material",
         ):
-            if not isinstance(task.get(field), bool) and not allow_unknown_usage:
+            value = task.get(field)
+            if value is not None and not isinstance(value, bool):
+                errors.append(f"{task_id}: {field} must be boolean")
+            elif value is None and not allow_unknown_usage:
                 errors.append(f"{task_id}: {field} must be boolean")
         for field in (
             "first_evidence_ms",
@@ -415,44 +482,71 @@ def validate_records(
             _require_non_negative(
                 task, field, task_id, allow_unknown=allow_unknown_usage
             )
-        if task.get("baseline_method") not in {
+        baseline_method = task.get("baseline_method")
+        if baseline_method is not None and baseline_method not in {
             "direct_host_read",
             "host_read_with_fair_cache",
             "host_native_media",
-        } and not allow_unknown_usage:
+        }:
+            errors.append(f"{task_id}: baseline_method must identify the comparison path")
+        elif baseline_method is None and not allow_unknown_usage:
             errors.append(f"{task_id}: baseline_method must identify the comparison path")
         provider = str(task.get("provider") or "")
         model = str(task.get("model") or "")
         baseline_provider = str(task.get("baseline_provider") or "")
         baseline_model = str(task.get("baseline_model") or "")
-        if (provider, model) != run_identity or (baseline_provider, baseline_model) != run_identity:
-            if not allow_unknown_usage or all((provider, model, baseline_provider, baseline_model)):
-                errors.append(f"{task_id}: Envoy and baseline must match run provider/model")
+        for arm, identity in (
+            ("Envoy", (provider, model)),
+            ("baseline", (baseline_provider, baseline_model)),
+        ):
+            for index, field_name in enumerate(("provider", "model")):
+                value = identity[index]
+                expected = run_identity[index]
+                if (
+                    value
+                    and value.lower() not in unknown_markers
+                    and expected
+                    and expected.lower() not in unknown_markers
+                    and value != expected
+                ):
+                    errors.append(f"{task_id}: {arm} must match run provider/model")
+                if not allow_unknown_usage and value != expected:
+                    errors.append(f"{task_id}: Envoy and baseline must match run provider/model")
         usage_status = task.get("usage_status")
-        if usage_status not in {"actual", "unknown"} and not allow_unknown_usage:
+        if usage_status is not None and usage_status not in {"actual", "unknown"}:
+            errors.append(f"{task_id}: usage_status must be actual or unknown")
+        if usage_status is None and not allow_unknown_usage:
             errors.append(f"{task_id}: usage_status must be actual or unknown")
         if usage_status != "actual" and not allow_unknown_usage:
             errors.append(f"{task_id}: Envoy arm requires actual provider usage")
         if usage_status == "actual":
             for field in ("input_tokens", "output_tokens"):
                 _require_non_negative(
-                    task, field, task_id, allow_unknown=allow_unknown_usage
+                    task, field, task_id
                 )
         baseline_usage_status = task.get("baseline_usage_status")
-        if baseline_usage_status not in {"actual", "unknown"} and not allow_unknown_usage:
+        if baseline_usage_status is not None and baseline_usage_status not in {"actual", "unknown"}:
+            errors.append(f"{task_id}: baseline_usage_status must be actual or unknown")
+        if baseline_usage_status is None and not allow_unknown_usage:
             errors.append(f"{task_id}: baseline_usage_status must be actual or unknown")
         if baseline_usage_status != "actual" and not allow_unknown_usage:
             errors.append(f"{task_id}: baseline_usage_status must be actual")
         if baseline_usage_status == "actual":
             for field in ("baseline_input_tokens", "baseline_output_tokens"):
                 _require_non_negative(
-                    task, field, task_id, allow_unknown=allow_unknown_usage
+                    task, field, task_id
                 )
-        if not isinstance(task.get("evidence_locators"), list) and not allow_unknown_usage:
+        evidence_locators = task.get("evidence_locators")
+        if evidence_locators is not None and not isinstance(evidence_locators, list):
             errors.append(f"{task_id}: evidence_locators must be a list")
-        elif task.get("citation_correct") is True and not task.get("evidence_locators"):
+        elif evidence_locators is None and not allow_unknown_usage:
+            errors.append(f"{task_id}: evidence_locators must be a list")
+        elif task.get("citation_correct") is True and not evidence_locators:
             errors.append(f"{task_id}: a correct citation requires at least one evidence locator")
-        if not isinstance(task.get("reused_material"), bool) and not allow_unknown_usage:
+        reused_material = task.get("reused_material")
+        if reused_material is not None and not isinstance(reused_material, bool):
+            errors.append(f"{task_id}: reused_material must be boolean")
+        elif reused_material is None and not allow_unknown_usage:
             errors.append(f"{task_id}: reused_material must be boolean")
 
     for source_id in source_ids:

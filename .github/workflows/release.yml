@@ -1,4 +1,4 @@
-name: Envoy Release
+name: Envoy 正式发行 / Envoy Release
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   release:
-    name: Build and publish local Skill assets
+    name: 构建并发布安装包 / Build and publish assets
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Verify tag matches package versions
+      - name: 验证标签与包版本 / Verify tag and package versions
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
@@ -42,7 +42,7 @@ jobs:
               if actual != expected:
                   raise SystemExit(f"{path}: version {actual} does not match tag {expected}")
           PY
-      - name: Build installable assets
+      - name: 构建可安装产物 / Build installable assets
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
@@ -60,7 +60,7 @@ jobs:
           ]
           Path("dist/SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="ascii")
           PY
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release (Chinese first, English below)
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}

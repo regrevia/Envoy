@@ -1,14 +1,15 @@
-name: Feature Request
-description: Suggest a workflow or platform improvement
+name: 功能建议 / Feature request
+description: 提出工作流、平台或产品改进建议 / Suggest a workflow, platform, or product improvement
 body:
   - type: textarea
     id: goal
     attributes:
-      label: User goal and current limitation
+      label: 目标与当前限制 / Goal and current limitation
+      description: 你想完成什么？现在遇到什么限制？ / What are you trying to do, and what is blocking you?
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed behavior and public examples
-      description: Do not include credentials, private files, or signed media URLs.
+      label: 期望行为与公开示例 / Expected behavior and public examples
+      description: 请勿提交凭据、私有文件或带签名的媒体链接。 / Do not include credentials, private files, or signed media URLs.
