@@ -57,6 +57,14 @@ locators, answer and citation review, first-evidence and total latency, Envoy
 calls, visual inputs, repeated downloads, and actual host usage.
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, and the provider/model used for both arms.
+Each source records when it was revalidated and the SHA-256 source revision
+when material was available (null is allowed for an observed blocked source).
+Private/loopback URLs, signed URLs, duplicate source URLs, and tracking-only URL
+variants do not count as distinct public sources.
+Each task includes a versioned reference-fact set, arm-specific claimed and
+supported fact IDs, plus every citation's reviewed locator/support judgment.
+The report emits macro fact recall/precision and citation-support rates;
+manual answer/citation booleans remain separate adjudication fields.
 
 ```bash
 python3 benchmarks/agent_product_eval.py \
