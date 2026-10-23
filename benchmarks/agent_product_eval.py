@@ -203,7 +203,9 @@ def _reviewed_accuracy(items: list[dict], field: str) -> float | None:
     return sum(values) / len(values)
 
 
-def _reviewed_count(items: list[dict], field: str) -> int:
+def _reviewed_count(items: list[dict], field: str) -> int | None:
+    if not items:
+        return None
     return sum(isinstance(item.get(field), bool) for item in items)
 
 
@@ -235,16 +237,11 @@ def validate_records(
         errors.append(f"run: missing fields {sorted(missing_run)}")
     for field in ("envoy_version", "envoy_commit", "host_agent", "host_agent_version", "operating_system", "python_version"):
         value = str(run.get(field) or "").strip().lower()
-        if not value or value.startswith("replace-with") or value in {"unknown", "draft", "not exposed"}:
-            if allow_unknown_usage:
-                continue
+        if (not value or value.startswith("replace-with") or value in {"unknown", "draft", "not exposed"}) and not allow_unknown_usage:
             errors.append(f"run: {field} must identify the actual evaluation runtime")
-    if (
-        run.get("envoy_commit")
-        and str(run.get("envoy_commit")).lower() not in {"unknown", "not exposed"}
-        and not re.fullmatch(r"[0-9a-f]{7,40}", str(run.get("envoy_commit") or "").lower())
-    ):
-        errors.append("run: envoy_commit must be a Git commit hash")
+    commit = str(run.get("envoy_commit") or "").lower()
+    if commit and commit not in {"unknown", "not exposed"} and not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+        errors.append("run: envoy_commit must be a Git commit hash or null when not exposed")
     if run.get("quality_review_method") not in {"dual_human", "single_human", "reference_rubric"} and not allow_unknown_usage:
         errors.append("run: quality_review_method must identify how answers and citations were reviewed")
     if not allow_unknown_usage and any(
@@ -530,7 +527,8 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         and isinstance(task.get("baseline_citation_correct"), bool)
     ]
     quality_inputs_complete = (
-        bool(quality_reviewed_tasks)
+        len(quality_reviewed_tasks) == len(tasks)
+        and bool(tasks)
         and metrics_complete
     )
     quality_non_inferior = None
