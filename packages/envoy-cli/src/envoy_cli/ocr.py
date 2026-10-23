@@ -12,6 +12,7 @@ from typing import Any
 
 
 OCR_PROFILES = {"fast", "balanced", "quality", "pro"}
+OCR_PIPELINE_REVISION = "tesseract-tsv-page-dimensions-v2"
 
 
 def ocr_cache_key(
@@ -76,7 +77,19 @@ def _tesseract_command(language: str) -> list[str]:
 
 def _parse_tesseract_tsv(payload: str, *, width: int, height: int) -> list[dict[str, Any]]:
     regions: list[dict[str, Any]] = []
+    image_width = max(width, 1)
+    image_height = max(height, 1)
     for row in csv.DictReader(io.StringIO(payload), delimiter="\t"):
+        if str(row.get("level") or "") == "1":
+            try:
+                page_width = int(row.get("width") or 0)
+                page_height = int(row.get("height") or 0)
+            except (TypeError, ValueError):
+                page_width = page_height = 0
+            if page_width > 0 and page_height > 0:
+                image_width = page_width
+                image_height = page_height
+            continue
         text = " ".join(str(row.get("text") or "").split())
         if not text:
             continue
@@ -93,10 +106,10 @@ def _parse_tesseract_tsv(payload: str, *, width: int, height: int) -> list[dict[
         regions.append({
             "text": text,
             "bbox": [
-                max(0.0, left / max(width, 1)),
-                max(0.0, top / max(height, 1)),
-                min(1.0, (left + box_width) / max(width, 1)),
-                min(1.0, (top + box_height) / max(height, 1)),
+                max(0.0, left / image_width),
+                max(0.0, top / image_height),
+                min(1.0, (left + box_width) / image_width),
+                min(1.0, (top + box_height) / image_height),
             ],
             "confidence": max(0.0, min(1.0, confidence / 100.0)),
         })
