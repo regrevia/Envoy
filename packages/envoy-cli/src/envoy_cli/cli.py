@@ -12,6 +12,7 @@ from envoy_core.schemas.read_v1 import (
     LocalVideoReadRequest,
     MaterialSearchRequest,
     ReadRequest,
+    VisualObservationRequest,
 )
 
 from .capabilities import capability_catalog
@@ -24,7 +25,13 @@ from . import __version__
 from . import mcp
 from .collections import CollectionError, discover_profile
 from .local_video import read_local_video
-from .reader import PublicPageError, expand_material, read_public_page, search_material
+from .reader import (
+    PublicPageError,
+    expand_material,
+    read_public_page,
+    record_visual_observation,
+    search_material,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -40,6 +47,16 @@ def _parser() -> argparse.ArgumentParser:
         "--request-json",
         required=True,
         help="read an envoy.read/1 local-video request from this path or '-' for stdin",
+    )
+
+    observe = subparsers.add_parser(
+        "observe-visual",
+        help="persist one host inspection observation for a delivered visual resource",
+    )
+    observe.add_argument(
+        "--request-json",
+        required=True,
+        help="read an envoy.observe/1 request from this path or '-' for stdin",
     )
 
     expand = subparsers.add_parser("expand", help="read the next range from a local material")
@@ -182,6 +199,27 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         elif args.command == "read-local-video":
             operation_request = LocalVideoReadRequest.model_validate_json(payload)
             response = read_local_video(operation_request)
+        elif args.command == "observe-visual":
+            observation_request = VisualObservationRequest.model_validate_json(payload)
+            persistence = record_visual_observation(
+                observation_request.material_id,
+                observation_request.source_url,
+                observation_request.resource_id,
+                observation_request.source_block_id,
+                observation_request.observation,
+                observation_request.locator_quote,
+                observation_request.session_id,
+            )
+            print(json.dumps({
+                "protocol_version": "envoy.observe/1",
+                "request_id": observation_request.request_id,
+                "session_id": observation_request.session_id,
+                "material_id": observation_request.material_id,
+                "result": "ready" if persistence.get("persisted") else "blocked",
+                "execution_state": "completed",
+                "observation_persistence": persistence,
+            }, ensure_ascii=False))
+            return 0 if persistence.get("persisted") else 2
         else:
             request = ReadRequest.model_validate_json(payload)
             operation_request = request

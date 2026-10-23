@@ -211,7 +211,7 @@ class VisualObservationRequest(ContractModel):
     request_id: str = Field(min_length=1, max_length=128)
     material_id: Optional[str] = Field(default=None, pattern=r"^mat-[a-f0-9]{24}$")
     session_id: Optional[str] = Field(default=None, max_length=128)
-    source_url: str = Field(min_length=1, max_length=8192)
+    source_url: Optional[str] = Field(default=None, max_length=8192)
     resource_id: str = Field(min_length=1, max_length=256)
     source_block_id: str = Field(min_length=1, max_length=256)
     observation: str = Field(min_length=1, max_length=20_000)

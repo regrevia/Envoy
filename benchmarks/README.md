@@ -101,7 +101,10 @@ disabled or isolated. If that cannot be verified, report the batch as
 cache-confounded.
 
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
-ASR/OCR status, and the provider/model used for both arms.
+ASR/OCR status, the provider/model used for both arms, and
+`cache_isolation_status`: `verified_disabled`, `verified_isolated`,
+`cache_confounded`, or `unknown`. Only the first two states permit a
+token-savings claim.
 Each source records when it was revalidated and the SHA-256 source revision
 when material was available (null is allowed for an observed blocked source).
 Private/loopback URLs, signed URLs, duplicate source URLs, and tracking-only URL
@@ -110,6 +113,14 @@ Each task includes a versioned reference-fact set, arm-specific claimed and
 supported fact IDs, plus every citation's reviewed locator/support judgment.
 The report emits macro fact recall/precision and citation-support rates;
 manual answer/citation booleans remain separate adjudication fields.
+
+If the inference server exposes cache accounting, each task can record
+`usage_breakdown_status: "reported"` plus `uncached_input_tokens`,
+`cache_read_input_tokens`, and `cache_creation_input_tokens`. These disjoint
+counts must sum to `input_tokens`; the baseline uses corresponding
+`baseline_` fields. Missing breakdowns remain `N/A` and are never reconstructed
+from total input tokens. The concise report includes the cache split and total
+input exposure when the split is complete.
 
 ```bash
 python3 benchmarks/agent_product_eval.py \

@@ -47,6 +47,37 @@ envoy asr install --model base
 envoy doctor --json --verify-asr
 ```
 
+技术中文语音建议使用 `large-v3` 以提高识别质量；它比默认 `base`
+占用更多磁盘、内存和处理时间。只有确认本机资源足够且中文技术词准确度重要时再安装：
+
+```bash
+envoy asr install --model large-v3
+envoy doctor --json --verify-asr
+```
+
+`base` 是轻量速度档，不是中文技术逐字稿质量保证。任何 Whisper 档位都可能误识术语；
+保留 ASR 来源标记，并对不确定词回听或引用原始视频证据。
+
+## CLI 视觉观察
+
+读取结果中的状态字段是 `result`（`ready`、`partial`、`needs_host`、`blocked`、
+`empty`）；`execution_state` 是独立的生命周期字段。CLI 可用
+`observe-visual` 完成逐帧检查后的观察记录：
+
+```bash
+printf '%s' '{"protocol_version":"envoy.observe/1","request_id":"observe-frame-1","material_id":"mat-0123456789abcdef01234567","session_id":"agent-session","resource_id":"resource-frame-1","source_block_id":"blk-video-frame-001","observation":"00:02.000 shows a three-column architecture diagram.","locator_quote":"00:02.000"}' | envoy observe-visual --request-json -
+```
+
+协议版本必须是 `envoy.observe/1`。`observation` 是简短纯字符串，不是对象；
+内容只能描述宿主实际检查过的图像。保留的材料会根据
+`material_id + resource_id + source_block_id` 验证资源归属，并从已交付资源推导
+`source_url`；`source_url` 因此可省略。MCP 与 CLI 使用同一观察协议。
+
+抖音页面有时只能公开提供页面文字/章节摘要，而签名或会话绑定的媒体 URL
+不能安全地作为视频级证据处理。此时 `envoy_read` 会保持 `partial`，不会返回 ASR
+或视频帧；如果用户另有本地文件，可单独运行 `envoy_read_local_video`，但不能
+假定本地文件与链接内容相同。
+
 浏览器默认 headless。只有页面需要正常登录或用户验证时，才会打开隔离浏览器请用户接管。Envoy 不读取个人浏览器 Cookie，也不绕过 CAPTCHA、登录或反爬限制。仅使用用户配置或明确认可的可信代理，不搜索或使用公共代理。
 
 更新时从 Release 获取新 wheel，再运行 `uv tool install --force <wheel-path>`。Whisper/ASR 是可选依赖，更新时需按指南保留已配置的 ASR engine。

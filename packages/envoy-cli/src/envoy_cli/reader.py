@@ -459,6 +459,18 @@ def _goal_score(value: str, terms: list[str]) -> int:
     return score
 
 
+def _is_probable_ui_image(image: dict) -> bool:
+    image_url = urlparse(str(image.get("url") or ""))
+    filename = image_url.path.rsplit("/", 1)[-1]
+    normalized = re.sub(r"([a-z])([A-Z])", r"\1 \2", filename).lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    markers = {
+        "avatar", "background", "bg", "btn", "button", "close", "icon",
+        "logo", "loading", "placeholder", "sprite",
+    }
+    return bool(markers & set(normalized.split()))
+
+
 def _safe_visual_candidates(
     images: list[dict],
     page_url: str,
@@ -1931,7 +1943,7 @@ def _record_material_range(stored: dict, state: dict, start: int, end: int, cont
 @_serialize_material_id_first
 def record_visual_observation(
     material_id: str | None,
-    source_url: str,
+    source_url: str | None,
     resource_id: str,
     source_block_id: str,
     observation: str,
@@ -1965,10 +1977,15 @@ def record_visual_observation(
         ),
         None,
     ) if isinstance(expected_resources, list) else None
-    safe_source_url = _redact_url(source_url)
+    if expected is None:
+        return {"persisted": False, "reason": "resource_mismatch"}
+    expected_source_url = str(expected.get("source_url") or "")
+    if source_url:
+        safe_source_url = _redact_url(source_url)
+    else:
+        safe_source_url = _redact_url(expected_source_url)
     if (
-        expected is None
-        or _visual_source_identity(str(expected.get("source_url") or ""))
+        _visual_source_identity(str(expected.get("source_url") or ""))
         != _visual_source_identity(safe_source_url)
     ):
         return {"persisted": False, "reason": "resource_mismatch"}
@@ -1997,7 +2014,11 @@ def record_visual_observation(
         _store_material(material_id, stored)
     except OSError:
         return {"persisted": False, "reason": "storage_unavailable"}
-    return {"persisted": True, "observation_count": len(stored["visual_observations"])}
+    return {
+        "persisted": True,
+        "observation_count": len(stored["visual_observations"]),
+        "source_url": _redact_url(expected_source_url),
+    }
 
 
 @_serialize_material_request
@@ -5113,7 +5134,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         )
         visual_budget = max(0, request.budget.max_visual_inputs)
         goal_terms = _goal_terms(request.goal)
-        image_candidates = [
+        raw_image_candidates = [
             {
                 **image,
                 "score": _goal_score(f"{image.get('alt', '')} {image.get('url', '')}", goal_terms),
@@ -5121,8 +5142,25 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
             }
             for index, image in enumerate(parser.images)
         ]
+        ui_images_excluded = sum(
+            _is_probable_ui_image(item) and int(item["score"]) == 0
+            for item in raw_image_candidates
+        )
+        image_candidates = [
+            item for item in raw_image_candidates
+            if not _is_probable_ui_image(item) or int(item["score"]) > 0
+        ]
         if goal_terms and not image_note_page:
-            image_candidates.sort(key=lambda item: (-int(item["score"]), int(item["source_index"])))
+            image_candidates.sort(key=lambda item: (
+                -int(item["score"]),
+                _is_probable_ui_image(item),
+                int(item["source_index"]),
+            ))
+        elif not image_note_page:
+            image_candidates.sort(key=lambda item: (
+                _is_probable_ui_image(item),
+                int(item["source_index"]),
+            ))
         safe_image_catalog, skipped_sensitive_images = _safe_visual_candidates(
             image_candidates,
             final_url,
@@ -5490,7 +5528,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             ),
                             *(
                                 ["Image input budget limited returned images"]
-                                if len(selected_images) < len(parser.images)
+                                if len(selected_images) < len(image_candidates)
+                                else []
+                            ),
+                            *(
+                                [
+                                    f"{ui_images_excluded} obvious interface decoration images were excluded"
+                                ]
+                                if ui_images_excluded
                                 else []
                             ),
                             *(
@@ -5538,6 +5583,11 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                                     "image_order": [item.resource_id for item in resources],
                                 }
                                 if image_note_page
+                                else {}
+                            ),
+                            **(
+                                {"ui_images_excluded": ui_images_excluded}
+                                if ui_images_excluded
                                 else {}
                             ),
                         },

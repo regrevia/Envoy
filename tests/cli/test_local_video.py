@@ -204,3 +204,76 @@ def test_local_video_cli_accepts_protocol_request_and_returns_json(
     assert code == 0
     assert payload["request_id"] == "cli-local-video"
     assert payload["result"] == "partial"
+
+
+def test_cli_observe_visual_accepts_observe_protocol_and_returns_json(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    import json
+    from envoy_cli import cli
+
+    request = {
+        "protocol_version": "envoy.observe/1",
+        "request_id": "observe-frame-1",
+        "material_id": "mat-" + "a" * 24,
+        "session_id": "session-1",
+        "source_url": "https://example.org/video",
+        "resource_id": "resource-frame-1",
+        "source_block_id": "blk-frame-1",
+        "observation": "At 00:02 the slide shows a three-column architecture diagram.",
+        "locator_quote": "00:02.000",
+    }
+    monkeypatch.setattr(
+        cli,
+        "record_visual_observation",
+        lambda *args: {
+            "persisted": True,
+            "observation_count": 1,
+            "request": args,
+        },
+    )
+
+    code = cli.main(
+        ["observe-visual", "--request-json", "-"],
+        stdin=json.dumps(request),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["protocol_version"] == "envoy.observe/1"
+    assert payload["result"] == "ready"
+    assert payload["execution_state"] == "completed"
+    assert payload["observation_persistence"]["persisted"] is True
+    assert payload["observation_persistence"]["observation_count"] == 1
+    assert payload["observation_persistence"]["request"] == [
+        request["material_id"],
+        request["source_url"],
+        request["resource_id"],
+        request["source_block_id"],
+        request["observation"],
+        request["locator_quote"],
+        request["session_id"],
+    ]
+
+
+def test_cli_observe_visual_rejects_wrong_protocol_version(capsys):
+    import json
+    from envoy_cli import cli
+
+    code = cli.main(
+        ["observe-visual", "--request-json", "-"],
+        stdin=json.dumps({
+            "protocol_version": "envoy.read/1",
+            "request_id": "wrong-protocol",
+            "source_url": "https://example.org/video",
+            "resource_id": "resource-1",
+            "source_block_id": "block-1",
+            "observation": "A frame observation.",
+        }),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["error"] == "invalid_request"

@@ -322,6 +322,63 @@ def test_mcp_bridge_rejects_unlinked_visual_observation(capsys):
     assert payload["observation_persistence"]["reason"] == "material_id_missing"
 
 
+def test_mcp_visual_observation_infers_source_from_needs_resource_binding(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "c" * 24
+    source_url = "https://example.org/video"
+    reader._store_material(material_id, {
+        "source_url": source_url,
+        "source_revision": "d" * 64,
+        "session_id": "visual-session",
+        "text": "",
+        "visual_resources": [{
+            "resource_id": "frame-1",
+            "source_block_id": "blk-frame-1",
+            "source_url": source_url,
+            "frame_path": str(tmp_path / "frame-1.jpg"),
+            "timestamp": 2.0,
+        }],
+    })
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "observe",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_observe_visual",
+            "arguments": {
+                "protocol_version": "envoy.observe/1",
+                "request_id": "observe-from-needs",
+                "material_id": material_id,
+                "session_id": "visual-session",
+                "resource_id": "frame-1",
+                "source_block_id": "blk-frame-1",
+                "observation": "At 00:02 the frame shows a three-column diagram.",
+            },
+        },
+    }])
+
+    response = json.loads(capsys.readouterr().out.splitlines()[1])
+    payload = json.loads(response["result"]["content"][0]["text"])
+
+    assert payload["protocol_version"] == "envoy.observe/1"
+    assert payload["result"] == "ready"
+    assert payload["blocks"][0]["locator"]["source_url"] == source_url
+    assert payload["blocks"][0]["content"]["text"] == (
+        "At 00:02 the frame shows a three-column diagram."
+    )
+
+
 def test_mcp_bridge_redacts_visual_observation_source_query(capsys):
     from envoy_cli import mcp
 

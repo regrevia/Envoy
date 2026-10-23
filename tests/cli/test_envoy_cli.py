@@ -107,6 +107,31 @@ def test_goal_ranks_relevant_images_without_changing_source_coordinates(monkeypa
     assert details["selected_candidates"][0]["alt"] == "Deployment command"
 
 
+def test_goal_image_budget_skips_obvious_ui_backgrounds_without_goal_match(monkeypatch):
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+        "https://example.org/video",
+        "<html><body><p>Video page.</p>"
+        '<img src="https://cdn.example.org/jxWeakBtnBgV1.png" alt="">'
+        '<img src="https://cdn.example.org/poster.jpg" alt="Frame">'
+        "</body></html>",
+    ))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-ui-image-filter",
+        "source": {"url": "https://example.org/video"},
+        "goal": "Inspect the visual layout",
+        "budget": {"max_visual_inputs": 1},
+    }))
+
+    assert len(response.resources) == 1
+    assert response.resources[0].delivery.uri.endswith("poster.jpg")
+
+
 def test_goal_reports_later_text_evidence_candidates_for_targeted_expansion(monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ReadRequest
@@ -428,7 +453,11 @@ def test_visual_observation_is_persisted_to_existing_material(tmp_path, monkeypa
     )
 
     stored = json.loads((tmp_path / f"{material_id}.json").read_text(encoding="utf-8"))
-    assert result == {"persisted": True, "observation_count": 1}
+    assert result == {
+        "persisted": True,
+        "observation_count": 1,
+        "source_url": "https://example.org/chart.png",
+    }
     assert stored["visual_observations"][0]["observation"] == "The chart shows three stages."
     assert "secret" not in json.dumps(stored)
     reader._store_material(material_id, {

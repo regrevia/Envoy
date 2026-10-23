@@ -39,8 +39,12 @@ of the complete video.
 ## Output rule
 
 The response is JSON and contains `result`, `execution_state`, `blocks`,
-`resources`, `coverage`, and `errors`. The host should use `blocks` first and
-only load a `resources` URI when the task requires visual inspection.
+`resources`, `coverage`, and `errors`. `result` describes evidence availability
+(`ready`, `partial`, `needs_host`, `blocked`, or `empty`); `execution_state`
+describes operation lifecycle (`running`, `waiting_for_host`, `completed`,
+`failed`, or `canceled`). Do not read either value from a `status` field. The
+host should use `blocks` first and only load a `resources` URI when the task
+requires visual inspection.
 
 `source_revision` identifies the fetched snapshot. A later read may produce a
 new revision; do not silently merge blocks from different revisions.
@@ -88,9 +92,27 @@ The response returns bounded frames with actual `video_time` locators and
 leased `local_file` resources. For every `inspect_visual` need, inspect each
 listed resource the host can access before its `expires_at` lease and submit
 one `envoy_observe_visual` call per inspected frame. Pair `resource_ids` and
-`source_block_ids` by index; use the matching block locator's `source_url`,
-original `material_id` and `session_id`, and a unique request ID. Wait for each
-observation call to return before using it. `needs_host` is a handoff, not a
+`source_block_ids` by index; pass the original `material_id` and `session_id`,
+and a unique request ID. `source_url` may be omitted when the retained
+material, resource, and block IDs identify the delivered resource; Envoy
+derives and validates the URL from that binding. `observation` must be a
+concise plain string describing only what the host actually saw, not an object.
+The request uses protocol version `envoy.observe/1`:
+
+```json
+{
+  "protocol_version": "envoy.observe/1",
+  "request_id": "observe-frame-01",
+  "material_id": "mat-0123456789abcdef01234567",
+  "session_id": "session-01",
+  "resource_id": "resource-frame-01",
+  "source_block_id": "blk-video-frame-01",
+  "observation": "00:02.000 shows a three-column architecture diagram.",
+  "locator_quote": "00:02.000"
+}
+```
+
+Wait for each observation call to return before using it. `needs_host` is a handoff, not a
 terminal answer state: continue with the original ASR/chapter evidence and the
 returned observations; do not repeat `envoy_read` just to clear its original
 status. If a frame cannot be inspected, its lease has expired, or its
@@ -109,7 +131,7 @@ When a read returns `partial` with `continuation_available: true`, send:
 {
   "protocol_version": "envoy.read/1",
   "request_id": "req_unique_02",
-  "material_id": "mat_<24-hex-id>",
+  "material_id": "mat-0123456789abcdef01234567",
   "offset": 12000,
   "max_chars": 4000,
   "max_total_response_chars": 48000

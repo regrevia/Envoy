@@ -41,6 +41,13 @@ A **task package** contains:
 - A reference-fact set, expected source attribution, and answer rubric,
   written before either arm is run.
 
+The versioned package manifest uses `task_package_schema_version:
+envoy.task-package/1`. Each package has at least two distinct public source
+IDs and exactly three scripted turns: one initial request and two follow-ups.
+The package's `package_id` and fixed `source_ids` are repeated on each task
+record. The package, rather than an individual URL or turn, is the primary
+randomization and bootstrap unit.
+
 The same package is run once in each arm. Each arm gets its own clean Claude
 Code session, work directory, local state, and material cache. The three turns
 within an arm stay in that arm's session so both configurations may reuse their
@@ -247,6 +254,25 @@ logs lack correlation fields, a local adapter may add run/package/arm/session
 metadata without reading, retaining, or changing prompt and response bodies.
 If usage cannot be reconciled, mark those pairs missing; do not substitute
 Claude Code's estimates or Envoy's token estimate.
+
+The run record must declare `cache_isolation_status` as
+`verified_disabled`, `verified_isolated`, `cache_confounded`, or `unknown`.
+Strict claims require one of the first two states. When the inference server
+exposes cache accounting, each task records
+`usage_breakdown_status` and, when reported,
+`uncached_input_tokens`, `cache_read_input_tokens`, and
+`cache_creation_input_tokens` for both arms. The three components must sum to
+the corresponding `input_tokens`; missing components remain unknown. The
+evaluator reports input exposure and its cache split only when both arms are
+complete, and withholds token-savings claims when cache isolation is unverified.
+
+For each scripted turn, the runner also records `envoy_task_outcome` and
+`baseline_task_outcome` (`completed`, `partial`, `blocked`, or `failed`),
+human intervention count/minutes, and provider cost status. A package is
+complete only when all three turns in that arm are `completed`; blocked and
+partial packages remain in the intention-to-treat denominator. Cost is
+reported only when the inference server provides it for every paired turn;
+otherwise the public table shows `N/A`.
 
 ## Quality Review
 

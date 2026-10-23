@@ -93,3 +93,48 @@ def test_plan_requires_two_sources_per_package(tmp_path):
 
     assert result.returncode == 2
     assert "at least two source_ids" in result.stderr
+
+
+def test_plan_accepts_explicit_platform_stratum_and_task_manifest_reference(tmp_path):
+    result = _run(tmp_path, [
+        {
+            "package_id": "douyin-cross-platform-001",
+            "source_ids": ["douyin-1", "wechat-1"],
+            "source_class": "cross_platform",
+            "task_manifest_id": "manifest-v1-package-001",
+        },
+        {
+            "package_id": "xhs-001",
+            "source_ids": ["xhs-1", "xhs-2"],
+            "source_class": "xiaohongshu",
+            "task_manifest_id": "manifest-v1-package-002",
+        },
+    ])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["schema_version"] == "envoy.paired-experiment-plan/1"
+    planned = {item["package_id"]: item for item in plan["packages"]}
+    assert planned["douyin-cross-platform-001"]["source_class"] == "cross_platform"
+    assert (
+        planned["douyin-cross-platform-001"]["task_manifest_id"]
+        == "manifest-v1-package-001"
+    )
+
+
+def test_plan_rejects_invalid_stratum_and_empty_manifest_id(tmp_path):
+    invalid_stratum = _run(tmp_path, [{
+        "package_id": "pkg-a",
+        "source_ids": ["source-a", "source-b"],
+        "source_class": "unknown-platform",
+    }])
+    assert invalid_stratum.returncode == 2
+    assert "source_class" in invalid_stratum.stderr
+
+    empty_manifest = _run(tmp_path, [{
+        "package_id": "pkg-b",
+        "source_ids": ["source-a", "source-b"],
+        "task_manifest_id": "",
+    }])
+    assert empty_manifest.returncode == 2
+    assert "task_manifest_id" in empty_manifest.stderr
