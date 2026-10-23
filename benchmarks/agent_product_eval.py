@@ -781,6 +781,23 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
     envoy_input_tokens = _complete_sum(usage_actual, "input_tokens")
     baseline_input_tokens = _complete_sum(usage_actual, "baseline_input_tokens")
     paired_bootstrap = _paired_cluster_bootstrap(run, tasks)
+    source_class_by_id = {
+        str(source["source_id"]): str(source["source_class"])
+        for source in sources
+    }
+    stratified_tasks: dict[str, list[dict]] = defaultdict(list)
+    for task in tasks:
+        source_class = source_class_by_id.get(str(task.get("source_id") or ""))
+        if source_class:
+            stratified_tasks[source_class].append(task)
+    stratified_bootstrap = {
+        source_class: _paired_cluster_bootstrap(run, class_tasks)
+        for source_class, class_tasks in sorted(stratified_tasks.items())
+    }
+    source_class_task_counts = {
+        source_class: len(class_tasks)
+        for source_class, class_tasks in sorted(stratified_tasks.items())
+    }
     token_savings_interval = paired_bootstrap["metrics"]["input_token_savings_fraction"]
     savings_eligible = (
         len(usage_actual) == len(tasks)
@@ -815,6 +832,8 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "baseline_citation_support_rate": baseline_citation_support,
         "quality_non_inferior": quality_non_inferior,
         "paired_bootstrap": paired_bootstrap,
+        "stratified_bootstrap": stratified_bootstrap,
+        "source_class_task_counts": source_class_task_counts,
         "input_token_savings_ci_support": bool(
             token_savings_interval is not None
             and token_savings_interval["lower"] > 0
@@ -966,6 +985,34 @@ def render_markdown(report: dict[str, Any]) -> str:
     ])
     if not strict_gate:
         lines.append("当前数据未通过正式评测门槛，效率变化率不作结论。")
+    strata = report.get("stratified_bootstrap") or {}
+    if strata:
+        lines.extend([
+            "",
+            "来源类型分层（source-clustered 95% CI）：",
+            "| 来源类型 | 来源数 | 配对任务 | 输入 token 节省点估计 | 95% CI |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ])
+        sources_by_class = report.get("source_classes") or {}
+        # Task counts are included in each stratum below by summing from the
+        # source records' task links in the structured report.
+        tasks_by_class = report.get("source_class_task_counts") or {}
+        for source_class, interval_report in sorted(strata.items()):
+            token_interval = interval_report["metrics"].get("input_token_savings_fraction")
+            if token_interval is None:
+                estimate = "N/A"
+                confidence_interval = "N/A"
+            else:
+                estimate = f"{token_interval['estimate'] * 100:.2f}%"
+                confidence_interval = (
+                    f"[{token_interval['lower'] * 100:.2f}%, "
+                    f"{token_interval['upper'] * 100:.2f}%]"
+                )
+            lines.append(
+                f"| {source_class} | {sources_by_class.get(source_class, 0)} "
+                f"| {tasks_by_class.get(source_class, 0)} | {estimate} "
+                f"| {confidence_interval} |"
+            )
     return "\n".join(lines) + "\n"
 
 

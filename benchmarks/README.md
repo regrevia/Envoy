@@ -122,7 +122,9 @@ quality percentages and count deltas remain visible when reviewed data is
 available. Incomplete usage is rendered as `N/A`, never inferred from Envoy's
 own token estimate. The JSON and Markdown reports also include a deterministic
 source-clustered paired bootstrap 95% interval; a token-saving claim is
-withheld when that interval crosses zero.
+withheld when that interval crosses zero. JSON includes the same interval
+stratified by `source_class`, so platform-specific regressions are visible
+even when the overall average looks favorable.
 
 The command exits nonzero for incomplete or placeholder records. Use
 `--allow-incomplete` only while preparing a draft; draft output must not be
