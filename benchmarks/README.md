@@ -103,13 +103,15 @@ after the server-side operator has verified it; otherwise use `unknown` during
 planning and later classify the executed batch as `cache-confounded`.
 
 The generated plan also freezes a deterministic `run_id`,
-`package_manifest_sha256`, `session_ids`, and three request IDs per arm
-(`initial`, `followup-1`, `followup-2`). The controller must pass those IDs
-through its inference-server correlation metadata and retain the plan beside
-the result JSONL. `confirmatory_minimum_met` is only a planning signal: it is
-true when the plan has at least 20 packages, 40 scripted turns, and 20 unique
-source IDs; it does not prove that sources were reachable or that either arm
-completed.
+`package_manifest_sha256`, `session_ids`, and three `turn_correlation_ids` per
+arm (`initial`, `followup-1`, `followup-2`). A turn correlation ID is a logical
+task-turn key, not an inference-server request ID: one turn may trigger several
+model requests. The controller must attach the turn key to every server request
+and retain every server-issued request ID in its usage ledger. Keep that ledger
+and the plan beside the result JSONL. `confirmatory_minimum_met` is only a
+planning signal: it is true when the plan has at least 20 packages, 40 scripted
+turns, and 20 unique source IDs; it does not prove that sources were reachable
+or that either arm completed.
 
 The first JSONL record must identify the Envoy commit, host agent/OS, optional
 ASR/OCR status, the provider/model used for both arms, and
