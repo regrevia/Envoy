@@ -463,3 +463,24 @@ def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
         assert report["median_total_elapsed_ms"] is None
         assert report["envoy_actual_input_tokens"] is None
         assert report["input_token_savings_fraction"] is None
+
+
+def test_combined_mdn_pilots_are_one_incomplete_three_source_run():
+    records = ROOT / "benchmarks" / "pilots" / "2026-10-23-mdn-http-status-codex-release-0.1.6.jsonl"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--allow-incomplete"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report["validation_status"] == "passed"
+    assert report["source_count"] == 3
+    assert report["task_count"] == 6
+    assert report["gate_status"] == "incomplete"
+    assert report["fact_recall"] == 1.0
+    assert report["followup_reuse_rate"] == 1.0
+    assert report["baseline_fact_recall"] is None
+    assert report["envoy_actual_input_tokens"] is None
+    assert report["input_token_savings_fraction"] is None
