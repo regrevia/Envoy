@@ -293,6 +293,61 @@ def test_media_status_accepts_current_registry_digest_after_runtime_upgrade(
     assert media._read_asr_config()["sha256"] == "0" * 64
 
 
+def test_media_status_does_not_load_whisper_registry_when_config_digest_matches(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    checkpoint = cache / "base.pt"
+    checkpoint.write_bytes(b"configured checkpoint")
+    digest = media._sha256_file(checkpoint)
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("base", digest)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(
+        media,
+        "_model_expected_sha256",
+        lambda _name: pytest.fail("matching configured digest should avoid Whisper import"),
+    )
+
+    status = media.media_runtime_status()
+
+    assert status["asr_model_verified"] is True
+    assert status["asr_model_available"] is True
+
+
+def test_media_status_does_not_load_whisper_registry_without_a_trust_anchor(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    (cache / "base.pt").write_bytes(b"unverified checkpoint")
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("base")
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(
+        media,
+        "_model_expected_sha256",
+        lambda _name: pytest.fail("ordinary doctor should not import Whisper without a pin"),
+    )
+
+    status = media.media_runtime_status()
+
+    assert status["asr_model_verified"] is None
+    assert status["asr_model_available"] is False
+    assert status["asr_next_step"] == "run envoy doctor --verify-asr"
+
+
 def test_media_status_load_checks_engine_and_verified_model(monkeypatch, tmp_path):
     from envoy_cli import media
 
