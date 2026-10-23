@@ -43,7 +43,13 @@ from .media import (
     probe_media_duration,
     transcribe_audio_file,
 )
-from .ocr import _engine_version, available_ocr_backends, extract_image_ocr, ocr_cache_key
+from .ocr import (
+    OCR_PIPELINE_REVISION,
+    _engine_version,
+    available_ocr_backends,
+    extract_image_ocr,
+    ocr_cache_key,
+)
 from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
@@ -529,6 +535,16 @@ def _download_image_response(response, root: Path, max_bytes: int) -> tuple[Path
         Path(temporary.name).unlink(missing_ok=True)
 
 
+def _ocr_zero_confidence_regions(regions) -> int:
+    count = 0
+    for region in regions or []:
+        try:
+            count += float(region.get("confidence") or 0) <= 0
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return count
+
+
 def _read_cached_image_ocr(
     image_path: Path,
     image_sha256: str,
@@ -538,32 +554,43 @@ def _read_cached_image_ocr(
 ) -> dict:
     cache_root = _material_root() / "ocr-cache"
     cache_root.mkdir(mode=0o700, exist_ok=True)
-    cache_candidates = []
     available = available_ocr_backends()
-    for backend in ("paddleocr", "tesseract"):
-        if available.get(backend):
-            key = ocr_cache_key(
-                image_sha256,
-                profile=profile,
-                language=language,
-                backend=backend,
-                engine_version=_engine_version(backend),
-            )
-            cache_candidates.append(cache_root / f"{key}.json")
-    for cache_path in cache_candidates:
+    selected_backend = (
+        "paddleocr"
+        if available.get("paddleocr")
+        else "tesseract"
+        if available.get("tesseract")
+        else ""
+    )
+    cache_path = None
+    if selected_backend:
+        cache_engine_version = (
+            f"{_engine_version(selected_backend)}+{OCR_PIPELINE_REVISION}"
+        )
+        key = ocr_cache_key(
+            image_sha256,
+            profile=profile,
+            language=language,
+            backend=selected_backend,
+            engine_version=cache_engine_version,
+        )
+        cache_path = cache_root / f"{key}.json"
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             if isinstance(cached, dict) and cached.get("source_sha256") == image_sha256:
                 return {**cached, "cache_hit": True}
         except (FileNotFoundError, OSError, ValueError):
-            continue
+            pass
     result = extract_image_ocr(
         image_path,
         profile=profile,
         language=language,
     )
     backend = str(result.get("backend") or "auto")
-    cache_path = cache_root / f"{ocr_cache_key(image_sha256, profile=profile, language=language, backend=backend, engine_version=str(result.get('engine_version') or 'unknown'))}.json"
+    cache_engine_version = (
+        f"{result.get('engine_version') or 'unknown'}+{OCR_PIPELINE_REVISION}"
+    )
+    cache_path = cache_root / f"{ocr_cache_key(image_sha256, profile=profile, language=language, backend=backend, engine_version=cache_engine_version)}.json"
     cache_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     try:
         cache_path.chmod(0o600)
@@ -2266,6 +2293,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             break
         start = candidate["start"] + window_start
         end = start + len(content)
+        ocr_span = None
         if stored.get("source_kind") == "pdf":
             span = next(
                 (
@@ -2278,6 +2306,31 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             locator = PdfLocator(
                 type="pdf_page",
                 page_number=int(span["page_number"]) if span else 1,
+            )
+        elif stored.get("source_kind") == "image":
+            ocr_span = next(
+                (
+                    item for item in stored.get("ocr_spans", [])
+                    if isinstance(item, dict)
+                    and int(item.get("end") or 0) > start
+                    and int(item.get("start") or 0) < end
+                ),
+                None,
+            )
+            locator = (
+                ImageRegionLocator(
+                    type="image_region",
+                    resource_id=str(ocr_span["resource_id"]),
+                    coordinate_system="normalized_top_left",
+                    bbox=[float(value) for value in ocr_span["bbox"]],
+                )
+                if ocr_span
+                else WebLocator(
+                    type="web",
+                    source_url=str(stored.get("source_url") or ""),
+                    block_id="blk-image-0001",
+                    quote=content[:MAX_LOCATOR_QUOTE_CHARS],
+                )
             )
         elif stored.get("source_kind") == "video":
             locator = _video_locator_for_range(
@@ -2302,21 +2355,49 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             )
         blocks.append(MaterialBlock(
             id=f"blk-search-{len(blocks) + 1:04d}",
-            kind=MaterialKind.TRANSCRIPT if stored.get("source_kind") == "video" else MaterialKind.PARAGRAPH,
+            kind=(
+                MaterialKind.TRANSCRIPT
+                if stored.get("source_kind") == "video"
+                else MaterialKind.OCR
+                if ocr_span
+                else MaterialKind.PARAGRAPH
+            ),
             content=TextContent(type="text", text=content),
             origin=(
                 MaterialOrigin.ASR
                 if stored.get("source_kind") == "video" and stored.get("transcript_source") == "asr"
                 else MaterialOrigin.SUBTITLE
                 if stored.get("source_kind") == "video"
+                else MaterialOrigin.OCR
+                if ocr_span
                 else MaterialOrigin.SOURCE_TEXT
             ),
             locator=locator,
             order=start,
             quality={
-                "engine": "goal_keyword_search",
-                "engine_score": min(1.0, candidate["score"] / max(len(terms), 1)),
-                "unresolved": ["Lexical relevance is a retrieval hint, not semantic verification"],
+                "engine": (
+                    str(ocr_span.get("engine") or "ocr")
+                    if ocr_span
+                    else "goal_keyword_search"
+                ),
+                "engine_score": (
+                    float(ocr_span.get("confidence") or 0)
+                    if ocr_span
+                    else min(1.0, candidate["score"] / max(len(terms), 1))
+                ),
+                "unresolved": (
+                    [
+                        "OCR is a derived text hint; inspect the source image for layout or ambiguity",
+                        "Lexical relevance is a retrieval hint, not semantic verification",
+                        *(
+                            ["The OCR engine assigned zero confidence to this region"]
+                            if ocr_span and float(ocr_span.get("confidence") or 0) <= 0
+                            else []
+                        ),
+                    ]
+                    if ocr_span
+                    else ["Lexical relevance is a retrieval hint, not semantic verification"]
+                ),
             },
         ))
         used_chars += len(content)
@@ -3219,7 +3300,8 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
 
 
 def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
-    if request.host_capabilities.image_input != ImageInputCapability.URI:
+    can_handoff_image = request.host_capabilities.image_input == ImageInputCapability.URI
+    if not can_handoff_image and not request.ocr_profile:
         return _blocked(
             request,
             ErrorCode.MISSING_CAPABILITY,
@@ -3232,33 +3314,180 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
         dns_cache,
     )
     resource_id = "resource-image"
-    source_revision = hashlib.sha256(source["url"].encode()).hexdigest()
+    block_id = "blk-image-0001"
+    ocr_blocks = []
+    ocr_unresolved = []
+    ocr_spans = []
+    returned_ranges = []
+    image_sha256 = None
+    ocr_text = ""
+    returned_chars = 0
+    returned_tokens = 0
+    ocr_result = {}
+    ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
+    if request.ocr_profile:
+        try:
+            image_path, image_sha256 = _download_image_for_ocr(
+                source_url,
+                max_bytes=request.budget.max_download_bytes,
+                dns_cache=dns_cache,
+            )
+            ocr_result = _read_cached_image_ocr(
+                image_path,
+                image_sha256,
+                profile=request.ocr_profile,
+                language=ocr_language,
+            )
+            text_parts = []
+            pending_spans = []
+            cursor = 0
+            for region in ocr_result.get("regions") or []:
+                text_value = str(region.get("text") or "").strip()
+                bbox = region.get("bbox")
+                if not text_value or not isinstance(bbox, list) or len(bbox) != 4:
+                    continue
+                try:
+                    left, top, right, bottom = (float(value) for value in bbox)
+                    confidence = max(0.0, min(1.0, float(region.get("confidence") or 0)))
+                except (TypeError, ValueError):
+                    continue
+                if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+                    continue
+                start = cursor
+                end = start + len(text_value)
+                if text_parts:
+                    cursor += 1
+                    start += 1
+                    end += 1
+                text_parts.append(text_value)
+                cursor = end
+                span = {
+                    "start": start,
+                    "end": end,
+                    "resource_id": resource_id,
+                    "source_block_id": block_id,
+                    "bbox": [left, top, right, bottom],
+                    "confidence": confidence,
+                    "engine": f"{ocr_result.get('backend', 'ocr')}-{request.ocr_profile}",
+                }
+                pending_spans.append(span)
+            if not pending_spans:
+                ocr_unresolved.append("OCR returned no valid text regions")
+            ocr_text = "\n".join(text_parts)
+            char_limits = [
+                request.budget.max_response_chars,
+                request.budget.max_total_response_chars,
+            ]
+            max_chars = min(char_limits)
+            token_limits = [
+                value
+                for value in (
+                    request.budget.max_response_tokens,
+                    request.budget.max_total_response_tokens,
+                )
+                if value is not None
+            ]
+            max_tokens = min(token_limits) if token_limits else None
+            for span in pending_spans:
+                text_value = ocr_text[span["start"]:span["end"]]
+                region_tokens = _estimated_tokens(text_value)
+                if (
+                    returned_chars + len(text_value) > max_chars
+                    or (
+                        max_tokens is not None
+                        and returned_tokens + region_tokens > max_tokens
+                    )
+                ):
+                    ocr_unresolved.append(
+                        "OCR regions were limited by the response character or token budget"
+                    )
+                    continue
+                ocr_blocks.append(MaterialBlock(
+                    id=f"{block_id}-ocr-{len(ocr_blocks) + 1:03d}",
+                    kind=MaterialKind.OCR,
+                    content=TextContent(type="text", text=text_value),
+                    origin=MaterialOrigin.OCR,
+                    locator=ImageRegionLocator(
+                        type="image_region",
+                        resource_id=resource_id,
+                        coordinate_system="normalized_top_left",
+                        bbox=span["bbox"],
+                    ),
+                    parent_id=block_id,
+                    order=len(ocr_blocks) + 1,
+                    relations=[Relation(
+                        type="derived_from",
+                        target_id=block_id,
+                        basis="extraction",
+                    )],
+                    quality=Quality(
+                        engine=span["engine"],
+                        engine_score=span["confidence"],
+                        unresolved=[
+                            "OCR is a text extraction hint; inspect the source image for layout or ambiguity"
+                        ],
+                    ),
+                ))
+                span["returned"] = True
+                returned_ranges.append([span["start"], span["end"]])
+                returned_chars += len(text_value)
+                returned_tokens += region_tokens
+            returned_span_keys = {
+                (span["start"], span["end"])
+                for span in pending_spans
+                if span.get("returned")
+            }
+            ocr_spans = [
+                {
+                    **span,
+                    "returned": (span["start"], span["end"]) in returned_span_keys,
+                }
+                for span in pending_spans
+            ]
+            zero_confidence_regions = _ocr_zero_confidence_regions(
+                ocr_result.get("regions")
+            )
+            if zero_confidence_regions:
+                ocr_unresolved.append(
+                    f"{zero_confidence_regions} OCR regions have zero confidence and need visual review"
+                )
+        except (
+            OSError,
+            ValueError,
+            PublicPageError,
+            MediaBudgetExceeded,
+            RuntimeError,
+            httpx.HTTPError,
+        ) as exc:
+            ocr_unresolved.append(f"OCR skipped for {resource_id} ({type(exc).__name__})")
+    source_revision = image_sha256 or hashlib.sha256(source["url"].encode()).hexdigest()
     material_id = _material_id(
         source["url"], source_revision, request.session_id, request.request_id
     )
     if request.retention.derived_ttl_seconds > 0:
         try:
             _store_material(material_id, {
+                "source_kind": "image",
                 "source_url": source["url"],
                 "source_revision": source_revision,
                 "session_id": request.session_id,
-                "text": "",
+                "text": ocr_text,
                 "title_text": request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image",
-                "visual_resources": [{
+                "visual_resources": ([{
                     "resource_id": resource_id,
-                    "source_block_id": "blk-image-0001",
+                    "source_block_id": block_id,
                     "source_url": source["url"],
-                }],
+                    **({"sha256": image_sha256} if image_sha256 else {}),
+                }] if can_handoff_image else []),
+                **({"ocr_spans": ocr_spans} if ocr_spans else {}),
                 "budget_state": {
                     "max_total_response_chars": request.budget.max_total_response_chars,
                     "max_total_response_tokens": request.budget.max_total_response_tokens,
                     "max_expansion_rounds": 0,
-                    "returned_chars": 0,
-                    "returned_tokens": _estimated_tokens(
-                        request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image"
-                    ),
+                    "returned_chars": returned_chars,
+                    "returned_tokens": returned_tokens,
                     "expansion_rounds": 0,
-                    "returned_ranges": [],
+                    "returned_ranges": returned_ranges,
                 },
                 "expires_at": time.time() + min(
                     request.retention.derived_ttl_seconds,
@@ -3267,16 +3496,35 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
             })
         except OSError:
             pass
+    ocr_complete = bool(ocr_blocks) and not ocr_unresolved
+    response_errors = []
+    if not can_handoff_image and not ocr_blocks:
+        response_errors.append(ReadError(
+            code=ErrorCode.EMPTY_CONTENT,
+            message="Local OCR did not produce readable text and the host cannot inspect the source image",
+        ))
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
         material_id=material_id,
         source_revision=source_revision,
-        execution_state=ExecutionState.WAITING_FOR_HOST,
-        result=ReadResult.NEEDS_HOST,
+        execution_state=(
+            ExecutionState.WAITING_FOR_HOST
+            if can_handoff_image
+            else ExecutionState.COMPLETED
+        ),
+        result=(
+            ReadResult.NEEDS_HOST
+            if can_handoff_image
+            else ReadResult.READY
+            if ocr_complete
+            else ReadResult.PARTIAL
+            if ocr_blocks
+            else ReadResult.BLOCKED
+        ),
         blocks=[
             MaterialBlock(
-                id="blk-image-0001",
+                id=block_id,
                 kind=MaterialKind.IMAGE,
                 content=ImageContent(
                     type="image",
@@ -3288,43 +3536,83 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
                 locator=WebLocator(
                     type="web",
                     source_url=source["url"],
-                    block_id="blk-image-0001",
+                    block_id=block_id,
                     quote=request.goal[:MAX_LOCATOR_QUOTE_CHARS] or "Source image",
                 ),
                 order=0,
-            )
+            ),
+            *ocr_blocks,
         ],
-        resources=[
-            ResourceRef(
-                resource_id=resource_id,
-                mime_type=source["mime_type"],
-                delivery=HostDelivery(type="uri", uri=source["url"]),
-                sha256=None,
-                delivery_evidence="unverified",
-            )
-        ],
-        needs=[
-            Need(
-                action_id="inspect-image-0001",
-                type="inspect_visual",
-                purpose=request.goal or "Inspect the source image",
-                resource_ids=[resource_id],
-                source_block_ids=["blk-image-0001"],
-                reason="The source contains visual information that should be inspected by the host model.",
-                max_resources=1,
-            )
-        ],
+        resources=[ResourceRef(
+            resource_id=resource_id,
+            mime_type=source["mime_type"],
+            delivery=HostDelivery(type="uri", uri=source["url"]),
+            sha256=image_sha256,
+            delivery_evidence="unverified",
+        )],
+        needs=[Need(
+            action_id="inspect-image-0001",
+            type="inspect_visual",
+            purpose=request.goal or "Inspect this image",
+            resource_ids=[resource_id],
+            source_block_ids=[block_id],
+            reason="The source contains visual information that should be inspected by the host model.",
+            max_resources=1,
+        )] if can_handoff_image else [],
         coverage=Coverage(
             modalities={
                 "images": CoverageItem(
                     discovered=1,
                     extracted=1,
                     returned=1,
-                    delivered=1,
-                    extraction="complete",
-                )
-            }
+                    delivered=1 if can_handoff_image else 0,
+                    extraction="complete" if can_handoff_image else "partial",
+                    unresolved=(
+                        []
+                        if can_handoff_image
+                        else ["Original image was not delivered because the host lacks URI image input"]
+                    ),
+                ),
+                **({
+                    "ocr": CoverageItem(
+                        discovered=len(ocr_spans),
+                        extracted=len(ocr_spans),
+                        returned=len(ocr_blocks),
+                        extraction=(
+                            "complete"
+                            if not ocr_unresolved
+                            and len(ocr_blocks) == len(ocr_spans)
+                            else "partial"
+                        ),
+                        unresolved=ocr_unresolved,
+                        details={
+                            "profile": request.ocr_profile,
+                            "language": ocr_language,
+                            "region_count": len(ocr_spans),
+                            "returned_regions": len(ocr_blocks),
+                            "zero_confidence_regions": _ocr_zero_confidence_regions(
+                                ocr_result.get("regions") if isinstance(ocr_result, dict) else []
+                            ),
+                            "cache_hit": bool(
+                                isinstance(ocr_result, dict)
+                                and ocr_result.get("cache_hit")
+                            ),
+                            **_token_budget_details(
+                                request,
+                                returned_tokens,
+                                "\n".join(
+                                    ocr_text[span["start"]:span["end"]]
+                                    for span in ocr_spans
+                                    if not span.get("returned")
+                                ),
+                            ),
+                        },
+                    )
+                } if request.ocr_profile else {}),
+            },
+            unresolved=ocr_unresolved,
         ),
+        errors=response_errors,
     )
 
 
@@ -3965,6 +4253,7 @@ def _attach_video_frames(
             visual_records = []
             ocr_blocks = []
             ocr_unresolved = []
+            zero_confidence_regions = 0
             ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
             frame_pixels = 0
             for index, frame in enumerate(extracted_frames[:len(timestamps)], start=1):
@@ -4030,6 +4319,9 @@ def _attach_video_frames(
                             profile=request.ocr_profile,
                             language=ocr_language,
                         )
+                        zero_confidence_regions += _ocr_zero_confidence_regions(
+                            ocr_result.get("regions")
+                        )
                         for region_index, region in enumerate(
                             ocr_result.get("regions") or [], start=1
                         ):
@@ -4074,6 +4366,10 @@ def _attach_video_frames(
                     "frame_path": str(destination),
                     "timestamp": timestamp,
                 })
+            if zero_confidence_regions:
+                ocr_unresolved.append(
+                    f"{zero_confidence_regions} frame OCR regions have zero confidence and need visual review"
+                )
             blocks.extend(ocr_blocks)
     except MediaBudgetExceeded as exc:
         video_coverage = video_coverage.model_copy(update={
@@ -4944,6 +5240,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         resources = []
         ocr_blocks = []
         ocr_unresolved = []
+        zero_confidence_regions = 0
         ocr_profile = request.ocr_profile
         ocr_language = os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
         for item in safe_images:
@@ -4986,6 +5283,9 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                         profile=ocr_profile,
                         language=ocr_language,
                     )
+                    zero_confidence_regions += _ocr_zero_confidence_regions(
+                        ocr_result.get("regions")
+                    )
                     for region_index, region in enumerate(ocr_result.get("regions") or [], start=1):
                         ocr_text = str(region.get("text") or "").strip()
                         bbox = region.get("bbox")
@@ -5021,6 +5321,10 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     ocr_unresolved.append(
                         f"OCR skipped for {item['resource_id']} ({type(exc).__name__})"
                     )
+            if zero_confidence_regions:
+                ocr_unresolved.append(
+                    f"{zero_confidence_regions} OCR regions have zero confidence and need visual review"
+                )
             blocks.extend(ocr_blocks)
         image_note_unknown_total = image_note_page and image_note_total is None
         image_partial = (
@@ -5176,6 +5480,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             "language": ocr_language,
                             "source_image_count": len(safe_images),
                             "region_count": len(ocr_blocks),
+                            "zero_confidence_regions": zero_confidence_regions,
                             "host_visual_fallback": True,
                         },
                     )} if ocr_profile else {}),
