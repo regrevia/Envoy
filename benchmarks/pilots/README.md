@@ -5,6 +5,12 @@ benchmarks. Run them with `--allow-incomplete`; they must retain
 `gate_status: incomplete` until the strict 20-source/40-task paired evaluation
 is populated.
 
+`2026-10-24-bilibili-fixed-wheel-exploration.md` records three bounded ASR
+reads from the fixed `c29579f` wheel. It is exploratory only: the runtime
+reused dependencies from a different isolated tool install, no reference facts
+were independently frozen, and no paired baseline or authoritative usage
+ledger was collected.
+
 `2026-10-23-public-docs-codex-release-0.1.6.jsonl` combines five MDN HTTP
 status pages and the Python JSON library documentation (six distinct source
 URLs, twelve questions) into one pilot run.
