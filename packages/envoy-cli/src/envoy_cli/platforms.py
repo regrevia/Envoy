@@ -6,7 +6,14 @@ import re
 from urllib.parse import urljoin, urlparse
 
 
-_XHS_HOSTS = {"xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com", "www.xhslink.com"}
+_XHS_HOSTS = {
+    "xiaohongshu.com",
+    "www.xiaohongshu.com",
+    "xhslink.com",
+    "www.xhslink.com",
+    "xhslink.cn",
+    "www.xhslink.cn",
+}
 _XHS_NOTE_RE = re.compile(r"^/(?:explore|discovery/item)/[^/?#]+", re.IGNORECASE)
 
 
@@ -15,7 +22,7 @@ def classify_public_url(value: str) -> str:
     host = (parsed.hostname or "").lower()
     path = parsed.path.lower()
     if host in _XHS_HOSTS:
-        if host.endswith("xhslink.com"):
+        if host.endswith(("xhslink.com", "xhslink.cn")):
             return "xiaohongshu_share"
         if _XHS_NOTE_RE.match(parsed.path):
             return "xiaohongshu_note"

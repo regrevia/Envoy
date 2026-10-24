@@ -94,6 +94,12 @@ MAX_TEXT_CHARS = 2_000_000
 MAX_SEARCH_CACHE_CHARS = 256_000
 MAX_IMAGES = 40
 CHALLENGE_MARKERS = (
+    "安全限制",
+    "ip存在风险",
+    "切换可靠网络",
+    "访问过于频繁",
+    "请求过于频繁",
+    "当前笔记暂时无法浏览",
     "验证码",
     "安全验证",
     "人机验证",
@@ -776,6 +782,22 @@ def _source_text_was_truncated(values: list[str]) -> bool:
 def _looks_like_access_challenge(title: str, text: str) -> bool:
     haystack = f"{title}\n{text}".lower()
     return any(marker in haystack for marker in CHALLENGE_MARKERS)
+
+
+MISSING_PAGE_MARKERS = (
+    "你访问的页面不见了",
+    "笔记不存在",
+    "笔记已删除",
+    "该内容已被删除",
+    "内容已删除",
+    "page not found",
+    "this page does not exist",
+)
+
+
+def _looks_like_missing_page(title: str, text: str) -> bool:
+    haystack = f"{title}\n{text}".lower()
+    return any(marker in haystack for marker in MISSING_PAGE_MARKERS)
 
 
 def _read_with_isolated_browser(
@@ -5517,6 +5539,14 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         title = _clean_text(parser.title_parts) or final_url
         source_text_truncated = _source_text_was_truncated(parser.text_parts)
         text = _clean_text(parser.text_parts)
+        if _looks_like_missing_page(title, text):
+            return _blocked(
+                request,
+                ErrorCode.SOURCE_UNAVAILABLE,
+                "The source page no longer exists or is not publicly viewable; "
+                "the platform returned its own error page instead of content.",
+                details={"diagnosis": "source_not_found"},
+            )
         if _looks_like_access_challenge(title, text):
             if not browser_attempted:
                 browser_page, browser_error = _read_with_isolated_browser(
