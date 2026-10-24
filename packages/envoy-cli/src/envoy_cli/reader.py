@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import httpx
 from pypdf import PdfReader
 from .video import extract_public_subtitles, has_specialized_extractor
+from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
 from .platforms import (
     classify_public_url,
     extract_xhs_note_images,
@@ -534,7 +535,7 @@ def _download_image_for_ocr(
     root = _material_root() / "ocr-inputs"
     root.mkdir(mode=0o700, exist_ok=True)
     current_url = image_url
-    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False) as client:
+    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
         for _ in range(5):
             if not _is_public_http_url(current_url, dns_cache):
                 raise PublicPageError("OCR image redirect resolved to a non-public address")
@@ -800,10 +801,29 @@ def _looks_like_missing_page(title: str, text: str) -> bool:
     return any(marker in haystack for marker in MISSING_PAGE_MARKERS)
 
 
+EGRESS_CHALLENGE_MARKERS = (
+    "安全限制",
+    "ip存在风险",
+    "ip 存在风险",
+    "切换可靠网络",
+    "访问过于频繁",
+    "请求过于频繁",
+    "too many requests",
+    "300012",
+)
+
+
+def _challenge_suggests_egress_issue(title: str, text: str) -> bool:
+    """True when a block page blames the network exit rather than the visitor."""
+    haystack = f"{title}\n{text}".lower()
+    return any(marker in haystack for marker in EGRESS_CHALLENGE_MARKERS)
+
+
 def _read_with_isolated_browser(
     request: ReadRequest,
     source_url: str,
     dns_cache: dict[str, bool],
+    only_proxy: bool = False,
 ):
     from . import browser
 
@@ -821,6 +841,7 @@ def _read_with_isolated_browser(
             source_url,
             max_work_seconds=_remaining_work_seconds(request),
             on_user_action=user_action,
+            only_proxy=only_proxy,
         )
     except MediaBudgetExceeded as exc:
         raise PublicPageError(str(exc), ErrorCode.BUDGET_EXCEEDED) from exc
@@ -3283,147 +3304,171 @@ def _fetch_html(
     max_bytes: int = MAX_HTML_BYTES,
     dns_cache: dict[str, bool] | None = None,
 ) -> tuple[str, str]:
-    current_url = source_url
     dns_cache = dns_cache if dns_cache is not None else {}
+    last_error: Exception | None = None
+    for proxy in proxy_plan():
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(20, read=45),
+                follow_redirects=False,
+                trust_env=False,
+                proxy=proxy,
+            ) as client:
+                return _fetch_html_via(client, source_url, max_bytes, dns_cache)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = exc
+    raise PublicPageError(
+        "The source could not be reached directly or through the configured proxy",
+        ErrorCode.NETWORK_ERROR,
+    ) from last_error
+
+
+def _fetch_html_via(
+    client: httpx.Client,
+    source_url: str,
+    max_bytes: int,
+    dns_cache: dict[str, bool],
+) -> tuple[str, str]:
+    current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
-    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False) as client:
-        for _ in range(5):
-            if not _is_public_http_url(current_url, dns_cache):
-                raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
-            for attempt in range(MAX_FETCH_ATTEMPTS):
-                try:
-                    with client.stream("GET", current_url, headers=headers) as response:
-                        if response.status_code in {301, 302, 303, 307, 308}:
-                            location = response.headers.get("location")
-                            if not location:
-                                raise PublicPageError("The source returned an invalid redirect")
-                            current_url = urljoin(current_url, location)
-                            break
-                        if response.status_code in {401, 403}:
-                            raise PublicPageError(
-                                "The source requires access that Envoy cannot provide",
-                                ErrorCode.AUTH_REQUIRED,
-                                details={
-                                    "http_status": response.status_code,
-                                    "final_url": _redact_url(current_url),
-                                    "diagnosis": "access_required",
-                                    "user_check_recommended": True,
-                                    "proxy_configured": _http_proxy_configured(),
-                                },
-                            )
-                        if response.status_code == 404:
-                            raise PublicPageError(
-                                "The source returned HTTP 404. This may be a removed or private item, an invalid share link, or an upstream proxy response; Envoy cannot distinguish these from the response alone.",
-                                ErrorCode.SOURCE_UNAVAILABLE,
-                                details={
-                                    "http_status": 404,
-                                    "final_url": _redact_url(current_url),
-                                    "diagnosis": "source_or_route_not_found",
-                                    "user_check_recommended": True,
-                                    "proxy_configured": _http_proxy_configured(),
-                                    "suggested_next_action": "Ask the user to open the same link in their regular browser. If it opens there, ask whether to use an already configured or user-approved trusted proxy.",
-                                },
-                            )
-                        if response.status_code in {408, 425, 429} or response.status_code >= 500:
-                            if attempt + 1 < MAX_FETCH_ATTEMPTS:
-                                time.sleep(0.25 * (attempt + 1))
-                                continue
-                        response.raise_for_status()
-                        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                        if content_type == "application/pdf":
-                            content_length = response.headers.get("content-length")
-                            if content_length:
-                                try:
-                                    if int(content_length) > max_bytes:
-                                        raise PublicPageError("The PDF exceeds Envoy's size limit")
-                                except ValueError:
-                                    pass
-                            body = bytearray()
-                            for chunk in response.iter_bytes():
-                                body.extend(chunk)
-                                if len(body) > max_bytes:
-                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
-                            pdf_data = bytes(body)
-                            if not pdf_data.startswith(b"%PDF-"):
-                                raise PublicPageError("The server declared PDF content but returned invalid PDF data")
-                            raise DetectedPDF({
-                                "url": _redact_url(current_url),
-                                "data": pdf_data,
-                                "mime_type": "application/pdf",
-                            })
-                        if content_type.startswith("image/"):
-                            raise DetectedImage({
-                                "url": _redact_url(current_url),
-                                "mime_type": content_type,
-                            })
-                        if content_type.startswith(("video/", "audio/")):
-                            raise DetectedMedia({
-                                "url": _redact_url(current_url),
-                                "mime_type": content_type,
-                                "sensitive_url": any(
-                                    _is_sensitive_query_key(key)
-                                    for key, _value in parse_qsl(
-                                        urlparse(current_url).query,
-                                        keep_blank_values=True,
-                                    )
-                                ),
-                                "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
-                            })
-                        text_path = urlparse(current_url).path.lower()
-                        is_text_content = (
-                            content_type in TEXT_CONTENT_TYPES
-                            or (
-                                content_type == "application/octet-stream"
-                                and text_path.endswith(TEXT_SUFFIXES)
-                            )
+
+    for _ in range(5):
+        if not _is_public_http_url(current_url, dns_cache):
+            raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
+        for attempt in range(MAX_FETCH_ATTEMPTS):
+            try:
+                with client.stream("GET", current_url, headers=headers) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise PublicPageError("The source returned an invalid redirect")
+                        current_url = urljoin(current_url, location)
+                        break
+                    if response.status_code in {401, 403}:
+                        raise PublicPageError(
+                            "The source requires access that Envoy cannot provide",
+                            ErrorCode.AUTH_REQUIRED,
+                            details={
+                                "http_status": response.status_code,
+                                "final_url": _redact_url(current_url),
+                                "diagnosis": "access_required",
+                                "user_check_recommended": True,
+                                "proxy_configured": _http_proxy_configured(),
+                            },
                         )
-                        if is_text_content:
-                            content_length = response.headers.get("content-length")
-                            if content_length:
-                                try:
-                                    if int(content_length) > MAX_TEXT_SOURCE_BYTES:
-                                        raise PublicPageError("The text document exceeds Envoy's size limit")
-                                except ValueError:
-                                    pass
-                            body = bytearray()
-                            for chunk in response.iter_bytes():
-                                body.extend(chunk)
-                                if len(body) > MAX_TEXT_SOURCE_BYTES:
-                                    raise PublicPageError("The text document exceeds Envoy's size limit")
-                            charset = getattr(response, "encoding", None) or "utf-8"
-                            raise DetectedText({
-                                "url": _redact_url(current_url),
-                                "data": bytes(body),
-                                "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
-                                "encoding": charset,
-                            })
-                        if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
-                            raise PublicPageError(
-                                f"Static reader only accepts HTML pages, received {content_type}",
-                                ErrorCode.UNSUPPORTED_SOURCE,
-                            )
+                    if response.status_code == 404:
+                        raise PublicPageError(
+                            "The source returned HTTP 404. This may be a removed or private item, an invalid share link, or an upstream proxy response; Envoy cannot distinguish these from the response alone.",
+                            ErrorCode.SOURCE_UNAVAILABLE,
+                            details={
+                                "http_status": 404,
+                                "final_url": _redact_url(current_url),
+                                "diagnosis": "source_or_route_not_found",
+                                "user_check_recommended": True,
+                                "proxy_configured": _http_proxy_configured(),
+                                "suggested_next_action": "Ask the user to open the same link in their regular browser. If it opens there, ask whether to use an already configured or user-approved trusted proxy.",
+                            },
+                        )
+                    if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                        if attempt + 1 < MAX_FETCH_ATTEMPTS:
+                            time.sleep(0.25 * (attempt + 1))
+                            continue
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                    if content_type == "application/pdf":
                         content_length = response.headers.get("content-length")
                         if content_length:
                             try:
                                 if int(content_length) > max_bytes:
-                                    raise PublicPageError("The public page exceeds Envoy's size limit")
+                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
                             except ValueError:
                                 pass
                         body = bytearray()
                         for chunk in response.iter_bytes():
                             body.extend(chunk)
                             if len(body) > max_bytes:
+                                raise PublicPageError("The PDF exceeds Envoy's size limit")
+                        pdf_data = bytes(body)
+                        if not pdf_data.startswith(b"%PDF-"):
+                            raise PublicPageError("The server declared PDF content but returned invalid PDF data")
+                        raise DetectedPDF({
+                            "url": _redact_url(current_url),
+                            "data": pdf_data,
+                            "mime_type": "application/pdf",
+                        })
+                    if content_type.startswith("image/"):
+                        raise DetectedImage({
+                            "url": _redact_url(current_url),
+                            "mime_type": content_type,
+                        })
+                    if content_type.startswith(("video/", "audio/")):
+                        raise DetectedMedia({
+                            "url": _redact_url(current_url),
+                            "mime_type": content_type,
+                            "sensitive_url": any(
+                                _is_sensitive_query_key(key)
+                                for key, _value in parse_qsl(
+                                    urlparse(current_url).query,
+                                    keep_blank_values=True,
+                                )
+                            ),
+                            "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
+                        })
+                    text_path = urlparse(current_url).path.lower()
+                    is_text_content = (
+                        content_type in TEXT_CONTENT_TYPES
+                        or (
+                            content_type == "application/octet-stream"
+                            and text_path.endswith(TEXT_SUFFIXES)
+                        )
+                    )
+                    if is_text_content:
+                        content_length = response.headers.get("content-length")
+                        if content_length:
+                            try:
+                                if int(content_length) > MAX_TEXT_SOURCE_BYTES:
+                                    raise PublicPageError("The text document exceeds Envoy's size limit")
+                            except ValueError:
+                                pass
+                        body = bytearray()
+                        for chunk in response.iter_bytes():
+                            body.extend(chunk)
+                            if len(body) > MAX_TEXT_SOURCE_BYTES:
+                                raise PublicPageError("The text document exceeds Envoy's size limit")
+                        charset = getattr(response, "encoding", None) or "utf-8"
+                        raise DetectedText({
+                            "url": _redact_url(current_url),
+                            "data": bytes(body),
+                            "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
+                            "encoding": charset,
+                        })
+                    if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
+                        raise PublicPageError(
+                            f"Static reader only accepts HTML pages, received {content_type}",
+                            ErrorCode.UNSUPPORTED_SOURCE,
+                        )
+                    content_length = response.headers.get("content-length")
+                    if content_length:
+                        try:
+                            if int(content_length) > max_bytes:
                                 raise PublicPageError("The public page exceeds Envoy's size limit")
-                        encoding = getattr(response, "encoding", None) or "utf-8"
-                        return current_url, bytes(body).decode(encoding, errors="replace")
-                except httpx.TransportError:
-                    if attempt + 1 >= MAX_FETCH_ATTEMPTS:
-                        raise
-                    time.sleep(0.25 * (attempt + 1))
-                else:
-                    break
+                        except ValueError:
+                            pass
+                    body = bytearray()
+                    for chunk in response.iter_bytes():
+                        body.extend(chunk)
+                        if len(body) > max_bytes:
+                            raise PublicPageError("The public page exceeds Envoy's size limit")
+                    encoding = getattr(response, "encoding", None) or "utf-8"
+                    return current_url, bytes(body).decode(encoding, errors="replace")
+            except httpx.TransportError:
+                if attempt + 1 >= MAX_FETCH_ATTEMPTS:
+                    raise
+                time.sleep(0.25 * (attempt + 1))
             else:
-                continue
+                break
+        else:
+            continue
     raise PublicPageError("The source exceeded the redirect limit")
 
 
@@ -3434,7 +3479,7 @@ def _fetch_source(
 ) -> dict:
     current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
-    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False) as client:
+    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
         for _ in range(5):
             if not _is_public_http_url(current_url, dns_cache):
                 raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
@@ -3471,7 +3516,7 @@ def _fetch_pdf_source(
 ) -> dict:
     current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
-    with httpx.Client(timeout=httpx.Timeout(20, read=60), follow_redirects=False) as client:
+    with httpx.Client(timeout=httpx.Timeout(20, read=60), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
         for _ in range(5):
             if not _is_public_http_url(current_url, dns_cache):
                 raise PublicPageError("The PDF URL or redirect is not a public HTTP(S) address")
@@ -5567,6 +5612,39 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     title = _clean_text(parser.title_parts) or final_url
                     source_text_truncated = _source_text_was_truncated(parser.text_parts)
                     text = _clean_text(parser.text_parts)
+        if _looks_like_access_challenge(
+            title, text
+        ) and _challenge_suggests_egress_issue(title, text):
+            fallback_proxy = explicit_proxy() or detected_proxy()
+            if fallback_proxy:
+                print(
+                    "Envoy retried the source through a proxy after the network "
+                    "exit was blocked.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                proxy_page, _proxy_error = _read_with_isolated_browser(
+                    request,
+                    source_url,
+                    dns_cache,
+                    only_proxy=True,
+                )
+                if proxy_page is not None:
+                    final_url, html = proxy_page.url, proxy_page.html
+                    browser_snapshot = proxy_page
+                    browser_used = True
+                    browser_snapshot_for_video = _browser_page_has_video(
+                        proxy_page,
+                        request.source.kind.value,
+                    )
+                    parser = _PageParser()
+                    parser.feed(html)
+                    title = _clean_text(parser.title_parts) or final_url
+                    source_text_truncated = _source_text_was_truncated(
+                        parser.text_parts
+                    )
+                    text = _clean_text(parser.text_parts)
+                    browser_error = None
         if _looks_like_access_challenge(title, text):
             return _blocked(
                 request,

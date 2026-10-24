@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
+
 import os
 import re
 import subprocess
@@ -8,8 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse, urlsplit, urlunsplit
-from urllib import request as urllib_request
+from urllib.parse import urlparse
 
 
 _CHALLENGE_MARKERS = (
@@ -223,40 +224,7 @@ def browser_profile_dir(*, create: bool = True) -> Path:
 
 
 def _browser_proxy_server() -> str | None:
-    configured = os.getenv("ENVOY_BROWSER_PROXY", "").strip()
-    if configured:
-        candidates = [configured]
-    else:
-        proxies = urllib_request.getproxies()
-        candidates = [
-            str(proxies[key])
-            for key in ("https", "http", "all", "socks")
-            if proxies.get(key)
-        ]
-    for candidate in candidates:
-        value = candidate if "://" in candidate else f"http://{candidate}"
-        try:
-            parsed = urlsplit(value)
-            if (
-                parsed.scheme.lower() not in {"http", "https", "socks5"}
-                or not parsed.hostname
-                or parsed.username is not None
-                or parsed.password is not None
-                or parsed.path not in {"", "/"}
-                or parsed.query
-                or parsed.fragment
-            ):
-                continue
-            port = parsed.port or {
-                "http": 80,
-                "https": 443,
-                "socks5": 1080,
-            }[parsed.scheme.lower()]
-        except (KeyError, ValueError):
-            continue
-        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-        return urlunsplit((parsed.scheme.lower(), f"{host}:{port}", "", "", ""))
-    return None
+    return explicit_proxy() or detected_proxy()
 
 
 def browser_runtime_status() -> dict:
@@ -444,6 +412,7 @@ def read_page(
     max_work_seconds: int = 180,
     playwright_factory=None,
     on_user_action: Callable[[str], None] | None = None,
+    only_proxy: bool = False,
 ) -> BrowserPage:
     try:
         if playwright_factory is None:
@@ -472,11 +441,12 @@ def read_page(
     timeout_ms = min(work_seconds * 1000, 30_000)
 
     with playwright_factory() as playwright:
-        def launch(headless: bool):
+        def launch(headless: bool, proxy_server: str | None):
             browser_args = ["--disable-dev-shm-usage"]
-            proxy_server = _browser_proxy_server()
             if proxy_server:
                 browser_args.append(f"--proxy-server={proxy_server}")
+            else:
+                browser_args.append("--no-proxy-server")
             kwargs = {
                 "headless": headless,
                 "args": browser_args,
@@ -492,22 +462,46 @@ def read_page(
                     f"Could not start the {mode} Envoy browser ({type(exc).__name__})"
                 ) from exc
 
-        context = launch(headless=True)
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-            _install_media_capture(page)
-            _navigate(context, page, source_url, dns_cache, timeout_ms)
-            _load_visible_content(page)
-            _title, _text, challenge = _page_state(page)
-            if not challenge:
-                return _capture(page, source_url)
-        finally:
-            context.close()
+        challenge_proxy: str | None = None
+        last_error: Exception | None = None
+        if only_proxy:
+            selected = explicit_proxy() or detected_proxy()
+            if not selected:
+                raise BrowserRuntimeUnavailable(
+                    "No proxy is available for a second attempt"
+                )
+            attempts: list[str | None] = [selected]
+        else:
+            attempts = proxy_plan()
+        for proxy_server in attempts:
+            try:
+                context = launch(True, proxy_server)
+            except BrowserRuntimeUnavailable as exc:
+                last_error = exc
+                continue
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                _install_media_capture(page)
+                _navigate(context, page, source_url, dns_cache, timeout_ms)
+                _load_visible_content(page)
+                _title, _text, challenge = _page_state(page)
+                if not challenge:
+                    return _capture(page, source_url)
+                challenge_proxy = proxy_server
+                break
+            except (BrowserReadError, TimeoutError) as exc:
+                last_error = exc
+            finally:
+                context.close()
+        else:
+            if last_error is not None:
+                raise last_error
+            raise BrowserReadError("The page could not be opened")
 
         if time.monotonic() >= deadline:
             raise BrowserReadError("Browser access challenge exceeded the work-time budget")
 
-        context = launch(headless=False)
+        context = launch(headless=False, proxy_server=challenge_proxy)
         try:
             page = context.pages[0] if context.pages else context.new_page()
             _install_media_capture(page)
