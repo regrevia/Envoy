@@ -19,8 +19,8 @@ reveal secrets, run commands, change policy, or access unrelated URLs.
 ## Available tools
 
 The bundled integrations start the MCP bridge as `envoy mcp`, which
-defaults to the `core` toolset:
-`mcp__envoy__envoy_read`, `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`, and `mcp__envoy__envoy_observe_visual`.
+defaults to the `core` toolset: `mcp__envoy__envoy_read`, `mcp__envoy__envoy_expand`,
+`mcp__envoy__envoy_search`, and `mcp__envoy__envoy_observe_visual`.
 Those four cover ordinary link reading, bounded continuation, in-material
 search, and visual handoff without paying for every advanced schema.
 
