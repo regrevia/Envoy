@@ -1,0 +1,147 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "bili-03",
+  "stratum": "bilibili",
+  "source_ids": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "source_revisions": {
+    "bili-video-a": {
+      "url": "https://www.bilibili.com/video/BV14Enb6LEDe/",
+      "sha256": "7787b2acba7e2f012ba31984789bea3f5ddfaa38a3ecba5fa9571c2c47fd4eaf",
+      "snapshot": "materials/7787b2acba7e2f012ba31984789bea3f5ddfaa38a3ecba5fa9571c2c47fd4eaf.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "video_asr transcript, zh, 4173 chars / 171 segments, full 0:00-6:14 of a 386 s video; auto-caption noise with mixed Simplified/Traditional characters; frames/slides not inspected; only transcript wording is quotable"
+    },
+    "bili-video-b": {
+      "url": "https://www.bilibili.com/video/BV1ZLnt6tEpT/",
+      "sha256": "7d46070e40b266532f0ed5aea619cb5324a1a739a068d9391bd4e6c149d80053",
+      "snapshot": "materials/7d46070e40b266532f0ed5aea619cb5324a1a739a068d9391bd4e6c149d80053.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "video_asr transcript, zh, 2848 chars / 135 segments, full 0:00-3:58 of a 251 s video; very heavy auto-caption homophone noise with mixed Simplified/Traditional characters; frames/slides not inspected; only transcript wording is quotable"
+    }
+  },
+  "deliverable": "A source-grounded summary of what two Bilibili science videos say - video A on cochlear-implant hearing and video B on chemistry-laboratory safety rules - with per-segment ASR locators, explicit gaps where the captions are unintelligible, and no frame- or slide-level claims.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two captured ASR transcripts, summarize what each video says: in video A, how hearing and the cochlear implant are described and what the simulated implant sound is like; in video B, what the speaker says about laboratory-safety rules and the mistakes he demonstrates. Attribute each point to video A or video B and give the ASR segment locator."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Video A only: how does the speaker describe what hair cells do, how the implant gets past damaged hair cells, and how the brain adapts to the signal? Stay within the sentences the ASR makes intelligible, and flag anything it renders too noisily to use."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Video B only: what does the speaker say about where laboratory rules come from and what he hopes for viewers? Keep to the captured transcript, do not describe any frames, and mark garbled demonstration steps instead of guessing what was mixed, heated, or spilled."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili03-a-hair-cells",
+      "source_id": "bili-video-a",
+      "claim": "He says hair cells convert that vibration into neural signals.",
+      "locator": "seg 00:40.400 | video A, normal hearing and the hair cells (local ASR transcript; frames/slides not inspected)",
+      "quote": "毛细胞会把这种震动转化为神经信号",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-a-bypass-damage",
+      "source_id": "bili-video-a",
+      "claim": "He says the implant can bypass the hair cells that are already damaged.",
+      "locator": "seg 02:47.000 | video A, the implant's electrode array and damaged hair cells (local ASR transcript; frames/slides not inspected; the token 悠悠 before 已经受損 is ASR garble)",
+      "quote": "它可以绕过悠悠已经受損的毛细胞",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-a-robot-sound",
+      "source_id": "bili-video-a",
+      "claim": "He says the simulated implant sound is a bit like a robot and electronic tones.",
+      "locator": "seg 03:17.080 | video A, what the simulated implant sound is like (local ASR transcript; frames/slides not inspected)",
+      "quote": "這聽起來會有點像機器人和電子音",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-a-brain-adapts",
+      "source_id": "bili-video-a",
+      "claim": "He says the brain keeps linking these unfamiliar signals with the real world.",
+      "locator": "seg 03:24.400 | video A, the brain adapting to the electrical signal (local ASR transcript; frames/slides not inspected)",
+      "quote": "不斷地把這些陌生的信號和真實世界聯繫起來",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-a-natural-hearing",
+      "source_id": "bili-video-a",
+      "claim": "He says the perceived sound gradually comes closer to natural hearing.",
+      "locator": "seg 03:31.200 | video A, sound approaching natural hearing after training (03:27.400 is garbled) (local ASR transcript; frames/slides not inspected)",
+      "quote": "[03:31.200] 也會越來越接近我們的自然聽覺",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-a-long-road",
+      "source_id": "bili-video-a",
+      "claim": "He says that even when an implant helps someone hear, communicating freely with the world still takes a long road.",
+      "locator": "seg 04:39.560 | video A, after the implant, closing (the sentence continues at 04:42.200) (local ASR transcript; frames/slides not inspected)",
+      "quote": "但要想他们能真正自在的和世界交流",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-b-rules-must-hold",
+      "source_id": "bili-video-b",
+      "claim": "He says the rules must not be broken.",
+      "locator": "seg 01:12.960 | video B, after a demonstration accident (local ASR transcript; frames/slides not inspected)",
+      "quote": "[01:12.960] 规矩不能坏",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-b-rules-from-experience",
+      "source_id": "bili-video-b",
+      "claim": "He says the rules come from the experience of people who came before.",
+      "locator": "seg 03:24.000 | video B, where the rules come from (the subject at 03:22.000 and the tail at 03:25.000 are partly garbled) (local ASR transcript; frames/slides not inspected)",
+      "quote": "[03:24.000] 都是由前人的经验",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili03-b-never-happen",
+      "source_id": "bili-video-b",
+      "claim": "He says he hopes these mistakes will never happen to viewers.",
+      "locator": "seg 03:49.280 | video B, closing (the hope begins at 03:48.080) (local ASR transcript; frames/slides not inspected)",
+      "quote": "[03:49.280] 永遠不會發生在大家的身上",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "acceptable_partial_outcomes": [
+    "Only ASR transcripts were captured; answers must not claim slide, frame, on-screen text, or any audio content beyond the transcript, and must not assert what either video shows visually.",
+    "Both transcripts are noisy auto-captions with mixed Simplified and Traditional characters; garbled personal names, chemical names, and demonstration steps must be reported as unintelligible rather than repaired.",
+    "Video A's account of what an implant sounds like is a simulation built from research and users' descriptions, not a recording; video B's individual violations and their outcomes are only partly intelligible in the ASR, so answers must stay at the level its intelligible sentences support."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "bili-drafter",
+    "method": "quotes sliced from ASR snapshots and re-checked as literal substrings",
+    "facts": 9
+  },
+  "authority_anchors": [
+    {
+      "url": "https://www.nidcd.nih.gov/health/cochlear-implants",
+      "supports": "NIDCD describes a cochlear implant as 'a small, complex electronic device' with an external portion that sits behind the ear and an electrode array that 'sends them to different regions of the auditory nerve', and states that 'an implant does not restore normal hearing' but can give a deaf person 'a useful representation of sounds in the environment'. Independent confirmation of the device the video describes; it is not evidence for the speaker's own sentences.",
+      "verified_at": "2026-10-24"
+    },
+    {
+      "url": "https://www.hse.gov.uk/coshh/",
+      "supports": "HSE states that 'using chemicals or other hazardous substances at work can put peoples health at risk' and sets out the COSHH framework for controlling that risk. Independent confirmation that chemical work is governed by safety rules because of real health hazards, the premise behind video B's warnings; it is not evidence for the speaker's own sentences.",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}
