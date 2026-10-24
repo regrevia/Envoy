@@ -5,8 +5,8 @@
 ### 中文
 
 - 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
-  `envoy mcp`、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；保留原有读取、
-  发现、续读和视觉交接能力。
+  `envoy mcp --toolset core`、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；
+  保留原有读取、发现、续读和视觉交接能力；高级工具可用 `--toolset full` 开启。
 - 新增 Claude Code 与 Codex 插件（`integrations/claude-code`、`integrations/codex`），共享
   `envoy hook prompt` 的 URL 检测、内网过滤、显式退出和失败开放策略。路由提示默认按用户
   消息自动选择中文或英文（`ENVOY_HOOK_LANGUAGE=auto`）。Claude Code 直接加载插件 hook；
@@ -16,15 +16,29 @@
   搜索；模型遇到链接时优先用分段读取/`envoy_expand`/`envoy_search` 控制上下文。
 - OCR 新增 macOS Vision 与 RapidOCR 后端，默认语言改为 `auto`（中文优先、兼容英文），新增
   `envoy ocr status|test`，并支持 `ENVOY_OCR_BACKEND` / `ENVOY_OCR_LANG`。
-- 新增 DSH Skill 生成器与测试，将十个 MCP 工具名适配为 `mcp__envoy__*`，并检查生成文件与
-  CLI 版本同步。
+- 新增 MCP `--toolset core|full`（环境变量 `ENVOY_MCP_TOOLSET`）：`core` 只声明
+  `envoy_read`、`envoy_expand`、`envoy_search`、`envoy_observe_visual`，工具声明从约
+  19.9 KB 降到约 8.2 KB；Claude Code、Codex、通用 Skill 和 DSH 插件默认用 `core`，
+  本地视频、主页发现、合集、回放、视觉历史和 doctor 等高级能力用 `full`。`envoy mcp`
+  不带参数时仍为 `full`，保持兼容；工具集在进程启动时固定，避免中途换 schema 破坏缓存。
+- 新增 DSH Skill 生成器与测试，将全部 MCP 工具名适配为 `mcp__envoy__*`（`core` 默认外露
+  四个，`full` 暴露十个），并检查生成文件与 CLI 版本同步。
 
 ### English
 
+- Add MCP `--toolset core|full` (also `ENVOY_MCP_TOOLSET`): `core` declares only
+  `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`,
+  reducing resident tool declarations from about 19.9 KB to about 8.2 KB.
+  Claude Code, Codex, the generic skill host, and the DSH bundle start with
+  `core`; local video, profile discovery, collections, replay, visual history,
+  and doctor require `full`. Bare `envoy mcp` still defaults to `full` for
+  compatibility. The toolset is fixed at process startup so schemas never
+  change mid-session.
 - Add the `integrations/dsh/envoy-dsh` DeepSeek Harness bundle: one Plugin
-  Manager install mounts `envoy mcp`, registers the Envoy skill, and enables
-  link-first routing through `agent/pre-step` while preserving reading,
-  discovery, expansion, and visual handoff behavior.
+  Manager install mounts `envoy mcp --toolset core`, registers the Envoy skill,
+  and enables link-first routing through `agent/pre-step` while preserving
+  reading, discovery, expansion, and visual handoff behavior; advanced tools
+  remain available with `--toolset full`.
 - Add Claude Code and Codex plugins (`integrations/claude-code`,
   `integrations/codex`) sharing the `envoy hook prompt` URL detection,
   private-address filtering, explicit opt-out, and fail-open policy. The notice
@@ -39,8 +53,9 @@
 - Add macOS Vision and RapidOCR OCR backends, default the language to `auto`
   (Chinese first, English compatible), add `envoy ocr status|test`, and support
   `ENVOY_OCR_BACKEND` / `ENVOY_OCR_LANG`.
-- Add a DSH skill generator and tests that adapt the ten MCP tools to
-  `mcp__envoy__*` and keep generated files in sync with the CLI version.
+- Add a DSH skill generator and tests that adapt every MCP tool name to
+  `mcp__envoy__*` (four exposed by `core`, all ten under `full`) and keep
+  generated files in sync with the CLI version.
 
 **Known boundaries**
 

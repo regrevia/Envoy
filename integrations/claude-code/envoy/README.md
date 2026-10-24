@@ -25,13 +25,16 @@ Restart Claude Code or run `/plugin` to confirm the plugin is enabled.
 
 ## What it adds
 
-- **MCP**: `envoy_read`, `envoy_read_local_video`, `envoy_expand`,
-  `envoy_search`, `envoy_replay`, `envoy_doctor`, and the other Envoy tools.
+- **MCP**: starts `envoy mcp --toolset core`, so the default catalog is
+  `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`.
+  Restart with `--toolset full` (or use the CLI) for local video, discovery,
+  collections, replay, visual history, and doctor tools.
 - **`UserPromptSubmit` hook**: when the prompt contains a public `http(s)` URL,
   it injects a short, deterministic policy:
-  - try `envoy_read` (or `envoy_read_local_video`) first;
+  - try `envoy_read` first; for a local video or audio file use the exposed
+    local-video tool or the `envoy read-local-video` CLI;
   - keep `material_id` and locators, continue with `envoy_expand` /
-    `envoy_search` / `envoy_replay`;
+    `envoy_search`; use replay only when that tool is exposed;
   - fall back to built-in fetching only on `blocked` / `challenge_required`,
     sign-in, CAPTCHA, or a missing Envoy tool;
   - treat screenshots/OCR as source evidence and trust the image when page text

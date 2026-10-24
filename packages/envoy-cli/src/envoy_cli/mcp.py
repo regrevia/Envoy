@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sys
 from typing import Any, Iterable, TextIO
@@ -357,6 +358,41 @@ TOOLS = [
     },
 ]
 
+# Tool declarations are part of every request prefix, so hosts that only read
+# links should not pay for local-video, collection, replay, or diagnostics
+# schemas. The toolset is fixed at process startup: changing tools/list
+# mid-session invalidates prompt-cache reuse.
+DEFAULT_TOOLSET = "full"
+TOOLSET_ENV = "ENVOY_MCP_TOOLSET"
+TOOLSETS: dict[str, tuple[str, ...]] = {
+    "core": (
+        "envoy_read",
+        "envoy_expand",
+        "envoy_search",
+        "envoy_observe_visual",
+    ),
+    "full": tuple(tool["name"] for tool in TOOLS),
+}
+TOOLSET_NAMES = tuple(TOOLSETS)
+
+
+def normalize_toolset(value: str | None = None) -> str:
+    """Return a validated toolset name from an argument or environment."""
+
+    selected = (value or os.environ.get(TOOLSET_ENV) or DEFAULT_TOOLSET).strip().lower()
+    if selected not in TOOLSETS:
+        raise ValueError(
+            f"unknown MCP toolset {selected!r}; choose one of {', '.join(TOOLSET_NAMES)}"
+        )
+    return selected
+
+
+def tools_for_toolset(value: str | None = None) -> list[dict]:
+    """Return the static tool declarations for one toolset, preserving order."""
+
+    allowed = set(TOOLSETS[normalize_toolset(value)])
+    return [tool for tool in TOOLS if tool["name"] in allowed]
+
 
 class MCPProtocolSession:
     def __init__(self):
@@ -507,8 +543,14 @@ def _modern_error(request_id: Any, version: str | None, params: dict, session: M
     return None
 
 
-def handle_message(message: dict, session: MCPProtocolSession | None = None) -> dict | None:
+def handle_message(
+    message: dict,
+    session: MCPProtocolSession | None = None,
+    toolset: str | None = None,
+) -> dict | None:
     session = session or MCPProtocolSession()
+    selected_toolset = normalize_toolset(toolset)
+    allowed_tools = set(TOOLSETS[selected_toolset])
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or not isinstance(message.get("method"), str):
         return _error(message.get("id") if isinstance(message, dict) else None, -32600, "Invalid JSON-RPC request")
 
@@ -564,7 +606,7 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
     if method == "tools/list":
         return _result(
             request_id,
-            {"tools": TOOLS},
+            {"tools": tools_for_toolset(selected_toolset)},
             modern=modern_request,
             cacheable=modern_request,
         )
@@ -575,6 +617,25 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
         return _error(request_id, -32602, "Tool arguments must be an object")
+    if not isinstance(name, str) or name not in allowed_tools:
+        known_tools = {tool["name"] for tool in TOOLS}
+        if isinstance(name, str) and name in known_tools:
+            return _error(
+                request_id,
+                -32602,
+                f"Tool {name!r} is not exposed by the {selected_toolset!r} MCP toolset",
+                {
+                    "toolset": selected_toolset,
+                    "available": list(TOOLSETS[selected_toolset]),
+                    "hint": "Restart the MCP server with --toolset full for advanced tools.",
+                },
+            )
+        return _error(
+            request_id,
+            -32602,
+            f"Unknown tool: {name!r}",
+            {"toolset": selected_toolset, "available": list(TOOLSETS[selected_toolset])},
+        )
     try:
         if name == "envoy_read":
             response = read_public_page(ReadRequest.model_validate(arguments))
@@ -782,11 +843,12 @@ def handle_message(message: dict, session: MCPProtocolSession | None = None) -> 
     }, modern=modern_request)
 
 
-def run_lines(lines: Iterable[dict]) -> int:
+def run_lines(lines: Iterable[dict], toolset: str | None = None) -> int:
     session = MCPProtocolSession()
+    selected_toolset = normalize_toolset(toolset)
     for message in lines:
         try:
-            response = handle_message(message, session)
+            response = handle_message(message, session, selected_toolset)
         except Exception:
             request_id = message.get("id") if isinstance(message, dict) else None
             _LOGGER.exception("Unexpected Envoy MCP request failure")
@@ -800,8 +862,13 @@ def run_lines(lines: Iterable[dict]) -> int:
     return 0
 
 
-def run_stream(input_stream: TextIO, output_stream: TextIO) -> int:
+def run_stream(
+    input_stream: TextIO,
+    output_stream: TextIO,
+    toolset: str | None = None,
+) -> int:
     session = MCPProtocolSession()
+    selected_toolset = normalize_toolset(toolset)
     for line in input_stream:
         if not line.strip():
             continue
@@ -812,7 +879,7 @@ def run_stream(input_stream: TextIO, output_stream: TextIO) -> int:
             output_stream.flush()
             continue
         try:
-            response = handle_message(message, session)
+            response = handle_message(message, session, selected_toolset)
         except Exception:
             request_id = message.get("id") if isinstance(message, dict) else None
             _LOGGER.exception("Unexpected Envoy MCP request failure")
@@ -827,5 +894,10 @@ def run_stream(input_stream: TextIO, output_stream: TextIO) -> int:
     return 0
 
 
-def main() -> int:
-    return run_stream(sys.stdin, sys.stdout)
+def main(toolset: str | None = None) -> int:
+    try:
+        selected_toolset = normalize_toolset(toolset)
+    except ValueError as exc:
+        print(f"envoy mcp: {exc}", file=sys.stderr)
+        return 2
+    return run_stream(sys.stdin, sys.stdout, selected_toolset)

@@ -140,6 +140,9 @@ def test_hook_payload_auto_detects_prompt_language():
     assert "Envoy MCP 工具" not in english_context
     assert "`envoy_read`" in english_context
     assert "`envoy_read_local_video`" in english_context
+    assert "when the active MCP toolset exposes it" in english_context
+    assert "`envoy read-local-video` CLI" in english_context
+    assert "`envoy_replay` only when that tool is exposed" in english_context
     assert "本轮用户消息包含公网链接" in chinese_context
     assert "This turn contains public link(s)" not in chinese_context
 
@@ -203,7 +206,11 @@ def test_claude_plugin_hook_config():
     # Claude Code auto-loads hooks/hooks.json; declaring manifest.hooks duplicates it.
     assert "hooks" not in manifest
     assert manifest["mcpServers"] == "./.mcp.json"
-    assert _load_json(CLAUDE_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == ["mcp"]
+    assert _load_json(CLAUDE_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == [
+        "mcp",
+        "--toolset",
+        "core",
+    ]
 
 
 def test_codex_plugin_hook_config():
@@ -217,7 +224,11 @@ def test_codex_plugin_hook_config():
     assert manifest["mcpServers"] == "./.mcp.json"
     assert manifest["interface"]["capabilities"] == ["MCP"]
     assert "envoy hook install --host codex" in manifest["interface"]["longDescription"]
-    assert _load_json(CODEX_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == ["mcp"]
+    assert _load_json(CODEX_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == [
+        "mcp",
+        "--toolset",
+        "core",
+    ]
 
 
 def test_hook_scripts_are_identical_and_fail_open_without_envoy(tmp_path):

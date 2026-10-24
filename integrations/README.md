@@ -2,7 +2,9 @@
 
 Envoy ships one runtime and three thin host adapters. They share the same
 routing policy (`envoy hook prompt`) and the same MCP server (`envoy mcp`), so
-behaviour stays consistent across agents.
+behaviour stays consistent across agents. All bundled MCP configs launch it
+with `--toolset core`; use `--toolset full` when local-video, discovery,
+collection, replay, visual-history, or doctor tools are needed.
 
 | Host | Package | Mechanism |
 | --- | --- | --- |
