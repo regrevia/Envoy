@@ -13,12 +13,10 @@ sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-core" / "src"))
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-cli" / "src"))
 
 from envoy_cli import browser, reader
-from envoy_cli.media import MediaCapabilityMissing
 from envoy_cli.capabilities import capability_catalog
 from envoy_core.schemas.read_v1 import (
     ExecutionState,
     HostDelivery,
-    ImageInputCapability,
     MaterialBlock,
     MaterialKind,
     MaterialOrigin,
@@ -27,7 +25,6 @@ from envoy_core.schemas.read_v1 import (
     ReadResult,
     ResourceRef,
     TextContent,
-    VideoLocator,
 )
 
 
@@ -488,7 +485,7 @@ def test_read_idempotency_key_replays_material_without_fetching_twice(monkeypatc
 
 
 def test_temporary_blocked_read_result_is_retryable_but_needs_host_is_cacheable():
-    from envoy_core.schemas.read_v1 import ErrorCode, ReadError, ReadRequest
+    from envoy_core.schemas.read_v1 import ErrorCode, ReadRequest
 
     temporary = reader._blocked(
         ReadRequest.model_validate({

@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import sys
@@ -66,7 +65,7 @@ def test_read_protocol_rejects_unversioned_requests_and_invalid_image_coordinate
 
 
 def test_video_visual_scope_requires_explicit_host_frame_and_time_range():
-    from envoy_core.schemas.read_v1 import HostCapabilities, ReadRequest
+    from envoy_core.schemas.read_v1 import ReadRequest
 
     request = ReadRequest.model_validate({
         "protocol_version": "envoy.read/1",

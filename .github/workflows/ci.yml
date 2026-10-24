@@ -69,6 +69,20 @@ jobs:
           python -m pip install --target /tmp/envoy-wheel-smoke /tmp/envoy-wheel/envoy_cli-*.whl
           PYTHONPATH=/tmp/envoy-wheel-smoke python -c "import envoy_cli, envoy_core; print(envoy_cli.__version__, envoy_core.__version__)"
 
+  lint:
+    name: 静态检查 / Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装并运行 ruff / Install and run ruff
+        run: |
+          python -m pip install "ruff==0.17.2"
+          python -m ruff check .
+
   standalone-windows:
     name: Windows 独立运行测试 / Standalone Skill on Windows
     runs-on: windows-latest

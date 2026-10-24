@@ -2563,7 +2563,6 @@ def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadRe
             truncated = True
         if not content:
             continue
-        resource_id = str(item.get("resource_id") or "")
         source_block_id = str(item.get("source_block_id") or "")
         source_url = _redact_url(str(item.get("source_url") or ""))
         blocks.append(MaterialBlock(
@@ -5447,7 +5446,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 return _parse_pdf_source(request, detected_pdf.source)
             except DetectedText as detected_text:
                 return _parse_text_source(request, detected_text.source)
-            except DetectedImage as detected_image:
+            except DetectedImage:
                 if request.host_capabilities.image_input.value != "uri":
                     return _blocked(
                         request,

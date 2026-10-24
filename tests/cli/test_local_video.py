@@ -12,7 +12,6 @@ sys.path.insert(0, str(ROOT / "packages" / "envoy-cli" / "src"))
 
 from envoy_core.schemas.read_v1 import (
     ExecutionState,
-    MaterialKind,
     MaterialOrigin,
     ReadResult,
 )

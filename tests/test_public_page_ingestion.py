@@ -186,7 +186,7 @@ def test_public_page_bundle_passes_ocr_blocks_into_materials(tmp_path, monkeypat
         extra_metadata={"artifact_filename": "image.webp", "alt": "Screenshot"},
     )
 
-    result = _attach_public_page_source_to_bundle(
+    _attach_public_page_source_to_bundle(
         db=None,
         task_id="task-ocr",
         project_id="project-1",
@@ -227,7 +227,6 @@ def test_public_page_material_response_marks_source_and_ocr_origins():
 
 
 def test_public_page_bundle_can_include_ocr_blocks_from_image_assets(tmp_path, monkeypatch):
-    from types import SimpleNamespace
     from app.services.web_content_service import public_page_material_response
 
     response = public_page_material_response(

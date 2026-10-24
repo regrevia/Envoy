@@ -8,7 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 for src in (ROOT / "packages" / "envoy-cli" / "src", ROOT / "packages" / "envoy-core" / "src"):

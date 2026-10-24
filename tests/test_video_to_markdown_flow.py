@@ -439,7 +439,6 @@ def test_long_video_frame_windows_cover_every_frame_with_overlap_and_asr_alignme
 
 
 def test_video_worker_reuses_successful_download_and_preprocess_checkpoints(tmp_path):
-    import json
     import os
 
     os.environ["DATABASE_URL"] = f"sqlite:///{tmp_path / 'envoy-video-worker-resume.db'}"
