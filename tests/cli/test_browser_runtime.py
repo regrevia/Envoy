@@ -1319,3 +1319,15 @@ def test_cli_doctor_reports_browser_runtime(monkeypatch, capsys):
     assert cli.main(["doctor", "--json"]) == 0
     payload = __import__("json").loads(capsys.readouterr().out)
     assert payload["runtime"]["browser"]["ready"] is False
+
+
+def test_egress_block_pages_count_as_network_evidence():
+    assert reader._challenge_suggests_egress_issue(
+        "安全限制",
+        "IP存在风险，请切换可靠网络环境后重试\n300012",
+    )
+    assert reader._challenge_suggests_egress_issue("访问过于频繁", "")
+    assert not reader._challenge_suggests_egress_issue(
+        "Verify you are human",
+        "Please complete the captcha to continue",
+    )
