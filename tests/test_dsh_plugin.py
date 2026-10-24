@@ -312,8 +312,8 @@ console.log(JSON.stringify({
         # Envoy first, with the exact MCP tool names the Harness exposes.
         assert "mcp__envoy__envoy_read" in text
         assert "mcp__envoy__envoy_read_local_video" in text
-        # Advanced tools are explicitly qualified by what the toolset exposes.
-        assert "toolset exposes it" in text or "工具集暴露" in text
+        # Local files are read through envoy_read with a path or file:// URL.
+        assert "`file://`" in text
         assert "envoy read-local-video" in text
         # Keep provenance and widen with bounded reads instead of re-fetching.
         assert "material_id" in text

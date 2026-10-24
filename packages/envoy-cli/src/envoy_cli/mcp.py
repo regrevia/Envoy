@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import sys
 import uuid
+from pathlib import Path
 from typing import Any, Iterable, TextIO
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from envoy_core.schemas.read_v1 import (
     ExpandRequest,
@@ -107,7 +109,10 @@ READ_SCHEMA = {
             "additionalProperties": True,
             "required": ["url"],
             "properties": {
-                "url": {"type": "string"},
+                "url": {
+                    "type": "string",
+                    "description": "HTTP(S) URL or local file path (file:///abs/path.mp4).",
+                },
                 "kind": {
                     "type": "string",
                     "enum": ["auto", "article", "video", "audio", "image", "document", "collection"],
@@ -300,7 +305,10 @@ TOOLS = [
             "auto-detected; use returned coverage and resources to decide whether "
             "to expand text or request host visual/video inspection. Public videos "
             "prefer captions, then optional local ASR; browser-captured public media "
-            "may be processed into timestamped ASR and bounded frames. Envoy returns "
+            "may be processed into timestamped ASR and bounded frames. A file the user "
+            "already has is accepted too: pass it as `source.url` either as a `file://` "
+            "URL or as an absolute path, and Envoy reads it locally without uploading it. "
+            "Envoy returns "
             "evidence and coverage gaps, not job-location or company-match conclusions. "
             "An envoy_read needs_host response is a handoff, not a terminal state. "
             "For inspect_visual, inspect every "
@@ -312,7 +320,16 @@ TOOLS = [
             "uninspected resources; do not repeat envoy_read merely to clear the "
             "original status, and sparse frames never imply full-video coverage. "
             "Request frames only when needed with scope.include_visual=true and "
-            "explicit frame-capable host settings."
+            "explicit frame-capable host settings. The returned text carries "
+            "`material_id` and `source_revision`: keep them, because the full blocks "
+            "and resource descriptors live only in structuredContent, which some "
+            "hosts do not forward. Once a source has been read, continue with "
+            "envoy_search or envoy_expand on that material_id instead of reading "
+            "the URL again; a repeated read can hit an auth wall or challenge, and "
+            "Envoy then serves the material it already retained rather than "
+            "re-fetching. Resource descriptors are Envoy artifacts delivered in "
+            "structuredContent; this server exposes no MCP resources capability, so "
+            "listing MCP resources is always empty by design."
         ),
         "inputSchema": READ_SCHEMA,
     },
@@ -477,9 +494,20 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
         for block in blocks
         if isinstance(block, dict) and isinstance(block.get("content"), dict)
     )
+    handle = _material_handle(payload)
     if result == "blocked":
         errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
-        code = errors[0].get("code", "unknown") if errors and isinstance(errors[0], dict) else "unknown"
+        first = errors[0] if errors and isinstance(errors[0], dict) else {}
+        code = first.get("code", "unknown")
+        message = str(first.get("message") or "").strip()
+        if handle:
+            return (
+                f"Envoy read blocked ({code}): {message or 'no detail'}.{handle} "
+                "Re-read is blocked; call envoy_replay with that material_id (or "
+                "envoy_expand for more of it) instead of reading the URL again."
+            )
+        if message:
+            return f"Envoy read blocked ({code}): {message}"
         return f"Envoy read blocked ({code}). See structuredContent.errors for details."
     if result == "needs_host":
         needs = payload.get("needs") if isinstance(payload.get("needs"), list) else []
@@ -504,10 +532,19 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
                 "imply full-video coverage."
             )
         return "Envoy read needs_host: perform the requested host action in structuredContent.needs."
+    origin = (
+        " Served from the material retained in this session; the source was not re-fetched."
+        if payload.get("served_from_retained_material")
+        else ""
+    )
+    next_step = (
+        " Continue with envoy_search or envoy_expand on that material_id; do not re-read the URL."
+        if handle
+        else ""
+    )
     return (
         f"Envoy read {result}: {text_chars} text characters, "
-        f"{len(blocks)} blocks, {len(resources)} resources. "
-        "Full materials are in structuredContent."
+        f"{len(blocks)} blocks, {len(resources)} resources.{origin}{handle}{next_step}"
     )
 
 
@@ -543,6 +580,146 @@ _RANGE_FIELDS = ("start_seconds", "end_seconds", "locator", "include_visual")
 # persisted material instead of minting a request-scoped duplicate. Replay is
 # excluded because it is defined by the difference between two sessions.
 _PROCESS_SESSION_ID = f"mcp-{uuid.uuid4().hex}"
+
+_LOCAL_FILE_SCHEME = "file://"
+
+
+def _local_source_path(arguments: dict) -> str | None:
+    """Return the on-disk path a caller handed to `envoy_read`, if any.
+
+    A file the user already has is not a public URL, so it cannot be fetched.
+    It is read by the same local pipeline `envoy_read_local_video` uses, which
+    keeps a bounded core toolset sufficient for local footage: the file is never
+    uploaded, only its transcript and any requested frames are returned.
+    """
+
+    source = arguments.get("source")
+    if not isinstance(source, dict):
+        return None
+    raw = str(source.get("url") or "").strip()
+    if not raw:
+        return None
+    if raw.lower().startswith(_LOCAL_FILE_SCHEME):
+        decoded = unquote(urlparse(raw).path or "") or unquote(raw[len(_LOCAL_FILE_SCHEME):])
+        if not decoded:
+            return None
+        candidate = decoded
+    elif raw.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", raw):
+        candidate = raw
+    else:
+        return None
+    return str(Path(candidate).expanduser())
+
+
+def _local_file_identity(path: str) -> str:
+    """Stable idempotency identity for a local file, without hashing its bytes."""
+
+    digest = hashlib.sha256()
+    digest.update(str(Path(path).expanduser().resolve()).encode("utf-8", "surrogatepass"))
+    try:
+        stat = Path(path).expanduser().stat()
+    except OSError:
+        return digest.hexdigest()[:32]
+    digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+    return digest.hexdigest()[:32]
+
+
+def _local_video_arguments(read_arguments: dict, path: str) -> dict:
+    allowed = set(LocalVideoReadRequest.model_fields)
+    converted = {key: value for key, value in read_arguments.items() if key in allowed}
+    converted["path"] = path
+    if not converted.get("idempotency_key"):
+        converted["idempotency_key"] = f"local-{_local_file_identity(path)}"
+    return converted
+
+
+# A read is the expensive part. Once a source has been read in this bridge
+# process, a later failure of the same source (auth wall, challenge, transient
+# block) must not cost the host the evidence it already received: re-reading
+# from the retained material keeps the session movable instead of dead.
+_RETAINABLE_RESULTS = {"ready", "partial", "needs_host"}
+_RETAINED_READS: dict[str, dict] = {}
+
+
+def _retained_key(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path}"
+
+
+def _remember_read(arguments: dict, payload: dict) -> None:
+    source = arguments.get("source")
+    if not isinstance(source, dict):
+        return
+    key = _retained_key(str(source.get("url") or ""))
+    if not key or payload.get("result") not in _RETAINABLE_RESULTS:
+        return
+    if not payload.get("material_id"):
+        return
+    _RETAINED_READS[key] = {
+        "payload": payload,
+        "material_id": payload.get("material_id"),
+        "source_revision": payload.get("source_revision"),
+    }
+
+
+def _retained_read(arguments: dict) -> dict | None:
+    source = arguments.get("source")
+    if not isinstance(source, dict):
+        return None
+    return _RETAINED_READS.get(_retained_key(str(source.get("url") or "")))
+
+
+def _retained_payload(retained: dict, exc: Any = None) -> dict:
+    payload = dict(retained["payload"])
+    payload["served_from_retained_material"] = True
+    notices = payload.get("notices")
+    notice: dict = {
+        "code": "served_from_retained_material",
+        "message": (
+            "The source could not be re-read, so the material already retained "
+            "in this session was returned instead; nothing was re-fetched"
+        )
+        if exc is not None
+        else (
+            "This source was read earlier in this session, so the retained material "
+            "was returned; nothing was re-fetched. Send refresh=true to read it again"
+        ),
+    }
+    if exc is not None:
+        notice["refetch_error"] = {
+            "code": getattr(getattr(exc, "code", None), "value", "unknown"),
+            "message": str(exc),
+        }
+    payload["notices"] = [*(notices if isinstance(notices, list) else []), notice]
+    return payload
+
+
+def _material_handle(payload: dict) -> str:
+    material_id = str(payload.get("material_id") or "").strip()
+    if not material_id:
+        return ""
+    revision = str(payload.get("source_revision") or "").strip()
+    handle = f" material_id={material_id}"
+    if revision:
+        handle += f" source_revision={revision}"
+    return handle
+
+
+def _local_file_blocked_payload(request_id: Any, path: str, reason: str, message: str) -> dict:
+    return {
+        "protocol_version": "envoy.read/1",
+        "request_id": str(request_id or "mcp"),
+        "execution_state": "completed",
+        "result": "blocked",
+        "blocks": [],
+        "errors": [{
+            "code": "source_unavailable",
+            "message": message,
+            "details": {"kind": "local_file", "reason": reason, "filename": Path(path).name},
+        }],
+    }
 
 
 def _server_arguments(name: str, arguments: dict) -> dict:
@@ -729,8 +906,44 @@ def handle_message(
     try:
         arguments = _server_arguments(name, arguments)
         if name == "envoy_read":
-            response = read_public_page(ReadRequest.model_validate(arguments))
-            payload = _read_payload(response, compact=modern_request)
+            local_path = _local_source_path(arguments)
+            if local_path is None:
+                retained = _retained_read(arguments)
+                if retained is not None and not arguments.get("refresh"):
+                    payload = _retained_payload(retained)
+                else:
+                    read_arguments = {
+                        key: value for key, value in arguments.items() if key != "refresh"
+                    }
+                    response = read_public_page(ReadRequest.model_validate(read_arguments))
+                    payload = _read_payload(response, compact=modern_request)
+            else:
+                path = Path(local_path)
+                if not path.is_file():
+                    payload = _local_file_blocked_payload(
+                        request_id,
+                        local_path,
+                        "not_found",
+                        (
+                            "The local file was not found at the path Envoy was given; "
+                            "no reading was attempted and nothing was uploaded"
+                        ),
+                    )
+                elif not os.access(path, os.R_OK):
+                    payload = _local_file_blocked_payload(
+                        request_id,
+                        local_path,
+                        "not_readable",
+                        "The local file exists but is not readable by Envoy's process",
+                    )
+                else:
+                    response = read_local_video(
+                        LocalVideoReadRequest.model_validate(
+                            _local_video_arguments(arguments, local_path)
+                        )
+                    )
+                    payload = _read_payload(response, compact=modern_request)
+            _remember_read(arguments, payload)
         elif name == "envoy_read_local_video":
             response = read_local_video(LocalVideoReadRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
@@ -904,17 +1117,21 @@ def handle_message(
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
     except PublicPageError as exc:
-        payload = {
-            "protocol_version": "envoy.read/1",
-            "request_id": arguments.get("request_id", "mcp"),
-            "execution_state": "completed",
-            "result": "blocked",
-            "errors": [{
-                "code": exc.code.value,
-                "message": str(exc),
-                **({"details": exc.details} if exc.details else {}),
-            }],
-        }
+        retained = _retained_read(arguments)
+        if retained is not None:
+            payload = _retained_payload(retained, exc)
+        else:
+            payload = {
+                "protocol_version": "envoy.read/1",
+                "request_id": arguments.get("request_id", "mcp"),
+                "execution_state": "completed",
+                "result": "blocked",
+                "errors": [{
+                    "code": exc.code.value,
+                    "message": str(exc),
+                    **({"details": exc.details} if exc.details else {}),
+                }],
+            }
     except (TypeError, ValueError, CollectionRevisionConflict) as exc:
         return _error(request_id, -32602, str(exc))
     except Exception:
