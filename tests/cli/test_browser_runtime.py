@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-core" / "src"))
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-cli" / "src"))
 
-from envoy_cli import browser, reader
+from envoy_cli import browser, netpolicy, reader
 from envoy_cli.capabilities import capability_catalog
 from envoy_core.schemas.read_v1 import (
     ExecutionState,
@@ -200,38 +200,46 @@ def test_youtube_sign_in_to_confirm_bot_is_detected_as_access_challenge():
     assert challenge is True
 
 
-def test_browser_uses_system_https_proxy_without_exposing_credentials(monkeypatch):
-    from urllib import request
-
+def test_system_proxy_is_only_a_fallback_after_a_direct_attempt(monkeypatch):
     monkeypatch.delenv("ENVOY_BROWSER_PROXY", raising=False)
-    monkeypatch.setattr(request, "getproxies", lambda: {
+    monkeypatch.setattr(netpolicy, "getproxies", lambda: {
         "http": "http://proxy.example:8080",
         "https": "http://proxy.example:8080",
     })
 
+    assert netpolicy.proxy_plan() == [None, "http://proxy.example:8080"]
     assert browser._browser_proxy_server() == "http://proxy.example:8080"
 
 
 def test_browser_does_not_put_proxy_credentials_in_chromium_args(monkeypatch):
-    from urllib import request
-
     monkeypatch.delenv("ENVOY_BROWSER_PROXY", raising=False)
-    monkeypatch.setattr(request, "getproxies", lambda: {
+    monkeypatch.setattr(netpolicy, "getproxies", lambda: {
         "https": "http://user:secret@proxy.example:8080",
     })
 
+    assert netpolicy.detected_proxy() is None
+    assert netpolicy.proxy_plan() == [None]
     assert browser._browser_proxy_server() is None
 
 
 def test_explicit_browser_proxy_overrides_system_proxy(monkeypatch):
-    from urllib import request
-
     monkeypatch.setenv("ENVOY_BROWSER_PROXY", "socks5://127.0.0.1:7898")
-    monkeypatch.setattr(request, "getproxies", lambda: {
+    monkeypatch.setattr(netpolicy, "getproxies", lambda: {
         "https": "http://system-proxy.example:8080",
     })
 
+    assert netpolicy.proxy_plan() == ["socks5://127.0.0.1:7898"]
     assert browser._browser_proxy_server() == "socks5://127.0.0.1:7898"
+
+
+def test_direct_pin_disables_the_proxy_fallback(monkeypatch):
+    monkeypatch.setenv("ENVOY_BROWSER_PROXY", "none")
+    monkeypatch.setattr(netpolicy, "getproxies", lambda: {
+        "https": "http://proxy.example:8080",
+    })
+
+    assert netpolicy.proxy_plan() == [None]
+    assert browser._browser_proxy_server() is None
 
 
 def test_dismissible_login_overlay_is_closed_in_headless_browser(tmp_path):
