@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit
 
 from .media import interprocess_file_lock
 
@@ -184,20 +184,50 @@ def _write(path: Path, value: dict) -> None:
 def canonical_candidate_url(value: str) -> str:
     parts = urlsplit(str(value or "").strip())
     host = (parts.hostname or "").lower()
-    if parts.scheme not in {"http", "https"} or host not in {
-        "douyin.com", "www.douyin.com", "v.douyin.com",
-    }:
-        raise CollectionError("Only public Douyin post URLs can be canonicalized")
-    match = re.fullmatch(r"/(video|note)/([A-Za-z0-9_-]+)", parts.path.rstrip("/"))
-    if not match:
-        raise CollectionError("URL does not identify a canonical Douyin video or note")
-    kind, post_id = match.groups()
-    return f"https://www.douyin.com/{kind}/{post_id}"
+    if parts.scheme not in {"http", "https"}:
+        raise CollectionError("Only public post URLs can be canonicalized")
+    path = parts.path.rstrip("/")
+    if host in {"douyin.com", "www.douyin.com", "v.douyin.com"}:
+        match = re.fullmatch(r"/(video|note)/([A-Za-z0-9_-]+)", path)
+        if not match:
+            raise CollectionError("URL does not identify a canonical Douyin video or note")
+        kind, post_id = match.groups()
+        return f"https://www.douyin.com/{kind}/{post_id}"
+    if host in {"bilibili.com", "www.bilibili.com", "m.bilibili.com"}:
+        match = re.fullmatch(r"/video/(BV[A-Za-z0-9]{10}|av\d+)", path)
+        if not match:
+            raise CollectionError("URL does not identify a canonical Bilibili video")
+        return f"https://www.bilibili.com/video/{match.group(1)}"
+    raise CollectionError("Only public Douyin or Bilibili post URLs can be canonicalized")
 
 
 def candidate_id(source_url: str) -> str:
     canonical = canonical_candidate_url(source_url)
-    return "douyin-" + hashlib.sha256(canonical.encode()).hexdigest()[:24]
+    prefix = "bili-" if "bilibili.com" in canonical else "douyin-"
+    return prefix + hashlib.sha256(canonical.encode()).hexdigest()[:24]
+
+
+def canonical_profile_url(value: str) -> tuple[str, str]:
+    """Return the canonical profile URL and the platform that serves it."""
+    parts = urlsplit(str(value or "").strip())
+    host = (parts.hostname or "").lower()
+    path = parts.path.rstrip("/")
+    if (
+        parts.scheme not in {"http", "https"}
+        or parts.username
+        or parts.password
+    ):
+        raise CollectionError("A public profile URL is required")
+    if host in {"douyin.com", "www.douyin.com"}:
+        if not re.fullmatch(r"/user/[^/]+", path):
+            raise CollectionError("A public Douyin user profile URL is required")
+        return f"https://www.douyin.com{path}", "douyin"
+    if host == "space.bilibili.com":
+        match = re.fullmatch(r"/(\d{1,20})(?:/video)?", path)
+        if not match:
+            raise CollectionError("A public Bilibili space URL is required")
+        return f"https://space.bilibili.com/{match.group(1)}/video", "bilibili"
+    raise CollectionError("A public Douyin or Bilibili profile URL is required")
 
 
 def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100) -> list[dict]:
@@ -212,8 +242,11 @@ def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100
             candidate_url = raw_url
         elif item_id and re.fullmatch(r"[A-Za-z0-9_-]+", item_id):
             entry_type = str(entry.get("ie_key") or entry.get("extractor_key") or "").lower()
-            kind = "note" if "note" in entry_type else "video"
-            candidate_url = f"https://www.douyin.com/{kind}/{item_id}"
+            if "bilibili" in entry_type:
+                candidate_url = f"https://www.bilibili.com/video/{item_id}"
+            else:
+                kind = "note" if "note" in entry_type else "video"
+                candidate_url = f"https://www.douyin.com/{kind}/{item_id}"
         else:
             continue
         try:
@@ -228,6 +261,7 @@ def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100
         candidates.append({
             "candidate_id": stable_id,
             "source_url": canonical,
+            "platform": "bilibili" if "bilibili.com" in canonical else "douyin",
             "item_type": "image_note" if path_kind == "note" else "video",
             "title": str(entry.get("title") or ""),
             "published_at": entry.get("upload_date"),
@@ -252,22 +286,7 @@ def discover_profile(
 
     if not 1 <= int(limit) <= 100:
         raise CollectionError("limit must be between 1 and 100")
-    parts = urlsplit(profile_url)
-    if (
-        parts.scheme not in {"http", "https"}
-        or (parts.hostname or "").lower() not in {"douyin.com", "www.douyin.com"}
-        or not re.fullmatch(r"/user/[^/]+/?", parts.path)
-        or parts.username
-        or parts.password
-    ):
-        raise CollectionError("A public Douyin user profile URL is required")
-    canonical_profile = urlunsplit((
-        parts.scheme,
-        (parts.hostname or "").lower(),
-        parts.path.rstrip("/"),
-        "",
-        "",
-    ))
+    canonical_profile, platform = canonical_profile_url(profile_url)
     revision = ""
     offset = 0
     if cursor:
@@ -290,6 +309,7 @@ def discover_profile(
         has_more = next_offset < len(all_candidates)
         return {
             "profile_url": canonical_profile,
+            "platform": snapshot.get("platform", "douyin"),
             "discovery_revision": revision,
             "cursor_mode": "persisted_snapshot",
             "ordering": snapshot.get("ordering", "source"),
@@ -331,6 +351,8 @@ def discover_profile(
     cursor_mode = "yt_dlp_flat_metadata"
     if isinstance(entries, (list, tuple)):
         candidates = _candidate_records(list(entries), limit=100)
+    elif platform != "douyin":
+        raise CollectionError("No public profile candidates were discovered")
     else:
         from . import browser
         from .reader import _is_public_http_url
@@ -373,6 +395,7 @@ def discover_profile(
     snapshot_has_more = None
     snapshot = {
         "profile_url": canonical_profile,
+        "platform": platform,
         "discovery_revision": revision,
         "cursor_mode": cursor_mode,
         "ordering": "source",
@@ -390,6 +413,7 @@ def discover_profile(
     has_more = len(candidates) > limit
     return {
         "profile_url": canonical_profile,
+        "platform": platform,
         "discovery_revision": revision,
         "cursor_mode": cursor_mode,
         "ordering": "source",
@@ -415,16 +439,7 @@ def create_collection(
     collection_id = _safe_identity(collection_id, "collection_id")
     run_id = _safe_identity(run_id, "run_id")
     operation_id = _safe_identity(operation_id, "operation_id")
-    parts = urlsplit(profile_url)
-    if (
-        parts.scheme not in {"http", "https"}
-        or (parts.hostname or "").lower() not in {"douyin.com", "www.douyin.com"}
-        or not re.fullmatch(r"/user/[^/]+/?", parts.path)
-        or parts.username
-        or parts.password
-    ):
-        raise CollectionError("A public Douyin user profile URL is required")
-    profile = urlunsplit((parts.scheme, parts.netloc.lower(), parts.path.rstrip("/"), "", ""))
+    profile, platform = canonical_profile_url(profile_url)
     path = _manifest_path(collection_id, run_id)
     with _locked(path):
         existing = _read(path)
@@ -437,6 +452,7 @@ def create_collection(
             "collection_id": collection_id,
             "run_id": run_id,
             "profile_url": profile,
+            "platform": platform,
             "discovery_revision": None,
             "selection_plan_revision": 0,
             "manifest_revision": 1,
