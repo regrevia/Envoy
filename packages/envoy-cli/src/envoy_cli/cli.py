@@ -19,7 +19,7 @@ from envoy_core.schemas.read_v1 import (
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
-from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook
+from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_status, render_hook_status
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
 from .ocr import (
     DEFAULT_OCR_BACKEND,
@@ -137,6 +137,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     hook_install.add_argument("--host", default="codex", choices=("codex",))
     hook_install.add_argument("--uninstall", action="store_true")
+    hook_status_parser = hook_commands.add_parser(
+        "status",
+        help="report whether a host hook is installed and trusted",
+    )
+    hook_status_parser.add_argument("--host", default="codex", choices=SUPPORTED_HOSTS)
+    hook_status_parser.add_argument("--json", action="store_true")
     ocr = subparsers.add_parser("ocr", help="inspect or exercise local OCR backends")
     ocr_commands = ocr.add_subparsers(dest="ocr_command", required=True)
     ocr_status = ocr_commands.add_parser("status", help="report OCR backend availability")
@@ -153,8 +159,8 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "static tool declarations to expose: core (read/expand/search/"
-            "observe_visual) or full (all tools). Default: full or "
-            "ENVOY_MCP_TOOLSET."
+            "observe_visual) or full (all tools). Default: core, or "
+            "ENVOY_MCP_TOOLSET when set to full."
         ),
     )
     return parser
@@ -242,6 +248,15 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         }, ensure_ascii=False, indent=2))
         return 0
     if args.command == "hook":
+        if args.hook_command == "status":
+            report = hook_status(args.host)
+            if args.json:
+                print(json.dumps(report, ensure_ascii=False))
+            else:
+                print(render_hook_status(report))
+            if report.get("error"):
+                return 2
+            return 1 if report.get("ok") is False else 0
         if args.hook_command == "install":
             install = install_codex_hooks(uninstall=args.uninstall)
             print(json.dumps(install, ensure_ascii=False))
