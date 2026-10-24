@@ -8,8 +8,11 @@
 
 `envoy-dsh` 是一个 DSH bundle，一次安装插入两个插件行：
 
-- `envoy-mcp`：通过官方 `@deepseek-ai/dsh-mcp-client` 启动 `envoy mcp`，
-  把 Envoy 的十个工具挂载为 `mcp__envoy__*`。
+- `envoy-mcp`：通过官方 `@deepseek-ai/dsh-mcp-client` 启动
+  `envoy mcp --toolset core`，把 `envoy_read`、`envoy_expand`、
+  `envoy_search`、`envoy_observe_visual` 四个工具挂载为 `mcp__envoy__*`。
+  `full` 工具集额外提供本地视频、主页发现、合集、回放、视觉历史和 doctor
+  工具，需要时把启动参数改为 `--toolset full` 并重启插件。
 - `envoy-skill`：通过公开的 `ctx.skills` 服务注册 Envoy Skill，内容由
   `integrations/skills/envoy/SKILL.md` 生成，工具名已适配 DSH 前缀。
 
@@ -40,10 +43,12 @@
 
 - 插件管理器显示 **Envoy 链接阅读器**，带 Envoy 小鸟图标；
 - 工具列表出现 `mcp__envoy__envoy_read`、
-  `mcp__envoy__envoy_doctor` 等十个工具；
+  `mcp__envoy__envoy_expand`、`mcp__envoy__envoy_search` 和
+  `mcp__envoy__envoy_observe_visual`；高级工具需重启为 `full` 后才出现；
 - 技能目录出现 `envoy`，加载后以
   `# Envoy Link Reader in DeepSeek Harness` 开头；
-- 实际调用 `mcp__envoy__envoy_doctor` 返回 `0.1.6`。
+- `envoy doctor --json` 返回 `0.1.6`；使用 `full` 时也可调用
+  `mcp__envoy__envoy_doctor`。
 
 ## PATH 与超时
 

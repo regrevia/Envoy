@@ -59,29 +59,32 @@ DSH_TOOL_PREFIX = "mcp__envoy__"
 DSH_HEADING = "# Envoy Link Reader in DeepSeek Harness"
 DSH_PREAMBLE = """\
 DeepSeek Harness adaptation of the canonical Envoy Agent Skill. The
-`envoy-dsh` bundle mounts Envoy's MCP bridge, so tool names below carry the
-`mcp__envoy__` prefix (for example `mcp__envoy__envoy_read`). Use the mounted
-tools for normal reading; the `envoy` CLI remains available for maintenance
-commands such as `envoy doctor --json`. The full request and response protocol
-is in `references/protocol.md` next to this skill."""
+`envoy-dsh` bundle mounts Envoy's MCP bridge with the `core` toolset, so tool
+names below carry the `mcp__envoy__` prefix (for example
+`mcp__envoy__envoy_read`). Use the mounted tools for normal reading; the
+`envoy` CLI remains available for maintenance commands such as
+`envoy doctor --json` and for advanced operations not exposed by `core`. The
+full request and response protocol is in `references/protocol.md` next to this
+skill."""
 
 DSH_HOST_SECTION = """\
 ## DeepSeek Harness host
 
-DeepSeek Harness starts `envoy mcp` for this session through the bundle's
-`@deepseek-ai/dsh-mcp-client` row. The bridge is already mounted; do not launch
-a second process. The exposed tools are:
+DeepSeek Harness starts `envoy mcp --toolset core` for this session through the
+bundle's `@deepseek-ai/dsh-mcp-client` row. The bridge is already mounted; do
+not launch a second process. The exposed tools are:
 
 - `envoy_read`
-- `envoy_read_local_video`
-- `envoy_discover`
-- `envoy_collection_checkpoint`
 - `envoy_expand`
-- `envoy_replay`
 - `envoy_search`
-- `envoy_doctor`
 - `envoy_observe_visual`
-- `envoy_visual_history`
+
+The `full` toolset additionally exposes `envoy_read_local_video`,
+`envoy_discover`, `envoy_collection_checkpoint`, `envoy_replay`,
+`envoy_visual_history`, and `envoy_doctor`. Change the launcher to
+`--toolset full` and restart the bundle when those are needed. The selected
+toolset is fixed for the process lifetime; a tool absent from the catalog is
+not an invitation to guess its name.
 
 Discover the catalog once, choose a tool from the user's goal and returned
 coverage, and do not assume a capability that is absent from the catalog. The
@@ -91,12 +94,14 @@ retention, and source access rules."""
 
 DSH_PROTOCOL_NOTE = """\
 > DeepSeek Harness adaptation: the Envoy MCP bridge is mounted by the
-> `envoy-dsh` plugin, so these operations appear as `mcp__envoy__*` tools. Use
-> the mounted tools; do not start a second `envoy mcp` process."""
+> `envoy-dsh` plugin with the `core` toolset, so these operations appear as
+> `mcp__envoy__*` tools. Use the mounted tools; do not start a second
+> `envoy mcp` process. Advanced tools require `--toolset full` or the CLI."""
 
 DESCRIPTION_SUFFIX = (
-    "This DeepSeek Harness plugin mounts the Envoy MCP bridge and provides the "
-    "adapted skill, so no separate MCP setup is required."
+    "This DeepSeek Harness plugin mounts the Envoy MCP bridge with the bounded "
+    "core toolset and provides the adapted skill, so no separate MCP setup is "
+    "required."
 )
 
 

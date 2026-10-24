@@ -146,7 +146,17 @@ def _parser() -> argparse.ArgumentParser:
     ocr_test.add_argument("--backend", default=DEFAULT_OCR_BACKEND)
     ocr_test.add_argument("--language", default="auto")
     ocr_test.add_argument("--profile", default="balanced", choices=sorted(OCR_PROFILES))
-    subparsers.add_parser("mcp", help="run the stdio MCP bridge")
+    mcp_parser = subparsers.add_parser("mcp", help="run the stdio MCP bridge")
+    mcp_parser.add_argument(
+        "--toolset",
+        choices=mcp.TOOLSET_NAMES,
+        default=None,
+        help=(
+            "static tool declarations to expose: core (read/expand/search/"
+            "observe_visual) or full (all tools). Default: full or "
+            "ENVOY_MCP_TOOLSET."
+        ),
+    )
     return parser
 
 
@@ -200,7 +210,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
     if args.command == "browser":
         return browser_runtime.setup_browser()
     if args.command == "mcp":
-        return mcp.main()
+        return mcp.main(toolset=args.toolset)
     if args.command == "ocr":
         if args.ocr_command == "status":
             status = ocr_runtime_status()

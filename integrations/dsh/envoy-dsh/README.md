@@ -43,15 +43,22 @@ The bundle inserts two rows:
 
 | Row | Package | Purpose |
 |---|---|---|
-| `envoy-mcp` | `@deepseek-ai/dsh-mcp-client` | Starts `envoy mcp` and exposes its ten tools as `mcp__envoy__*`. |
+| `envoy-mcp` | `@deepseek-ai/dsh-mcp-client` | Starts `envoy mcp --toolset core` and exposes four link tools as `mcp__envoy__*`. |
 | `envoy-skill` | `envoy-dsh` | Registers the Envoy skill provider and the link-routing `agent/pre-step` hook. |
+
+`core` exposes `envoy_read`, `envoy_expand`, `envoy_search`, and
+`envoy_observe_visual`. The `full` toolset adds local-video, discovery,
+collection, replay, visual-history, and doctor tools. Switch the launcher to
+`--toolset full` and restart the bundle when those are needed. Starting with
+`core` keeps the MCP tool declarations, which enter every request prefix, small
+for ordinary link reading. The choice is static for the process lifetime.
 
 ## Launcher PATH
 
 The Harness GUI may not inherit a login shell's PATH, so the patch uses:
 
 ```sh
-/bin/sh -c 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; exec envoy mcp'
+/bin/sh -c 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; exec envoy mcp --toolset core'
 ```
 
 This covers `uv tool install` (`~/.local/bin`), Apple Silicon Homebrew
@@ -68,11 +75,13 @@ After installation, check that:
 - Plugin Manager shows **Envoy Link Reader** / **Envoy 链接阅读器** with the
   bundled bird icon.
 - The agent's tool list contains `mcp__envoy__envoy_read`,
-  `mcp__envoy__envoy_doctor`, and the other Envoy tools.
+  `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`, and
+  `mcp__envoy__envoy_observe_visual`. The advanced tools appear only after a
+  restart with `--toolset full`.
 - The skill catalog contains `envoy`; loading it shows
   `# Envoy Link Reader in DeepSeek Harness` and `mcp__envoy__` tool names.
-- A real `mcp__envoy__envoy_doctor` call reports `0.1.6` and the expected
-  capability catalog.
+- `envoy doctor --json` reports `0.1.6` and the expected capability catalog.
+  When the bridge runs with `full`, `mcp__envoy__envoy_doctor` is equivalent.
 - On the **first step** of a turn that contains a public URL, the model sees one
   injected `[envoy-link-routing]` message. A linkless prompt, a follow-up step,
   a localhost/private URL, or a prompt containing `不要用 Envoy` gets no

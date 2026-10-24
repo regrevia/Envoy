@@ -97,7 +97,7 @@ def test_patch_mounts_envoy_mcp_and_skill_provider():
     assert "serverName: envoy" in patch
     assert "transport: stdio" in patch
     assert "command: /bin/sh" in patch
-    assert "exec envoy mcp" in patch
+    assert "exec envoy mcp --toolset core" in patch
     assert "toolCallTimeoutMs: 300000" in patch
     assert "failOnStartupError: true" in patch
     assert "id: envoy-skill" in patch
@@ -312,6 +312,9 @@ console.log(JSON.stringify({
         # Envoy first, with the exact MCP tool names the Harness exposes.
         assert "mcp__envoy__envoy_read" in text
         assert "mcp__envoy__envoy_read_local_video" in text
+        # Advanced tools are explicitly qualified by what the toolset exposes.
+        assert "toolset exposes it" in text or "工具集暴露" in text
+        assert "envoy read-local-video" in text
         # Keep provenance and widen with bounded reads instead of re-fetching.
         assert "material_id" in text
         assert "coverage" in text

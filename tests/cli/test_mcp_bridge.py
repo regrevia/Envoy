@@ -44,6 +44,86 @@ def test_mcp_bridge_initialize_and_list_tools(capsys):
     assert "idempotency_key" in tools["envoy_read_local_video"]["inputSchema"]["required"]
 
 
+def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
+    from envoy_cli import mcp
+
+    exit_code = mcp.run_lines(
+        [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "envoy_doctor", "arguments": {}},
+            },
+        ],
+        toolset="core",
+    )
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 0
+    assert set(lines[1]["result"]["tools"][0]) >= {"name", "description"}
+    names = {tool["name"] for tool in lines[1]["result"]["tools"]}
+    assert names == {
+        "envoy_read",
+        "envoy_expand",
+        "envoy_search",
+        "envoy_observe_visual",
+    }
+    error = lines[2]["error"]
+    assert error["code"] == -32602
+    assert "not exposed by the 'core' MCP toolset" in error["message"]
+    assert error["data"]["toolset"] == "core"
+    assert error["data"]["available"] == [
+        "envoy_read",
+        "envoy_expand",
+        "envoy_search",
+        "envoy_observe_visual",
+    ]
+    assert "--toolset full" in error["data"]["hint"]
+
+
+def test_unknown_tool_is_distinct_from_hidden_tool(capsys):
+    from envoy_cli import mcp
+
+    exit_code = mcp.run_lines(
+        [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "envoy_nope", "arguments": {}},
+            },
+        ]
+    )
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 0
+    error = lines[1]["error"]
+    assert error["code"] == -32602
+    assert error["message"] == "Unknown tool: 'envoy_nope'"
+    assert "not exposed" not in error["message"]
+    assert error["data"]["toolset"] == "full"
+
+
+def test_mcp_toolset_normalization_and_errors(monkeypatch):
+    from envoy_cli import mcp
+
+    assert mcp.normalize_toolset(" CORE ") == "core"
+    assert mcp.normalize_toolset(None) == "full"
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "core")
+    assert mcp.normalize_toolset(None) == "core"
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "bogus")
+    try:
+        mcp.normalize_toolset(None)
+    except ValueError as exc:
+        assert "unknown MCP toolset 'bogus'" in str(exc)
+    else:
+        raise AssertionError("unknown toolset must raise ValueError")
+
+
 def test_mcp_replay_dispatches_bounded_request_to_new_session(monkeypatch, capsys):
     from envoy_cli import mcp
     from envoy_core.schemas.read_v1 import ExecutionState, ReadResponse, ReadResult

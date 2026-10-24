@@ -3,8 +3,9 @@
 The independent Skill uses `envoy.read/1`.
 
 If the requested operation or runtime support is unclear, inspect
-`envoy_doctor`'s `capabilities` object before choosing a follow-up. It is
-versioned as `envoy.capabilities/1` and describes the standalone runtime.
+`envoy doctor --json` (or `envoy_doctor` when the active toolset exposes it)
+before choosing a follow-up. It is versioned as `envoy.capabilities/1` and
+describes the standalone runtime.
 Dynamic public HTML is read by Envoy's isolated Chromium when that runtime is
 installed. The host does not need to provide a browser or share its browser
 profile.
@@ -160,7 +161,8 @@ matching passages and consumes the same cumulative character/token budget as
 expansion, without sequentially returning unrelated source ranges.
 
 For a new host session that has a retained material reference, use
-`envoy_replay` with the material's `source_revision`:
+`envoy replay --request-json -` (or `envoy_replay` when the active toolset
+exposes it) with the material's `source_revision`:
 
 ```json
 {

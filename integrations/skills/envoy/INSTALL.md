@@ -30,9 +30,15 @@ envoy doctor --json
 
 ## 3. 连接 MCP
 
-将 `hosts/mcp.json` 中的配置合并到所用 Agent 的 MCP 设置。命令为 `envoy`，参数为 `mcp`。重启或重载 Agent 后，确认其能发现 `envoy_read` 和 `envoy_doctor`。
+将 `hosts/mcp.json` 中的配置合并到所用 Agent 的 MCP 设置。默认配置以 `envoy`
+为命令、`mcp --toolset core` 为参数，只声明 `envoy_read`、`envoy_expand`、
+`envoy_search` 和 `envoy_observe_visual`。重启或重载 Agent 后，确认其能发现这
+四个工具；需要本地视频、发现、合集、回放、视觉历史或诊断工具时，把启动参数
+改为 `--toolset full`。
 
-若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后检查 `envoy_doctor` 报告的版本；旧 MCP 进程可能仍在运行。
+若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后用
+`envoy doctor --json` 检查版本（`full` 下也可调用 `envoy_doctor`）；旧 MCP
+进程可能仍在运行。
 
 DeepSeek Harness Desktop 用户可在插件管理器中安装本仓库的 [Envoy DSH 插件](../../dsh/README.md)，一次完成 MCP 桥接、Skill 注册和链接优先 hook；该方式仍要求先安装上面的 runtime。
 
@@ -107,8 +113,9 @@ printf '%s' '{"protocol_version":"envoy.observe/1","request_id":"observe-frame-1
 
 抖音页面有时只能公开提供页面文字/章节摘要，而签名或会话绑定的媒体 URL
 不能安全地作为视频级证据处理。此时 `envoy_read` 会保持 `partial`，不会返回 ASR
-或视频帧；如果用户另有本地文件，可单独运行 `envoy_read_local_video`，但不能
-假定本地文件与链接内容相同。
+或视频帧；如果用户另有本地文件，可用 `envoy read-local-video` CLI 单独读取
+（`full` 工具集下也可调用 `envoy_read_local_video`），但不能假定本地文件与
+链接内容相同。
 
 浏览器默认 headless。只有页面需要正常登录或用户验证时，才会打开隔离浏览器请用户接管。Envoy 不读取个人浏览器 Cookie，也不绕过 CAPTCHA、登录或反爬限制。仅使用用户配置或明确认可的可信代理，不搜索或使用公共代理。
 
@@ -162,14 +169,18 @@ not exported to MCP requests.
 ## 3. Connect the MCP server
 
 Add the contents of `hosts/mcp.json` to the selected agent's MCP configuration.
-The command is `envoy` with argument `mcp`. Restart or reload the agent, then
-confirm it can discover `envoy_read` and `envoy_doctor`.
+The bundled config uses `envoy` with arguments `mcp --toolset core`, which
+declares only `envoy_read`, `envoy_expand`, `envoy_search`, and
+`envoy_observe_visual`. Restart or reload the agent, then confirm it can
+discover those four. Switch the arguments to `--toolset full` when local video,
+discovery, collections, replay, visual history, or doctor tools are needed.
 
 The Skill installer does not install the runtime or edit host MCP settings.
 Those steps are kept explicit so users can review what runs locally.
 Use an absolute path to the installed `envoy` executable if the host does not
-inherit the terminal's PATH. Verify the newly connected MCP's `envoy_doctor`
-version after reloading; an old connection can keep running the old process.
+inherit the terminal's PATH. Verify the version with `envoy doctor --json`
+after reloading (`envoy_doctor` under `full`); an old connection can keep
+running the old process.
 
 DeepSeek Harness Desktop users can install the repository's
 [Envoy DSH plugin](../../dsh/README.md) from the Plugin Manager to mount the MCP
