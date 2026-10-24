@@ -15,15 +15,14 @@ server.
 
 [中文快速安装](../README.md) · [Envoy 安装指南](../../skills/envoy/INSTALL.md)
 
-## What one link gets you
+## One link in, AI-ready material out
 
-Paste a Douyin or Bilibili share link — a 图文 note, a short video, a course
-episode — and Envoy returns material with source locators: transcript text,
-timestamps, frames, and a `material_id` you can quote from. Ask for a summary,
-notes, or a 干货 writeup and the agent composes it from that material instead of
-guessing from the page title. Articles, PDFs, and audio links go through the
-same path. A batch job over many posts runs `envoy collect`, which checkpoints
-every item, so an interrupted run resumes from where it stopped.
+Paste a Douyin or Bilibili video or 图文 share link and Envoy returns
+source-linked material — transcript, timestamps, frames, a `material_id` you
+can quote — enough for the agent to write Markdown, a wiki page, or a
+knowledge-base entry from what was actually said, not from the title. Articles,
+PDFs, and audio links take the same path. For a whole feed, `envoy collect`
+checkpoints every item, so an interrupted run resumes instead of restarting.
 
 ## Requirements
 
