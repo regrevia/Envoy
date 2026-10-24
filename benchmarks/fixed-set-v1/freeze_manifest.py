@@ -1,0 +1,294 @@
+"""Validate and freeze the fixed-set package manifest.
+
+The design freezes the source set, task text, and reference facts before
+either arm runs, so a claimed manifest hash has to come from a checker
+instead of from hand-editing JSON. This tool is the sanctioned producer of
+`manifest.json`:
+
+    python benchmarks/fixed-set-v1/freeze_manifest.py --check
+    python benchmarks/fixed-set-v1/freeze_manifest.py --write [--rehearsal]
+
+`--check` reports every blocker and exits non-zero when the set is not
+frozen-ready. `--rehearsal` relaxes the set-size rules for the 2-package
+instrumentation run, and marks the produced manifest as rehearsal-only so it
+can never be mistaken for the confirmatory set.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+SCHEMA_VERSION = "envoy.fixed-evaluation-package/1"
+MANIFEST_SCHEMA = "envoy.fixed-set-manifest/1"
+REQUIRED_TURN_IDS = ("initial", "followup-1", "followup-2")
+DESIGN_PACKAGES = 20
+DESIGN_UNIQUE_URLS = 40
+ACCEPTED_STATE = "accepted"
+ACCEPTED_REVIEW = "complete"
+REHEARSAL_MIN_PACKAGES = 2
+REHEARSAL_MIN_URLS = 4
+
+
+def read_sources(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
+
+
+def read_packages(directory: Path) -> list[dict]:
+    packages = []
+    for path in sorted(directory.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["_path"] = path.name
+        packages.append(data)
+    return packages
+
+
+def canonical_url(value: str) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _is_sha256(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return len(text) == 64 and all(char in "0123456789abcdef" for char in text)
+
+
+def validate(rows: list[dict], packages: list[dict], *, rehearsal: bool = False) -> list[str]:
+    """Return every reason the set cannot be frozen; empty means ready."""
+    problems: list[str] = []
+    min_packages = REHEARSAL_MIN_PACKAGES if rehearsal else DESIGN_PACKAGES
+    min_urls = REHEARSAL_MIN_URLS if rehearsal else DESIGN_UNIQUE_URLS
+
+    if len(packages) < min_packages:
+        problems.append(
+            f"only {len(packages)} package drafts, design requires at least {min_packages}"
+        )
+
+    urls_by_package: dict[str, set[str]] = {}
+    for row in rows:
+        url = canonical_url(row.get("canonical_url", ""))
+        if not url:
+            problems.append(f"{row.get('package_id')} slot {row.get('source_slot')}: empty URL")
+            continue
+        urls_by_package.setdefault(row["package_id"], set()).add(url)
+
+    owners: dict[str, set[str]] = {}
+    for package_id, urls in urls_by_package.items():
+        for url in urls:
+            owners.setdefault(url, set()).add(package_id)
+    for url, package_ids in sorted(owners.items()):
+        if len(package_ids) > 1:
+            problems.append(
+                f"URL reused across packages ({', '.join(sorted(package_ids))}): {url}"
+            )
+
+    unique_urls = len(owners)
+    if unique_urls < min_urls:
+        problems.append(
+            f"only {unique_urls} unique canonical URLs, design requires at least {min_urls}"
+        )
+
+    for row in rows:
+        label = f"{row.get('package_id')} slot {row.get('source_slot')}"
+        if row.get("accepted_state") != ACCEPTED_STATE:
+            problems.append(f"{label}: source is {row.get('accepted_state') or 'unknown'}, not accepted")
+        if row.get("reference_review") != ACCEPTED_REVIEW:
+            problems.append(
+                f"{label}: reference review is {row.get('reference_review') or 'unknown'}, not {ACCEPTED_REVIEW}"
+            )
+        if not _is_sha256(row.get("source_revision_sha256", "")):
+            problems.append(f"{label}: missing source revision SHA-256")
+
+    rows_by_package: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        rows_by_package.setdefault(row["package_id"], {})[row["source_slot"]] = row
+
+    by_id = {package["package_id"]: package for package in packages}
+    if len(by_id) != len(packages):
+        problems.append("duplicate package_id across drafts")
+
+    for package in packages:
+        package_id = package.get("package_id")
+        source_ids = list(package.get("source_ids") or [])
+        revisions = package.get("source_revisions") or {}
+        if len(set(source_ids)) != len(source_ids):
+            problems.append(f"{package_id}: duplicate source_id in source_ids")
+        if len(set(source_ids)) < 2:
+            problems.append(f"{package_id}: fewer than two distinct sources")
+        available = rows_by_package.get(package_id, {})
+        for source_id in source_ids:
+            revision = revisions.get(source_id)
+            if not isinstance(revision, dict):
+                problems.append(f"{package_id}: no source revision recorded for {source_id}")
+                continue
+            if not _is_sha256(revision.get("sha256", "")):
+                problems.append(f"{package_id}: {source_id} revision has no SHA-256")
+            url = canonical_url(revision.get("url", ""))
+            matching = [
+                row
+                for row in available.values()
+                if canonical_url(row.get("canonical_url", "")) == url
+            ]
+            if not matching:
+                problems.append(f"{package_id}: {source_id} URL is absent from source-intake.csv")
+                continue
+            if not any(
+                _is_sha256(row.get("source_revision_sha256", ""))
+                and row["source_revision_sha256"].lower() == revision["sha256"].lower()
+                for row in matching
+            ):
+                problems.append(
+                    f"{package_id}: {source_id} URL is recorded, but the draft's revision SHA-256 differs from the intake"
+                )
+
+        if package.get("schema_version") != SCHEMA_VERSION:
+            problems.append(f"{package_id}: schema_version is not {SCHEMA_VERSION}")
+        if not package.get("rubric_version"):
+            problems.append(f"{package_id}: no rubric_version")
+        status = str(package.get("status") or "")
+        if not status.startswith(("frozen", "accepted")):
+            problems.append(f"{package_id}: draft status is {status or 'missing'}, not frozen")
+        turn_ids = [turn.get("turn_id") for turn in package.get("turns") or []]
+        if tuple(turn_ids) != REQUIRED_TURN_IDS:
+            problems.append(
+                f"{package_id}: turn ids are {turn_ids}, expected {list(REQUIRED_TURN_IDS)}"
+            )
+        for turn in package.get("turns") or []:
+            if not str(turn.get("text", "")).strip():
+                problems.append(f"{package_id}: turn {turn.get('turn_id')} has no text")
+        facts = package.get("reference_facts") or []
+        if not facts:
+            problems.append(f"{package_id}: no reference facts")
+        for fact in facts:
+            missing = [
+                key
+                for key in ("fact_id", "claim", "source_id", "locator")
+                if not str(fact.get(key, "")).strip()
+            ]
+            if missing:
+                problems.append(
+                    f"{package_id}: fact {fact.get('fact_id') or '?'} lacks {', '.join(missing)}"
+                )
+            elif fact["source_id"] not in revisions:
+                problems.append(
+                    f"{package_id}: fact {fact['fact_id']} cites unknown source {fact['source_id']}"
+                )
+
+    if not rehearsal:
+        strata: dict[str, int] = {}
+        for package in packages:
+            strata[package.get("stratum", "")] = strata.get(package.get("stratum", ""), 0) + 1
+        for stratum in ("bilibili", "douyin", "xiaohongshu", "wechat", "cross_platform"):
+            if strata.get(stratum, 0) < 4:
+                problems.append(f"stratum {stratum} has {strata.get(stratum, 0)} packages, expected 4")
+
+    return problems
+
+
+def build_manifest(rows: list[dict], packages: list[dict], *, rehearsal: bool) -> dict:
+    """Deterministic payload: same inputs always hash the same."""
+    payload_packages = []
+    for package in sorted(packages, key=lambda item: item["package_id"]):
+        payload_packages.append({
+            "package_id": package["package_id"],
+            "stratum": package["stratum"],
+            "status": "rehearsal_only" if rehearsal else "frozen",
+            "rubric_version": package["rubric_version"],
+            "deliverable": package.get("deliverable", ""),
+            "source_revisions": {
+                source_id: {
+                    "url": canonical_url(package["source_revisions"][source_id]["url"]),
+                    "sha256": package["source_revisions"][source_id]["sha256"].lower(),
+                }
+                for source_id in sorted(package["source_revisions"])
+            },
+            "turns": [
+                {"turn_id": turn["turn_id"], "text": turn["text"]}
+                for turn in package["turns"]
+            ],
+            "reference_facts": package.get("reference_facts") or [],
+            "expected_source_attribution": package.get("expected_source_attribution") or [],
+            "acceptable_partial_outcomes": package.get("acceptable_partial_outcomes") or [],
+        })
+    sources = sorted(
+        (
+            {
+                "package_id": row["package_id"],
+                "source_slot": row["source_slot"],
+                "source_class": row.get("source_class", ""),
+                "canonical_url": canonical_url(row["canonical_url"]),
+                "sha256": str(row.get("source_revision_sha256", "")).lower(),
+                "coverage_note": row.get("coverage_note", ""),
+            }
+            for row in rows
+        ),
+        key=lambda item: (item["package_id"], item["source_slot"]),
+    )
+    return {
+        "schema_version": MANIFEST_SCHEMA,
+        "design": "fixed-set-v1",
+        "rehearsal": rehearsal,
+        "packages": payload_packages,
+        "sources": sources,
+    }
+
+
+def manifest_sha256(payload: dict) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def write_manifest(payload: dict, path: Path) -> str:
+    digest = manifest_sha256(payload)
+    document = dict(payload)
+    document["frozen_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    document["manifest_sha256"] = digest
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return digest
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--sources", type=Path, default=ROOT / "source-intake.csv")
+    parser.add_argument("--packages", type=Path, default=ROOT / "task-drafts")
+    parser.add_argument("--out", type=Path, default=ROOT / "manifest.json")
+    parser.add_argument("--check", action="store_true", help="validate only; do not write")
+    parser.add_argument("--write", action="store_true", help="write the frozen manifest")
+    parser.add_argument(
+        "--rehearsal",
+        action="store_true",
+        help="relax set-size rules for the 2-package instrumentation rehearsal",
+    )
+    args = parser.parse_args(argv)
+
+    rows = read_sources(args.sources)
+    packages = read_packages(args.packages)
+    problems = validate(rows, packages, rehearsal=args.rehearsal)
+    if problems:
+        print(f"{len(problems)} blocker(s); the set is not freezable:")
+        for problem in problems:
+            print(f"- {problem}")
+        return 1
+
+    payload = build_manifest(rows, packages, rehearsal=args.rehearsal)
+    if args.write:
+        digest = write_manifest(payload, args.out)
+        print(f"wrote {args.out} ({'rehearsal' if args.rehearsal else 'confirmatory'})")
+        print(f"manifest_sha256: {digest}")
+    else:
+        print("manifest is freezable")
+        print(f"manifest_sha256: {manifest_sha256(payload)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
