@@ -139,7 +139,7 @@ def test_hook_payload_auto_detects_prompt_language():
     assert "Envoy MCP 工具" not in english_context
     assert "`envoy_read`" in english_context
     assert "`envoy_read_local_video`" in english_context
-    assert "when the active MCP toolset exposes it" in english_context
+    assert "`file://` URL" in english_context
     assert "`envoy read-local-video` CLI" in english_context
     assert "`envoy_replay` only when that tool is exposed" in english_context
     assert "本轮用户消息包含公网链接" in chinese_context

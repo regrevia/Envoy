@@ -35,6 +35,15 @@
 - 新增 `scripts/check_versions.py --check`：交叉校验 10 处版本声明（两个 `pyproject.toml`、
   三个插件/市场清单、DSH bundle、Skill 打包脚本和两个测试常量）与 CLI 权威版本一致，
   并接入 CI；`scripts/sync_host_skills.py --check` 同时防止宿主技能副本漂移。
+- `envoy_read` 现在直接接受本地文件路径和 `file://` URL（视频走本机 Whisper，原文件不上传），
+  失败原因同时写进 `content[0].text` 与 `structuredContent.errors[0].details`，不再只回
+  `source_unavailable` 而没有细节。
+- MCP 读取结果的可行动句柄写进 `content[0].text`：`material_id`、`source_revision`，以及
+  “用 `envoy_search`/`envoy_expand` 继续、不要重读 URL”。同一 URL 再次读取直接复用本进程
+  已保留的物料（`served_from_retained_material`，不发网络请求），确实要重抓时传
+  `refresh: true`；重抓遇到登录、验证或源不可用时降级为保留物料并附
+  `notices[].refetch_error`，而不是返回 `blocked`。本服务不声明 MCP resources 能力，
+  `list_mcp_resources` 为空是设计如此，物料只经 structuredContent 下发。
 
 ### English
 
@@ -77,6 +86,21 @@
 - Add a DSH skill generator and tests that adapt every MCP tool name to
   `mcp__envoy__*` (four exposed by `core`, all ten under `full`) and keep
   generated files in sync with the CLI version.
+- `envoy_read` now accepts a local file path or `file://` URL directly (video
+  goes through on-device Whisper; the original file is never uploaded), and a
+  failure carries its reason in both `content[0].text` and
+  `structuredContent.errors[0].details` instead of a bare `source_unavailable`.
+- Every read result carries the actionable handle in `content[0].text` —
+  `material_id`, `source_revision`, and "continue with `envoy_search` /
+  `envoy_expand`, do not re-read the URL" — so a host that drops
+  `structuredContent` can still continue. Reading the same URL again answers
+  from the material retained in the process
+  (`served_from_retained_material`, no network call); pass `refresh: true` for
+  a deliberate new read, and a refresh that hits sign-in, a challenge, or a
+  source error falls back to the retained material with a `refetch_error`
+  notice instead of `blocked`. This server declares no MCP resources
+  capability, so an empty `list_mcp_resources` is by design; material only
+  travels in `structuredContent`.
 
 **Known boundaries**
 

@@ -64,10 +64,12 @@ and keep it in one file, in a stable source order.
   continue instead of re-scraping. Read the candidates you need with
   `envoy_read`, then aggregate into one deliverable that lists every included
   source with its URL.
-- **A local course file.** `envoy read-local-video` takes an `envoy.read/1`
-  request JSON naming the local path; use `start_seconds` / `end_seconds` to
-  bound a long recording, and `envoy_expand` to continue from a returned
-  material when one range is not enough.
+- **A local course file.** Call `envoy_read` with the local file path or its
+  `file://` URL, using `start_seconds` / `end_seconds` to bound a long
+  recording, and `envoy_expand` to continue from a returned material when one
+  range is not enough. The `full` toolset also exposes
+  `envoy_read_local_video` and the `envoy read-local-video` CLI accepts the
+  same `envoy.read/1` request JSON.
 
 Long runs must survive interruption. `envoy collect` already checkpoints
 every item it reads, so prefer it for a profile-to-Markdown job. When you need
@@ -323,10 +325,11 @@ For Douyin specifically, a page can be publicly readable while its playback URL
 is signed or session-bound and therefore unavailable to the local media
 extractor. In that case page text or chapter summaries may be returned as
 `partial`, but Envoy cannot provide video-level ASR or frames from that link.
-When the user has a local copy, use `envoy read-local-video` (or
-`envoy_read_local_video` when the active toolset exposes it) as a separate
-source; do not imply that it is the same artifact as the URL unless the user
-confirms that relationship.
+When the user has a local copy, read it as a separate source with
+`envoy_read` on the file path or `file://` URL (the `full` toolset also exposes
+`envoy_read_local_video`, and the CLI accepts `envoy read-local-video`); do not
+imply that it is the same artifact as the URL unless the user confirms that
+relationship.
 
 When a supported site has no public captions, Envoy falls back to local
 Whisper ASR if the optional runtime and model are prepared. The transcript is
@@ -423,10 +426,11 @@ claim unsupported source coverage.
 
 ### Local Video Files
 
-When the user provides a local video file, call `envoy_read_local_video` if the
-active toolset exposes it; otherwise send the same `envoy.read/1` request to
-`envoy read-local-video --request-json -`. Supply the user-selected path, goal,
-and a stable `idempotency_key`. Set
+When the user provides a local video file, call `envoy_read` with
+`source.url` set to the absolute path or a `file://` URL; the `full` toolset
+also exposes `envoy_read_local_video`, and CLI-only flows can send the same
+`envoy.read/1` request to `envoy read-local-video --request-json -`. Supply the
+user-selected path, goal, and a stable `idempotency_key`. Set
 `scope.include_visual: true` only when frame inspection is relevant and the
 host can inspect local image resources. Envoy probes the local file, runs
 bounded on-device Whisper when available, and can return timestamped frames.
@@ -458,6 +462,18 @@ are not completed evidence: after the environment or user action is resolved,
 retry the same key and unchanged input to execute again. Legacy cached failures
 are also re-evaluated. Completed `partial` and `needs_host` evidence still replays;
 finish its handoff/continuation, or choose a new key for an intentional fresh read.
+See the retained-read rule below before retrying a URL that was already read.
+
+Reading the same URL again in the same session answers from the material the
+process already retained: the result sets `served_from_retained_material: true`
+and makes no network request. Pass `refresh: true` only for a deliberate new
+read. A refresh that runs into sign-in, a challenge, or a source error falls
+back to the retained material with a `refetch_error` notice instead of
+returning `blocked`. Every read result text carries `material_id` and
+`source_revision` even when the host drops `structuredContent`, so continue
+with `envoy_search` / `envoy_expand` rather than reading the URL again. This
+server declares no MCP resources capability, so listing MCP resources is empty
+by design; material descriptors only travel in `structuredContent`.
 
 When a new host session has a retained `material_id` and `source_revision`, use
 `envoy replay --request-json -` (or `envoy_replay` when the active toolset

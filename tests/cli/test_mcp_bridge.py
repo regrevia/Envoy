@@ -13,6 +13,19 @@ for path in (
         sys.path.insert(0, str(path))
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_retained_reads():
+    """The bridge retains read material per process, so each test starts empty."""
+    from envoy_cli import mcp
+
+    mcp._RETAINED_READS.clear()
+    yield
+    mcp._RETAINED_READS.clear()
+
+
 def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
     from envoy_cli import mcp
 
@@ -1293,3 +1306,266 @@ def test_mcp_bridge_reuses_one_session_identity_per_process():
     # Replay is defined by the difference between two sessions; never invented.
     replay = mcp._server_arguments("envoy_replay", {"material_id": "mat-x", "source_revision": "r"})
     assert replay.get("session_id") is None
+
+
+class _LocalReadStub:
+    protocol_version = "envoy.read/1"
+
+    def __init__(self):
+        self.path = None
+
+    def model_dump(self, **_kwargs):
+        return {
+            "protocol_version": "envoy.read/1",
+            "result": "ready",
+            "blocks": [{"id": "blk-1", "kind": "paragraph", "content": {"type": "text", "text": "local"}}],
+            "errors": [],
+        }
+
+
+def _call_tool(capsys, mcp, name, arguments, modern=False):
+    params = {"name": name, "arguments": arguments}
+    if modern:
+        params["_meta"] = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2026-07-28" if modern else "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "call",
+        "method": "tools/call",
+        "params": params,
+    }])
+    return json.loads(capsys.readouterr().out.splitlines()[1])["result"]
+
+
+def test_envoy_read_routes_a_file_url_to_the_local_pipeline(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"0" * 64)
+    captured = {}
+
+    def fake_read_local_video(request):
+        captured["request"] = request
+        return _LocalReadStub()
+
+    def fail_public(*_args, **_kwargs):
+        raise AssertionError("a local file must not be fetched as a public URL")
+
+    monkeypatch.setattr(mcp, "read_local_video", fake_read_local_video)
+    monkeypatch.setattr(mcp, "read_public_page", fail_public)
+
+    result = _call_tool(
+        capsys,
+        mcp,
+        "envoy_read",
+        {"source": {"url": f"file://{video}"}, "goal": "what does this clip say"},
+    )
+
+    request = captured["request"]
+    assert Path(request.path) == video
+    assert request.goal == "what does this clip say"
+    # Crash recovery needs a stable identity derived from the file, not a random one.
+    same = mcp._local_video_arguments({"request_id": "r", "goal": "g"}, str(video))["idempotency_key"]
+    assert request.idempotency_key == same
+    assert request.idempotency_key.startswith("local-")
+    assert result["isError"] is False
+    assert result["structuredContent"]["result"] == "ready"
+
+
+def test_envoy_read_accepts_an_absolute_local_path(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    video = tmp_path / "绝对 路径.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    monkeypatch.setattr(mcp, "read_local_video", lambda request: _LocalReadStub())
+    monkeypatch.setattr(
+        mcp,
+        "read_public_page",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no fetch")),
+    )
+
+    result = _call_tool(capsys, mcp, "envoy_read", {"source": {"url": str(video)}, "goal": "g"})
+
+    assert result["isError"] is False
+    assert mcp._local_source_path({"source": {"url": str(video)}}) == str(video)
+
+
+def test_envoy_read_reports_a_missing_local_file_and_its_reason(capsys):
+    from envoy_cli import mcp
+
+    missing = Path("/nonexistent/envoy-does-not-exist.mp4")
+    result = _call_tool(capsys, mcp, "envoy_read", {"source": {"url": f"file://{missing}"}, "goal": "g"})
+
+    assert result["isError"] is True
+    payload = result["structuredContent"]
+    assert payload["result"] == "blocked"
+    error = payload["errors"][0]
+    assert error["code"] == "source_unavailable"
+    assert error["details"]["kind"] == "local_file"
+    assert error["details"]["reason"] == "not_found"
+    # The reason has to reach the model, not just structuredContent.
+    text = result["content"][0]["text"]
+    assert "not found" in text
+    assert error["message"] in text
+
+
+def test_envoy_read_leaves_public_urls_on_the_public_reader(monkeypatch, capsys):
+    from envoy_cli import mcp
+    from envoy_cli import reader
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda _url, _max_bytes, _cache=None: ("https://example.org/", "<html><body><p>Hello there.</p></body></html>"),
+    )
+    monkeypatch.setattr(
+        mcp,
+        "read_local_video",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no local read")),
+    )
+
+    result = _call_tool(capsys, mcp, "envoy_read", {"source": {"url": "https://example.org/"}, "goal": "g"})
+
+    assert result["isError"] is False
+    assert mcp._local_source_path({"source": {"url": "https://example.org/"}}) is None
+
+
+class _PublicReadStub:
+    protocol_version = "envoy.read/1"
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def model_dump(self, **_kwargs):
+        return dict(self._payload)
+
+
+def test_envoy_read_serves_retained_material_when_a_reread_is_blocked(capsys, monkeypatch):
+    from envoy_cli import mcp
+    from envoy_cli.reader import PublicPageError
+    from envoy_core.schemas.read_v1 import ErrorCode
+
+    mcp._RETAINED_READS.clear()
+    first_payload = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "r1",
+        "session_id": mcp._PROCESS_SESSION_ID,
+        "material_id": "mat-retained",
+        "source_revision": "rev-1",
+        "execution_state": "completed",
+        "result": "partial",
+        "blocks": [{"id": "blk-1", "kind": "paragraph", "content": {"type": "text", "text": "evidence"}}],
+        "resources": [],
+        "errors": [{"code": "source_unavailable", "message": "ransom note: only page text was available"}],
+    }
+    calls = {"n": 0}
+
+    def fake_read_public_page(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _PublicReadStub(first_payload)
+        raise PublicPageError("Douyin requires sign-in", ErrorCode.AUTH_REQUIRED)
+
+    monkeypatch.setattr(mcp, "read_public_page", fake_read_public_page)
+    url = "https://v.douyin.com/HXOTfJ1neq4/"
+
+    first = _call_tool(capsys, mcp, "envoy_read", {"source": {"url": url}, "goal": "g"}, modern=True)
+    second = _call_tool(capsys, mcp, "envoy_read", {"source": {"url": url}, "goal": "g"}, modern=True)
+
+    assert first["isError"] is False
+    assert second["isError"] is False, "a blocked re-read must fall back to the retained material"
+    payload = second["structuredContent"]
+    assert payload["served_from_retained_material"] is True
+    assert payload["material_id"] == "mat-retained"
+    assert payload["source_revision"] == "rev-1"
+    assert payload["result"] == "partial"
+    assert payload["blocks"][0]["content"]["text"] == "evidence"
+    notice = payload["notices"][-1]
+    assert notice["code"] == "served_from_retained_material"
+    assert "nothing was re-fetched" in notice["message"]
+    text = second["content"][0]["text"]
+    assert "material_id=mat-retained" in text
+    assert "not re-fetched" in text
+    # The repeat read answered from the retained material: the source was not fetched again.
+    assert calls["n"] == 1
+
+    refreshed = _call_tool(
+        capsys,
+        mcp,
+        "envoy_read",
+        {"source": {"url": url}, "goal": "g", "refresh": True},
+        modern=True,
+    )
+    assert refreshed["isError"] is False, "refresh must fall back to the retained material when refetching is blocked"
+    assert calls["n"] == 2
+    refetch_notice = refreshed["structuredContent"]["notices"][-1]
+    assert refetch_notice["refetch_error"]["code"] == "auth_required"
+
+
+def test_envoy_read_keeps_different_sources_apart_when_serving_retained_material(capsys, monkeypatch):
+    from envoy_cli import mcp
+    from envoy_cli.reader import PublicPageError
+    from envoy_core.schemas.read_v1 import ErrorCode
+
+    mcp._RETAINED_READS.clear()
+    payload = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "r1",
+        "material_id": "mat-a",
+        "source_revision": "rev-a",
+        "execution_state": "completed",
+        "result": "ready",
+        "blocks": [],
+        "resources": [],
+    }
+    monkeypatch.setattr(mcp, "read_public_page", lambda _request: _PublicReadStub(payload))
+    _call_tool(capsys, mcp, "envoy_read", {"source": {"url": "https://example.org/a"}, "goal": "g"})
+
+    def blocked(_request):
+        raise PublicPageError("gone", ErrorCode.SOURCE_UNAVAILABLE)
+
+    monkeypatch.setattr(mcp, "read_public_page", blocked)
+    other = _call_tool(capsys, mcp, "envoy_read", {"source": {"url": "https://example.org/b"}, "goal": "g"})
+
+    assert other["isError"] is True
+    assert other["structuredContent"]["result"] == "blocked"
+    assert "served_from_retained_material" not in other["structuredContent"]
+
+
+def test_envoy_read_text_always_carries_the_material_handle_and_replay_path():
+    from envoy_cli import mcp
+
+    text = mcp._tool_content_text(
+        {
+            "result": "partial",
+            "material_id": "mat-x",
+            "source_revision": "rev-x",
+            "blocks": [{"content": {"text": "abc"}}],
+            "resources": [{}, {}],
+        },
+        modern=True,
+    )
+    assert "material_id=mat-x" in text
+    assert "source_revision=rev-x" in text
+    assert "do not re-read" in text
+
+    blocked = mcp._tool_content_text(
+        {
+            "result": "blocked",
+            "material_id": "mat-x",
+            "errors": [{"code": "auth_required", "message": "sign-in required"}],
+        },
+        modern=True,
+    )
+    assert "auth_required" in blocked
+    assert "sign-in required" in blocked
+    assert "envoy_replay" in blocked

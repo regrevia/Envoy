@@ -4,6 +4,8 @@
 [`envoy-dsh/`](envoy-dsh/)。安装后由 DSH 插件管理器统一管理，既保留 Envoy
 原有能力，也把 Envoy 注册为 Agent Skill。
 
+当前插件版本：`0.1.7`（`dev` 分支上的开发版）。
+
 ## 它做什么
 
 `envoy-dsh` 是一个 DSH bundle，一次安装插入两个插件行：

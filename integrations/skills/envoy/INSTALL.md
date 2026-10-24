@@ -1,6 +1,6 @@
 # 安装 Envoy
 
-Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.6`。
+Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.6`；`dev` 分支上的下一个开发版为 `0.1.7`，发行说明以 `CHANGELOG.md` 为准。
 
 ## 1. 安装 Skill
 
@@ -35,6 +35,14 @@ envoy doctor --json
 `envoy_search` 和 `envoy_observe_visual`。重启或重载 Agent 后，确认其能发现这
 四个工具；需要本地视频、发现、合集、回放、视觉历史或诊断工具时，在启动宿主的
 环境里导出 `ENVOY_MCP_TOOLSET=full` 并重启（也可临时改用 `--toolset full`）。
+
+本机文件不需要上传：`envoy_read` 的 `source.url` 可以直接是绝对路径或 `file://`
+URL，视频会用本机 Whisper 转写。同一链接重复读取会复用本会话已保留的物料（不发
+网络请求），确实要重抓时传 `refresh: true`；重抓遇到登录或验证时同样回退到保留
+物料，并在 `notices` 里说明原因。每条读取结果文本都带 `material_id` 与
+`source_revision`，所以即使宿主丢弃 `structuredContent` 也能接着用
+`envoy_search` / `envoy_expand`。本服务不声明 MCP resources 能力，
+`list_mcp_resources` 为空是设计如此。
 
 若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后用
 `envoy doctor --json` 检查版本（`full` 下也可调用 `envoy_doctor`）；旧 MCP
