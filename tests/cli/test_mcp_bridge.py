@@ -1242,3 +1242,25 @@ def test_mcp_bridge_undeclared_advanced_blocks_are_still_accepted():
         tool for tool in mcp.tools_for_toolset("core") if tool["name"] == "envoy_search"
     )["inputSchema"]
     assert schema["required"] == ["material_id", "query"]
+
+
+def test_mcp_bridge_reuses_one_session_identity_per_process():
+    """Follow-up calls must address the materials the same bridge persisted."""
+
+    from envoy_cli import mcp
+
+    first = mcp._server_arguments("envoy_read", {"source": {"url": "https://example.org/"}, "goal": "g"})
+    second = mcp._server_arguments("envoy_read", {"source": {"url": "https://example.org/"}, "goal": "g"})
+    assert first["session_id"] == second["session_id"]
+    assert first["session_id"]
+    # The request envelope stays per-call so nothing is mistaken for a replay.
+    assert first["request_id"] != second["request_id"]
+
+    explicit = mcp._server_arguments(
+        "envoy_read", {"source": {"url": "https://example.org/"}, "goal": "g", "session_id": "mine"}
+    )
+    assert explicit["session_id"] == "mine"
+
+    # Replay is defined by the difference between two sessions; never invented.
+    replay = mcp._server_arguments("envoy_replay", {"material_id": "mat-x", "source_revision": "r"})
+    assert replay.get("session_id") is None
