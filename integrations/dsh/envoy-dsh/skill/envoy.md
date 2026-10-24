@@ -35,6 +35,39 @@ Stop after one plain fetch and one Envoy read. A short source that returns
 `blocked` is a normal outcome: report it and stop rather than retrying in a
 loop. Keep `goal` narrow enough that a `partial` result still answers it.
 
+## Deliverables from one source or many
+
+The point of a read is usually an artifact, not a summary in chat. Build the
+artifact the user asked for (Markdown notes, a wiki page, a comparison table)
+and keep it in one file, in a stable source order.
+
+- **One link.** Read it, then write the deliverable from the returned material.
+  Anchor every claim to where it came from: a timestamp range for video or
+  audio, a heading or quoted phrase for an article. Never invent a timestamp,
+  a quote, or a section that the material does not contain, and mark what the
+  source did not cover instead of filling the gap.
+- **A profile with several videos.** Enumerate first, then read, then compose.
+  `envoy discover --url <profile> --limit 20` returns candidates plus
+  `next_cursor`; pass that cursor back to continue instead of re-scraping. Read
+  the candidates you need with `mcp__envoy__envoy_read`, then aggregate into one deliverable
+  that lists every included source with its URL.
+- **A local course file.** `envoy read-local-video` takes an `envoy.read/1`
+  request JSON naming the local path; use `start_seconds` / `end_seconds` to
+  bound a long recording, and `mcp__envoy__envoy_expand` to continue from a returned
+  material when one range is not enough.
+
+Long runs must survive interruption. Persist progress with
+`mcp__envoy__envoy_collection_checkpoint`, or `envoy collection-checkpoint --request-json`
+when the active toolset does not expose it: `create` fixes the collection,
+`set_cursor` records how far discovery got, `item_state` / `record_evidence`
+record what each candidate produced, and `get` re-reads the current state. Every
+mutation needs `expected_revision` and a unique `operation_id`, so a retried
+call is idempotent. On resume, start from `get`, skip candidates already
+recorded as done, and never rebuild the collection from zero.
+
+A candidate that returns `blocked` is recorded as blocked and the run continues;
+it is not silently dropped and not retried in a loop.
+
 ## Available tools
 
 The bundled integrations start the MCP bridge as `envoy mcp`, which
