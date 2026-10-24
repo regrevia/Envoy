@@ -18,6 +18,7 @@ from envoy_core.schemas.read_v1 import (
 
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
+from . import cache as cache_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_status, render_hook_status
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
@@ -152,6 +153,19 @@ def _parser() -> argparse.ArgumentParser:
     ocr_test.add_argument("--backend", default=DEFAULT_OCR_BACKEND)
     ocr_test.add_argument("--language", default="auto")
     ocr_test.add_argument("--profile", default="balanced", choices=sorted(OCR_PROFILES))
+    cache = subparsers.add_parser("cache", help="report or reclaim local material storage")
+    cache_commands = cache.add_subparsers(dest="cache_command", required=True)
+    cache_status = cache_commands.add_parser(
+        "status",
+        help="report stored materials, caches and their disk usage",
+    )
+    cache_status.add_argument("--json", action="store_true")
+    cache_prune = cache_commands.add_parser(
+        "prune",
+        help="delete expired materials, orphaned frames, OCR caches and spent ledgers",
+    )
+    cache_prune.add_argument("--dry-run", action="store_true", help="report without deleting")
+    cache_prune.add_argument("--json", action="store_true")
     mcp_parser = subparsers.add_parser("mcp", help="run the stdio MCP bridge")
     mcp_parser.add_argument(
         "--toolset",
@@ -212,6 +226,20 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
         if args.verify_asr and runtime["asr_operational"] != "verified":
             return 2
+        return 0
+    if args.command == "cache":
+        if args.cache_command == "status":
+            report = cache_storage.cache_status()
+            if args.json:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print(cache_storage.render_status(report))
+            return 0
+        report = cache_storage.prune_cache(dry_run=args.dry_run)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(cache_storage.render_prune(report))
         return 0
     if args.command == "browser":
         return browser_runtime.setup_browser()
