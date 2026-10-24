@@ -473,3 +473,132 @@ def install_codex_hooks(*, home=None, uninstall: bool = False) -> dict:
         hooks_path.write_text(rendered, encoding="utf-8")
         result["changed"] = True
     return result
+
+
+# --- Hook installation status ---------------------------------------------
+
+_DELIVERY = {
+    "claude-code": "plugin",
+    "codex": "user-config",
+    "dsh": "plugin-bundle",
+}
+
+_VERIFY_COMMAND = {
+    "claude-code": "claude plugin details envoy   # expect 'Hooks (1) UserPromptSubmit'",
+    "codex": "codex   # then run /hooks and approve the Envoy entry once",
+    "dsh": "dsh plugin list   # the envoy-dsh bundle provides agent/pre-step routing",
+}
+
+_TRUST_STATE = {
+    "claude-code": "not-required",
+    "codex": "unknown",
+    "dsh": "not-required",
+}
+
+
+def _codex_home(home=None) -> "Path":
+    import os
+    from pathlib import Path
+
+    if home:
+        return Path(home).expanduser()
+    return Path(
+        os.getenv("CODEX_HOME") or (Path.home() / ".codex")
+    ).expanduser()
+
+
+def hook_status(host: str, *, home=None) -> dict:
+    """Report whether the host hook is wired up. Read-only; never writes.
+
+    Codex needs both a user-level ``hooks.json`` and a one-time ``/hooks``
+    approval inside the CLI. The approval leaves no trace on disk, so ``trusted``
+    stays ``unknown`` instead of being inferred from the file's presence.
+    """
+
+    import os
+
+    canonical = normalize_host(host)
+    if canonical is None:
+        return {"host": host, "error": "unknown_host", "ok": False}
+    report: dict = {
+        "host": canonical,
+        "delivery": _DELIVERY[canonical],
+        "trusted": _TRUST_STATE[canonical],
+        "verify": _VERIFY_COMMAND[canonical],
+    }
+    if canonical != "codex":
+        # Plugin-supplied hooks are owned by the host bundle; claiming a state
+        # the CLI cannot observe would be worse than reporting it as managed.
+        report.update({"installed": None, "ok": None})
+        return report
+
+    codex_home = _codex_home(home)
+    hooks_path = codex_home / "hooks.json"
+    script_dir = codex_home / _CODEX_HOOK_SCRIPT_DIR
+    report["config_path"] = str(hooks_path)
+    if not hooks_path.is_file():
+        report.update({
+            "installed": False,
+            "ok": False,
+            "reason": "hooks.json is missing; run: envoy hook install --host codex",
+        })
+        return report
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8") or "{}")
+    except ValueError as exc:
+        report.update({"installed": False, "ok": False, "error": f"invalid JSON: {exc}"})
+        return report
+
+    entries: list = []
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if isinstance(hooks, dict) and isinstance(hooks.get("UserPromptSubmit"), list):
+        entries = [entry for entry in hooks["UserPromptSubmit"] if isinstance(entry, dict)]
+    envoy_entries = [
+        entry
+        for entry in entries
+        if any(_is_envoy_codex_hook(hook) for hook in entry.get("hooks") or [])
+    ]
+    scripts = {}
+    for name in ("envoy-hook.sh", "envoy-hook.ps1"):
+        path = script_dir / name
+        scripts[name] = {
+            "path": str(path),
+            "exists": path.is_file(),
+            "executable": bool(name.endswith(".sh") and path.is_file() and os.access(path, os.X_OK)),
+        }
+    report["scripts"] = scripts
+    report["installed"] = bool(envoy_entries)
+    report["entries"] = len(envoy_entries)
+    missing = [name for name, info in scripts.items() if not info["exists"]]
+    if missing:
+        report["ok"] = False
+        report["reason"] = "hook wrapper missing: " + ", ".join(missing)
+    elif not envoy_entries:
+        report["ok"] = False
+        report["reason"] = "no Envoy UserPromptSubmit entry; run: envoy hook install --host codex"
+    else:
+        report["ok"] = True
+    return report
+
+
+def render_hook_status(report: dict) -> str:
+    """Render :func:`hook_status` for a human, one fact per line."""
+
+    installed = report.get("installed")
+    label = {True: "yes", False: "no", None: "host-managed"}[installed]
+    lines = [
+        f"host: {report.get('host', 'unknown')}",
+        f"delivery: {report.get('delivery', 'unknown')}",
+    ]
+    if report.get("config_path"):
+        lines.append(f"config: {report['config_path']}")
+    lines.append(f"installed: {label}")
+    if report.get("entries") is not None:
+        lines.append(f"entries: {report['entries']}")
+    lines.append(f"trusted: {report.get('trusted', 'unknown')}")
+    if report.get("reason"):
+        lines.append(f"reason: {report['reason']}")
+    if report.get("error"):
+        lines.append(f"error: {report['error']}")
+    lines.append(f"verify: {report.get('verify', '')}")
+    return "\n".join(lines)
