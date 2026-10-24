@@ -63,6 +63,9 @@ def _regex(relative: str, pattern: re.Pattern[str]) -> str:
 DECLARATIONS: tuple[tuple[str, callable], ...] = (
     ("packages/envoy-core/pyproject.toml", _toml),
     ("packages/envoy-core/src/envoy_core/__init__.py", lambda p: _regex(p, _CORE_VERSION)),
+    # ``envoy --version`` prints this constant, not the installed metadata; it
+    # drifted two releases behind while every manifest agreed.
+    ("packages/envoy-cli/src/envoy_cli/__init__.py", lambda p: _regex(p, _CORE_VERSION)),
     (
         "integrations/claude-code/envoy/.claude-plugin/plugin.json",
         lambda p: _json(p, "version"),
@@ -104,6 +107,10 @@ _PATCHES: dict[str, tuple[re.Pattern[str], str]] = {
         'version\\1"{v}"',
     ),
     "packages/envoy-core/src/envoy_core/__init__.py": (
+        re.compile(r'(?m)^__version__(\s*=\s*)"[^"]+"'),
+        '__version__\\1"{v}"',
+    ),
+    "packages/envoy-cli/src/envoy_cli/__init__.py": (
         re.compile(r'(?m)^__version__(\s*=\s*)"[^"]+"'),
         '__version__\\1"{v}"',
     ),
