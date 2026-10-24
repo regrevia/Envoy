@@ -31,6 +31,17 @@ Do not start the confirmatory run while any of the 40 source rows is pending.
 - The five `*-05` packages are expansion slots added when the design moved
   from 20 to 25 packages. `xhs-05` is the labeled robustness package: it is
   scored on access honesty, never on reconstructed note content.
+- Four Douyin URLs now have archived page-level snapshots (`douyin-01..04`:
+  real titles, captions, chapter summaries and chapter markers; no transcript
+  or media), but they stay `待复核` because no second distinct Douyin URL could
+  be captured for each package. `envoy discover` refuses without a public
+  profile URL and page text exposes none, so the two-source rule was kept
+  rather than relaxed to single-source packages. `douyin-02`'s snapshot is
+  explicitly a retained earlier capture of the same URL, not a fresh fetch.
+- On the same day Bilibili capture failed at the network layer for two new
+  science videos (`BV14Enb6LEDe`, `BV1ZLnt6tEpT`): `SSL: UNEXPECTED_EOF_WHILE_
+  READING` / handshake timeout, so the Bilibili stratum stays at its four
+  already-accepted videos. That is a transport failure, not a content verdict.
 - There are no duplicate URLs across the populated slots. Package pairing,
   independent fact review, and task quality still need review.
 
