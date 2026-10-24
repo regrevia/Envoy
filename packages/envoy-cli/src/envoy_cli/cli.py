@@ -32,7 +32,14 @@ from .ocr import (
 from .package_install import install_media_dependencies
 from . import __version__
 from . import mcp
-from .collections import CollectionError, discover_profile
+from .collections import (
+    CollectionBudget,
+    CollectionError,
+    create_collection,
+    discover_profile,
+    get_collection,
+    update_collection,
+)
 from .local_video import read_local_video
 from .reader import (
     PublicPageError,
@@ -83,6 +90,15 @@ def _parser() -> argparse.ArgumentParser:
     discover.add_argument("--limit", type=int, default=20)
     discover.add_argument("--cursor")
     discover.add_argument("--max-work-seconds", type=int, default=60)
+    checkpoint = subparsers.add_parser(
+        "collection-checkpoint",
+        help="create, read, or advance a bounded collection run",
+    )
+    checkpoint.add_argument(
+        "--request-json",
+        required=True,
+        help="read one collection checkpoint request from this path or '-' for stdin",
+    )
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
@@ -195,6 +211,62 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             print(json.dumps({
                 "result": "blocked",
                 "error": {"code": "source_unavailable", "message": str(exc)},
+            }, ensure_ascii=False))
+            return 2
+    if args.command == "collection-checkpoint":
+        try:
+            if args.request_json == "-":
+                raw = stdin if stdin is not None else sys.stdin.read()
+            else:
+                with open(args.request_json, "r", encoding="utf-8") as request_file:
+                    raw = request_file.read()
+            payload = json.loads(raw)
+            action = str(payload.get("action") or "")
+            collection_id = str(payload.get("collection_id") or "")
+            run_id = str(payload.get("run_id") or "")
+            budget_data = payload.get("budget") or {}
+            if action == "create":
+                data = create_collection(
+                    collection_id,
+                    run_id,
+                    str(payload.get("profile_url") or ""),
+                    operation_id=str(payload.get("operation_id") or ""),
+                    budget=CollectionBudget(**budget_data) if budget_data else None,
+                )
+            elif action == "get":
+                data = get_collection(collection_id, run_id)
+            else:
+                if payload.get("expected_revision") is None or not payload.get("operation_id"):
+                    raise CollectionError(
+                        "Mutations require expected_revision and operation_id"
+                    )
+                data = update_collection(
+                    collection_id,
+                    run_id=run_id,
+                    expected_revision=int(payload["expected_revision"]),
+                    operation_id=str(payload["operation_id"]),
+                    action=action,
+                    candidate_ids=payload.get("candidate_ids"),
+                    candidate_id_value=payload.get("candidate_id"),
+                    item_state=payload.get("item_state"),
+                    material_id=payload.get("material_id"),
+                    source_revision=payload.get("source_revision"),
+                    expires_at=payload.get("expires_at"),
+                    evidence_available=payload.get("evidence_available"),
+                    pending_resource_ids=payload.get("pending_resource_ids"),
+                    observed_resource_ids=payload.get("observed_resource_ids"),
+                    usage=payload.get("usage"),
+                    budget=CollectionBudget(**budget_data) if budget_data else None,
+                )
+            print(json.dumps(
+                {"tool": "envoy_collection_checkpoint", "action": action, **data},
+                ensure_ascii=False,
+            ))
+            return 0
+        except (CollectionError, ValueError) as exc:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "collection_error", "message": str(exc)},
             }, ensure_ascii=False))
             return 2
     if args.command == "doctor":
