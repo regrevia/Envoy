@@ -39,8 +39,8 @@ cross-03,cross_platform,1,bilibili_video,,待补充,,,,pending
 cross-03,cross_platform,2,wechat_article,,待补充,,,,pending
 cross-04,cross_platform,1,douyin_video,,待补充,,,,pending
 cross-04,cross_platform,2,xiaohongshu_image_note,,待补充,,,,pending
-bili-05,bilibili,1,,,待补充,2026-10-24,,expansion slot: public URL not yet chosen,pending
-bili-05,bilibili,2,,,待补充,2026-10-24,,expansion slot: public URL not yet chosen,pending
+bili-05,bilibili,1,bilibili_video,https://www.bilibili.com/video/BV1Rhn36VEVG/,已接受,2026-10-24,1c25d98e729bdaa13d02632f05a6c8150f43b15a994a46619900d6f18e21b030,"""accepted; local ASR transcript 8310 chars / 353 segments, stored as materials/1c25d98e729bdaa13d02632f05a6c8150f43b15a994a46619900d6f18e21b030.txt; frames/slides not inspected; only ASR wording is quotable evidence""",complete
+bili-05,bilibili,2,bilibili_video,https://www.bilibili.com/video/BV1BFnh6KEuW/,已接受,2026-10-24,d9fbd496e668035eee761953969fcdfa303d7720d2a6cb7bca25392d4a454df6,"""accepted; local ASR transcript 3359 chars / 140 segments, stored as materials/d9fbd496e668035eee761953969fcdfa303d7720d2a6cb7bca25392d4a454df6.txt; frames/slides not inspected; only ASR wording is quotable evidence""",complete
 douyin-05,douyin,1,,,待补充,2026-10-24,,expansion slot: public URL not yet chosen,pending
 douyin-05,douyin,2,,,待补充,2026-10-24,,expansion slot: public URL not yet chosen,pending
 xhs-05,xiaohongshu,1,,,待补充,2026-10-24,,"expansion slot: robustness package - blocked platform outcome scored on access honesty, not content recall",pending

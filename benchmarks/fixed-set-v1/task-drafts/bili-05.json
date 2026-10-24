@@ -1,0 +1,178 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "bili-05",
+  "stratum": "bilibili",
+  "source_ids": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "source_revisions": {
+    "bili-video-a": {
+      "url": "https://www.bilibili.com/video/BV1Rhn36VEVG/",
+      "sha256": "1c25d98e729bdaa13d02632f05a6c8150f43b15a994a46619900d6f18e21b030",
+      "snapshot": "materials/1c25d98e729bdaa13d02632f05a6c8150f43b15a994a46619900d6f18e21b030.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "video_asr transcript, zh, 8310 chars / 353 segments, 0:00-10:29 of a 630 s video, i.e. the whole talk; auto-caption homophone noise with mixed Simplified/Traditional characters (距今 as 人近, 纪深海 as 寄身海, 偏振光 as 偏正光); frames/slides not inspected; only transcript wording is quotable"
+    },
+    "bili-video-b": {
+      "url": "https://www.bilibili.com/video/BV1BFnh6KEuW/",
+      "sha256": "d9fbd496e668035eee761953969fcdfa303d7720d2a6cb7bca25392d4a454df6",
+      "snapshot": "materials/d9fbd496e668035eee761953969fcdfa303d7720d2a6cb7bca25392d4a454df6.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "video_asr transcript, zh (mixed Simplified/Traditional), 3359 chars / 140 segments, 0:00-5:47 of a 349 s video; heavy auto-caption homophone noise (p值 as 屁值, I² as 愛平方, 出版 as 出般); frames/slides not inspected; only transcript wording is quotable"
+    }
+  },
+  "deliverable": "A two-part brief in which every sentence is tied to one of the two spoken transcripts. Part A reconstructs video A's speculative-evolution premise: an enlarged peacock mantis shrimp dropped into the Ordovician sea about 445 million years ago, 300 m down in the dark, where the cold and the pressure defeat it; it keeps the animal's real reported traits in play (16 photoreceptor types, a strike that shatters shells, an adult length of 1.8 m). Part B reconstructs video B's allegations about two papers it examines: patient data from different hospitals and periods showing a striking regularity across 18 sets of statistics, last-column values all shifted by exactly 0.001 (0.579 to 0.580 and so on), I-squared values of 79/98/99% against a text claiming consistency, and a drug name that does not match the catalogue entry. The brief must keep \"the speaker says\" and \"this is true\" apart.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Summarise what each of the two videos argues, one part per video. For every point, quote the wording you rely on and name the source; make clear these are the speakers' own claims taken from the spoken transcript, not facts anyone verified, and not anything seen on screen."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Video A only: what does it say about the setting it drops the animal into, and what does it say about the animal's own traits - depth and pressure, its eyes, its strike, its size?"
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Video B only: walk through the specific numbers and anomalies the speaker points at, then explain what he says is wrong with the drug naming. Stay with what he actually says and mark anything the auto-captions garble."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili05-a-ordovician-445ma",
+      "source_id": "bili-video-a",
+      "claim": "The opening premise drops the animal into the Ordovician sea about 445 million years ago.",
+      "locator": "seg 00:03.200 | video A, the opening premise (local ASR transcript; frames/slides not inspected; the ASR renders 距今 as 人近 and 纪深海 as 寄身海)",
+      "quote": "[00:03.200] 人近4.45億年前的奧陶寄身海",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-a-300m-dark",
+      "source_id": "bili-video-a",
+      "claim": "It places the scene 300 metres below the surface, where the surroundings are dark.",
+      "locator": "seg 00:09.040 | video A, the dive setting (local ASR transcript; frames/slides not inspected)",
+      "quote": "[00:09.040] 這裡距離海面300米四周昏暗",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-a-cold-pressure",
+      "source_id": "bili-video-a",
+      "claim": "It says the animal simply cannot adapt to the low temperature and the high pressure there.",
+      "locator": "seg 00:14.960 | video A, why the setting defeats it (local ASR transcript; frames/slides not inspected)",
+      "quote": "[00:14.960] 根本適應不了這裡的低溫和高壓",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-a-16-photoreceptors",
+      "source_id": "bili-video-a",
+      "claim": "It says the creature normally has 16 types of photoreceptor.",
+      "locator": "seg 00:21.040 | video A, what the animal is said to see with (local ASR transcript; frames/slides not inspected; 光感受器 is the speaker's term for photoreceptors)",
+      "quote": "[00:21.040] 更要命的是原本擁有16種光感受器",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-a-punch",
+      "source_id": "bili-video-a",
+      "claim": "It says the animal has a pair of fists that can shatter hard shells in an instant.",
+      "locator": "seg 01:22.480 | video A, the strike (local ASR transcript; frames/slides not inspected)",
+      "quote": "[01:22.480] 明明又有一雙能瞬間敲碎硬殼的鐵拳",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-a-adult-size",
+      "source_id": "bili-video-a",
+      "claim": "It says the adult form is 1.8 metres and the animal is still far short of that length.",
+      "locator": "seg 00:29.840 | video A, body size (local ASR transcript; frames/slides not inspected)",
+      "quote": "[00:29.840] 距離成年後的1.8米還差的遠",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-b-hospital-regularity",
+      "source_id": "bili-video-b",
+      "claim": "He says patient data from different hospitals and different time periods nevertheless showed a striking regularity.",
+      "locator": "seg 00:40.280 | video B, comparing table one of the two papers (local ASR transcript; frames/slides not inspected)",
+      "quote": "[00:40.280] 來自不同醫院不同時間段的患者數據卻出現了驚人的規律性",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-b-18-sets",
+      "source_id": "bili-video-b",
+      "claim": "He says the comparison covers all 18 sets of statistics.",
+      "locator": "seg 00:49.560 | video B, the scope of the comparison (local ASR transcript; frames/slides not inspected)",
+      "quote": "[00:49.560] 整整18組數據的統計結果",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-b-plus-0001",
+      "source_id": "bili-video-b",
+      "claim": "He says the values in the last column all increase in an orderly way by exactly 0.001.",
+      "locator": "seg 01:07.800 | video B, the shifted last-row values (local ASR transcript; frames/slides not inspected; the preceding ASR segment renders p值 as 屁值)",
+      "quote": "[01:07.800] 居然全都整齐的增加0.001",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-b-0579-to-0580",
+      "source_id": "bili-video-b",
+      "claim": "He reads out one such value changing from 0.579 to 0.580.",
+      "locator": "seg 01:28.920 | video B, reading one pair of values out loud (local ASR transcript; frames/slides not inspected)",
+      "quote": "[01:28.920] 原来0.579变成0.580",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-b-i2-values",
+      "source_id": "bili-video-b",
+      "claim": "He says the corresponding I-squared values are 79%, 98% and 99%, which contradicts the text's claim that the studies were consistent.",
+      "locator": "seg 03:30.600 | video B, the heterogeneity figures (local ASR transcript; frames/slides not inspected; the ASR renders I² as 愛平方)",
+      "quote": "[03:30.600] 對應的愛平方分別是79%、98%和99%",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili05-b-drug-name",
+      "source_id": "bili-video-b",
+      "claim": "He says a drug's name is not an arbitrary label because it decides the experimental effect and whether others can reproduce the result.",
+      "locator": "seg 04:18.880 | video B, the questionable drug naming (local ASR transcript; frames/slides not inspected)",
+      "quote": "[04:18.880] 藥物的名稱不是一個隨便的標籤",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    {
+      "source_id": "bili-video-a",
+      "expectation": "Every statement about the Ordovician setting, the 300 m depth, the cold and pressure, the 16 photoreceptor types, the strike and the 1.8 m adult length must be attributed to video A (远古-回响, BV1Rhn36VEVG) and carry its segment timestamp."
+    },
+    {
+      "source_id": "bili-video-b",
+      "expectation": "Every statement about the 18 data sets, the 0.001 shift, the 0.579-to-0.580 value, the 79/98/99% I-squared figures and the drug-name problem must be attributed to video B (梗直哥丶, BV1BFnh6KEuW) and carry its segment timestamp."
+    }
+  ],
+  "acceptable_partial_outcomes": [
+    "Answering from one video only is acceptable if the untouched video is named as uncovered.",
+    "Reporting the auto-caption garble (人近 for 距今, 寄身海 for 纪深海, 屁值 for p值, 愛平方 for I²) instead of silently repairing it is acceptable; the quotes must stay verbatim.",
+    "Declining to state whether the papers really contain fabricated data, and reporting only that the speaker alleges it, is acceptable and preferred.",
+    "Saying that frames, tables and slides were not inspected, and that only the ASR wording is quotable evidence, is acceptable and expected."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "bili-drafter",
+    "method": "quotes sliced from ASR snapshots and re-checked as literal substrings",
+    "facts": 12
+  },
+  "authority_anchors": [
+    {
+      "url": "https://ori.hhs.gov/definition-research-misconduct",
+      "supports": "US Office of Research Integrity definition of research misconduct as fabrication, falsification or plagiarism in proposing, performing, reviewing or reporting research. It fixes the terms video B's allegations are measured against; it is independent of the video and is not evidence for the speaker's own sentences.",
+      "verified_at": "2026-10-24"
+    },
+    {
+      "url": "https://oceanservice.noaa.gov/facts/pressure.html",
+      "supports": "NOAA on how pressure changes with ocean depth: one atmosphere per 10.06 m, so 300 m is roughly 30 atmospheres. It independently confirms the physical setting video A invokes, not the narrative built on it.",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}
