@@ -1,6 +1,6 @@
 # Envoy Agent Benchmark Design
 
-**Status:** Design draft for review
+**Status:** Approved; fixed 20-package first confirmatory batch is in preparation
 **Date:** 2026-10-23
 **Decision owners:** Envoy maintainer and benchmark operator
 
@@ -15,10 +15,10 @@ into token-savings claims.
 ## Scope
 
 The primary product experiment compares two arms using the same Claude Code
-CLI build and the same self-hosted DeepSeek checkpoint. The planned first
-confirmatory batch uses the operator's deployed DeepSeek-V4.1-Flash-1017
-model, subject to recording the checkpoint and tokenizer actually loaded by
-the inference server:
+CLI build and the same self-hosted model endpoint. The approved first batch
+uses the model name reported by the gateway, `DeepSeek-V4.1-Flash`. Checkpoint,
+tokenizer, and quantization are unknown unless independently attested by the
+serving operator.
 
 - **A, native read:** Envoy Skill and MCP are absent. The host may use only
   native reading tools that are actually installed and enabled on the server.
@@ -54,23 +54,25 @@ within an arm stay in that arm's session so both configurations may reuse their
 own material. No prompts, answers, extracted material, or caches cross from A
 to B or B to A.
 
-The product corpus contains 100 task packages, 20 per stratum. The four
-priority Chinese platforms are Bilibili, Douyin, Xiaohongshu, and WeChat
-Official Accounts; cross-platform packages test synthesis across them:
+The approved first fixed evaluation set contains 20 task packages, four per
+stratum. It is a bounded first confirmatory batch, not evidence for all content
+on these platforms. A later expansion to 100 packages, 20 per stratum, must be
+a separately versioned batch. The four priority Chinese platforms are
+Bilibili, Douyin, Xiaohongshu, and WeChat Official Accounts; cross-platform
+packages test synthesis across them:
 
 | Stratum | Packages | Focus |
 | --- | ---: | --- |
-| Bilibili-centered | 20 | Multiple public video links, subtitles/ASR, follow-up reuse |
-| Douyin-centered | 20 | Share/video links and public image-note links, with source-specific coverage |
-| Xiaohongshu-centered | 20 | Public image notes, ordered images, visual evidence and OCR where enabled |
-| WeChat Official Account-centered | 20 | Public article links, long text, continuation and follow-up reuse |
-| Cross-platform synthesis | 20 | Multiple links spanning at least two priority platforms |
+| Bilibili-centered | 4 | Multiple public video links, subtitles/ASR, follow-up reuse |
+| Douyin-centered | 4 | Share/video links and public image-note links, with source-specific coverage |
+| Xiaohongshu-centered | 4 | Public image notes, ordered images, visual evidence and OCR where enabled |
+| WeChat Official Account-centered | 4 | Public article links, long text, continuation and follow-up reuse |
+| Cross-platform synthesis | 4 | Multiple links spanning at least two priority platforms |
 
-Each package contains multiple links; package counts must not be reported as
-URL counts. Require at least two distinct public source URLs per package and
-target at least 200 unique URLs overall. The run manifest records both counts
-and URL deduplication; an intentionally reused URL counts once in the unique
-URL total. The paired planner additionally freezes a deterministic
+Each package contains at least two distinct links; package counts must not be
+reported as URL counts. The first fixed set requires at least 40 unique public
+URLs, with no URL reused across packages. The run manifest records package
+and URL counts and URL deduplication. The paired planner freezes a deterministic
 `run_id`, package-manifest SHA-256, per-arm session IDs, and
 `turn_correlation_ids` for all three turns. A turn correlation ID is a logical
 task-turn key, not an inference-server request ID, because one turn may issue
@@ -156,22 +158,23 @@ not run the entire baseline corpus first and the entire Envoy corpus later:
 time, source changes, model-server changes, and operational drift would be
 confounded with the treatment.
 
-The primary cold-cache comparison disables cross-request server prefix/KV
-cache reuse when supported, and starts each session with empty Claude Code
-conversation and local cache state. It must not clear or reset another
-operator's shared service state. If server caching cannot be disabled, isolate
-each arm in separate cache namespaces or equivalent replicas, and record
-cache-read/cache-write usage. If isolation cannot be verified, classify the
-batch as cache-confounded rather than claiming a cold-cache result.
+The primary comparison starts each arm with empty Claude Code conversation
+and local cache state. The approved gateway policy uses a fresh random cache
+salt per model request while leaving upstream prefix caching enabled. The
+2026-10-24 server calibration verified this policy for three calibration
+requests only; it does not count as experiment data. For every formal request,
+the redacted authoritative ledger must contain the SHA-256 of its salt, a
+unique salt hash, and `cache_read_input_tokens: 0`. Never log or export the
+raw salt. If any formal request is missing its salt hash, reuses a salt hash,
+or reports cache reads, classify the run as cache-confounded. Do not clear or
+reset another operator's shared service state.
 
 Envoy's material cache and each arm's conversation context remain available
 within the three-turn package to measure intended follow-up reuse. Clear
-package-scoped material and local state between packages. A separate
-production-cache condition may measure normal warm-cache behavior; report it
-as a distinct condition and never mix it with cold-cache results. No shared
-browser profile, personal cookies, private account, or unapproved proxy may
-be used. Normal user authentication or verification is handled by the user
-and counted as intervention.
+package-scoped material and local state between packages. No shared browser
+profile, personal cookies, private account, or unapproved proxy may be used.
+Normal user authentication or verification is handled by the user and counted
+as intervention.
 
 ### Operator Run Sequence
 
@@ -214,21 +217,20 @@ The batch manifest records:
 - Host OS, architecture, Python/runtime versions, and installed native
   reading tools.
 - Inference server implementation/version, API protocol, server configuration
-  digest, tokenizer identity, quantization, and checkpoint revision/hash.
-  For the planned DeepSeek-V4.1-Flash-1017 run, record the exact served model
-  identifier and loaded checkpoint/revision; do not infer model identity from
-  a Claude Code model alias or a requested configuration value.
-- Envoy Release version, source commit, wheel SHA-256, Skill commit, and MCP
-  tool inventory for B.
+  digest, and gateway-reported model name. For this batch the accepted model
+  identity is `DeepSeek-V4.1-Flash`; checkpoint, tokenizer, and quantization
+  remain unknown absent authoritative evidence. A change to the reported model
+  name or gateway configuration digest starts a separate batch.
+- Envoy build channel, source commit, wheel SHA-256, Skill commit, and MCP
+  tool inventory for B. The approved first batch pins a source-built wheel
+  from `main`; it is not labeled or pooled as Release `v0.1.6`.
 - Cache policy, session-isolation procedure, network/proxy policy, concurrency,
   warm-up, task-order seed, and rubric version.
 
-For an official DeepSeek API run, record the exact API model identifier and
-provider-returned model field. For self-hosted weights, record the actual
-checkpoint revision/hash and serving stack rather than treating an API alias
-such as `deepseek-flash` as proof of the loaded local model version. A change
-to any of these identities starts a new batch; do not merge results across
-identities.
+For this self-hosted run, the model field in every request usage record must
+match `DeepSeek-V4.1-Flash`. The separate 2026-10-24 server calibration is
+isolation evidence only; its three request IDs and usage rows must not enter
+the formal benchmark ledger.
 
 ## Instrumentation
 
@@ -281,8 +283,13 @@ the main evaluator JSONL. A missing server row must not be turned into a
 zero-token observation.
 
 The run record must declare `cache_isolation_status` as
-`verified_disabled`, `verified_isolated`, `cache_confounded`, or `unknown`.
-Strict claims require one of the first two states. When the inference server
+`verified_disabled`, `verified_isolated`, `per_request_salt`,
+`verified_per_request_salt`, `cache_confounded`, or `unknown`. Strict claims
+require a verified state and a valid authoritative usage ledger.
+`per_request_salt` is a planned policy, not verification. For the verified
+`verified_per_request_salt` state, every request row must carry a unique `salt_sha256`
+and report zero `cache_read_input_tokens`; calibration calls do not substitute
+for formal-run request rows. When the inference server
 exposes cache accounting, each task records
 `usage_breakdown_status` and, when reported,
 `uncached_input_tokens`, `cache_read_input_tokens`, and
@@ -380,8 +387,11 @@ Envoy's tokenizer-independent estimate as actual model usage.
    task/request correlation, usage reconciliation, redaction, cache handling,
    and reproducible output generation. Pilot data is never combined with the
    confirmatory batch.
-2. **Product batch:** 100 multi-link packages / 300 scripted turns plus the
-   separate robustness set. Freeze manifests and rubrics before unblinding.
+2. **First fixed product batch:** 20 multi-link packages / 60 scripted turns
+   per arm (120 paired turn outcomes), plus an optional, separately reported
+   robustness set. Freeze manifests and rubrics before unblinding. A later
+   expansion to 100 packages is a separate batch, not pooled silently with
+   this first result.
 3. **QASPER calibration:** frozen 200-question subset, official evaluator,
    separately reported.
 4. **Claims review:** publish only metrics backed by complete paired records

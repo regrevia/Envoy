@@ -113,6 +113,31 @@ planning signal: it is true when the plan has at least 20 packages, 40 scripted
 turns, and 20 unique source IDs; it does not prove that sources were reachable
 or that either arm completed.
 
+The first approved fixed set uses exactly 20 packages (four in each of the
+Bilibili, Douyin, Xiaohongshu, WeChat, and cross-platform strata), three
+identical scripted turns per package, and at least 40 unique public URLs. Freeze
+the package manifest, exact turn text, source revisions, reference facts, and
+rubric before generating the randomized plan. Candidate URLs are not accepted
+sources until both arms' required access condition and source evidence have
+been revalidated. Do not replace an inaccessible URL after seeing an arm's
+result; record the failure in the assigned pair.
+
+For this experiment, the accepted model identity is the gateway-reported name
+`DeepSeek-V4.1-Flash`; checkpoint, tokenizer, and quantization are not claimed.
+Use B group built from the same frozen Envoy `main` commit as recorded in the
+run manifest, not the older `v0.1.6` Release. Keep that source-build batch
+separate from any later Release evaluation.
+
+The server calibration completed on 2026-10-24 is cache-isolation evidence
+only, not benchmark usage. To use `per_request_salt` for a formal
+plan, every formal `request_usage` row must include a SHA-256 of its per-request
+salt (never the raw salt), all hashes must be unique, and
+`cache_read_input_tokens` must be zero. The ledger validator enforces those
+conditions and reports its independent `cache_isolation_evidence.verified`
+result. If a request has no salt evidence, reuses a salt, or reports cache
+reads, classify the batch as `cache_confounded`; do not claim cold-cache
+isolation.
+
 Validate the redacted inference-server usage ledger before converting it into
 the evaluator's per-turn JSONL:
 

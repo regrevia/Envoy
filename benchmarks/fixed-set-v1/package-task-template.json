@@ -1,0 +1,29 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "template_only_not_frozen",
+  "package_id": "REPLACE_BEFORE_FREEZE",
+  "stratum": "bilibili|douyin|xiaohongshu|wechat|cross_platform",
+  "source_ids": [],
+  "source_revisions": {},
+  "deliverable": "A concise source-grounded brief with a claim-to-source locator table and explicit evidence gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only the supplied public sources, produce the package deliverable. Separate each factual claim from interpretation and cite the source plus an exact locator. State what the sources do not establish."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Re-check the evidence for the most important claims. Add any relevant located facts that were missed, and label unsupported or conflicting claims without guessing."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Revise the deliverable to include the additional source evidence, preserve exact locators, and list remaining coverage gaps. Reuse previously obtained evidence when possible; do not claim uninspected content."
+    }
+  ],
+  "reference_facts": [],
+  "expected_source_attribution": [],
+  "acceptable_partial_outcomes": [],
+  "frozen_at": null,
+  "manifest_sha256": null
+}

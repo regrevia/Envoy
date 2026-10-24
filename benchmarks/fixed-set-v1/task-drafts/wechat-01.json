@@ -1,0 +1,114 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "draft_reference_review_pending",
+  "package_id": "wechat-01",
+  "stratum": "wechat",
+  "source_ids": [
+    "wechat-params-basics",
+    "wechat-params-principles"
+  ],
+  "source_revisions": {
+    "wechat-params-basics": {
+      "url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
+      "sha256": "94f354535d3545b1a4429b7879520edb3387054e352075c8efe6a5e52976f53c"
+    },
+    "wechat-params-principles": {
+      "url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
+      "sha256": "7184e75e9d3d435e3f2b52f078100b1f8727c85da4c15959ff3ceda994891276c3"
+    }
+  },
+  "deliverable": "A source-grounded comparison of the two articles' explanations of LLM generation parameters, with a compact table, exact section locators, and explicit coverage gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two articles, compare how they describe temperature, top_p, frequency_penalty, presence_penalty, and max_tokens. Give the basic article's scenario examples and the principles article's mechanism explanations where present. Cite each claim by article title and section; distinguish what one article omits from what it contradicts."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on temperature and top_p. What ranges/defaults and scenario settings does the basics article give, and how does the principles article explain temperature's effect on logits and softmax? Keep source claims attributed; do not present them as universally correct API guidance."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Add the articles' descriptions of max_tokens and the two penalties. Explain what each article says about output length, repeated tokens, and repeated topics, cite the relevant headings, and list any gaps or inconsistencies between the articles."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "basics-customer-service-settings",
+      "claim": "The basics article recommends low temperature and top_p for customer service and gives example values of 0.2 and about 0.5, with a max_tokens example of 100.",
+      "source_id": "wechat-params-basics",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
+        "block_id": "blk-body-0001",
+        "section": "案例一：智能客服中的参数调优"
+      },
+      "adjudication_note": "Scores faithful reporting of the article, not whether these values are best practice."
+    },
+    {
+      "fact_id": "basics-creative-settings",
+      "claim": "The basics article gives higher temperature and top_p examples, approximately 0.8 and 0.9, for creative writing.",
+      "source_id": "wechat-params-basics",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
+        "block_id": "blk-body-0001",
+        "section": "案例二：内容创作中的参数调优"
+      },
+      "adjudication_note": "Scores source attribution and numeric fidelity; do not endorse as universal settings."
+    },
+    {
+      "fact_id": "basics-temperature-top-p-ranges",
+      "claim": "The basics article states a temperature range of 0 to 2 with default 1 and a top_p range of 0 to 1 with default 1.",
+      "source_id": "wechat-params-basics",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
+        "block_id": "blk-body-0001",
+        "section": "三、核心参数讲解"
+      },
+      "adjudication_note": "Treat as a claim made by the article, not provider-independent API truth."
+    },
+    {
+      "fact_id": "principles-temperature-softmax",
+      "claim": "The principles article explains temperature as scaling logits before softmax, making the resulting distribution sharper at lower values and flatter at higher values.",
+      "source_id": "wechat-params-principles",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
+        "block_id": "blk-body-0001",
+        "section": "2.1 temperature"
+      },
+      "adjudication_note": "The gold fact is the article's stated mechanism."
+    },
+    {
+      "fact_id": "principles-max-tokens",
+      "claim": "The principles article describes max_tokens as a generation-step limit that can stop output early and cause truncation without changing the per-step probability distribution.",
+      "source_id": "wechat-params-principles",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
+        "block_id": "blk-body-0001",
+        "section": "2.5 max_tokens"
+      },
+      "adjudication_note": "Do not conflate the article's terminology with every provider's implementation."
+    },
+    {
+      "fact_id": "principles-penalty-distinction",
+      "claim": "The principles article distinguishes frequency_penalty as proportional to a token's prior count and presence_penalty as a fixed penalty triggered when a token has appeared at least once.",
+      "source_id": "wechat-params-principles",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
+        "block_id": "blk-body-0001",
+        "section": "2.2 frequency_penalty and 2.3 presence_penalty"
+      },
+      "adjudication_note": "Score the distinction and attribution, not external technical correctness."
+    }
+  ],
+  "expected_source_attribution": [
+    "wechat-params-basics",
+    "wechat-params-principles"
+  ],
+  "acceptable_partial_outcomes": [
+    "The articles differ in scope; do not invent a mechanism explanation where only the basics article gives a scenario recommendation.",
+    "Some image diagrams were not returned; answers must not claim to have inspected them."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null
+}

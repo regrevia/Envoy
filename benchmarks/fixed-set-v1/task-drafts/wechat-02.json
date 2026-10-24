@@ -1,0 +1,114 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "draft_reference_review_pending",
+  "package_id": "wechat-02",
+  "stratum": "wechat",
+  "source_ids": [
+    "wechat-transformer-overview",
+    "wechat-deepseek-mla"
+  ],
+  "source_revisions": {
+    "wechat-transformer-overview": {
+      "url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
+      "sha256": "61618408aaa5425a346044400721f939606363f1ff78237187becf4292c78b12"
+    },
+    "wechat-deepseek-mla": {
+      "url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
+      "sha256": "73e6c2720fb14be8a9a9beb18c28b8f942ddd90e05659101b0825cff76f7597b"
+    }
+  },
+  "deliverable": "A source-grounded comparison of the Transformer overview and DeepSeek MLA explainer, with a concept map, source locators, and explicit text/image coverage gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two articles, explain how they describe attention and Transformer components. Then summarize the MLA article's progression from MHA through MQA/GQA to MLA and identify which details are not established by the returned text. Attribute every claim to a source and section."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Compare the overview article's encoder/decoder and self-attention descriptions with the MLA article's account of MHA, MQA, and GQA. Give the stated trade-offs and cite the section headings; do not fill gaps from memory."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Explain what the MLA article says about KV Cache and RoPE, and contrast that with the overview article's training/inference description. Note when equations or diagrams were not returned and avoid claiming to have inspected unseen images."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "transformer-overview-encoder-decoder",
+      "claim": "The overview article describes Transformer as using encoder and decoder stacks with embedding layers and an output layer, and says corresponding layers share architecture but not weights.",
+      "source_id": "wechat-transformer-overview",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
+        "block_id": "blk-body-0001",
+        "section": "1 什么是 transformer"
+      },
+      "adjudication_note": "Score attribution to this article's text, not external validation of the architecture description."
+    },
+    {
+      "fact_id": "transformer-overview-self-attention",
+      "claim": "The overview article presents self-attention as relating each input token to other tokens to help resolve context-dependent references.",
+      "source_id": "wechat-transformer-overview",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
+        "block_id": "blk-body-0001",
+        "section": "2 注意力机制的作用是什么？"
+      },
+      "adjudication_note": "The examples involving “it” are source examples; the rubric scores faithful summary."
+    },
+    {
+      "fact_id": "transformer-overview-rnn-tradeoff",
+      "claim": "The overview article contrasts Transformer with RNNs by citing long-distance dependency handling and sequential computation as RNN limitations.",
+      "source_id": "wechat-transformer-overview",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
+        "block_id": "blk-body-0001-range-3275",
+        "section": "8 transformer 比 RNN 强在哪里？"
+      },
+      "adjudication_note": "This locator is from the resumed text range."
+    },
+    {
+      "fact_id": "mla-mha-mqa-gqa",
+      "claim": "The MLA article describes MHA as having multiple query/key/value heads, MQA as sharing one key/value set, and GQA as sharing key/value sets within groups.",
+      "source_id": "wechat-deepseek-mla",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
+        "block_id": "blk-body-0001",
+        "section": "一，多头注意力机制MHA and 三，MQA，GQA：多头注意力机制的降本增效"
+      },
+      "adjudication_note": "Score that the response reports distinctions made by the article."
+    },
+    {
+      "fact_id": "mla-kv-cache-latent",
+      "claim": "The MLA article frames MLA as reducing cached key/value storage by caching a compressed latent representation, while addressing the risk of reconstructing full values during inference.",
+      "source_id": "wechat-deepseek-mla",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
+        "block_id": "blk-body-0001",
+        "section": "四，MLA：山穷水尽疑无路，柳暗花明又一村"
+      },
+      "adjudication_note": "Detailed equations and image diagrams were not returned; only assess the text summary."
+    },
+    {
+      "fact_id": "mla-rope-special-dimensions",
+      "claim": "The MLA article says its described solution adds separate dimensions for positional information in Q and K to handle RoPE compatibility.",
+      "source_id": "wechat-deepseek-mla",
+      "locator": {
+        "source_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
+        "block_id": "blk-body-0001",
+        "section": "4.2.2 MLA和RoPE位置编码不兼容"
+      },
+      "adjudication_note": "This is a claim in the article; unseen formula images are outside the gold evidence."
+    }
+  ],
+  "expected_source_attribution": [
+    "wechat-transformer-overview",
+    "wechat-deepseek-mla"
+  ],
+  "acceptable_partial_outcomes": [
+    "Some article diagrams and equations are images not delivered as text; do not infer their contents.",
+    "Preserve differences in scope between an overview article and a specialized MLA article."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null
+}

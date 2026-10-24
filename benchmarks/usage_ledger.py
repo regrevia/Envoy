@@ -51,6 +51,7 @@ OPTIONAL_REQUEST_FIELDS = {
     "uncached_input_tokens",
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
+    "salt_sha256",
     "server_cost",
     "server_cost_currency",
 }
@@ -158,6 +159,11 @@ def aggregate_ledger(
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     turn_summaries: dict[tuple[str, str, str], dict[str, Any]] = {}
     provider_model: set[tuple[str, str]] = set()
+    salt_hashes: dict[str, str] = {}
+    salt_isolation_requested = plan.get("cache_isolation_status") in {
+        "per_request_salt",
+        "verified_per_request_salt",
+    }
 
     for line_number, record in enumerate(records, 1):
         if not isinstance(record, dict):
@@ -238,6 +244,22 @@ def aggregate_ledger(
         if not request_id or request_id in seen_request_ids:
             errors.append(f"line {line_number}: duplicate or empty server_request_id")
         seen_request_ids.add(request_id)
+        if "salt_sha256" in record:
+            salt_hash = record["salt_sha256"]
+            if (
+                not isinstance(salt_hash, str)
+                or len(salt_hash) != 64
+                or any(char not in "0123456789abcdef" for char in salt_hash.lower())
+            ):
+                errors.append(
+                    f"line {line_number}: salt_sha256 must be a SHA-256 hex digest"
+                )
+            else:
+                salt_hashes[request_id] = salt_hash.lower()
+        elif salt_isolation_requested:
+            errors.append(
+                f"line {line_number}: verified_per_request_salt requires salt_sha256 for every request"
+            )
         key = (
             str(record["package_id"]),
             str(record["arm"]),
@@ -273,6 +295,10 @@ def aggregate_ledger(
                     _non_negative(record[field], field)
                 except ValueError as exc:
                     errors.append(f"line {line_number}: {exc}")
+        if salt_isolation_requested and record.get("cache_read_input_tokens") != 0:
+            errors.append(
+                f"line {line_number}: verified_per_request_salt requires cache_read_input_tokens to be zero"
+            )
         if "server_cost" in record:
             cost = record["server_cost"]
             if isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0:
@@ -326,6 +352,24 @@ def aggregate_ledger(
         )
     if len(provider_model) > 1:
         errors.append("provider/model identity changed within usage ledger")
+    unique_salts = len(set(salt_hashes.values()))
+    cache_read_tokens = sum(
+        row.get("cache_read_input_tokens", 0)
+        for rows in grouped.values()
+        for row in rows
+        if isinstance(row.get("cache_read_input_tokens"), int)
+        and not isinstance(row.get("cache_read_input_tokens"), bool)
+    )
+    cache_read_count_complete = len(salt_hashes) == len(seen_request_ids) and all(
+        isinstance(row.get("cache_read_input_tokens"), int)
+        and not isinstance(row.get("cache_read_input_tokens"), bool)
+        for rows in grouped.values()
+        for row in rows
+    )
+    if salt_isolation_requested and unique_salts != len(salt_hashes):
+        errors.append(
+            "verified_per_request_salt requires salt_sha256 values to be unique"
+        )
 
     turns = []
     turns_by_package_role: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -375,8 +419,8 @@ def aggregate_ledger(
             "server_request_count": len(rows),
             "provider": rows[0]["provider"] if rows else None,
             "model": rows[0]["model"] if rows else None,
-            "started_at": first.isoformat() if first else None,
-            "completed_at": last.isoformat() if last else None,
+            "first_request_at": first.isoformat() if first else None,
+            "last_request_at": last.isoformat() if last else None,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "usage_status": usage_status,
@@ -500,11 +544,49 @@ def aggregate_ledger(
             })
         paired_usage_rows.append(row)
 
+    cache_isolation_verified = plan.get("cache_isolation_status") in {
+        "verified_disabled",
+        "verified_isolated",
+    } or (
+        salt_isolation_requested
+        and len(seen_request_ids) > 0
+        and len(salt_hashes) == len(seen_request_ids)
+        and unique_salts == len(seen_request_ids)
+        and cache_read_count_complete
+        and cache_read_tokens == 0
+        and all(
+            row.get("cache_read_input_tokens") == 0
+            for rows in grouped.values()
+            for row in rows
+        )
+        and not errors
+    )
     return {
         "schema_version": "envoy.usage-ledger-report/1",
         "run_id": plan.get("run_id"),
         "plan_schema_version": plan.get("schema_version"),
-        "cache_isolation_status": plan.get("cache_isolation_status", "unknown"),
+        "cache_isolation_status": (
+            "verified_per_request_salt"
+            if salt_isolation_requested and cache_isolation_verified
+            else "cache_confounded"
+            if salt_isolation_requested
+            else plan.get("cache_isolation_status", "unknown")
+        ),
+        "cache_isolation_evidence": {
+            "status": (
+                "verified_per_request_salt"
+                if salt_isolation_requested and cache_isolation_verified
+                else "cache_confounded"
+                if salt_isolation_requested
+                else plan.get("cache_isolation_status", "unknown")
+            ),
+            "verified": cache_isolation_verified,
+            "server_request_count": len(seen_request_ids),
+            "salt_hash_count": len(salt_hashes),
+            "unique_salt_hash_count": unique_salts,
+            "cache_read_input_tokens": cache_read_tokens,
+            "cache_read_count_complete": cache_read_count_complete,
+        },
         "planned_turn_count": len(expected),
         "observed_turn_count": len(seen_turns),
         "missing_turn_count": len(missing_turns),
