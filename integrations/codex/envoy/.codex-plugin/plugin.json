@@ -2,6 +2,7 @@
   "name": "envoy",
   "version": "0.1.6",
   "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
+  "skills": "./skills/",
   "author": {
     "name": "regrevia",
     "url": "https://github.com/regrevia"
