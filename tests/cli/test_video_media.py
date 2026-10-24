@@ -95,6 +95,92 @@ def test_audio_download_uses_cookie_free_bounded_yt_dlp_options(tmp_path, monkey
     assert "cookiesfrombrowser" not in captured
 
 
+def test_audio_download_pins_yt_dlp_to_a_direct_connection_by_default(tmp_path, monkeypatch):
+    from envoy_cli import media
+
+    captured = {}
+
+    class FakeYDL:
+        def __init__(self, options):
+            captured.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            path = tmp_path / "audio.m4a"
+            path.write_bytes(b"audio")
+            return {
+                "id": "sample",
+                "title": "Sample",
+                "duration": 30,
+                "requested_downloads": [{"filepath": str(path)}],
+            }
+
+    monkeypatch.setattr(media, "_load_yt_dlp", lambda: FakeYDL)
+    monkeypatch.setattr(media, "version", lambda _name: "2026.8.19")
+    monkeypatch.setattr(media, "proxy_plan", lambda: [None])
+    _run_ytdlp_inline(monkeypatch, media)
+
+    media.download_audio_for_asr(
+        "https://video.example/watch/1",
+        tmp_path,
+        max_download_bytes=1024,
+        max_work_seconds=30,
+    )
+
+    assert captured["proxy"] == ""
+
+
+def test_audio_download_retries_through_the_detected_proxy_after_a_direct_failure(
+    tmp_path, monkeypatch
+):
+    from envoy_cli import media
+
+    proxies = []
+
+    class FlakyYDL:
+        def __init__(self, options):
+            proxies.append(options["proxy"])
+            self.failing = options["proxy"] == ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, download):
+            if self.failing:
+                raise OSError("handshake timed out")
+            path = tmp_path / "audio.m4a"
+            path.write_bytes(b"audio")
+            return {
+                "id": "sample",
+                "title": "Sample",
+                "duration": 30,
+                "requested_downloads": [{"filepath": str(path)}],
+            }
+
+    monkeypatch.setattr(media, "_load_yt_dlp", lambda: FlakyYDL)
+    monkeypatch.setattr(media, "version", lambda _name: "2026.8.19")
+    monkeypatch.setattr(media, "proxy_plan", lambda: [None, "http://127.0.0.1:7897"])
+    _run_ytdlp_inline(monkeypatch, media)
+
+    result = media.download_audio_for_asr(
+        "https://video.example/watch/1",
+        tmp_path,
+        max_download_bytes=1024,
+        max_work_seconds=30,
+    )
+
+    assert proxies == ["", "http://127.0.0.1:7897"]
+    assert result["path"] == str(tmp_path / "audio.m4a")
+
+
 def test_audio_download_raises_socket_timeout_for_longer_work_budget(tmp_path, monkeypatch):
     import socket
     from envoy_cli import media

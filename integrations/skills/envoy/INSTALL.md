@@ -298,10 +298,12 @@ Video downloads enforce byte budgets. Elapsed-work limits are checked between
 extractor stages and during transfers; a site metadata request may last up to
 its bounded socket timeout. Envoy does not read browser cookies or bypass login,
 CAPTCHA, or anti-bot challenges. Direct media may still be rejected by its host
-or access policy. Chromium and yt-dlp use the system HTTP(S) proxy when present;
-set `ENVOY_BROWSER_PROXY` to an unauthenticated proxy URL to override Chromium's
-proxy selection. Proxy credentials are not passed in browser command-line
-arguments.
+or access policy. Every outbound path — HTTP read, Chromium, and yt-dlp media
+download — connects **directly first**; a system or environment proxy is only an
+automatic fallback after a direct attempt fails, so a proxy never silently
+changes what a source returns. Set `ENVOY_BROWSER_PROXY` to an unauthenticated
+proxy URL to pin that proxy, or to `none`/`off` to forbid proxying entirely.
+Proxy credentials are not passed in browser command-line arguments.
 Only use configured or user-approved trusted proxies. Never search for or use
 public proxy lists. A 404 alone does not establish deletion, region blocking,
 or a proxy problem: ask whether the user can open the link, then diagnose.
