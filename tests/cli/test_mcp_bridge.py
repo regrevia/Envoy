@@ -14,8 +14,11 @@ for path in (
         sys.path.insert(0, str(path))
 
 
-def test_mcp_bridge_initialize_and_list_tools(capsys):
+def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
 
     exit_code = mcp.run_lines([
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
@@ -96,7 +99,8 @@ def test_unknown_tool_is_distinct_from_hidden_tool(capsys):
                 "method": "tools/call",
                 "params": {"name": "envoy_nope", "arguments": {}},
             },
-        ]
+        ],
+        toolset="full",
     )
 
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
@@ -112,6 +116,8 @@ def test_mcp_toolset_normalization_and_errors(monkeypatch):
     from envoy_cli import mcp
 
     assert mcp.normalize_toolset(" CORE ") == "core"
+    assert mcp.normalize_toolset(None) == "core"
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
     assert mcp.normalize_toolset(None) == "full"
     monkeypatch.setenv(mcp.TOOLSET_ENV, "core")
     assert mcp.normalize_toolset(None) == "core"
@@ -126,6 +132,9 @@ def test_mcp_toolset_normalization_and_errors(monkeypatch):
 
 def test_mcp_replay_dispatches_bounded_request_to_new_session(monkeypatch, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
     from envoy_core.schemas.read_v1 import ExecutionState, ReadResponse, ReadResult
 
     observed = {}
@@ -170,6 +179,9 @@ def test_mcp_replay_dispatches_bounded_request_to_new_session(monkeypatch, capsy
 
 def test_mcp_local_video_read_forwards_selected_path_and_goal(monkeypatch, tmp_path, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
     from envoy_core.schemas.read_v1 import (
         ExecutionState,
         ReadResponse,
@@ -222,6 +234,9 @@ def test_mcp_local_video_read_forwards_selected_path_and_goal(monkeypatch, tmp_p
 
 def test_mcp_collection_checkpoint_create_update_and_get(tmp_path, monkeypatch, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     mcp.run_lines([
@@ -300,6 +315,9 @@ def test_mcp_collection_checkpoint_create_update_and_get(tmp_path, monkeypatch, 
 
 def test_mcp_discover_forwards_bounded_request(monkeypatch, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
 
     monkeypatch.setattr(mcp, "discover_profile", lambda url, **kwargs: {
         "profile_url": url,
@@ -554,6 +572,9 @@ def test_mcp_bridge_redacts_visual_observation_source_query(capsys):
 def test_mcp_bridge_reads_persisted_visual_observations_with_budget(tmp_path, monkeypatch, capsys):
     from envoy_cli import mcp, reader
 
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     material_id = "mat-" + "f" * 24
     reader._store_material(material_id, {
@@ -798,8 +819,11 @@ def test_mcp_bridge_discovery_advertises_modern_protocol(capsys):
     assert response["result"]["cacheScope"] == "public"
 
 
-def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys):
+def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(monkeypatch, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
 
     metadata = {
         "_meta": {
@@ -889,8 +913,11 @@ def test_mcp_bridge_modern_tool_call_returns_complete_structured_result(monkeypa
     assert len(paragraph["locator"]["quote"]) <= 120
 
 
-def test_mcp_bridge_modern_doctor_uses_short_status_text(capsys):
+def test_mcp_bridge_modern_doctor_uses_short_status_text(monkeypatch, capsys):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
 
     mcp.run_lines([{
         "jsonrpc": "2.0",
@@ -1016,6 +1043,9 @@ def test_unexpected_tool_failure_returns_internal_error_and_keeps_stream_alive(
     monkeypatch,
 ):
     from envoy_cli import mcp
+
+    # These cover advanced tools, which the bounded toolset hides.
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
 
     monkeypatch.setattr(
         mcp,

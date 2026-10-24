@@ -381,7 +381,7 @@ TOOLS = [
 # links should not pay for local-video, collection, replay, or diagnostics
 # schemas. The toolset is fixed at process startup: changing tools/list
 # mid-session invalidates prompt-cache reuse.
-DEFAULT_TOOLSET = "full"
+DEFAULT_TOOLSET = "core"
 TOOLSET_ENV = "ENVOY_MCP_TOOLSET"
 TOOLSETS: dict[str, tuple[str, ...]] = {
     "core": (

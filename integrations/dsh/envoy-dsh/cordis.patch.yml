@@ -1,9 +1,10 @@
 # DeepSeek Harness bundle for Envoy.
 #
-# The first row mounts Envoy's stdio MCP bridge. It starts with the `core`
-# toolset so ordinary sessions do not pay for local-video, collection, replay,
-# or diagnostics schemas; switch to `--toolset full` when those tools are
-# needed. The shell launcher supplies the common uv/Homebrew PATH entries
+# The first row mounts Envoy's stdio MCP bridge. It starts with no toolset
+# flag, so the `core` default applies and ordinary sessions do not pay for
+# local-video, collection, replay, or diagnostics schemas; export
+# `ENVOY_MCP_TOOLSET=full` before Harness starts when those tools are needed.
+# The shell launcher supplies the common uv/Homebrew PATH entries
 # because the Harness GUI is not started from a login shell and may not inherit
 # the terminal PATH. Users who installed Envoy elsewhere should replace `envoy`
 # in the last argument with an absolute path.
@@ -21,7 +22,7 @@
           - -c
           - >-
             PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH";
-            export PATH; exec envoy mcp --toolset core
+            export PATH; exec envoy mcp
         toolCallTimeoutMs: 300000
         failOnStartupError: true
 

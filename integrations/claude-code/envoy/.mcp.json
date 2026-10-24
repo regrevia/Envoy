@@ -2,7 +2,9 @@
   "mcpServers": {
     "envoy": {
       "command": "envoy",
-      "args": ["mcp", "--toolset", "core"]
+      "args": [
+        "mcp"
+      ]
     }
   }
 }

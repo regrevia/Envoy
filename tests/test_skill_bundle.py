@@ -37,7 +37,7 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         manifest = json.loads(archive.read("envoy-skill.json"))
         assert manifest["protocol"] == "envoy.read/1"
         assert manifest["installation"] == "INSTALL.md"
-        assert manifest["mcp"]["args"] == ["mcp", "--toolset", "core"]
+        assert manifest["mcp"]["args"] == ["mcp"]
         assert b"API Key" not in archive.read("SKILL.md")
         install = archive.read("INSTALL.md")
         assert b"GitHub Release" in install
@@ -66,11 +66,7 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
         assert b"ocr_profile" in skill
         assert b"Album totals may be unknown" in skill
         host_config = json.loads(archive.read("hosts/mcp.json"))
-        assert host_config["mcpServers"]["envoy"]["args"] == [
-            "mcp",
-            "--toolset",
-            "core",
-        ]
+        assert host_config["mcpServers"]["envoy"]["args"] == ["mcp"]
 
 
 def test_skill_bundle_is_deterministic_for_same_sources(tmp_path):
