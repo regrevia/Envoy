@@ -24,6 +24,10 @@ knowledge-base entry from what was actually said, not from the title. Articles,
 PDFs, and audio links take the same path. For a whole feed, `envoy collect`
 checkpoints every item, so an interrupted run resumes instead of restarting.
 
+The same Envoy skill ships for Codex and Claude Code; this package is the
+DeepSeek Harness build, and the deliverables are the same Markdown, wiki, or
+knowledge-base material on all three hosts.
+
 ## Requirements
 
 - DeepSeek Harness Desktop with the Plugin Manager.
