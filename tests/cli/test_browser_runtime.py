@@ -375,6 +375,7 @@ def test_access_challenge_escalates_to_visible_profile_and_resumes(tmp_path):
         playwright_factory=lambda: FakePlaywrightManager(chromium),
         on_user_action=requests.append,
         max_work_seconds=5,
+        allow_visible=True,
     )
 
     assert result.text == "岗位：AI 产品经理。公司：示例科技。工作地点：深圳。"
@@ -398,10 +399,28 @@ def test_unresolved_challenge_fails_closed_after_visible_browser_timeout(tmp_pat
             profile_dir=tmp_path / "profile",
             playwright_factory=lambda: FakePlaywrightManager(chromium),
             max_work_seconds=1,
+            allow_visible=True,
         )
 
     assert [launch[1]["headless"] for launch in chromium.launches] == [True, False]
     assert all(context.closed for context, _kwargs in chromium.launches)
+
+
+def test_challenge_stays_headless_unless_visible_mode_is_opted_in(tmp_path):
+    chromium = FakeChromium("安全验证，请完成登录后继续。")
+    requests = []
+
+    with pytest.raises(browser.BrowserChallengeRequired, match="does not open a window"):
+        browser.read_page(
+            "https://example.org/article",
+            profile_dir=tmp_path / "profile",
+            playwright_factory=lambda: FakePlaywrightManager(chromium),
+            on_user_action=requests.append,
+            max_work_seconds=5,
+        )
+
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+    assert requests == []
 
 
 @pytest.mark.parametrize(
@@ -851,6 +870,111 @@ def test_browser_video_evidence_does_not_process_unbound_captured_media(monkeypa
     assert response.result == ReadResult.PARTIAL
     assert video.extraction == "partial"
     assert "could not be associated with the requested post" in " ".join(video.unresolved)
+
+
+def test_browser_video_evidence_groups_mirror_sources_of_one_file(monkeypatch, tmp_path):
+    mirror_a = "https://v95-web-sz.douyinvod.com/aaa/video/tos/cn/clip.mp4"
+    mirror_b = "https://v11-weba.douyinvod.com/bbb/video/tos/cn/clip.mp4"
+    play_endpoint = "https://www.douyin.com/aweme/v1/play/?aid=6383&biz_sign=zz"
+    another_clip = "https://v11-weba.douyinvod.com/bbb/video/tos/cn/other.mp4"
+    identities = {
+        mirror_a: ("clip-digest", "video/mp4"),
+        mirror_b: ("clip-digest", "video/mp4"),
+        play_endpoint: ("clip-digest", "video/mp4"),
+        another_clip: ("other-digest", "video/mp4"),
+    }
+    source_url = "https://www.douyin.com/video/7682646844794539298"
+    video_path = tmp_path / "download.mp4"
+    video_path.write_bytes(b"video")
+    downloaded: list[str] = []
+
+    def fake_download(url, *_args, **_kwargs):
+        downloaded.append(url)
+        return {"path": str(video_path), "duration": 72, "downloaded_bytes": 5, "elapsed_ms": 1}
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_probe_page_media", lambda url, _cache: identities.get(url))
+    monkeypatch.setattr(reader, "download_video_for_frames", fake_download)
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": False,
+        "asr_model_available": False,
+        "asr_model": "base",
+    })
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader._attach_browser_video_evidence(
+        ReadRequest.model_validate({
+            "request_id": "browser-video-mirrors",
+            "source": {"url": source_url, "kind": "video"},
+        }),
+        source_url,
+        [another_clip],
+        ReadResponse(
+            request_id="browser-video-mirrors",
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        ),
+        bound_media_urls=[mirror_a, mirror_b, play_endpoint],
+    )
+
+    assert downloaded == [mirror_a]
+    assert response.coverage.modalities["video"].extraction == "partial"
+    assert "no unique page video URL" not in " ".join(
+        response.coverage.modalities["video"].unresolved
+    )
+
+
+def test_browser_video_evidence_reads_the_page_source_past_mse_and_ui_assets(monkeypatch, tmp_path):
+    """Douyin exposes a blob: MSE source beside the signed <source> URL.
+
+    Counting the blob: entry as a competing candidate, or letting a captured
+    UI asset outvote the page player, hid the only URL that can be fetched.
+    """
+
+    source_url = "https://www.douyin.com/video/7682646844794539298"
+    signed_url = "https://v11-weba.douyinvod.com/aaa/bbb/video/tos/cn/obj/?token=secret"
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-mse-source",
+        "source": {"url": source_url, "kind": "video"},
+    })
+    video_path = tmp_path / "download.mp4"
+    video_path.write_bytes(b"video")
+    downloaded: list[str] = []
+
+    def fake_download(url, *_args, **_kwargs):
+        downloaded.append(url)
+        return {"path": str(video_path), "duration": 72, "downloaded_bytes": 5, "elapsed_ms": 1}
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", fake_download)
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": False,
+        "asr_model_available": False,
+        "asr_model": "base",
+    })
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader._attach_browser_video_evidence(
+        request,
+        source_url,
+        ["https://lf-douyin-pc-web.douyinstatic.com/obj/douyin-pc-web/uuu_265.mp4"],
+        ReadResponse(
+            request_id=request.request_id,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        ),
+        bound_media_urls=[
+            "blob:https://www.douyin.com/12654a98-5ab8-4441-a59d-9e0a2d329c69",
+            signed_url,
+        ],
+    )
+
+    assert downloaded == [signed_url]
+    video = response.coverage.modalities["video"]
+    assert video.details["transcript_source"] == "unavailable"
+    assert "rejected_media_candidates" not in video.details
+    serialized = response.model_dump_json()
+    assert signed_url not in serialized
 
 
 def test_browser_video_evidence_respects_include_visual_false(monkeypatch, tmp_path):

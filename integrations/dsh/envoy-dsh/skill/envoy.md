@@ -287,13 +287,22 @@ Public pages load headlessly. Before classifying a login prompt as a real
 challenge, Envoy tries to dismiss a dismissible login dialog without showing
 a browser window, including dialogs inside embedded frames, then checks whether
 the underlying page is readable. This check repeats after scrolling and lazy
-loading. The browser window is shown only when the page still requires a user login or
-verification action. Envoy waits for the user, then
-the same operation resumes if verification completes before the request's
-`max_work_seconds` budget expires (180 seconds by default). If the budget
-expires first, Envoy returns `challenge_required` instead of `empty_content`;
-retry the same link to reopen the same local isolated profile and continue the
-normal verification there. No host browser automation tool is required.
+loading, and a dismissible dialog is cleared before the page is judged, so its
+own wording (for example a `验证码登录` tab) is never mistaken for a captcha.
+Reading stays headless and silent: nothing is shown on screen and no user
+action is requested. A page that genuinely needs a login or verification
+action returns `challenge_required`; Envoy does not open a window unless
+visible browser mode is explicitly enabled with `ENVOY_VISIBLE_BROWSER=1`, and
+only then does it wait for the user before resuming within the request's
+`max_work_seconds` budget (180 seconds by default). No host browser automation
+tool is required.
+
+Feed pages such as Douyin reveal their player once a login dialog is dismissed:
+the element first exposes only a `blob:` MSE source, or none at all. Envoy
+waits briefly for a real HTTP source, ignores `blob:`/`data:` player internals,
+and groups the player's mirror URLs (a signed CDN link plus an `aweme/v1/play`
+redirect) by probing the first bytes of each file, so one post yields one
+downloadable video rather than an ambiguous or rejected candidate set.
 
 The isolated browser waits for dynamic content, scrolls the page, and clicks
 ordinary page controls such as “展开”, “阅读全文”, or “继续阅读”. It also

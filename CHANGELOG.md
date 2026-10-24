@@ -4,6 +4,17 @@
 
 ### 中文
 
+- 隔离浏览器改为**默认全程静默**：登录浮层先被关闭再判定页面状态，浮层自身文案
+  （如「验证码登录」）不再被误判成安全验证；确实需要人工验证时返回
+  `challenge_required`，不再自动弹窗。只有显式设置 `ENVOY_VISIBLE_BROWSER=1`
+  才启用可见浏览器回退。
+- 修复抖音类 feed 页拿不到原片：播放器起步只有 `blob:` MSE 源甚至没有源，Envoy
+  现在会短暂等待真实 HTTP 片源出现（已播放的 MSE 页面立即返回），忽略
+  `blob:`/`data:` 播放器内部地址，并用每个候选前 64 KiB 的 sha256 指纹把同一文件的
+  镜像地址（签名 CDN + `aweme/v1/play` 跳转）归并成一个下载目标，不再把多候选
+  整体拒绝或误判为“没有唯一的页面视频地址”。真机验证：抖音单条视频静默取回
+  7.0 MB 原片、216 秒时长、109 段中文 ASR 与 12 个章节，全程无窗口、无人工介入。
+
 - 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
   `envoy mcp`（默认 `core`）、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；
   保留原有读取、发现、续读和视觉交接能力；高级工具可用 `ENVOY_MCP_TOOLSET=full` 开启。
@@ -46,6 +57,22 @@
   `list_mcp_resources` 为空是设计如此，物料只经 structuredContent 下发。
 
 ### English
+
+- Reading in the isolated browser is now **silent by default**: a dismissible
+  login dialog is cleared before the page state is judged, so the dialog's own
+  wording (for example a `验证码登录` tab) is no longer mistaken for a captcha.
+  A page that genuinely needs verification returns `challenge_required`
+  instead of opening a window; visible browser mode now requires
+  `ENVOY_VISIBLE_BROWSER=1`.
+- Fix original-video capture on feed pages such as Douyin: the player may start
+  with only a `blob:` MSE source or none at all. Envoy now waits briefly for a
+  real HTTP source (returning immediately when the page is already playing
+  MSE), ignores `blob:`/`data:` player internals, and groups mirror URLs of one
+  file (a signed CDN link plus an `aweme/v1/play` redirect) by the sha256 of
+  their first 64 KiB, so one post yields one download target instead of a
+  rejected multi-candidate or ambiguous set. Verified against the live site:
+  one Douyin post returned a 7.0 MB source file, 216 seconds of duration, 109
+  Chinese ASR segments, and 12 chapters with no window and no user action.
 
 - Route media downloads (yt-dlp) through the same outbound policy as page reads
   and Chromium: connect directly by default and fall back to a proxy only after

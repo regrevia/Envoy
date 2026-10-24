@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "scripts" / "build_envoy_cli_wheel.py"
-PACKAGE_VERSION = "0.1.7"
+PACKAGE_VERSION = "0.1.8"
 
 
 def test_distributed_license_files_match_canonical_repository_notices():

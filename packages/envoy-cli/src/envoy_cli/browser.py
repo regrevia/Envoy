@@ -358,6 +358,52 @@ def _load_visible_content(page) -> tuple[str, str]:
     return title, text
 
 
+def _visible_browser_allowed(override: bool | None) -> bool:
+    """Visible browser mode is opt-in: silent headless reading is the default."""
+
+    if override is not None:
+        return bool(override)
+    return os.environ.get("ENVOY_VISIBLE_BROWSER", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _is_http_media_url(value: str) -> bool:
+    return str(value or "").strip().lower().startswith(("http://", "https://"))
+
+
+def _await_page_video_url(page, timeout_seconds: float = 4.0) -> list[str]:
+    """Give a lazy player a bounded chance to publish a real media URL.
+
+    Feed pages reveal the player when a login overlay goes away: the element
+    first appears with an empty ``src`` (or an MSE ``blob:`` source) and only
+    binds the signed CDN URL once it starts loading. Waiting on an unstarted
+    element is cheap; waiting on one that is already playing (bilibili-style
+    MSE, which keeps ``blob:`` forever) is not, so a playing element returns
+    immediately.
+    """
+
+    deadline = time.monotonic() + max(float(timeout_seconds), 0.0)
+    while True:
+        urls = [url for url in _page_video_urls(page) if _is_http_media_url(url)]
+        if urls:
+            return urls
+        try:
+            stalled = bool(page.evaluate(
+                """() => [...document.querySelectorAll('video')].some(node =>
+                     Number(node.readyState || 0) < 2 || Number(node.currentTime || 0) <= 0)"""
+            ))
+        except Exception:
+            return []
+        if not stalled or time.monotonic() >= deadline:
+            return []
+        _dismiss_login_overlays(page)
+        page.wait_for_timeout(300)
+
+
 def _capture(page, source_url: str) -> BrowserPage:
     title, text = _load_visible_content(page)
     try:
@@ -365,6 +411,10 @@ def _capture(page, source_url: str) -> BrowserPage:
     except Exception as exc:
         raise BrowserReadError(f"Could not capture the visible page ({type(exc).__name__})") from exc
     page_video_urls = tuple(_page_video_urls(page))
+    if not any(_is_http_media_url(url) for url in page_video_urls):
+        # A player that is still hidden or loading has no downloadable source
+        # yet; without this window the capture records `blob:` internals only.
+        page_video_urls = tuple(_await_page_video_url(page) or page_video_urls)
     media_urls = tuple(dict.fromkeys([*page_video_urls, *_captured_media_urls(page)]))
     return BrowserPage(
         url=str(page.url or source_url),
@@ -413,6 +463,7 @@ def read_page(
     playwright_factory=None,
     on_user_action: Callable[[str], None] | None = None,
     only_proxy: bool = False,
+    allow_visible: bool | None = None,
 ) -> BrowserPage:
     try:
         if playwright_factory is None:
@@ -484,6 +535,10 @@ def read_page(
                 _install_media_capture(page)
                 _navigate(context, page, source_url, dns_cache, timeout_ms)
                 _load_visible_content(page)
+                # A login dialog carries text such as `验证码登录`; leaving it in
+                # the DOM made a dismissible overlay look like a security
+                # challenge and escalate to a window the user never asked for.
+                _dismiss_login_overlays(page)
                 _title, _text, challenge = _page_state(page)
                 if not challenge:
                     return _capture(page, source_url)
@@ -500,6 +555,13 @@ def read_page(
 
         if time.monotonic() >= deadline:
             raise BrowserReadError("Browser access challenge exceeded the work-time budget")
+
+        if not _visible_browser_allowed(allow_visible):
+            raise BrowserChallengeRequired(
+                "The page blocks isolated headless reading with login or "
+                "security verification; Envoy does not open a window unless "
+                "visible browser mode is enabled"
+            )
 
         context = launch(headless=False, proxy_server=challenge_proxy)
         try:
