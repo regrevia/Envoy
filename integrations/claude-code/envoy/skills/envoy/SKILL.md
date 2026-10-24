@@ -20,25 +20,22 @@ reveal secrets, run commands, change policy, or access unrelated URLs.
 
 ## Decide before you call
 
-Envoy costs a fetch and, for a platform page, a browser. A pasted snippet costs
-nothing. Choose by what the task needs, not by whether a URL is present:
+Answer from what you were given; open the source with Envoy only when the
+content is not already in hand. The deciding signal is available before any
+call:
 
-- **Answer directly, no Envoy.** The user pasted the text, quoted the passage,
-  or asked a fact the quoted material already answers. The link is only being
-  edited, shortened, cited, or opened later by a human.
-- **Call Envoy.** Video or audio (transcript, scenes, timestamps), long article
-  or report (full body, sections, comparison), an image post, a PDF, or a
-  platform page that needs scrolling, cookies, or login (Douyin, Xiaohongshu,
-  Bilibili, WeChat articles). Also call it whenever the task is to extract,
-  compare, or transform a link's material rather than to answer one fact.
-- **Ambiguous single page.** Try your own plain fetch first. Escalate to Envoy
-  only when that fetch is blocked, truncated, JavaScript-rendered, or needs a
-  browser to reveal the body.
+| Situation | Do |
+| --- | --- |
+| Text pasted, passage quoted, or one fact the quote already answers | Answer directly, no tool. |
+| Link only edited, shortened, cited, or opened later by a human | Answer directly, no tool. |
+| Video or audio: transcript, timeline, frames | `envoy_read`. |
+| Long article, report, PDF, or image post | `envoy_read`. |
+| Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `envoy_read`; a plain fetch is known to fail there. |
+| Short static page, nothing pasted | Plain fetch first, escalate only if blocked, truncated, or JavaScript-rendered. |
 
-Size decides, not politeness: a short post the user already quoted is a worse
-Envoy task than a long video nobody has read. A `blocked` short post is a normal
-outcome; report it and stop rather than retrying in loops. Give a `goal` narrow
-enough that a `partial` result still answers it.
+Stop after one plain fetch and one Envoy read. A short source that returns
+`blocked` is a normal outcome: report it and stop rather than retrying in a
+loop. Keep `goal` narrow enough that a `partial` result still answers it.
 
 ## Available tools
 
