@@ -66,11 +66,11 @@ def test_plan_freezes_run_identity_and_server_request_correlation(tmp_path):
     records = [
         {
             "package_id": f"pkg-{index}",
-            "source_ids": [f"src-{index}", f"shared-{index % 2}"],
+            "source_ids": [f"src-{index}-a", f"src-{index}-b"],
             "source_class": "douyin",
             "task_manifest_id": f"manifest-{index}",
         }
-        for index in range(20)
+        for index in range(25)
     ]
 
     result = _run(tmp_path, records)
@@ -79,8 +79,8 @@ def test_plan_freezes_run_identity_and_server_request_correlation(tmp_path):
     plan = json.loads(result.stdout)
     assert plan["run_id"].startswith("envoy-ab-")
     assert len(plan["package_manifest_sha256"]) == 64
-    assert plan["task_count"] == 60
-    assert plan["unique_source_count"] == 22
+    assert plan["task_count"] == 75
+    assert plan["unique_source_count"] == 50
     assert plan["confirmatory_minimum_met"] is True
     item = plan["packages"][0]
     assert set(item["session_ids"]) == {"baseline", "envoy"}
@@ -153,7 +153,7 @@ def test_planner_cannot_mark_per_request_salt_as_verified(tmp_path):
     assert "invalid choice" in result.stderr
 
 
-def test_fixed_confirmatory_profile_requires_approved_balanced_twenty(tmp_path):
+def test_fixed_confirmatory_profile_requires_approved_balanced_twenty_five(tmp_path):
     records = []
     for source_class in (
         "bilibili",
@@ -162,7 +162,7 @@ def test_fixed_confirmatory_profile_requires_approved_balanced_twenty(tmp_path):
         "wechat",
         "cross_platform",
     ):
-        for index in range(4):
+        for index in range(5):
             package_id = f"{source_class}-{index}"
             records.append({
                 "package_id": package_id,
@@ -176,13 +176,13 @@ def test_fixed_confirmatory_profile_requires_approved_balanced_twenty(tmp_path):
                 ).hexdigest(),
             })
 
-    result = _run(tmp_path, records, "--confirmatory-fixed-20")
+    result = _run(tmp_path, records, "--confirmatory-fixed")
 
     assert result.returncode == 0, result.stdout + result.stderr
     plan = json.loads(result.stdout)
-    assert plan["evaluation_profile"] == "fixed_confirmatory_20"
-    assert plan["package_count"] == 20
-    assert plan["unique_source_count"] == 40
+    assert plan["evaluation_profile"] == "fixed_confirmatory_25"
+    assert plan["package_count"] == 25
+    assert plan["unique_source_count"] == 50
     assert plan["confirmatory_minimum_met"] is True
 
 
@@ -195,7 +195,7 @@ def test_fixed_confirmatory_profile_requires_manifest_content_hashes(tmp_path):
         "wechat",
         "cross_platform",
     ):
-        for index in range(4):
+        for index in range(5):
             package_id = f"{source_class}-{index}"
             records.append({
                 "package_id": package_id,
@@ -203,7 +203,7 @@ def test_fixed_confirmatory_profile_requires_manifest_content_hashes(tmp_path):
                 "source_class": source_class,
             })
 
-    result = _run(tmp_path, records, "--confirmatory-fixed-20")
+    result = _run(tmp_path, records, "--confirmatory-fixed")
 
     assert result.returncode == 2
     assert "source_manifest_sha256" in result.stderr
@@ -223,13 +223,13 @@ def test_fixed_confirmatory_profile_rejects_unbalanced_strata(tmp_path):
                 f"task-{index}".encode()
             ).hexdigest(),
         }
-        for index in range(20)
+        for index in range(25)
     ]
 
-    result = _run(tmp_path, records, "--confirmatory-fixed-20")
+    result = _run(tmp_path, records, "--confirmatory-fixed")
 
     assert result.returncode == 2
-    assert "four packages in each approved stratum" in result.stderr
+    assert "5 packages in each approved stratum" in result.stderr
 
 
 def test_plan_rejects_unknown_cache_policy(tmp_path):

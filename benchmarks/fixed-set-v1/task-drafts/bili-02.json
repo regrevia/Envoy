@@ -1,0 +1,166 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "bili-02",
+  "stratum": "bilibili",
+  "source_ids": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "source_revisions": {
+    "bili-video-a": {
+      "url": "https://www.bilibili.com/video/BV1nJ411V7bd/",
+      "sha256": "39baa22a7f6a7675ba4cb2e9c1273092e27e66a8c215fa4f59ac15392378fd3a",
+      "snapshot": "materials/39baa22a7f6a7675ba4cb2e9c1273092e27e66a8c215fa4f59ac15392378fd3a.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "local ASR transcript, 2431 chars, opening 0:00-5:00 only; heavy transcription noise with mixed Simplified/Traditional characters; slides/frames not inspected"
+    },
+    "bili-video-b": {
+      "url": "https://www.bilibili.com/video/BV1b7411N798/",
+      "sha256": "a4212a263a012415cfa8814cea69184fb331775600c59a8a820e1804407be252",
+      "snapshot": "materials/a4212a263a012415cfa8814cea69184fb331775600c59a8a820e1804407be252.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "local ASR transcript, 2801 chars, opening 0:00-4:35 only; heavy transcription noise incl. garbled personal and platform names; slides/frames not inspected"
+    }
+  },
+  "deliverable": "A source-grounded summary of what two Bilibili course-opening videos announce about a data-structures course and an exam-prep video series, with per-segment locators, ASR caveats, and no slide-level claims.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two captured openings, summarize what each lecturer announces about the subject, the course plan, the teaching materials, and the study method. Separate video A from video B and give the ASR segment locator for each point."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Video A only: how does the speaker justify the course's importance, what sequence of material does he announce from the introductory chapter onward, and what does he say about how other courses use the subject? Do not add material he does not say."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Video B only: what does the speaker say about the textbook, about how students should use the videos, and for which exam audiences the series is intended? Keep to the opening minutes and mark anything the ASR garbles instead of guessing it."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili02-a-course-name",
+      "source_id": "bili-video-a",
+      "claim": "The lecturer notes that students who receive the textbook and learn they are taking a course called data structures will have questions.",
+      "locator": "seg 00:10.000 | video A, course introduction (local ASR transcript; slides/frames not inspected)",
+      "quote": "当同学们拿到咱们的课本,知道咱们要上一门叫做数据结构的课,同学们就会有一些疑问,",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-a-formula",
+      "source_id": "bili-video-a",
+      "claim": "He quotes the well-known formula that a program equals data structures plus algorithms.",
+      "locator": "seg 00:44.960 | video A, why the course matters (local ASR transcript; slides/frames not inspected; the attribution sentence just before is garbled and is not relied on)",
+      "quote": "[00:44.960] 說程序就等於數據結構加算法",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-a-must-know",
+      "source_id": "bili-video-a",
+      "claim": "He says that if one wants to write programs, one must understand data structures and algorithms.",
+      "locator": "seg 01:13.120 | video A, why the course matters (local ASR transcript; slides/frames not inspected)",
+      "quote": "那么必然就要懂得数据结构和算法",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-a-basic-structures",
+      "source_id": "bili-video-a",
+      "claim": "He says the course next introduces basic data structures.",
+      "locator": "seg 01:36.000 | video A, course content (local ASR transcript; slides/frames not inspected; the chapter-1 description at 01:29.920 is garbled and is not quoted)",
+      "quote": "接下来就要给同学们介绍一些基本的数据结构",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-a-processing",
+      "source_id": "bili-video-a",
+      "claim": "He says students then learn techniques for processing those data structures.",
+      "locator": "seg 01:55.960 | video A, course content (local ASR transcript; slides/frames not inspected)",
+      "quote": "再让同学们来学一些处理这些数据结构的",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-a-foundation-course",
+      "source_id": "bili-video-a",
+      "claim": "He describes the course as a professional foundation course for related majors.",
+      "locator": "seg 02:29.560 | video A, course status (local ASR transcript; slides/frames not inspected)",
+      "quote": "以及相關專業的一門專業基礎課程",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-a-many-courses-use",
+      "source_id": "bili-video-a",
+      "claim": "He says many other professional courses will use content from data structures and algorithms.",
+      "locator": "seg 04:11.200 | video A, course status (local ASR transcript; slides/frames not inspected; the list of dependent courses around it is heavily garbled)",
+      "quote": "都会用到咱们的数据结构和算法当中的内容",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-b-instructor-role",
+      "source_id": "bili-video-b",
+      "claim": "The speaker introduces himself as the main instructor of the Wangdao postgraduate-entrance-exam course series.",
+      "locator": "seg 00:02.160 | video B, instructor introduction (local ASR transcript; slides/frames not inspected; the ASR renders his name oddly, so the name is not claimed)",
+      "quote": "我是王道考研系列课程的主讲人弦语学长",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-b-textbook",
+      "source_id": "bili-video-b",
+      "claim": "He says the textbook that accompanies the video course is the well-known 'Wangdao single-subject book'.",
+      "locator": "seg 00:29.680 | video B, teaching materials (local ASR transcript; slides/frames not inspected)",
+      "quote": "对了,有同学可能还不知道我们的视频课配套的教材就是传说中的王道单科书",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-b-not-only-videos",
+      "source_id": "bili-video-b",
+      "claim": "He tells students he hopes they will not only listen to the video course.",
+      "locator": "seg 01:38.680 | video B, study advice (local ASR transcript; slides/frames not inspected; the note-taking line at 01:41.280 is garbled and the hands-on line at 01:46.600 is below the 15-character quote floor)",
+      "quote": "希望大家不要只是听我们的视频课",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-b-self-set-schools",
+      "source_id": "bili-video-b",
+      "claim": "He says this is advice for students applying to schools that set their own exam questions.",
+      "locator": "seg 02:36.000 | video B, exam audiences (local ASR transcript; slides/frames not inspected)",
+      "quote": "所以这是给报考自主命题学校的同学的一些建议",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili02-b-forum",
+      "source_id": "bili-video-b",
+      "claim": "He suggests that students visit the Wangdao forum when they have time.",
+      "locator": "seg 04:11.920 | video B, community resources (local ASR transcript; slides/frames not inspected)",
+      "quote": "最后大家没事的时候可以多逛王道论坛",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "acceptable_partial_outcomes": [
+    "The transcripts cover only the opening minutes of each video; answers must not claim slide, frame, caption or other on-screen content, nor any part of either video beyond the captured opening.",
+    "The ASR is noisy and mixes Simplified and Traditional characters; a garbled personal name, chapter label, course list, or exercise reference must be reported as unclear rather than repaired.",
+    "The course map in video A cannot be reconstructed in full from the captured speech, and the exam-planning details in video B are only partly captured."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "bili-drafter",
+    "method": "quotes sliced from ASR snapshots and re-checked as literal substrings",
+    "facts": 12
+  },
+  "authority_anchors": [
+    {
+      "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/",
+      "supports": "The MIT 6.006 course description lists 'common algorithms, algorithmic paradigms, and data structures' as one subject and says the course 'emphasizes the relationship between algorithms and programming'; independent confirmation that data structures and algorithms are taught as a joint foundation of programming, the pairing the speaker states as program = data structures + algorithms. It is not evidence for the speaker's own sentences.",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}

@@ -2,16 +2,27 @@
 
 The design freezes the source set, task text, and reference facts before
 either arm runs, so a claimed manifest hash has to come from a checker
-instead of from hand-editing JSON. This tool is the sanctioned producer of
+instead of from hand-edited JSON. This tool is the sanctioned producer of
 `manifest.json`:
 
     python benchmarks/fixed-set-v1/freeze_manifest.py --check
     python benchmarks/fixed-set-v1/freeze_manifest.py --write [--rehearsal]
 
+Hallucination controls are structural, not advisory:
+
+- every accepted source must have a content-addressed snapshot in
+  `materials/<sha256>.txt`, and the recorded revision hash is recomputed from
+  that snapshot, so a source cannot be "accepted" on a hash nobody can check;
+- every reference fact must carry a quote that occurs verbatim in that
+  snapshot, so a fact cannot survive paraphrase or invention;
+- a fact that asserts something about the world rather than about the source
+  has to be `claim_basis: external_fact`, which requires an independent
+  authoritative corroboration URL and quote.
+
 `--check` reports every blocker and exits non-zero when the set is not
-frozen-ready. `--rehearsal` relaxes the set-size rules for the 2-package
-instrumentation run, and marks the produced manifest as rehearsal-only so it
-can never be mistaken for the confirmatory set.
+frozen-ready. `--rehearsal` relaxes set size for the 2-package instrumentation
+run and marks the produced manifest as rehearsal-only so it can never be
+mistaken for the confirmatory set.
 """
 
 from __future__ import annotations
@@ -25,13 +36,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SCHEMA_VERSION = "envoy.fixed-evaluation-package/1"
 MANIFEST_SCHEMA = "envoy.fixed-set-manifest/1"
+SCHEMA_VERSION = "envoy.fixed-evaluation-package/1"
 REQUIRED_TURN_IDS = ("initial", "followup-1", "followup-2")
-DESIGN_PACKAGES = 20
-DESIGN_UNIQUE_URLS = 40
-ACCEPTED_STATE = "accepted"
+DESIGN_PACKAGES = 25
+DESIGN_UNIQUE_URLS = 50
+DESIGN_PER_STRATUM = 5
+STRATA = ("bilibili", "douyin", "xiaohongshu", "wechat", "cross_platform")
+ACCEPTED_STATE = "已接受"
 ACCEPTED_REVIEW = "complete"
+CLAIM_BASES = ("source_claim", "external_fact")
+MIN_QUOTE_CHARS = 12
 REHEARSAL_MIN_PACKAGES = 2
 REHEARSAL_MIN_URLS = 4
 
@@ -50,17 +65,46 @@ def read_packages(directory: Path) -> list[dict]:
     return packages
 
 
+def load_snapshots(directory: Path) -> tuple[dict[str, str], list[str]]:
+    """Material snapshots are content-addressed: <sha256>.txt."""
+    texts: dict[str, str] = {}
+    problems: list[str] = []
+    if not directory.is_dir():
+        return texts, [f"no materials directory at {directory}"]
+    for path in sorted(directory.glob("*.txt")):
+        text = path.read_text(encoding="utf-8")
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if path.stem != digest:
+            problems.append(
+                f"materials/{path.name}: content hashes to {digest[:12]}, not to its filename"
+            )
+        texts[digest] = text
+    return texts, problems
+
+
 def canonical_url(value: str) -> str:
     return str(value or "").strip().rstrip("/")
 
 
-def _is_sha256(value: str) -> bool:
+def squash(text: str) -> str:
+    """Whitespace-insensitive comparison: layout changes are not inventions."""
+    return "".join(str(text).split())
+
+
+def is_sha256(value: str) -> bool:
     text = str(value or "").strip().lower()
     return len(text) == 64 and all(char in "0123456789abcdef" for char in text)
 
 
-def validate(rows: list[dict], packages: list[dict], *, rehearsal: bool = False) -> list[str]:
+def validate(
+    rows: list[dict],
+    packages: list[dict],
+    *,
+    rehearsal: bool = False,
+    snapshots: dict[str, str] | None = None,
+) -> list[str]:
     """Return every reason the set cannot be frozen; empty means ready."""
+    snapshots = snapshots or {}
     problems: list[str] = []
     min_packages = REHEARSAL_MIN_PACKAGES if rehearsal else DESIGN_PACKAGES
     min_urls = REHEARSAL_MIN_URLS if rehearsal else DESIGN_UNIQUE_URLS
@@ -102,8 +146,13 @@ def validate(rows: list[dict], packages: list[dict], *, rehearsal: bool = False)
             problems.append(
                 f"{label}: reference review is {row.get('reference_review') or 'unknown'}, not {ACCEPTED_REVIEW}"
             )
-        if not _is_sha256(row.get("source_revision_sha256", "")):
+        digest = str(row.get("source_revision_sha256", "")).strip().lower()
+        if not is_sha256(digest):
             problems.append(f"{label}: missing source revision SHA-256")
+        elif row.get("accepted_state") == ACCEPTED_STATE and digest not in snapshots:
+            problems.append(
+                f"{label}: no material snapshot materials/{digest[:12]}...txt for the recorded revision"
+            )
 
     rows_by_package: dict[str, dict[str, dict]] = {}
     for row in rows:
@@ -127,7 +176,8 @@ def validate(rows: list[dict], packages: list[dict], *, rehearsal: bool = False)
             if not isinstance(revision, dict):
                 problems.append(f"{package_id}: no source revision recorded for {source_id}")
                 continue
-            if not _is_sha256(revision.get("sha256", "")):
+            digest = str(revision.get("sha256", "")).strip().lower()
+            if not is_sha256(digest):
                 problems.append(f"{package_id}: {source_id} revision has no SHA-256")
             url = canonical_url(revision.get("url", ""))
             matching = [
@@ -139,8 +189,8 @@ def validate(rows: list[dict], packages: list[dict], *, rehearsal: bool = False)
                 problems.append(f"{package_id}: {source_id} URL is absent from source-intake.csv")
                 continue
             if not any(
-                _is_sha256(row.get("source_revision_sha256", ""))
-                and row["source_revision_sha256"].lower() == revision["sha256"].lower()
+                is_sha256(row.get("source_revision_sha256", ""))
+                and row["source_revision_sha256"].lower() == digest
                 for row in matching
             ):
                 problems.append(
@@ -162,31 +212,86 @@ def validate(rows: list[dict], packages: list[dict], *, rehearsal: bool = False)
         for turn in package.get("turns") or []:
             if not str(turn.get("text", "")).strip():
                 problems.append(f"{package_id}: turn {turn.get('turn_id')} has no text")
+
+        source_urls = {
+            canonical_url(revision.get("url", ""))
+            for revision in revisions.values()
+            if isinstance(revision, dict)
+        }
+        anchors = package.get("authority_anchors") or []
+        if not rehearsal:
+            if not anchors:
+                problems.append(f"{package_id}: no authority_anchors for its factual claims")
+            for anchor in anchors:
+                anchor_url = str(anchor.get("url", "")).strip()
+                if not anchor_url.startswith("https://"):
+                    problems.append(f"{package_id}: authority anchor is not an https URL")
+                elif canonical_url(anchor_url) in source_urls:
+                    problems.append(
+                        f"{package_id}: authority anchor must be independent of the package sources"
+                    )
+                if not str(anchor.get("supports", "")).strip():
+                    problems.append(f"{package_id}: authority anchor without a 'supports' note")
+
         facts = package.get("reference_facts") or []
         if not facts:
             problems.append(f"{package_id}: no reference facts")
+        fact_ids: set[str] = set()
         for fact in facts:
+            fact_id = str(fact.get("fact_id") or "?")
+            if fact_id in fact_ids:
+                problems.append(f"{package_id}: duplicate fact_id {fact_id}")
+            fact_ids.add(fact_id)
             missing = [
                 key
-                for key in ("fact_id", "claim", "source_id", "locator")
+                for key in ("claim", "source_id", "locator", "quote")
                 if not str(fact.get(key, "")).strip()
             ]
             if missing:
+                problems.append(f"{package_id}: fact {fact_id} lacks {', '.join(missing)}")
+                continue
+            basis = str(fact.get("claim_basis") or "source_claim")
+            if basis not in CLAIM_BASES:
+                problems.append(f"{package_id}: fact {fact_id} has unknown claim_basis {basis}")
+            if fact["source_id"] not in revisions:
+                problems.append(f"{package_id}: fact {fact_id} cites unknown source {fact['source_id']}")
+                continue
+            quote = str(fact["quote"])
+            if len(squash(quote)) < MIN_QUOTE_CHARS:
                 problems.append(
-                    f"{package_id}: fact {fact.get('fact_id') or '?'} lacks {', '.join(missing)}"
+                    f"{package_id}: fact {fact_id} quote is shorter than {MIN_QUOTE_CHARS} characters"
                 )
-            elif fact["source_id"] not in revisions:
+            digest = str(revisions[fact["source_id"]].get("sha256", "")).strip().lower()
+            text = snapshots.get(digest)
+            if text is None:
                 problems.append(
-                    f"{package_id}: fact {fact['fact_id']} cites unknown source {fact['source_id']}"
+                    f"{package_id}: fact {fact_id} has no material snapshot for {fact['source_id']}"
                 )
+            elif squash(quote) not in squash(text):
+                problems.append(
+                    f"{package_id}: fact {fact_id} quote is not verbatim in {fact['source_id']} - paraphrase or invention"
+                )
+            if basis == "external_fact":
+                corroboration = fact.get("corroboration") or {}
+                if not str(corroboration.get("url", "")).startswith("https://"):
+                    problems.append(
+                        f"{package_id}: fact {fact_id} is an external_fact without an https corroboration URL"
+                    )
+                if len(squash(str(corroboration.get("quote", "")))) < MIN_QUOTE_CHARS:
+                    problems.append(
+                        f"{package_id}: fact {fact_id} is an external_fact without a corroboration quote"
+                    )
 
     if not rehearsal:
         strata: dict[str, int] = {}
         for package in packages:
-            strata[package.get("stratum", "")] = strata.get(package.get("stratum", ""), 0) + 1
-        for stratum in ("bilibili", "douyin", "xiaohongshu", "wechat", "cross_platform"):
-            if strata.get(stratum, 0) < 4:
-                problems.append(f"stratum {stratum} has {strata.get(stratum, 0)} packages, expected 4")
+            stratum = package.get("stratum", "")
+            strata[stratum] = strata.get(stratum, 0) + 1
+        for stratum in STRATA:
+            if strata.get(stratum, 0) < DESIGN_PER_STRATUM:
+                problems.append(
+                    f"stratum {stratum} has {strata.get(stratum, 0)} packages, expected {DESIGN_PER_STRATUM}"
+                )
 
     return problems
 
@@ -201,6 +306,7 @@ def build_manifest(rows: list[dict], packages: list[dict], *, rehearsal: bool) -
             "status": "rehearsal_only" if rehearsal else "frozen",
             "rubric_version": package["rubric_version"],
             "deliverable": package.get("deliverable", ""),
+            "authority_anchors": package.get("authority_anchors") or [],
             "source_revisions": {
                 source_id: {
                     "url": canonical_url(package["source_revisions"][source_id]["url"]),
@@ -260,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sources", type=Path, default=ROOT / "source-intake.csv")
     parser.add_argument("--packages", type=Path, default=ROOT / "task-drafts")
+    parser.add_argument("--materials", type=Path, default=ROOT / "materials")
     parser.add_argument("--out", type=Path, default=ROOT / "manifest.json")
     parser.add_argument("--check", action="store_true", help="validate only; do not write")
     parser.add_argument("--write", action="store_true", help="write the frozen manifest")
@@ -268,11 +375,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="relax set-size rules for the 2-package instrumentation rehearsal",
     )
+    parser.add_argument(
+        "--only",
+        default="",
+        help=(
+            "rehearsal only: comma-separated package ids to freeze, so accepted "
+            "packages can be rehearsed while the rest of the set is still pending"
+        ),
+    )
     args = parser.parse_args(argv)
+    only = [item.strip() for item in args.only.split(",") if item.strip()]
+    if only and not args.rehearsal:
+        parser.error("--only is rehearsal-only; a confirmatory manifest freezes the whole set")
 
     rows = read_sources(args.sources)
     packages = read_packages(args.packages)
-    problems = validate(rows, packages, rehearsal=args.rehearsal)
+    if only:
+        known = {package["package_id"] for package in packages}
+        unknown = sorted(set(only) - known)
+        if unknown:
+            parser.error(f"--only names packages with no draft: {', '.join(unknown)}")
+        rows = [row for row in rows if row["package_id"] in only]
+        packages = [package for package in packages if package["package_id"] in only]
+    snapshots, snapshot_problems = load_snapshots(args.materials)
+    problems = snapshot_problems + validate(
+        rows, packages, rehearsal=args.rehearsal, snapshots=snapshots
+    )
     if problems:
         print(f"{len(problems)} blocker(s); the set is not freezable:")
         for problem in problems:
