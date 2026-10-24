@@ -534,3 +534,61 @@ def test_public_image_note_marks_empty_ocr_as_partial_for_visual_review(
     assert any("no valid text regions" in item for item in ocr_coverage.unresolved)
     assert any(resource.resource_id == "resource-image-1" for resource in response.resources)
     assert response.needs and response.needs[0].type == "inspect_visual"
+
+
+def test_xhslink_cn_short_link_is_xiaohongshu_share():
+    from envoy_cli.platforms import classify_public_url
+
+    assert classify_public_url("https://xhslink.cn/o/AAFFkhsOa1w") == "xiaohongshu_share"
+    assert classify_public_url("https://www.xhslink.cn/a/abc123") == "xiaohongshu_share"
+
+
+def _xhs_response(monkeypatch, tmp_path, html, request_id):
+    from types import SimpleNamespace
+    from envoy_cli import browser, reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_url = "https://www.xiaohongshu.com/explore/65abc123"
+    page = SimpleNamespace(
+        url=source_url,
+        title="page",
+        text="page",
+        html=html,
+        media_urls=(),
+        page_video_urls=(),
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "has_specialized_extractor", lambda *_args: False)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (source_url, html))
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+    return reader.read_public_page(ReadRequest.model_validate({
+        "request_id": request_id,
+        "source": {"url": source_url},
+    }))
+
+
+def test_platform_ip_risk_page_blocks_instead_of_reporting_ready(monkeypatch, tmp_path):
+    html = (
+        "<html><title>安全限制</title><body>"
+        "<p>安全限制 IP存在风险，请切换可靠网络环境后重试 300012 我要反馈 返回首页</p>"
+        "</body></html>"
+    )
+    response = _xhs_response(monkeypatch, tmp_path, html, "xhs-ip-risk")
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "challenge_required"
+    assert response.errors[0].action_required is True
+
+
+def test_missing_note_page_blocks_with_source_not_found(monkeypatch, tmp_path):
+    html = (
+        "<html><title>小红书 - 你访问的页面不见了</title><body>"
+        "<p>发现 RED 直播 发布 通知 消息 © 2014-2026 行吟信息科技（上海）有限公司</p>"
+        "</body></html>"
+    )
+    response = _xhs_response(monkeypatch, tmp_path, html, "xhs-missing")
+
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "source_unavailable"
+    assert response.errors[0].details.get("diagnosis") == "source_not_found"
