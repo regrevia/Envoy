@@ -6,7 +6,7 @@
 <h1 align="center">把链接分享给你的 AI</h1>
 
 <p align="center">
-  Envoy 提取网页、视频和本地媒体中的可追溯材料；由你的 AI 理解、分析并完成交付。
+  一个链接，成为你想要的任何东西。
 </p>
 
 <p align="center">
@@ -16,24 +16,19 @@
   <a href="#english">English</a>
 </p>
 
-Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后台运行；遇到登录或验证时才请你接管。安装 Skill、CLI runtime 和 MCP 连接是三个步骤，按[安装指南](integrations/skills/envoy/INSTALL.md)完成即可。Claude Code、Codex 和 DeepSeek Harness 都有对应插件：完成 MCP 挂载，并在提问带链接时先走 Envoy，而不是让内置抓取重复拉整页（Codex 0.156 起还需执行一次 `envoy hook install --host codex` 写入用户级 hook）。Envoy 不替代联网搜索，只负责用户给出的链接、视频/音频和需要完整来源证据的读取。
+给 AI 一个链接，Envoy 把它变成带来源定位的材料，AI 再用它写你要的东西：Wiki、摘要、报告、脚本。网页、公众号、PDF、小红书图文、B 站视频、本地视频都行。
 
-> **典型场景**：把一条 B 站视频整理成带 `[mm:ss]` 引用的 Wiki。见[完整示例](#bilibili-wiki)。
+## 能做什么
 
-## 能力
+**关键帧** — 视频里的 PPT、图表、演示画面按时间点抽帧交给 AI 看，不用来回拖进度条。
 
-- 提取公开网页、PDF 文本、图片、字幕和用户指定的本地视频
-- 按需续读、搜索和复用材料，保留来源与时间定位
-- 可选本地 Whisper、FFmpeg 和 OCR；缺少模态时明确标记材料不完整
-- 支持 macOS、Windows、Linux；代码与文档采用 Apache-2.0
+**视频理解** — 优先读公开字幕；没有字幕时对指定时间段跑本地 Whisper，返回带 `[mm:ss]` 的转写片段。
 
-登录、验证码、地区限制和 DRM 不会被绕过。抖音主页集合、小红书图文等能力仍按[平台验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)逐项验证。
+**图文** — 网页、公众号文章、PDF、图片帖，变成干净正文、图片和来源。
 
-<a id="bilibili-wiki"></a>
+**知识库 / Wiki** — 长视频整段读完，按主题分节，每条结论带时间戳，直接放进 Obsidian、Notion。
 
-## 示例：把一条 B 站视频做成可引用的知识库
-
-直接让模型“看视频”，通常只能拿到标题和简介；Envoy 先把视频变成带时间定位的材料，再让模型组织成 Wiki 或知识库。
+## 怎么用
 
 对 AI 说：
 
@@ -41,20 +36,7 @@ Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后�
 >
 > 先读前 10 分钟，按主题分节；每条结论后标注 `[mm:ss]`；没覆盖到的部分单列“待补”，不要猜。
 
-Envoy 负责：
-
-- 解析标题、作者、时长和章节；
-- 优先读取公开字幕；没有字幕时，对指定时间段运行本地 Whisper ASR；
-- 返回带 `video_time` 定位的字幕/转写片段和材料 ID；
-- 需要看 PPT、图表或演示画面时，按宿主能力请求抽帧，并接收视觉观察结果。
-
-AI 负责：
-
-- 用转写材料生成 Markdown Wiki（可直接放进 Obsidian、Notion 等知识库）：概述、分节要点、时间线、术语表、引用与待补；
-- 用 `envoy_search` 在材料里定位关键词，用 `envoy_expand` 补齐未读时间段；
-- 每条事实都带时间戳，读者可以跳回原视频核对。
-
-产出可以长这样（示意）：
+材料到手就已经分好段、带定位，所以产出可以直接引用：
 
 ```markdown
 ## 2. 为什么选择固定轮
@@ -64,11 +46,22 @@ AI 负责：
 - 这一段没有展示实际测试数据；待补。[09:31]
 ```
 
-边界：Envoy 只对实际读取并返回的时间段负责。视频没有字幕、登录/地区限制、下载预算不足或本地 ASR 不可用时，会返回明确缺口，不会把未覆盖内容写成结论。
+## 工作原理
 
-## 评测状态
+1. **取材料** — 打开链接，拿到标题、正文、字幕或转写、PDF 文本、图片。
+2. **带定位** — 切成片段并附 `video_time` 或来源坐标，给一个 material id。
+3. **按需续读** — `envoy_search` 定位关键词，`envoy_expand` 补齐没读的部分，不重拉整页。
+4. **缺口照实报** — 没字幕、要登录、模态缺失、下载预算不够，标记为未覆盖，不写成结论。
 
-我们正在进行同链接、同模型的 Envoy / 直接读取对比，记录完成时间、实际 token、事实覆盖、引用质量和人工介入情况。当前公开 pilot 为 **6 个来源、12 个任务**，缺少成对基线和宿主实际 usage，尚不能得出“更快”或“节省 token”的结论。查看[评测方法](benchmarks/README.md)和[pilot 数据](benchmarks/pilots/README.md)。
+浏览器在后台运行，遇到登录或验证才请你接管。接入方式是 Agent Skill + MCP，Claude Code、Codex、DeepSeek Harness 各有插件（Codex 0.156 起需执行一次 `envoy hook install --host codex`）。
+
+## 边界
+
+不绕过登录、验证码、地区限制和 DRM；不替代联网搜索。Envoy 只对实际读取并返回的时间段负责。抖音主页集合、小红书图文等能力按[平台验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)逐项验证。
+
+## 评测
+
+正在做同链接、同模型的 Envoy / 直接读取对比，记录完成时间、实际 token、事实覆盖、引用质量和人工介入。当前 pilot 为 **6 个来源、12 个任务**，还不足以得出“更快”或“更省 token”的结论。见[评测方法](benchmarks/README.md)与 [pilot 数据](benchmarks/pilots/README.md)。
 
 ## 文档
 
@@ -90,28 +83,22 @@ AI 负责：
 <h3 align="center">Share a link with your AI</h3>
 
 <p align="center">
-  Envoy extracts traceable material from web pages, videos, and local media.
-  Your AI analyzes it and creates the deliverable.
+  One link in. Anything you want out.
 </p>
 
-Envoy connects to MCP-capable agents through an Agent Skill and MCP server. The browser runs headlessly by default; you are asked to take over only when login or verification is needed. Installing the Skill, CLI runtime, and MCP connection are separate steps. Follow the [installation guide](integrations/skills/envoy/INSTALL.md). Claude Code, Codex, and DeepSeek Harness each have a plugin that mounts MCP and routes user-supplied links through Envoy before native fetching, avoiding duplicate full-page reads (Codex 0.156+ additionally needs one `envoy hook install --host codex` to write its user-level hook). Envoy does not replace web search; it handles the user's links, video/audio, and reads that need full-source evidence.
+Give your AI a link and Envoy turns it into material with source locators; the AI then writes whatever you asked for: a wiki, a summary, a report, a script. Web pages, WeChat posts, PDFs, Xiaohongshu image posts, Bilibili videos, local video files.
 
-> **Typical use case**: turn a Bilibili video into a wiki with `[mm:ss]` citations. See the [full example](#bilibili-video-wiki).
+### What it does
 
-### Capabilities
+**Keyframes** — pull slides, charts, and demo frames at chosen timestamps and hand them to the AI, no scrubbing.
 
-- Extract public web pages, PDF text, images, captions, and user-selected local videos
-- Continue, search, and reuse material with source and timestamp locators
-- Optional local Whisper, FFmpeg, and OCR; missing modalities are reported explicitly
-- macOS, Windows, and Linux; original code and documentation are Apache-2.0
+**Video** — captions first; when there are none, run local Whisper over the requested range and return transcript segments with `[mm:ss]`.
 
-Envoy does not bypass login, CAPTCHA, regional restrictions, or DRM. Douyin creator collections and Xiaohongshu image posts remain subject to the [platform acceptance matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md).
+**Text and images** — web pages, articles, PDFs, image posts become clean text, images, and their source.
 
-<a id="bilibili-video-wiki"></a>
+**Knowledge base / wiki** — read a long video end to end, group it by theme, put a timestamp on every claim, and drop the result into Obsidian or Notion.
 
-### Example: turn a Bilibili video into a citable knowledge base
-
-If you simply ask a model to "watch the video", it usually gets only the title and description. Envoy first turns the video into material with time locators; the model then organizes it into a wiki or knowledge base.
+### How to use it
 
 Ask your AI:
 
@@ -119,20 +106,7 @@ Ask your AI:
 >
 > Read the first 10 minutes, group sections by theme, and add `[mm:ss]` after each claim. List anything not covered under "To fill"; do not guess.
 
-Envoy handles:
-
-- title, author, duration, and chapters;
-- public captions first, then bounded local Whisper ASR for the requested range when captions are unavailable;
-- timestamped transcript segments with `video_time` locators and a material ID;
-- frame requests for slides, charts, or demos when the host supports images, plus the resulting visual observations.
-
-The AI handles:
-
-- a Markdown wiki you can drop into Obsidian, Notion, or another knowledge base: overview, section highlights, timeline, glossary, citations, and open gaps;
-- `envoy_search` to locate terms in the material and `envoy_expand` to fill unread ranges;
-- a timestamp on every factual claim, so readers can jump back to the source.
-
-Illustrative output:
+The material arrives already segmented and located, so the output can cite directly:
 
 ```markdown
 ## 2. Why use a fixed wheel
@@ -142,11 +116,22 @@ Illustrative output:
 - This section shows no measured data; to fill. [09:31]
 ```
 
-Scope: Envoy is responsible only for the ranges it actually read and returned. When captions are absent, access is restricted, the download budget is exceeded, or local ASR is unavailable, it reports the gap instead of turning uncovered content into a conclusion.
+### How it works
+
+1. **Fetch** — open the link and take the title, body, captions or transcript, PDF text, and images.
+2. **Locate** — split it into segments carrying `video_time` or source coordinates, and return a material id.
+3. **Continue on demand** — `envoy_search` finds a term, `envoy_expand` fills the unread range; no second full fetch.
+4. **Report gaps** — no captions, login required, missing modality, exhausted download budget: marked as uncovered rather than written up as a conclusion.
+
+The browser runs headlessly and asks you to take over only for login or verification. Access is an Agent Skill plus MCP server; Claude Code, Codex, and DeepSeek Harness each have a plugin (Codex 0.156+ needs one `envoy hook install --host codex`).
+
+### Scope
+
+No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement for web search. Envoy is responsible only for the ranges it actually read and returned. Douyin creator collections and Xiaohongshu image posts follow the [platform acceptance matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md).
 
 ### Evaluation
 
-We are comparing Envoy with direct reading on the same links and model, measuring completion time, actual host tokens, fact coverage, citation quality, and human intervention. The current public pilot has **6 sources and 12 tasks**, without paired baselines or actual host usage. It does not establish speed or token savings. See the [evaluation method](benchmarks/README.md) and [pilot data](benchmarks/pilots/README.md).
+Running a same-link, same-model comparison against direct reading: completion time, actual tokens, fact coverage, citation quality, and human intervention. The current pilot has **6 sources and 12 tasks** — not enough to claim speed or token savings yet. See the [evaluation method](benchmarks/README.md) and [pilot data](benchmarks/pilots/README.md).
 
 ### Documentation
 
