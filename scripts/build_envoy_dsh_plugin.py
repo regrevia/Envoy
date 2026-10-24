@@ -70,8 +70,9 @@ skill."""
 DSH_HOST_SECTION = """\
 ## DeepSeek Harness host
 
-DeepSeek Harness starts `envoy mcp --toolset core` for this session through the
-bundle's `@deepseek-ai/dsh-mcp-client` row. The bridge is already mounted; do
+DeepSeek Harness starts `envoy mcp` for this session through the bundle's
+`@deepseek-ai/dsh-mcp-client` row, so the default `core` toolset applies. The
+bridge is already mounted; do
 not launch a second process. The exposed tools are:
 
 - `envoy_read`
@@ -81,8 +82,8 @@ not launch a second process. The exposed tools are:
 
 The `full` toolset additionally exposes `envoy_read_local_video`,
 `envoy_discover`, `envoy_collection_checkpoint`, `envoy_replay`,
-`envoy_visual_history`, and `envoy_doctor`. Change the launcher to
-`--toolset full` and restart the bundle when those are needed. The selected
+`envoy_visual_history`, and `envoy_doctor`. Export `ENVOY_MCP_TOOLSET=full` in
+the Harness environment and restart the bundle when those are needed. The selected
 toolset is fixed for the process lifetime; a tool absent from the catalog is
 not an invitation to guess its name.
 
@@ -96,7 +97,7 @@ DSH_PROTOCOL_NOTE = """\
 > DeepSeek Harness adaptation: the Envoy MCP bridge is mounted by the
 > `envoy-dsh` plugin with the `core` toolset, so these operations appear as
 > `mcp__envoy__*` tools. Use the mounted tools; do not start a second
-> `envoy mcp` process. Advanced tools require `--toolset full` or the CLI."""
+> `envoy mcp` process. Advanced tools require `ENVOY_MCP_TOOLSET=full` or the CLI."""
 
 DESCRIPTION_SUFFIX = (
     "This DeepSeek Harness plugin mounts the Envoy MCP bridge with the bounded "

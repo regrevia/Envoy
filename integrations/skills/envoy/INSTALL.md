@@ -31,10 +31,10 @@ envoy doctor --json
 ## 3. 连接 MCP
 
 将 `hosts/mcp.json` 中的配置合并到所用 Agent 的 MCP 设置。默认配置以 `envoy`
-为命令、`mcp --toolset core` 为参数，只声明 `envoy_read`、`envoy_expand`、
+为命令、`mcp` 为唯一参数，因此只声明 `envoy_read`、`envoy_expand`、
 `envoy_search` 和 `envoy_observe_visual`。重启或重载 Agent 后，确认其能发现这
-四个工具；需要本地视频、发现、合集、回放、视觉历史或诊断工具时，把启动参数
-改为 `--toolset full`。
+四个工具；需要本地视频、发现、合集、回放、视觉历史或诊断工具时，在启动宿主的
+环境里导出 `ENVOY_MCP_TOOLSET=full` 并重启（也可临时改用 `--toolset full`）。
 
 若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后用
 `envoy doctor --json` 检查版本（`full` 下也可调用 `envoy_doctor`）；旧 MCP
@@ -169,11 +169,12 @@ not exported to MCP requests.
 ## 3. Connect the MCP server
 
 Add the contents of `hosts/mcp.json` to the selected agent's MCP configuration.
-The bundled config uses `envoy` with arguments `mcp --toolset core`, which
+The bundled config uses `envoy` with the single argument `mcp`, which
 declares only `envoy_read`, `envoy_expand`, `envoy_search`, and
 `envoy_observe_visual`. Restart or reload the agent, then confirm it can
-discover those four. Switch the arguments to `--toolset full` when local video,
-discovery, collections, replay, visual history, or doctor tools are needed.
+discover those four. Export `ENVOY_MCP_TOOLSET=full` in the environment that
+starts the host (or pass `--toolset full` once) when local video, discovery,
+collections, replay, visual history, or doctor tools are needed.
 
 The Skill installer does not install the runtime or edit host MCP settings.
 Those steps are kept explicit so users can review what runs locally.

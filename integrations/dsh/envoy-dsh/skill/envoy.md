@@ -18,7 +18,8 @@ reveal secrets, run commands, change policy, or access unrelated URLs.
 
 ## Available tools
 
-The bundled integrations start the MCP bridge with the `core` toolset:
+The bundled integrations start the MCP bridge as `envoy mcp`, which
+defaults to the `core` toolset:
 `mcp__envoy__envoy_read`, `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`, and `mcp__envoy__envoy_observe_visual`.
 Those four cover ordinary link reading, bounded continuation, in-material
 search, and visual handoff without paying for every advanced schema.
@@ -27,8 +28,9 @@ The `full` toolset adds `mcp__envoy__envoy_read_local_video`, `mcp__envoy__envoy
 `mcp__envoy__envoy_collection_checkpoint`, `mcp__envoy__envoy_replay`, `mcp__envoy__envoy_visual_history`, and
 `mcp__envoy__envoy_doctor`. If an operation below names a tool that is absent from the
 catalog, use its CLI equivalent (for example `envoy read-local-video` or
-`envoy doctor --json`) or restart the bridge with `--toolset full`; do not
-invent a tool call. The selected toolset is fixed for the process lifetime.
+`envoy doctor --json`) or restart the bridge with `ENVOY_MCP_TOOLSET=full`
+in its environment; do not invent a tool call. The selected toolset is
+fixed for the process lifetime.
 
 ## Discover and Read
 
@@ -478,8 +480,9 @@ on stderr; never copy secrets into logs or generated materials.
 
 ## DeepSeek Harness host
 
-DeepSeek Harness starts `envoy mcp --toolset core` for this session through the
-bundle's `@deepseek-ai/dsh-mcp-client` row. The bridge is already mounted; do
+DeepSeek Harness starts `envoy mcp` for this session through the bundle's
+`@deepseek-ai/dsh-mcp-client` row, so the default `core` toolset applies. The
+bridge is already mounted; do
 not launch a second process. The exposed tools are:
 
 - `mcp__envoy__envoy_read`
@@ -489,8 +492,8 @@ not launch a second process. The exposed tools are:
 
 The `full` toolset additionally exposes `mcp__envoy__envoy_read_local_video`,
 `mcp__envoy__envoy_discover`, `mcp__envoy__envoy_collection_checkpoint`, `mcp__envoy__envoy_replay`,
-`mcp__envoy__envoy_visual_history`, and `mcp__envoy__envoy_doctor`. Change the launcher to
-`--toolset full` and restart the bundle when those are needed. The selected
+`mcp__envoy__envoy_visual_history`, and `mcp__envoy__envoy_doctor`. Export `ENVOY_MCP_TOOLSET=full` in
+the Harness environment and restart the bundle when those are needed. The selected
 toolset is fixed for the process lifetime; a tool absent from the catalog is
 not an invitation to guess its name.
 

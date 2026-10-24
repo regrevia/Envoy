@@ -50,10 +50,11 @@ envoy hook install --host codex --uninstall
 
 ## What it adds
 
-- **MCP**: starts `envoy mcp --toolset core`, so the default catalog is
+- **MCP**: starts `envoy mcp`, so the default catalog is
   `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`.
-  Restart with `--toolset full` (or use the CLI) for local video, discovery,
-  collections, replay, visual history, and doctor tools.
+  Export `ENVOY_MCP_TOOLSET=full` in the shell that launches Codex and restart
+  (or use the CLI) for local video, discovery, collections, replay, visual
+  history, and doctor tools.
 - **`UserPromptSubmit` hook**: injects a short routing policy when the prompt
   contains a public `http(s)` URL:
   - call `envoy_read` first; for a local video or audio file use the exposed
