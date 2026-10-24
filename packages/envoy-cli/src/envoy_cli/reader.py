@@ -885,6 +885,96 @@ def _url_is_video_page(value: str) -> bool:
     )
 
 
+def _http_media_candidates(values: list[str] | None) -> list[str]:
+    """Keep only directly downloadable media URLs.
+
+    A page can expose its player internals next to the real file: Douyin
+    publishes a ``blob:`` MSE source while a ``<source>`` element carries the
+    signed CDN URL. Counting the ``blob:`` entry as a competing candidate hid
+    the single URL that can actually be fetched.
+    """
+
+    candidates = [
+        text
+        for text in (str(value or "").strip() for value in values or [])
+        if text.lower().startswith(("http://", "https://"))
+    ]
+    return list(dict.fromkeys(candidates))
+
+
+_PAGE_MEDIA_PROBE_BYTES = 64 * 1024
+
+
+def _probe_page_media(
+    url: str,
+    dns_cache: dict[str, bool],
+) -> tuple[str, str] | None:
+    """Fingerprint the first bytes of a page media URL.
+
+    Mirrors of one file share the digest even when their signed query strings
+    differ, which is what makes it safe to keep the first source of a player
+    instead of discarding every candidate as ambiguous.
+    """
+
+    if not _is_public_http_url(url, dns_cache):
+        return None
+    headers = {
+        "Range": f"bytes=0-{_PAGE_MEDIA_PROBE_BYTES - 1}",
+        "User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)",
+    }
+    for proxy in proxy_plan():
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(10),
+                follow_redirects=True,
+                trust_env=False,
+                proxy=proxy,
+            ) as client:
+                with client.stream("GET", url, headers=headers) as response:
+                    if response.status_code >= 400:
+                        return None
+                    content_type = str(response.headers.get("content-type") or "").lower()
+                    digest = hashlib.sha256()
+                    remaining = _PAGE_MEDIA_PROBE_BYTES
+                    for chunk in response.iter_bytes():
+                        if not chunk:
+                            continue
+                        digest.update(chunk[:remaining])
+                        remaining -= min(len(chunk), remaining)
+                        if remaining <= 0:
+                            break
+                    return digest.hexdigest(), content_type
+        except (httpx.TimeoutException, httpx.TransportError):
+            continue
+    return None
+
+
+def _choose_page_media_url(
+    candidates: list[str],
+    dns_cache: dict[str, bool],
+) -> tuple[str | None, int]:
+    """Choose one player source, grouping mirrors of the same file together."""
+
+    groups: dict[str, list[str]] = {}
+    unprobed: list[str] = []
+    for url in candidates[:5]:
+        identity = _probe_page_media(url, dns_cache)
+        if identity is None:
+            unprobed.append(url)
+            continue
+        groups.setdefault(identity[0], []).append(url)
+    if groups:
+        first_group = next(
+            (members for url in candidates for members in groups.values() if url in members),
+            None,
+        )
+        if first_group:
+            return first_group[0], len(groups)
+    if unprobed:
+        return unprobed[0], 0
+    return None, len(groups)
+
+
 def _select_browser_video_url(
     candidates: list[str],
     dns_cache: dict[str, bool],
@@ -984,13 +1074,23 @@ def _attach_browser_video_evidence(
     duration_seconds: float | None = None,
     bound_media_urls: list[str] | None = None,
 ) -> ReadResponse:
-    eligible_urls = list(dict.fromkeys(bound_media_urls or []))
+    # Only the page's own player binds a URL to the requested post; passively
+    # captured responses are diagnostics and may belong to other clips. The
+    # page player also publishes undownloadable player internals (`blob:` MSE
+    # sources), which must not compete with the signed URL beside them.
+    eligible_urls = _http_media_candidates(bound_media_urls)
     selected_url = None
     rejected_count = 0
     if len(eligible_urls) == 1:
         selected_url, rejected_count = _select_browser_video_url(eligible_urls, {})
     elif len(eligible_urls) > 1:
-        rejected_count = len(eligible_urls)
+        # A player publishes alternatives for the same title (mirror CDNs, an
+        # `aweme/v1/play` redirect): one file, several signed URLs.
+        chosen_url, _distinct = _choose_page_media_url(eligible_urls, {})
+        if chosen_url:
+            selected_url, rejected_count = _select_browser_video_url([chosen_url], {})
+        else:
+            rejected_count = len(eligible_urls)
     video_coverage = response.coverage.modalities.get("video") or CoverageItem(
         discovered=1,
         extraction="partial",

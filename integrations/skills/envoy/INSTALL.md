@@ -1,6 +1,6 @@
 # 安装 Envoy
 
-Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.6`；`dev` 分支上的下一个开发版为 `0.1.7`，发行说明以 `CHANGELOG.md` 为准。
+Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.6`；`dev` 分支上的下一个开发版为 `0.1.8`，发行说明以 `CHANGELOG.md` 为准。
 
 ## 1. 安装 Skill
 
@@ -309,6 +309,11 @@ CAPTCHA, or anti-bot challenges. Direct media may still be rejected by its host
 or access policy. Every outbound path — HTTP read, Chromium, and yt-dlp media
 download — connects **directly first**; a system or environment proxy is only an
 automatic fallback after a direct attempt fails, so a proxy never silently
+Reading runs headlessly by default and never opens a window: a page that still
+requires a login or verification action is reported as `challenge_required`.
+Export `ENVOY_VISIBLE_BROWSER=1` to allow Envoy's interactive fallback, which
+shows its isolated browser so you can complete that action once.
+
 changes what a source returns. Set `ENVOY_BROWSER_PROXY` to an unauthenticated
 proxy URL to pin that proxy, or to `none`/`off` to forbid proxying entirely.
 Proxy credentials are not passed in browser command-line arguments.
