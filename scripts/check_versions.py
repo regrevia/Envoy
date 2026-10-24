@@ -5,11 +5,13 @@ The release version is written by hand into a dozen manifests (two
 ``pyproject.toml`` files, three plugin/marketplace manifests, the DSH bundle, the
 skill packager, and two test constants). Nothing used to compare them, so a
 partial bump shipped mismatched artifacts. ``--check`` exits non-zero on any
-drift and CI runs it.
+drift and CI runs it; ``--write`` bumps every declaration from the
+authoritative CLI package instead of doing it by hand.
 
 Usage:
     python scripts/check_versions.py           # human-readable inventory
     python scripts/check_versions.py --check   # exit 1 on drift
+    python scripts/check_versions.py --write   # rewrite declarations from the CLI package
     python scripts/check_versions.py --json    # machine-readable report
 """
 
@@ -91,6 +93,54 @@ DOC_MENTIONS: tuple[str, ...] = (
     "integrations/dsh/README.md",
 )
 
+# How ``--write`` patches a declaration: the pattern spans the whole assignment
+# and ``count=1`` keeps look-alike keys (a nested plugin version, a dependency
+# pin) untouched. The replacement restores the captured separator and splices in
+# the authoritative version.
+_PATCHES: dict[str, tuple[re.Pattern[str], str]] = {
+    CLI_PYPROJECT: (re.compile(r'(?m)^version(\s*=\s*)"[^"]+"'), 'version\\1"{v}"'),
+    "packages/envoy-core/pyproject.toml": (
+        re.compile(r'(?m)^version(\s*=\s*)"[^"]+"'),
+        'version\\1"{v}"',
+    ),
+    "packages/envoy-core/src/envoy_core/__init__.py": (
+        re.compile(r'(?m)^__version__(\s*=\s*)"[^"]+"'),
+        '__version__\\1"{v}"',
+    ),
+    "integrations/claude-code/envoy/.claude-plugin/plugin.json": (
+        re.compile(r'"version"(\s*:\s*)"[^"]+"'),
+        '"version"\\1"{v}"',
+    ),
+    "integrations/codex/envoy/.codex-plugin/plugin.json": (
+        re.compile(r'"version"(\s*:\s*)"[^"]+"'),
+        '"version"\\1"{v}"',
+    ),
+    ".claude-plugin/marketplace.json": (
+        re.compile(r'"version"(\s*:\s*)"[^"]+"'),
+        '"version"\\1"{v}"',
+    ),
+    "integrations/dsh/envoy-dsh/package.json": (
+        re.compile(r'"version"(\s*:\s*)"[^"]+"'),
+        '"version"\\1"{v}"',
+    ),
+    "integrations/dsh/envoy-dsh/skill/manifest.json": (
+        re.compile(r'"version"(\s*:\s*)"[^"]+"'),
+        '"version"\\1"{v}"',
+    ),
+    "scripts/package_envoy_skill.py": (
+        re.compile(r'(?m)^SKILL_VERSION(\s*=\s*)"[^"]+"'),
+        'SKILL_VERSION\\1"{v}"',
+    ),
+    "tests/test_envoy_cli_distribution.py": (
+        re.compile(r'(?m)^PACKAGE_VERSION(\s*=\s*)"[^"]+"'),
+        'PACKAGE_VERSION\\1"{v}"',
+    ),
+    "tests/core_protocol/test_read_protocol.py": (
+        re.compile(r'(envoy_core\.__version__\s*==\s*)"[^"]+"'),
+        '\\1"{v}"',
+    ),
+}
+
 
 def authoritative_version() -> str:
     return _toml(CLI_PYPROJECT)
@@ -129,13 +179,37 @@ def find_doc_gaps(expected: str) -> list[str]:
     return missing
 
 
+def write_declarations(expected: str) -> list[str]:
+    """Rewrite every declaration to ``expected`` and return the paths touched.
+
+    Docs are not rewritten: their prose is authored by hand, so a missing
+    mention stays a reported gap rather than a silent edit.
+    """
+
+    changed: list[str] = []
+    for relative, (pattern, template) in _PATCHES.items():
+        path = ROOT / relative
+        text = path.read_text(encoding="utf-8")
+        patched, replacements = pattern.subn(template.format(v=expected), text, count=1)
+        if replacements and patched != text:
+            path.write_text(patched, encoding="utf-8")
+            changed.append(relative)
+    return changed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="exit 1 when anything drifts")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="rewrite every declaration from the CLI package version",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     expected = authoritative_version()
+    written = write_declarations(expected) if args.write else []
     rows = collect()
     drift = find_drift(rows, expected)
     doc_gaps = find_doc_gaps(expected)
@@ -146,12 +220,15 @@ def main(argv: list[str] | None = None) -> int:
             "expected": expected,
             "source": CLI_PYPROJECT,
             "ok": ok,
+            "written": written,
             "declarations": rows,
             "drift": drift,
             "docs_missing_version": doc_gaps,
         }, ensure_ascii=False))
     else:
         print(f"authoritative version: {expected} ({CLI_PYPROJECT})")
+        for relative in written:
+            print(f"  WROTE  {relative}")
         for row in rows:
             if row.get("error"):
                 print(f"  ERROR  {row['path']}: {row['error']}")
