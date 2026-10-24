@@ -44,11 +44,14 @@ from .media import (
     transcribe_audio_file,
 )
 from .ocr import (
+    DEFAULT_OCR_BACKEND,
     OCR_PIPELINE_REVISION,
     _engine_version,
     available_ocr_backends,
     extract_image_ocr,
     ocr_cache_key,
+    resolve_ocr_language,
+    select_ocr_backend,
 )
 from envoy_core.schemas.read_v1 import (
     Coverage,
@@ -603,52 +606,54 @@ def _read_cached_image_ocr(
     *,
     profile: str,
     language: str,
+    backend: str = DEFAULT_OCR_BACKEND,
 ) -> dict:
     cache_root = _material_root() / "ocr-cache"
     cache_root.mkdir(mode=0o700, exist_ok=True)
     available = available_ocr_backends()
-    selected_backend = (
-        "paddleocr"
-        if available.get("paddleocr")
-        else "tesseract"
-        if available.get("tesseract")
-        else ""
+    selected_backend = select_ocr_backend(backend, available=available)
+    # The lookup key has to be computable before extraction, so it uses the
+    # language the backend is configured for. Environment-aware backends (the
+    # Tesseract traineddata fallback) may report a narrower language in the
+    # result, and the entry is still stored under this stable key.
+    cache_language = resolve_ocr_language(selected_backend, language)
+    cache_engine_version = (
+        f"{_engine_version(selected_backend)}+{OCR_PIPELINE_REVISION}"
     )
-    cache_path = None
-    if selected_backend:
-        cache_engine_version = (
-            f"{_engine_version(selected_backend)}+{OCR_PIPELINE_REVISION}"
-        )
-        key = ocr_cache_key(
-            image_sha256,
-            profile=profile,
-            language=language,
-            backend=selected_backend,
-            engine_version=cache_engine_version,
-        )
-        cache_path = cache_root / f"{key}.json"
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            if isinstance(cached, dict) and cached.get("source_sha256") == image_sha256:
-                return {**cached, "cache_hit": True}
-        except (FileNotFoundError, OSError, ValueError):
-            pass
+    key = ocr_cache_key(
+        image_sha256,
+        profile=profile,
+        language=cache_language,
+        backend=selected_backend,
+        engine_version=cache_engine_version,
+    )
+    cache_path = cache_root / f"{key}.json"
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(cached, dict) and cached.get("source_sha256") == image_sha256:
+            return {**cached, "cache_hit": True}
+    except (FileNotFoundError, OSError, ValueError):
+        pass
     result = extract_image_ocr(
         image_path,
         profile=profile,
         language=language,
+        backend=selected_backend,
+        available=available,
     )
-    backend = str(result.get("backend") or "auto")
-    cache_engine_version = (
-        f"{result.get('engine_version') or 'unknown'}+{OCR_PIPELINE_REVISION}"
-    )
-    cache_path = cache_root / f"{ocr_cache_key(image_sha256, profile=profile, language=language, backend=backend, engine_version=cache_engine_version)}.json"
+    result_backend = str(result.get("backend") or selected_backend)
+    result_language = str(result.get("language") or cache_language)
     cache_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     try:
         cache_path.chmod(0o600)
     except OSError:
         pass
-    return {**result, "cache_hit": False}
+    return {
+        **result,
+        "backend": result_backend,
+        "language": result_language,
+        "cache_hit": False,
+    }
 
 
 def _goal_candidates(text: str, terms: list[str], limit: int = 5) -> list[dict]:
@@ -3835,7 +3840,19 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
 
 
 def _requested_ocr_language(request: ReadRequest) -> str:
-    return request.ocr_language or os.getenv("ENVOY_OCR_LANG", "eng").strip() or "eng"
+    return (
+        request.ocr_language
+        or os.getenv("ENVOY_OCR_LANG", "").strip()
+        or "auto"
+    )
+
+
+def _requested_ocr_backend(request: ReadRequest) -> str:
+    return (
+        getattr(request, "ocr_backend", None)
+        or os.getenv("ENVOY_OCR_BACKEND", "").strip().lower()
+        or DEFAULT_OCR_BACKEND
+    )
 
 
 def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
@@ -3864,6 +3881,7 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
     returned_tokens = 0
     ocr_result = {}
     ocr_language = _requested_ocr_language(request)
+    ocr_backend = _requested_ocr_backend(request)
     if request.ocr_profile:
         try:
             image_path, image_sha256 = _download_image_for_ocr(
@@ -3876,7 +3894,9 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
                 image_sha256,
                 profile=request.ocr_profile,
                 language=ocr_language,
+                backend=ocr_backend,
             )
+            ocr_language = str(ocr_result.get("language") or ocr_language)
             text_parts = []
             pending_spans = []
             cursor = 0
@@ -4794,6 +4814,7 @@ def _attach_video_frames(
             ocr_unresolved = []
             zero_confidence_regions = 0
             ocr_language = _requested_ocr_language(request)
+            ocr_backend = _requested_ocr_backend(request)
             frame_pixels = 0
             for index, frame in enumerate(extracted_frames[:len(timestamps)], start=1):
                 source_frame = Path(frame["path"]).resolve()
@@ -4857,7 +4878,9 @@ def _attach_video_frames(
                             str(frame["sha256"]),
                             profile=request.ocr_profile,
                             language=ocr_language,
+                            backend=ocr_backend,
                         )
+                        ocr_language = str(ocr_result.get("language") or ocr_language)
                         zero_confidence_regions += _ocr_zero_confidence_regions(
                             ocr_result.get("regions")
                         )
@@ -5808,6 +5831,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         zero_confidence_regions = 0
         ocr_profile = request.ocr_profile
         ocr_language = _requested_ocr_language(request)
+        ocr_backend = _requested_ocr_backend(request)
         for item in safe_images:
             image = item["image"]
             image_url = item["image_url"]
@@ -5847,7 +5871,9 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                         image_sha256,
                         profile=ocr_profile,
                         language=ocr_language,
+                        backend=ocr_backend,
                     )
+                    ocr_language = str(ocr_result.get("language") or ocr_language)
                     zero_confidence_regions += _ocr_zero_confidence_regions(
                         ocr_result.get("regions")
                     )

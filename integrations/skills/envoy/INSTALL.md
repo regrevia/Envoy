@@ -34,7 +34,37 @@ envoy doctor --json
 
 若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后检查 `envoy_doctor` 报告的版本；旧 MCP 进程可能仍在运行。
 
-DeepSeek Harness Desktop 用户可在插件管理器中安装本仓库的 [Envoy DSH 插件](../../dsh/README.md)，一次完成 MCP 桥接与 Skill 注册；该方式仍要求先安装上面的 runtime。
+DeepSeek Harness Desktop 用户可在插件管理器中安装本仓库的 [Envoy DSH 插件](../../dsh/README.md)，一次完成 MCP 桥接、Skill 注册和链接优先 hook；该方式仍要求先安装上面的 runtime。
+
+### Claude Code 与 Codex 插件
+
+Claude Code 插件直接提供 MCP 桥接和 `UserPromptSubmit` 链接优先 hook。
+Codex 0.156 起不再加载插件自带的生命周期 hook，因此 Codex 插件只负责 MCP，
+hook 需再执行一次 `envoy hook install --host codex` 写入用户级
+`~/.codex/hooks.json`。两者都会先尝试 `envoy_read`，只在 Envoy 返回
+`blocked` / `challenge_required`、需要登录/验证码或工具不可用时才回退到宿主
+自带抓取。
+
+```bash
+# Claude Code
+claude plugin marketplace add regrevia/Envoy
+claude plugin install envoy@envoy
+
+# Codex：插件安装 MCP，另外安装用户级 hook
+codex plugin marketplace add https://github.com/regrevia/Envoy.git
+codex plugin add envoy@envoy
+envoy hook install --host codex
+codex plugin list
+```
+
+Codex 首次运行会要求确认 hook 信任；`codex exec` 可用
+`--dangerously-bypass-hook-trust`，但仅限你理解该参数含义时。
+
+本地开发时把仓库绝对路径传给 `plugin marketplace add`。若 `envoy` 不在
+`PATH` 中，设置 `ENVOY_BIN` 为可执行文件绝对路径；hook 在找不到 Envoy 时会
+静默跳过，不影响正常提问。详见
+[Claude Code 插件](../../claude-code/envoy/README.md)和
+[Codex 插件](../../codex/envoy/README.md)。
 
 ## 4. 验证首次读取
 
@@ -143,7 +173,38 @@ version after reloading; an old connection can keep running the old process.
 
 DeepSeek Harness Desktop users can install the repository's
 [Envoy DSH plugin](../../dsh/README.md) from the Plugin Manager to mount the MCP
-bridge and register the skill in one step. It still requires the runtime above.
+bridge, register the skill, and enable link-first routing in one step. It still
+requires the runtime above.
+
+### Claude Code and Codex plugins
+
+The Claude Code plugin ships both the MCP bridge and a `UserPromptSubmit`
+link-first hook. Codex 0.156 no longer loads plugin-supplied lifecycle hooks, so
+its plugin only mounts MCP; run `envoy hook install --host codex` once to merge
+the hook into the user-level `~/.codex/hooks.json`. The hook asks the model to
+try `envoy_read` first and fall back to native fetching only on `blocked` /
+`challenge_required`, sign-in or CAPTCHA, or an unavailable Envoy tool.
+
+```bash
+# Claude Code
+claude plugin marketplace add regrevia/Envoy
+claude plugin install envoy@envoy
+
+# Codex: plugin mounts MCP; the hook is installed at user level
+codex plugin marketplace add https://github.com/regrevia/Envoy.git
+codex plugin add envoy@envoy
+envoy hook install --host codex
+codex plugin list
+```
+
+Codex asks you to trust the hook on first use. For `codex exec`, pass
+`--dangerously-bypass-hook-trust` only when you understand that flag.
+
+For local development pass the absolute checkout path to
+`plugin marketplace add`. If `envoy` is not on `PATH`, set `ENVOY_BIN` to the
+absolute executable path; the hook silently skips when Envoy is missing. See the
+[Claude Code plugin](../../claude-code/envoy/README.md) and
+[Codex plugin](../../codex/envoy/README.md).
 
 ## 4. Check the first read
 

@@ -19,8 +19,15 @@ from envoy_core.schemas.read_v1 import (
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
+from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook
 from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
-from .ocr import available_ocr_backends
+from .ocr import (
+    DEFAULT_OCR_BACKEND,
+    OCR_PROFILES,
+    available_ocr_backends,
+    extract_image_ocr,
+    ocr_runtime_status,
+)
 from .package_install import install_media_dependencies
 from . import __version__
 from . import mcp
@@ -111,6 +118,34 @@ def _parser() -> argparse.ArgumentParser:
             "large-v3", "large-v3-turbo",
         ],
     )
+    hook = subparsers.add_parser("hook", help="run a host integration hook")
+    hook_commands = hook.add_subparsers(dest="hook_command", required=True)
+    hook_prompt = hook_commands.add_parser(
+        "prompt",
+        help="inject Envoy link routing when a user prompt contains a public URL",
+    )
+    hook_prompt.add_argument("--host", required=True, choices=SUPPORTED_HOSTS)
+    hook_prompt.add_argument(
+        "--language",
+        default=None,
+        choices=("auto", "zh", "en"),
+        help="routing notice language (default: prompt auto-detection)",
+    )
+    hook_install = hook_commands.add_parser(
+        "install",
+        help="install or remove a host hook file (Codex user-level hooks)",
+    )
+    hook_install.add_argument("--host", default="codex", choices=("codex",))
+    hook_install.add_argument("--uninstall", action="store_true")
+    ocr = subparsers.add_parser("ocr", help="inspect or exercise local OCR backends")
+    ocr_commands = ocr.add_subparsers(dest="ocr_command", required=True)
+    ocr_status = ocr_commands.add_parser("status", help="report OCR backend availability")
+    ocr_status.add_argument("--json", action="store_true")
+    ocr_test = ocr_commands.add_parser("test", help="OCR one local image and print the result")
+    ocr_test.add_argument("image")
+    ocr_test.add_argument("--backend", default=DEFAULT_OCR_BACKEND)
+    ocr_test.add_argument("--language", default="auto")
+    ocr_test.add_argument("--profile", default="balanced", choices=sorted(OCR_PROFILES))
     subparsers.add_parser("mcp", help="run the stdio MCP bridge")
     return parser
 
@@ -166,6 +201,45 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         return browser_runtime.setup_browser()
     if args.command == "mcp":
         return mcp.main()
+    if args.command == "ocr":
+        if args.ocr_command == "status":
+            status = ocr_runtime_status()
+            if args.json:
+                print(json.dumps(status, ensure_ascii=False, indent=2))
+            else:
+                backend = status["auto_backend"] or "none"
+                print(f"auto backend: {backend}")
+                for name, info in status["backends"].items():
+                    state = "available" if info["available"] else "missing"
+                    print(f"  {name:<10} {state:<10} {info['engine_version'] or info['install_hint']}")
+            return 0
+        try:
+            result = extract_image_ocr(
+                args.image,
+                profile=args.profile,
+                backend=args.backend,
+                language=args.language,
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps({
+            "backend": result["backend"],
+            "language": result["language"],
+            "profile": result["profile"],
+            "regions": len(result["regions"]),
+            "text": result["text"],
+        }, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "hook":
+        if args.hook_command == "install":
+            install = install_codex_hooks(uninstall=args.uninstall)
+            print(json.dumps(install, ensure_ascii=False))
+            # A malformed ~/.codex/hooks.json is reported, not overwritten; make
+            # that visible to scripts instead of exiting successfully.
+            return 2 if install.get("error") else 0
+        payload = stdin if stdin is not None else sys.stdin.read()
+        return run_prompt_hook(args.host, payload, language=args.language)
     if args.command == "asr":
         try:
             if args.asr_command == "install":

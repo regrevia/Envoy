@@ -19,6 +19,12 @@ dependencies = [
 [project.optional-dependencies]
 media = ["openai-whisper==20250625"]
 ocr = ["Pillow>=10,<13"]
+ocr-vision = [
+  "Pillow>=10,<13",
+  "pyobjc-framework-Vision>=10,<12; sys_platform == 'darwin'",
+  "pyobjc-framework-Quartz>=10,<12; sys_platform == 'darwin'",
+]
+ocr-rapid = ["Pillow>=10,<13", "rapidocr-onnxruntime>=1.3,<2"]
 
 [project.scripts]
 envoy = "envoy_cli.cli:entrypoint"
@@ -29,3 +35,6 @@ include = ["envoy_cli*", "envoy_core*"]
 
 [tool.setuptools]
 license-files = ["LICENSE", "NOTICE"]
+
+[tool.setuptools.package-data]
+envoy_cli = ["hook_scripts/*.sh", "hook_scripts/*.ps1"]

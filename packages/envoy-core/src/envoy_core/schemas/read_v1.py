@@ -176,6 +176,9 @@ class ReadRequest(ContractModel):
     retention: Retention = Field(default_factory=Retention)
     host_capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
     ocr_profile: Optional[Literal["fast", "balanced", "quality", "pro"]] = None
+    ocr_backend: Optional[
+        Literal["auto", "vision", "paddleocr", "rapidocr", "tesseract"]
+    ] = None
     ocr_language: Optional[str] = Field(default=None, min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
     video_subtitle_language: Optional[str] = Field(default=None, max_length=32)
 

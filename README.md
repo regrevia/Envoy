@@ -16,7 +16,7 @@
   <a href="#english">English</a>
 </p>
 
-Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后台运行；遇到登录或验证时才请你接管。安装 Skill、CLI runtime 和 MCP 连接是三个步骤，按[安装指南](integrations/skills/envoy/INSTALL.md)完成即可。DeepSeek Harness Desktop 用户可通过[插件](integrations/dsh/README.md)一次完成 MCP 挂载与 Skill 注册。
+Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后台运行；遇到登录或验证时才请你接管。安装 Skill、CLI runtime 和 MCP 连接是三个步骤，按[安装指南](integrations/skills/envoy/INSTALL.md)完成即可。Claude Code、Codex 和 DeepSeek Harness 都有对应插件：完成 MCP 挂载，并在提问带链接时先走 Envoy，而不是让内置抓取重复拉整页（Codex 0.156 起还需执行一次 `envoy hook install --host codex` 写入用户级 hook）。Envoy 不替代联网搜索，只负责用户给出的链接、视频/音频和需要完整来源证据的读取。
 
 ## 能力
 
@@ -34,6 +34,8 @@ Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后�
 ## 文档
 
 - [安装、更新与 MCP 配置](integrations/skills/envoy/INSTALL.md)
+- [Claude Code 插件](integrations/claude-code/envoy/README.md)
+- [Codex 插件](integrations/codex/envoy/README.md)
 - [DeepSeek Harness 插件](integrations/dsh/README.md)
 - [产品与技术状态](docs/architecture/agent-link-reader-status.md)
 - [平台真实验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)
@@ -53,7 +55,7 @@ Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后�
   Your AI analyzes it and creates the deliverable.
 </p>
 
-Envoy connects to MCP-capable agents through an Agent Skill and MCP server. The browser runs headlessly by default; you are asked to take over only when login or verification is needed. Installing the Skill, CLI runtime, and MCP connection are separate steps. Follow the [installation guide](integrations/skills/envoy/INSTALL.md). DeepSeek Harness Desktop users can use the [plugin](integrations/dsh/README.md) to mount MCP and register the skill in one step.
+Envoy connects to MCP-capable agents through an Agent Skill and MCP server. The browser runs headlessly by default; you are asked to take over only when login or verification is needed. Installing the Skill, CLI runtime, and MCP connection are separate steps. Follow the [installation guide](integrations/skills/envoy/INSTALL.md). Claude Code, Codex, and DeepSeek Harness each have a plugin that mounts MCP and routes user-supplied links through Envoy before native fetching, avoiding duplicate full-page reads (Codex 0.156+ additionally needs one `envoy hook install --host codex` to write its user-level hook). Envoy does not replace web search; it handles the user's links, video/audio, and reads that need full-source evidence.
 
 ### Capabilities
 
@@ -71,6 +73,8 @@ We are comparing Envoy with direct reading on the same links and model, measurin
 ### Documentation
 
 - [Installation, updates, and MCP setup](integrations/skills/envoy/INSTALL.md)
+- [Claude Code plugin](integrations/claude-code/envoy/README.md)
+- [Codex plugin](integrations/codex/envoy/README.md)
 - [DeepSeek Harness plugin](integrations/dsh/README.md)
 - [Product and engineering status](docs/architecture/agent-link-reader-status.md)
 - [Platform acceptance matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md)

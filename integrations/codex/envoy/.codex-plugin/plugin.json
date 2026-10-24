@@ -1,0 +1,37 @@
+{
+  "name": "envoy",
+  "version": "0.1.6",
+  "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
+  "author": {
+    "name": "regrevia",
+    "url": "https://github.com/regrevia"
+  },
+  "homepage": "https://github.com/regrevia/Envoy",
+  "repository": "https://github.com/regrevia/Envoy",
+  "license": "Apache-2.0",
+  "keywords": [
+    "link-reader",
+    "web",
+    "video",
+    "ocr",
+    "mcp",
+    "hooks"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Envoy",
+    "shortDescription": "Read links through Envoy before built-in fetching",
+    "longDescription": "Mounts the Envoy MCP reader. Run `envoy hook install --host codex` once to add the user-level prompt hook that routes public links through envoy_read before built-in fetching.",
+    "developerName": "regrevia",
+    "category": "Productivity",
+    "capabilities": [
+      "MCP"
+    ],
+    "websiteURL": "https://github.com/regrevia/Envoy",
+    "defaultPrompt": [
+      "Read this link with Envoy and keep the material id.",
+      "Inspect this post and cite the locators."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

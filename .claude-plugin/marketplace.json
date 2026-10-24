@@ -1,0 +1,15 @@
+{
+  "name": "envoy",
+  "owner": {
+    "name": "regrevia",
+    "url": "https://github.com/regrevia"
+  },
+  "plugins": [
+    {
+      "name": "envoy",
+      "source": "./integrations/claude-code/envoy",
+      "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
+      "version": "0.1.6"
+    }
+  ]
+}

@@ -28,6 +28,7 @@
 | 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；Worker 租约、并发配额、取消贯通仍未达到方案门槛 |
 | 独立无数据库处理核心 | 进行中 | `packages/envoy-core` 已承载第一版 `envoy.read/1` 请求/材料/覆盖/资源 schema；现有 worker 尚未整体迁出 ORM |
 | CLI、宿主 Skill 与 MCP 桥 | 进行中 | `dev` 有 `packages/envoy-cli`、`envoy read/expand/doctor/mcp`；MCP 支持新版 per-request 元数据和旧版初始化协商；Skill 按目标指导 read/search/targeted expand。字幕时间定位、长行命中、跨 search/expand 区间账本、累计预算、material 文件锁、稳定视觉资源 ID、观察关联校验、租约帧交接均已实现。平台访问仍因登录/站点挑战而不稳定，未据此宣传全平台已验收 |
+| 多宿主链接优先 hook | 已验证（开发验收，`dev`） | `envoy hook prompt --host {claude-code,codex,dsh}` 共享同一 URL 提取/内网过滤/回退策略；Claude Code 插件已在本机通过 marketplace 安装并在 `--debug` 日志确认 `UserPromptSubmit` 注入 668 字符 `additionalContext`；Codex 插件已安装到 `~/.codex/plugins/cache/envoy/envoy/0.1.6`，因 0.156 不再加载插件 hook，用户级 `~/.codex/hooks.json` 已由 `envoy hook install --host codex` 写入并实测注入；DSH 使用 `agent/pre-step`。策略明确不替代宿主联网搜索：无链接检索仍用原生搜索，Envoy 只处理用户链接、视频/音频和需完整来源证据的读取，并通过分段读取/search/expand 控制上下文。 |
 | 跨来源质量/费用基准 | 未开始 | 尚无固定 60 来源/120 任务集，也未测得全链路费用改善数字 |
 
 ## 近期执行顺序
