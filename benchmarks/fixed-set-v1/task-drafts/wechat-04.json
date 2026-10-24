@@ -1,0 +1,171 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "wechat-04",
+  "stratum": "wechat",
+  "source_ids": [
+    "wechat-agent-tooling",
+    "wechat-agent-frameworks"
+  ],
+  "source_revisions": {
+    "wechat-agent-tooling": {
+      "url": "https://mp.weixin.qq.com/s/dAnNHayrE49FEl8TcLII2Q",
+      "sha256": "e92dcf250cb7b729a476a94ac5c7185bc5f6307a6d46fc3090b749ce38fa90dc",
+      "snapshot": "materials/e92dcf250cb7b729a476a94ac5c7185bc5f6307a6d46fc3090b749ce38fa90dc.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured, but the embedded JSON/JS code region came out token-split and is never quoted; images not read"
+    },
+    "wechat-agent-frameworks": {
+      "url": "https://mp.weixin.qq.com/s/0jB157hXY2AwIcji0jywBQ",
+      "sha256": "038f033d46aeb868ab6ef4e772c0ab709e7c3640aeabe8f6af1427401833767b",
+      "snapshot": "materials/038f033d46aeb868ab6ef4e772c0ab709e7c3640aeabe8f6af1427401833767b.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured in full; screenshots and tables-as-images not read"
+    }
+  },
+  "deliverable": "A source-grounded comparison of Function Calling, MCP and Skills as integration mechanisms, plus how agent frameworks differ, with explicit uncertainty where the two articles answer different questions.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two articles, describe Function Calling, MCP and Skills as the tooling article defines them, then summarize how the framework article compares LangGraph, LlamaIndex Workflows and alternatives."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Explain the tooling article's argument about whether MCP and Skills are complementary or competing, and what evidence it offers. Then state what the framework article says about the cost of adopting a framework."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Synthesize a decision rule: for a team that must integrate several existing internal systems, what do the two articles together imply about protocol choice versus framework choice, and where do they leave the question open?"
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "mcp-built-on-function-calling",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article describes MCP as still built on Function Calling: it converts a Function Calling invocation client-side into a JSON+HTTP request and answers it with a server, so existing systems can be used by any LLM.",
+      "locator": "blk-body-0001 | section: MCP",
+      "quote": "MCP的核心其实还是基于FunctionCalling的。它做的事情很简单：把FunctionCalling的调用，在客户端转换成一套JSON+HTTP的请求。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mcp-standard-connection",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article credits MCP with a standardized connection protocol plus JSON-RPC and a standard tool-description format that lowers integration cost, while also saying MCP is a connection standard rather than the only way to connect.",
+      "locator": "blk-body-0001 | section: Function Calling、MCP、Skills的核心定位",
+      "quote": "MCP的价值在于它提供了一套标准化的接驳协议，让不同的工具和数据源能够以统一的方式被LLM使用。通过JSON-RPC协议和标准化的工具描述格式，MCP降低了工具集成的成本，让开发者不需要为每个系统单独编写集成代码。但本质上，MCP更偏重是一套接驳标准，而不是唯一的接驳方式。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "skills-depend-on-function-calling",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article says the key point about Skills is that it depends entirely on Function Calling: without Function Calling, Skills cannot work, because loading a skill document is itself a function call.",
+      "locator": "blk-body-0001 | section: Skills",
+      "quote": "这里的关键是，Skills完全依赖于FunctionCalling这个基础能力。如果没有FunctionCalling，Skills就无法工作。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mcp-skills-competition",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article argues against the common view that MCP and Skills are complementary: it says they are more competitive than complementary because both solve the same problem of integrating several existing systems into a multi-step task.",
+      "locator": "blk-body-0001 | section: MCP与Skills的竞争关系",
+      "quote": "虽然很多人认为MCP和Skills是互补关系，但实际上，这两者更多是竞争关系。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "function-calling-integration-cost",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article says that under Function Calling every existing system has to be integrated separately, since each organisation has its own API, authentication and data format, so developers write a corresponding function implementation per organisation.",
+      "locator": "blk-body-0001 | section: 工具集成成本太高",
+      "quote": "在FunctionCalling的框架下，每个既有系统都需要单独集成到应用中。每个组织或公司都有自己的API、认证方式、数据格式，开发者需要为每个组织或公司编写对应的函数实现。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "function-calling-bridges-structures",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article states the essence of tool calling: the LLM converts an unstructured user need, a natural-language text, into a structured function call of function name and arguments, and the structured result is returned to the model for its next decision.",
+      "locator": "blk-body-0001 | section: 小结：工具调用的本质",
+      "quote": "LLM需要把用户的非结构化需求（一段自然语言文本）转换为结构化的函数调用（函数名和参数）",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "skills-replace-mcp-layer",
+      "source_id": "wechat-agent-tooling",
+      "claim": "The tooling article says the MCP JSON-RPC hop can be replaced outright by a command-line script or a remote curl call made locally, so the protocol-conversion server is not strictly necessary; this is the article's basis for treating the two approaches as rivals.",
+      "locator": "blk-body-0001 | section: MCP与Skills的竞争关系",
+      "quote": "换句话说，MCP的JSON-RPC可以被直接替换为命令行脚本或curl远程调用，在本地直接调用。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "langgraph-graph-structure",
+      "source_id": "wechat-agent-frameworks",
+      "claim": "The framework article describes LangGraph as first released in January 2024, built on LangChain and using a Pregel graph structure with nodes, edges and conditional edges to make cyclic agent flows and graph traversal more intuitive.",
+      "locator": "blk-body-0001 | section: 02 LangGraph",
+      "quote": "LangGraph通过引入节点（nodes）、边（edges）以及条件边（conditionaledges）的概念，简化了在智能体中创建循环流程的过程，使得图的遍历变得更加直观。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "pydantic-error-provenance",
+      "source_id": "wechat-agent-frameworks",
+      "claim": "The framework article reports that the misleading validation error encountered while building with LangGraph actually came from Pydantic rather than from LangGraph, and that the author eventually rewrote the skills as plain methods with LangChain's @tool decorator.",
+      "locator": "blk-body-0001 | section: 2.2 使用 LangGraph 面临的挑战",
+      "quote": "这个误导性的错误信息其实来自Pydantic，而非LangGraph。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "workflows-events-not-edges",
+      "source_id": "wechat-agent-frameworks",
+      "claim": "The framework article contrasts LlamaIndex Workflows with LangGraph: Workflows connects steps through events rather than edges or conditional edges, with agent logic packaged in steps that correspond to LangGraph's nodes.",
+      "locator": "blk-body-0001 | section: 03 LlamaIndex Workflows",
+      "quote": "尤其是它采用事件（events）而非边（edges）或条件边（conditionaledges）作为连接逻辑的方式",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "no-framework-simplest",
+      "source_id": "wechat-agent-frameworks",
+      "claim": "The framework article's comparison rates the no-framework approach as the simplest to implement, because all abstractions such as the SkillMap object are defined by the developer, so managing types and objects stays relatively simple.",
+      "locator": "blk-body-0001 | section: 04 对这些方法进行比较",
+      "quote": "无框架方法实施起来最简单。由于所有抽象层都是由开发者自行定义（如前例中的SkillMap对象），因此管理不同类型（types）和对象（objects）相对简单。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "plain-code-still-attractive",
+      "source_id": "wechat-agent-frameworks",
+      "claim": "The framework article concludes that the plain-code approach may remain an attractive choice forever, provided the abstractions the developer creates are strictly documented and enforced; this echoes the tooling article's point that intermediate layers can be replaced by simpler direct calls.",
+      "locator": "blk-body-0001 | section: 04 对这些方法进行比较",
+      "quote": "纯代码方法可能永远是一个有吸引力的选择。如果你能够严格地记录并执行所创建的任何抽象概念，那么确保外部框架不会成为你的阻碍就很容易了。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "framework-choice-three-questions",
+      "source_id": "wechat-agent-frameworks",
+      "claim": "The framework article reduces framework choice to three questions, the first being whether the project is already deeply integrated with LlamaIndex or LangChain, in which case those two options should be preferred.",
+      "locator": "blk-body-0001 | section: 05 在选择智能体框架时需要考虑的关键问题",
+      "quote": "你的项目是否已经深度集成了LlamaIndex或LangChain？如果是的话，不妨优先考虑这两个选项。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "wechat-agent-tooling",
+    "wechat-agent-frameworks"
+  ],
+  "acceptable_partial_outcomes": [
+    "The code region in the tooling article was captured token-split and is excluded; answers must not quote or reconstruct code from it.",
+    "The framework article compares frameworks qualitatively; do not invent benchmark numbers for them."
+  ],
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "lead",
+    "method": "every quote sliced from the stored snapshot and re-checked as a literal substring",
+    "facts": 13
+  },
+  "authority_anchors": [
+    {
+      "url": "https://modelcontextprotocol.io/docs",
+      "supports": "the official MCP documentation, which defines MCP as a standardized connection protocol for tools and data; used to judge the tooling article's description of MCP's role rather than to extend it",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}

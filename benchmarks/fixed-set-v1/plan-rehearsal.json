@@ -1,0 +1,294 @@
+{
+  "schema_version": "envoy.paired-experiment-plan/2",
+  "run_id": "envoy-ab-20261024-58dcd0c7abfd",
+  "seed": 20261024,
+  "package_count": 7,
+  "task_count": 21,
+  "unique_source_count": 14,
+  "source_class_package_counts": {
+    "bilibili": 2,
+    "wechat": 5
+  },
+  "package_manifest_sha256": "58dcd0c7abfd4b5a35cb4710ebe68d8d56b57aaa83464da26560875d078f794d",
+  "cache_isolation_status": "unknown",
+  "confirmatory_minimum_met": false,
+  "a_first_count": 4,
+  "b_first_count": 3,
+  "cache_policy": "caller must record disabled_or_isolated; otherwise cache-confounded",
+  "evaluation_profile": "custom_or_pilot",
+  "packages": [
+    {
+      "sequence": 1,
+      "package_id": "wechat-04",
+      "source_ids": [
+        "wechat-04-s1",
+        "wechat-04-s2"
+      ],
+      "source_class": "wechat",
+      "task_manifest_id": "manifest-wechat-04",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "baseline",
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0001-wechat-04/baseline",
+        "envoy": "profiles/pkg-0001-wechat-04/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0001-wechat-04-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    },
+    {
+      "sequence": 2,
+      "package_id": "wechat-05",
+      "source_ids": [
+        "wechat-05-s1",
+        "wechat-05-s2"
+      ],
+      "source_class": "wechat",
+      "task_manifest_id": "manifest-wechat-05",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "baseline",
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0002-wechat-05/baseline",
+        "envoy": "profiles/pkg-0002-wechat-05/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0002-wechat-05-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    },
+    {
+      "sequence": 3,
+      "package_id": "wechat-02",
+      "source_ids": [
+        "wechat-02-s1",
+        "wechat-02-s2"
+      ],
+      "source_class": "wechat",
+      "task_manifest_id": "manifest-wechat-02",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "envoy",
+      "arms": [
+        "envoy",
+        "baseline"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0003-wechat-02/baseline",
+        "envoy": "profiles/pkg-0003-wechat-02/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0003-wechat-02-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    },
+    {
+      "sequence": 4,
+      "package_id": "wechat-01",
+      "source_ids": [
+        "wechat-01-s1",
+        "wechat-01-s2"
+      ],
+      "source_class": "wechat",
+      "task_manifest_id": "manifest-wechat-01",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "envoy",
+      "arms": [
+        "envoy",
+        "baseline"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0004-wechat-01/baseline",
+        "envoy": "profiles/pkg-0004-wechat-01/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0004-wechat-01-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    },
+    {
+      "sequence": 5,
+      "package_id": "bili-01",
+      "source_ids": [
+        "bili-01-s1",
+        "bili-01-s2"
+      ],
+      "source_class": "bilibili",
+      "task_manifest_id": "manifest-bili-01",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "baseline",
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0005-bili-01/baseline",
+        "envoy": "profiles/pkg-0005-bili-01/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0005-bili-01-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    },
+    {
+      "sequence": 6,
+      "package_id": "bili-02",
+      "source_ids": [
+        "bili-02-s1",
+        "bili-02-s2"
+      ],
+      "source_class": "bilibili",
+      "task_manifest_id": "manifest-bili-02",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "envoy",
+      "arms": [
+        "envoy",
+        "baseline"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0006-bili-02/baseline",
+        "envoy": "profiles/pkg-0006-bili-02/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0006-bili-02-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    },
+    {
+      "sequence": 7,
+      "package_id": "wechat-03",
+      "source_ids": [
+        "wechat-03-s1",
+        "wechat-03-s2"
+      ],
+      "source_class": "wechat",
+      "task_manifest_id": "manifest-wechat-03",
+      "source_manifest_sha256": null,
+      "task_manifest_sha256": null,
+      "first_arm": "baseline",
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "profiles": {
+        "baseline": "profiles/pkg-0007-wechat-03/baseline",
+        "envoy": "profiles/pkg-0007-wechat-03/envoy"
+      },
+      "session_ids": {
+        "baseline": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-baseline-session",
+        "envoy": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-envoy-session"
+      },
+      "turn_correlation_ids": {
+        "baseline": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-baseline-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-baseline-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-baseline-followup-2"
+        },
+        "envoy": {
+          "initial": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-envoy-initial",
+          "followup-1": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-envoy-followup-1",
+          "followup-2": "envoy-ab-20261024-58dcd0c7abfd-pkg-0007-wechat-03-envoy-followup-2"
+        }
+      },
+      "same_package_session": true,
+      "reset_between_packages": true
+    }
+  ]
+}

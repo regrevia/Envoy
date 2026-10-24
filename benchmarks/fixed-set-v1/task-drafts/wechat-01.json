@@ -1,6 +1,6 @@
 {
   "schema_version": "envoy.fixed-evaluation-package/1",
-  "status": "draft_reference_review_pending",
+  "status": "frozen_reference_reviewed",
   "package_id": "wechat-01",
   "stratum": "wechat",
   "source_ids": [
@@ -10,11 +10,19 @@
   "source_revisions": {
     "wechat-params-basics": {
       "url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
-      "sha256": "94f354535d3545b1a4429b7879520edb3387054e352075c8efe6a5e52976f53c"
+      "sha256": "88885576b509dbf6b1c3adb92455d15ba695daf564ab08ef52ef48986257f453",
+      "snapshot": "materials/88885576b509dbf6b1c3adb92455d15ba695daf564ab08ef52ef48986257f453.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured; inline images not read, so image-only claims are out of scope"
     },
     "wechat-params-principles": {
       "url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
-      "sha256": "7184e75e9d3d435e3f2b52f078100b1f8727c85da4c15959ff3ceda994891276c3"
+      "sha256": "00916a9f23b72ee9399d64a6bad59cd9a1e095635fdb13aa2672415891c1f8f5",
+      "snapshot": "materials/00916a9f23b72ee9399d64a6bad59cd9a1e095635fdb13aa2672415891c1f8f5.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured; inline images not read, so image-only claims are out of scope"
     }
   },
   "deliverable": "A source-grounded comparison of the two articles' explanations of LLM generation parameters, with a compact table, exact section locators, and explicit coverage gaps.",
@@ -35,70 +43,100 @@
   ],
   "reference_facts": [
     {
-      "fact_id": "basics-customer-service-settings",
-      "claim": "The basics article recommends low temperature and top_p for customer service and gives example values of 0.2 and about 0.5, with a max_tokens example of 100.",
+      "fact_id": "basics-temperature-scenario",
       "source_id": "wechat-params-basics",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
-        "block_id": "blk-body-0001",
-        "section": "案例一：智能客服中的参数调优"
-      },
-      "adjudication_note": "Scores faithful reporting of the article, not whether these values are best practice."
+      "claim": "The basics article states that for an intelligent customer-service scenario temperature should be set to a low level such as 0.2 while top_p is lowered to about 0.5, in order to reduce randomness and keep answers accurate and consistent.",
+      "locator": "blk-body-0001 | section: 案例一：智能客服中的参数调优",
+      "quote": "我们可以将temperature（温度值）设置为较低水平（如0.2），同时调低top_p（累积概率）至0.5左右",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "basics-creative-settings",
-      "claim": "The basics article gives higher temperature and top_p examples, approximately 0.8 and 0.9, for creative writing.",
+      "fact_id": "basics-top_p-either-or",
       "source_id": "wechat-params-basics",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
-        "block_id": "blk-body-0001",
-        "section": "案例二：内容创作中的参数调优"
-      },
-      "adjudication_note": "Scores source attribution and numeric fidelity; do not endorse as universal settings."
+      "claim": "The basics article states that top_p (probability truncation, also called nucleus sampling) is usually adjusted as an either-or choice with temperature and that the two parameters need not be modified at the same time.",
+      "locator": "blk-body-0001 | section: 3.1 主要参数",
+      "quote": "通常和 temperature 二选一调整，不需要同时修改这两个参数。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "basics-temperature-top-p-ranges",
-      "claim": "The basics article states a temperature range of 0 to 2 with default 1 and a top_p range of 0 to 1 with default 1.",
+      "fact_id": "basics-frequency_penalty",
       "source_id": "wechat-params-basics",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
-        "block_id": "blk-body-0001",
-        "section": "三、核心参数讲解"
-      },
-      "adjudication_note": "Treat as a claim made by the article, not provider-independent API truth."
+      "claim": "The basics article states that a positive frequency_penalty punishes how frequently the model repeats the same words, so the higher the value the less the output reuses wording.",
+      "locator": "blk-body-0001 | section: 3.1 主要参数",
+      "quote": "正值会惩罚模型重复输出相同字词的频率。值越高，输出越不容易重复用词，以避免内容重复啰嗦",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "principles-temperature-softmax",
-      "claim": "The principles article explains temperature as scaling logits before softmax, making the resulting distribution sharper at lower values and flatter at higher values.",
-      "source_id": "wechat-params-principles",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
-        "block_id": "blk-body-0001",
-        "section": "2.1 temperature"
-      },
-      "adjudication_note": "The gold fact is the article's stated mechanism."
+      "fact_id": "basics-presence_penalty",
+      "source_id": "wechat-params-basics",
+      "claim": "The basics article states that a positive presence_penalty punishes the model for raising themes already present in the conversation, raising its tendency to introduce new topics.",
+      "locator": "blk-body-0001 | section: 3.1 主要参数",
+      "quote": "正值会惩罚模型重复提及对话中已出现过的主题，提高引入新话题的倾向。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "principles-max-tokens",
-      "claim": "The principles article describes max_tokens as a generation-step limit that can stop output early and cause truncation without changing the per-step probability distribution.",
-      "source_id": "wechat-params-principles",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
-        "block_id": "blk-body-0001",
-        "section": "2.5 max_tokens"
-      },
-      "adjudication_note": "Do not conflate the article's terminology with every provider's implementation."
+      "fact_id": "basics-max_tokens",
+      "source_id": "wechat-params-basics",
+      "claim": "The basics article states that setting max_tokens prevents overly long output and thereby controls cost, but that setting it too small may leave the answer incomplete.",
+      "locator": "blk-body-0001 | section: 3.1 主要参数",
+      "quote": "设置此参数可以防止输出过长（从而控制成本），但若设得过小可能导致回答不完整。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "principles-penalty-distinction",
-      "claim": "The principles article distinguishes frequency_penalty as proportional to a token's prior count and presence_penalty as a fixed penalty triggered when a token has appeared at least once.",
+      "fact_id": "basics-temp-top_p-contradiction",
+      "source_id": "wechat-params-basics",
+      "claim": "The basics article's content-creation example raises temperature to about 0.8 while also setting top_p to 0.9, which conflicts with the same article's advice to change only one of the two parameters.",
+      "locator": "blk-body-0001 | section: 案例二：内容创作中的参数调优",
+      "quote": "这时，我们可以将temperature调高至0.8左右，同时将top_p设置为0.9",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "principles-temperature-logits",
       "source_id": "wechat-params-principles",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
-        "block_id": "blk-body-0001",
-        "section": "2.2 frequency_penalty and 2.3 presence_penalty"
-      },
-      "adjudication_note": "Score the distinction and attribution, not external technical correctness."
+      "claim": "The principles article states that temperature scales every logit, either flattening or amplifying the gap between the scores of candidate tokens.",
+      "locator": "blk-body-0001 | section: 2.1 temperature（温度）",
+      "quote": "缩放所有 logit，抹平 / 放大差距",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "principles-top_p-nucleus",
+      "source_id": "wechat-params-principles",
+      "claim": "The principles article states that top_p, which belongs to the same nucleus-sampling family as temperature, controls output determinism (lower for accurate factual answers, higher for diverse responses), with a range of 0 to 1 and a default of 1.",
+      "locator": "blk-body-0001 | section: 2.4 top_p（概率截断）",
+      "quote": "top_p（与 temperature 同属核采样）可控制模型输出的确定性：需准确、事实性答案时调低参数，追求多样化响应则调高参数。取值 0～1，默认值为 1。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "principles-frequency_penalty",
+      "source_id": "wechat-params-principles",
+      "claim": "The principles article states that frequency_penalty applies a proportional penalty to the next token according to how many times it has already appeared in the prompt and reply, so higher values make repeated tokens less likely.",
+      "locator": "blk-body-0001 | section: 2.2 frequency_penalty（频率惩罚）",
+      "quote": "frequency penalty 会按 token 在提示与回复中已出现的次数，对下一个待生成 token 施加比例惩罚；数值越高，重复出现的 token 概率越低，从而减少回复中的词汇重复。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "principles-presence_penalty",
+      "source_id": "wechat-params-principles",
+      "claim": "The principles article states that presence_penalty penalizes repeated words with a fixed penalty that is the same whether a word appeared twice or ten times, which it distinguishes from frequency_penalty.",
+      "locator": "blk-body-0001 | section: 2.3 presence_penalty（存在惩罚）",
+      "quote": "presence penalty 同样对重复词施加惩罚，但与 frequency penalty 不同，其惩罚力度固定，同一 词无论出现 2 次还是 10 次，惩罚均相同，可避免模型过度重复用词。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "principles-max_tokens",
+      "source_id": "wechat-params-principles",
+      "claim": "The principles article states that max_tokens is a maximum number of generation steps N at which generation is forcibly terminated, without changing the per-step probability distribution or sampling logic.",
+      "locator": "blk-body-0001 | section: 2.5 max_tokens（最大生成长度）",
+      "quote": "max_tokens（max length）是控制大语言模型生成长度的核心参数，其数学本质：设定模型生成 token 的最大步数 N，当生成过程达到第 N 个 token 时强制终止，不改变每一步的概率分布与采样逻辑。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "principles-omits-scenario-values",
+      "source_id": "wechat-params-principles",
+      "claim": "The principles article states that it explains the parameters from the angle of mathematical formulas and what their settings mean for the model, and it gives no per-scenario recommended values of the kind the basics article supplies.",
+      "locator": "blk-body-0001 | section: body（引言，一、核心背景之前）",
+      "quote": "本篇将针对上一篇中的核心参数，从数学公式的角度为大家解释，参数的配置对模型到底意味着什么。",
+      "claim_basis": "source_claim"
     }
   ],
   "expected_source_attribution": [
@@ -110,5 +148,18 @@
     "Some image diagrams were not returned; answers must not claim to have inspected them."
   ],
   "frozen_at": null,
-  "manifest_sha256": null
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "lead",
+    "method": "every quote re-checked as a literal substring of the stored snapshot by freeze_manifest.validate",
+    "facts": 12
+  },
+  "authority_anchors": [
+    {
+      "url": "https://api-docs.deepseek.com/quick_start/parameter_settings",
+      "supports": "vendor default temperature (1.0) and the official per-use-case temperature table, used to judge which article values are API defaults and which are scenario advice",
+      "verified_at": "2026-10-24"
+    }
+  ]
 }

@@ -1,0 +1,163 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "wechat-03",
+  "stratum": "wechat",
+  "source_ids": [
+    "wechat-chatsql",
+    "wechat-agent-enterprise"
+  ],
+  "source_revisions": {
+    "wechat-chatsql": {
+      "url": "https://mp.weixin.qq.com/s/6FdfPNi9gOf_QQbwlkAdBQ",
+      "sha256": "1254e19a25177bb28d11716310e22e3caefcdd80d332108eb68f81d594e93c17",
+      "snapshot": "materials/1254e19a25177bb28d11716310e22e3caefcdd80d332108eb68f81d594e93c17.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured in full; inline images were not read, so image-only claims are out of scope"
+    },
+    "wechat-agent-enterprise": {
+      "url": "https://mp.weixin.qq.com/s/IJvzjWMLMhljkMQO2oa2bg",
+      "sha256": "062aa5ed1e9f6734e923db9e3de72efab53e342ea014e0cf3643afb32026155e",
+      "snapshot": "materials/062aa5ed1e9f6734e923db9e3de72efab53e342ea014e0cf3643afb32026155e.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured in full; diagrams and screenshots not read"
+    }
+  },
+  "deliverable": "A source-grounded brief on where text-to-SQL stops being reliable and how an enterprise agent pipeline is meant to absorb that risk, citing each article by section.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two articles, explain the ChatSQL pipeline and its failure modes, then explain the enterprise-agent architecture the second article proposes. Cite each claim by article and section."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on the boundary of text-to-SQL reliability: which failure modes does the ChatSQL article itself admit, and which controls (validation, execution checks, human approval) does the enterprise article require? Keep the two articles' claims separate."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Synthesize: if an enterprise deployed ChatSQL inside the second article's architecture, which of the first article's admitted failures would the second article's controls catch, and which would remain uncovered? Say plainly when the articles do not answer the question."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "chatsql-loop",
+      "source_id": "wechat-chatsql",
+      "claim": "The ChatSQL article summarizes its own mechanism as a five-stage loop of perception, understanding, generation, execution and feedback, with schema management, prompt engineering, SQL validation and an execution engine as the key components.",
+      "locator": "blk-body-0001 | section: 1.6 本章小结",
+      "quote": "核心是\"感知-理解-生成-执行-反馈\"的循环。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "chatsql-validator-guard",
+      "source_id": "wechat-chatsql",
+      "claim": "The ChatSQL article states that its SQL validator checks syntax and schema before execution, plus a safety check for whether DELETE or DROP appears, and estimates performance; the database is never hit by an unvalidated generated statement.",
+      "locator": "blk-body-0001 | section: 1.2.3 技术组件：五个核心模块",
+      "quote": "在SQL提交执行前进行检查：语法校验、Schema校验、安全校验（是否包含DELETE/DROP）、性能预估。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "chatsql-dialect-mismatch",
+      "source_id": "wechat-chatsql",
+      "claim": "The ChatSQL article lists dialect mismatch as failure mode 3: DATEDIFF and NOW() are MySQL syntax and do not exist in SQLite, so a syntactically plausible generated query still fails on the target engine.",
+      "locator": "blk-body-0001 | section: 1.4.1 失败模式：五种典型的翻车场景",
+      "quote": "DATEDIFF和NOW()是MySQL语法，在SQLite中不存在。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "chatsql-pragmatic-stack",
+      "source_id": "wechat-chatsql",
+      "claim": "The ChatSQL article's recommended default combination is private deployment plus a pipeline architecture plus human-in-the-loop, presented as the balance point between data security, controllability and practicality.",
+      "locator": "blk-body-0001 | section: 1.1.3 技术分类：三个关键维度",
+      "quote": "一个常见的务实选择是：私有化部署+管道型架构+人机协作——在数据安全、可控性和实用性之间取得较好平衡。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "chatsql-complexity-boundary",
+      "source_id": "wechat-chatsql",
+      "claim": "The ChatSQL article splits accuracy by query complexity: above 70% for low complexity (comfort zone), 30-70% for medium complexity (human-plus-machine zone), and below 30% for high-complexity professional queries that still need a professional data analyst.",
+      "locator": "blk-body-0001 | section: 1.4.3 能力边界：一个清醒的认知",
+      "quote": "高复杂度查询（专业领域）：准确率<30%，需要专业数据分析师",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "chatsql-pipeline-for-production",
+      "source_id": "wechat-chatsql",
+      "claim": "The ChatSQL article's architecture-selection dimension rates end-to-end as low complexity/low control and suited to fast validation, a pipeline as medium complexity/high control and suited to production systems, and an agent as high complexity with a high capability ceiling.",
+      "locator": "blk-body-0001 | section: 1.5.2 选型考量：三个关键维度",
+      "quote": "Pipeline：复杂度中、可控性高，适合生产系统",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "enterprise-three-modes",
+      "source_id": "wechat-agent-enterprise",
+      "claim": "The enterprise-agent article says rollout should be staged by scenario complexity rather than done in one step, starting with stage 1, the tool-assistant (Copilot) mode that completes a single analysis with a human in the loop.",
+      "locator": "blk-body-0001 | section: 四、落地路径：三种自动化模式的实战演进",
+      "quote": "企业落地不应一蹴而就，建议根据场景复杂度分级实施。阶段一：工具助手(Copilot)--单点提效",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "enterprise-storage-roi",
+      "source_id": "wechat-agent-enterprise",
+      "claim": "The enterprise-agent article reports the automated storage-governance case: high-confidence items are taken offline or put on cold standby while low-confidence ones only produce a recommendation report, for a 50% storage-cost reduction with zero wrongful deletions.",
+      "locator": "blk-body-0001 | section: 四、落地路径：三种自动化模式的实战演进",
+      "quote": "分级执行：高置信度直接下线/冷备；低置信度输出建议报告。ROI：存储成本降低50%，且实现了0误删。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "enterprise-explainable-output",
+      "source_id": "wechat-agent-enterprise",
+      "claim": "The enterprise-agent article forbids a bare yes/no answer: the agent must emit a structured report of conclusion, reasoning, reasoning process and the original data snapshot, both for human review and for later root-causing why the AI went wrong.",
+      "locator": "blk-body-0001 | section: 五、工程化交付标准",
+      "quote": "结构化报告：必须输出{结论,理由,推理过程,原始数据快照}",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "enterprise-workflow-over-agent",
+      "source_id": "wechat-agent-enterprise",
+      "claim": "The enterprise-agent article's closing advice to managers is not to over-trust agents: at this stage a clearly specified workflow is a better fit for enterprise production than a self-planning agent.",
+      "locator": "blk-body-0001 | section: 6. 总结与展望",
+      "quote": "不要迷信Agent：现阶段，逻辑清晰的Workflow比自主规划的Agent更适合企业生产环境。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "enterprise-hitl-gate",
+      "source_id": "wechat-agent-enterprise",
+      "claim": "The enterprise-agent article's multi-layer validation section requires a result-check node after key steps and a human-in-the-loop approval before any high-risk action is executed.",
+      "locator": "blk-body-0001 | section: 五、工程化交付标准",
+      "quote": "人机回环(HITL)：高风险操作必须经人工Approval才能执行。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "enterprise-perception-decision-action",
+      "source_id": "wechat-agent-enterprise",
+      "claim": "The enterprise-agent article's core architecture abstracts business operations into a perception-decision-action loop, deliberately modelled on a new employee's eyes, hands and brain rather than on a pure text generator.",
+      "locator": "blk-body-0001 | section: 三、核心架构设计：构建 AI 的“眼、手、脑”",
+      "quote": "我们将业务操作抽象为“感知(Perception)-决策(Decision)-执行(Action)”闭环",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "wechat-chatsql",
+    "wechat-agent-enterprise"
+  ],
+  "acceptable_partial_outcomes": [
+    "The two articles address different problems; do not invent a joint architecture diagram that neither article draws.",
+    "Inline diagrams were not read; answers must not claim to have inspected them."
+  ],
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "lead",
+    "method": "every quote sliced from the stored snapshot and re-checked as a literal substring",
+    "facts": 12
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/1809.08887",
+      "supports": "independent evidence that cross-domain text-to-SQL is a hard, separately benchmarked task (Spider, human-labeled complex/cross-domain queries), which is the difficulty the ChatSQL article attributes to real schemas",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}

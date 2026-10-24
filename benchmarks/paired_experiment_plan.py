@@ -14,6 +14,9 @@ from typing import Any
 
 
 SCHEMA_VERSION = "envoy.paired-experiment-plan/2"
+DESIGN_PACKAGES = 25
+DESIGN_PER_STRATUM = 5
+DESIGN_UNIQUE_SOURCES = 50
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]+")
 _SOURCE_CLASSES = {
     "bilibili",
@@ -107,11 +110,11 @@ def build_plan(
     packages: list[dict[str, Any]],
     seed: int,
     cache_isolation_status: str = "unknown",
-    confirmatory_fixed_20: bool = False,
+    confirmatory_fixed: bool = False,
 ) -> dict[str, Any]:
     if cache_isolation_status not in _CACHE_ISOLATION_STATUSES:
         raise ValueError("unsupported cache_isolation_status")
-    if confirmatory_fixed_20:
+    if confirmatory_fixed:
         required_strata = {
             "bilibili",
             "douyin",
@@ -119,8 +122,8 @@ def build_plan(
             "wechat",
             "cross_platform",
         }
-        if len(packages) != 20:
-            raise ValueError("fixed confirmatory set requires exactly 20 packages")
+        if len(packages) != DESIGN_PACKAGES:
+            raise ValueError(f"fixed confirmatory set requires exactly {DESIGN_PACKAGES} packages")
         for package in packages:
             if not package.get("source_manifest_sha256") or not package.get("task_manifest_sha256"):
                 raise ValueError(
@@ -132,10 +135,16 @@ def build_plan(
             source_class = package.get("source_class", "unclassified")
             counts[source_class] = counts.get(source_class, 0) + 1
             all_sources.extend(package.get("source_ids", []))
-        if set(counts) != required_strata or any(counts.get(stratum) != 4 for stratum in required_strata):
-            raise ValueError("fixed confirmatory set requires four packages in each approved stratum")
-        if len(all_sources) < 40 or len(set(all_sources)) != len(all_sources):
-            raise ValueError("fixed confirmatory set requires at least 40 unique source IDs")
+        if set(counts) != required_strata or any(
+            counts.get(stratum) != DESIGN_PER_STRATUM for stratum in required_strata
+        ):
+            raise ValueError(
+                f"fixed confirmatory set requires {DESIGN_PER_STRATUM} packages in each approved stratum"
+            )
+        if len(all_sources) < DESIGN_UNIQUE_SOURCES or len(set(all_sources)) != len(all_sources):
+            raise ValueError(
+                f"fixed confirmatory set requires at least {DESIGN_UNIQUE_SOURCES} unique source IDs"
+            )
     rng = random.Random(seed)
     manifest_bytes = json.dumps(
         packages,
@@ -203,13 +212,13 @@ def build_plan(
         "package_manifest_sha256": package_manifest_sha256,
         "cache_isolation_status": (
             "per_request_salt"
-            if confirmatory_fixed_20 and cache_isolation_status == "unknown"
+            if confirmatory_fixed and cache_isolation_status == "unknown"
             else cache_isolation_status
         ),
         "confirmatory_minimum_met": (
-            len(planned) >= 20
-            and len(planned) * 3 >= 40
-            and len(unique_sources) >= 20
+            len(planned) >= DESIGN_PACKAGES
+            and len(planned) * 3 >= DESIGN_PACKAGES * 3
+            and len(unique_sources) >= DESIGN_UNIQUE_SOURCES
         ),
         "a_first_count": a_first_count,
         "b_first_count": len(planned) - a_first_count,
@@ -219,8 +228,8 @@ def build_plan(
             else "caller must record disabled_or_isolated; otherwise cache-confounded"
         ),
         "evaluation_profile": (
-            "fixed_confirmatory_20"
-            if confirmatory_fixed_20
+            "fixed_confirmatory_25"
+            if confirmatory_fixed
             else "custom_or_pilot"
         ),
         "packages": planned,
@@ -237,9 +246,18 @@ def main() -> int:
         default="unknown",
     )
     parser.add_argument(
-        "--confirmatory-fixed-20",
+        "--confirmatory-fixed",
         action="store_true",
-        help="require exactly 20 packages, four per approved stratum, and 40 unique sources",
+        help=(
+            f"require exactly {DESIGN_PACKAGES} packages, {DESIGN_PER_STRATUM} per approved stratum, "
+            f"and {DESIGN_UNIQUE_SOURCES} unique sources"
+        ),
+    )
+    parser.add_argument(
+        "--confirmatory-fixed-20",
+        dest="confirmatory_fixed",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -248,7 +266,7 @@ def main() -> int:
             _load_packages(args.packages),
             args.seed,
             cache_isolation_status=args.cache_isolation_status,
-            confirmatory_fixed_20=args.confirmatory_fixed_20,
+            confirmatory_fixed=args.confirmatory_fixed,
         )
         serialized = json.dumps(plan, ensure_ascii=False, indent=2) + "\n"
         if args.output:

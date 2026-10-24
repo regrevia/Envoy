@@ -1,6 +1,6 @@
 {
   "schema_version": "envoy.fixed-evaluation-package/1",
-  "status": "draft_reference_review_pending",
+  "status": "frozen_reference_reviewed",
   "package_id": "wechat-02",
   "stratum": "wechat",
   "source_ids": [
@@ -10,11 +10,19 @@
   "source_revisions": {
     "wechat-transformer-overview": {
       "url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
-      "sha256": "61618408aaa5425a346044400721f939606363f1ff78237187becf4292c78b12"
+      "sha256": "5e6225da99a074ed9ab1e6a1eb04cf958cac3deb80096f65f995b8d8ee98abb1",
+      "snapshot": "materials/5e6225da99a074ed9ab1e6a1eb04cf958cac3deb80096f65f995b8d8ee98abb1.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "prose body captured; diagrams and formulas not read and out of scope"
     },
     "wechat-deepseek-mla": {
       "url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
-      "sha256": "73e6c2720fb14be8a9a9beb18c28b8f942ddd90e05659101b0825cff76f7597b"
+      "sha256": "4a7fe8348d20618155aef5220589d528018d4d54d36bc77a11c84358029376a3",
+      "snapshot": "materials/4a7fe8348d20618155aef5220589d528018d4d54d36bc77a11c84358029376a3.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "prose body captured; the latent-compression equation, matrix-absorption derivation, and RoPE formulas were lost in capture and are excluded"
     }
   },
   "deliverable": "A source-grounded comparison of the Transformer overview and DeepSeek MLA explainer, with a concept map, source locators, and explicit text/image coverage gaps.",
@@ -35,70 +43,100 @@
   ],
   "reference_facts": [
     {
-      "fact_id": "transformer-overview-encoder-decoder",
-      "claim": "The overview article describes Transformer as using encoder and decoder stacks with embedding layers and an output layer, and says corresponding layers share architecture but not weights.",
+      "fact_id": "transformer-attention-focus-related-words",
       "source_id": "wechat-transformer-overview",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
-        "block_id": "blk-body-0001",
-        "section": "1 什么是 transformer"
-      },
-      "adjudication_note": "Score attribution to this article's text, not external validation of the architecture description."
+      "claim": "The overview article states that, when processing a word, the attention mechanism lets the model focus on other words in the input that are closely related to that word.",
+      "locator": "blk-body-0001 | section: 2 注意力机制的作用是什么？",
+      "quote": "在处理一个词时，注意力机制使模型能够关注输入中与该词密切相关的其他词。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "transformer-overview-self-attention",
-      "claim": "The overview article presents self-attention as relating each input token to other tokens to help resolve context-dependent references.",
+      "fact_id": "transformer-self-attention-all-pairs",
       "source_id": "wechat-transformer-overview",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
-        "block_id": "blk-body-0001",
-        "section": "2 注意力机制的作用是什么？"
-      },
-      "adjudication_note": "The examples involving “it” are source examples; the rubric scores faithful summary."
+      "claim": "The overview article states that the self-attention mechanism used by the transformer architecture links every word in the input sequence to every other word.",
+      "locator": "blk-body-0001 | section: 2 注意力机制的作用是什么？",
+      "quote": "transformer 架构使用的自注意力机制，会把输入序列里的每一个词和其他所有词关联起来。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "transformer-overview-rnn-tradeoff",
-      "claim": "The overview article contrasts Transformer with RNNs by citing long-distance dependency handling and sequential computation as RNN limitations.",
+      "fact_id": "transformer-multiple-attention-scores",
       "source_id": "wechat-transformer-overview",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
-        "block_id": "blk-body-0001-range-3275",
-        "section": "8 transformer 比 RNN 强在哪里？"
-      },
-      "adjudication_note": "This locator is from the resumed text range."
+      "claim": "The overview article states that, so the model can handle finer distinctions in sentence intent and semantics, the transformer equips every word with multiple attention scores.",
+      "locator": "blk-body-0001 | section: 2 注意力机制的作用是什么？",
+      "quote": "为了让模型能处理句子意图和语义中更细微的差别，transformer 为每个词都配备了多个注意力得分。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "mla-mha-mqa-gqa",
-      "claim": "The MLA article describes MHA as having multiple query/key/value heads, MQA as sharing one key/value set, and GQA as sharing key/value sets within groups.",
-      "source_id": "wechat-deepseek-mla",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
-        "block_id": "blk-body-0001",
-        "section": "一，多头注意力机制MHA and 三，MQA，GQA：多头注意力机制的降本增效"
-      },
-      "adjudication_note": "Score that the response reports distinctions made by the article."
+      "fact_id": "transformer-encoder-self-attention-layer",
+      "source_id": "wechat-transformer-overview",
+      "claim": "The overview article states that the encoder contains a self-attention layer, which computes the relationships among the different words in the sequence, and a feed-forward layer that takes the attention layer's output as its input.",
+      "locator": "blk-body-0001 | section: 1 什么是 transformer",
+      "quote": "包含自注意力层（Self-attention ）和前馈层（Feed-forward ），前者负责计算序列中不同词汇之间的关系，后者将注意力层的输出作为输入。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "mla-kv-cache-latent",
-      "claim": "The MLA article frames MLA as reducing cached key/value storage by caching a compressed latent representation, while addressing the risk of reconstructing full values during inference.",
-      "source_id": "wechat-deepseek-mla",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
-        "block_id": "blk-body-0001",
-        "section": "四，MLA：山穷水尽疑无路，柳暗花明又一村"
-      },
-      "adjudication_note": "Detailed equations and image diagrams were not returned; only assess the text summary."
+      "fact_id": "transformer-parallel-processing-speedup",
+      "source_id": "wechat-transformer-overview",
+      "claim": "The overview article states that the transformer processes all words in the sequence in parallel, which greatly increases computation speed.",
+      "locator": "blk-body-0001 | section: 8 transformer 比 RNN 强在哪里？",
+      "quote": "transformer 并行处理序列中的所有词汇，极大提升了计算速度。",
+      "claim_basis": "source_claim"
     },
     {
-      "fact_id": "mla-rope-special-dimensions",
-      "claim": "The MLA article says its described solution adds separate dimensions for positional information in Q and K to handle RoPE compatibility.",
+      "fact_id": "transformer-overview-scope-no-kv-cache",
+      "source_id": "wechat-transformer-overview",
+      "claim": "The overview article frames its scope as the transformer's NLP applications, its advantages over RNNs, and how attention improves performance, and its body never mentions a KV cache or the GPU memory such a cache occupies.",
+      "locator": "blk-body-0001 | section: body",
+      "quote": "本篇将以通俗易懂、图文并茂的方式，为大家讲解 Transformer 在 NLP 中的应用、相比RNN的优势，重点介绍注意力机制如何提升性能。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mla-kv-cache-purpose",
       "source_id": "wechat-deepseek-mla",
-      "locator": {
-        "source_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
-        "block_id": "blk-body-0001",
-        "section": "4.2.2 MLA和RoPE位置编码不兼容"
-      },
-      "adjudication_note": "This is a claim in the article; unseen formula images are outside the gold evidence."
+      "claim": "The MLA explainer states that KV Cache is an engineering optimization that has existed since GPT2 and is mainly used in the generation (decode) stage to cache previously computed key-value pairs, avoiding recomputation and thereby saving compute resources and time.",
+      "locator": "blk-body-0001 | section: 二，KV Cache：推理阶段的工程优化",
+      "quote": "KV Cache是GPT2开始就存在的工程优化。它主要用于在生成阶段（decode）缓存之前计算的键值对，避免重复计算，从而节省计算资源和时间。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mla-prefill-decode-cache-reuse",
+      "source_id": "wechat-deepseek-mla",
+      "claim": "The MLA explainer states that prefill processes the entire input sequence, produces the first output token and initializes the KV cache, while decode generates later tokens one by one and, with a KV cache present, only has to process each newly generated token instead of recomputing the keys and values of all previous tokens.",
+      "locator": "blk-body-0001 | section: 二，KV Cache：推理阶段的工程优化",
+      "quote": "Prefill阶段处理整个输入序列，生成第一个输出token，并初始化KV缓存。\n\nDecode阶段则逐个生成后续的token，此时如果有KV缓存，每次只需处理新生成的token，而无需重新计算之前所有token的键值。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mla-mha-heads-unshared-kv",
+      "source_id": "wechat-deepseek-mla",
+      "claim": "The MLA explainer states that MHA contains h Query, Key and Value matrices, and that the Key and Value matrix weights are not shared among all the attention heads.",
+      "locator": "blk-body-0001 | section: 一，多头注意力机制MHA",
+      "quote": "MHA 包含h个Query、Key 和 Value 矩阵，所有注意力头(head)的 Key 和 Value 矩阵权重不共享。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mla-space-for-time-memory-pressure",
+      "source_id": "wechat-deepseek-mla",
+      "claim": "The MLA explainer states that after trading space for time to speed up inference, GPU memory occupancy became the next thing to optimize, and it asks whether the size of the KV cache can be reduced.",
+      "locator": "blk-body-0001 | section: 三，MQA，GQA：多头注意力机制的降本增效",
+      "quote": "既然我们用空间换时间的方案，加快了推理速度，那占用显存空间又成了一个可以优化的点，有没有可能降低KV Cache的大小呢？",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mla-mqa-shared-kv-reduces-cache",
+      "source_id": "wechat-deepseek-mla",
+      "claim": "The MLA explainer states that MQA reduces the contents of the KV cache by sharing keys and values inside the attention mechanism: there are still multiple queries but only one key and one value, so all queries share one set of KV and the KV cache becomes smaller.",
+      "locator": "blk-body-0001 | section: 三，MQA，GQA：多头注意力机制的降本增效",
+      "quote": "MQA通过在Attention机制里面共享keys和values来减少KV cache的内容，query的数量还是多个，而keys和values只有一个，所有的query共享一组kv，这样KV Cache就变小了。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "mla-latent-shrink-every-cached-kv",
+      "source_id": "wechat-deepseek-mla",
+      "claim": "The MLA explainer states, in the section introducing MLA, that to cut KV-cache memory further, thinking in terms of the number of cached KVs no longer works, so one must think about the KV itself and whether every cached KV can be smaller than before.",
+      "locator": "blk-body-0001 | section: 四，MLA：山穷水尽疑无路，柳暗花明又一村",
+      "quote": "如果想进一步降低KV缓存的占用，从数量上思考已经不行了，那就势必得从KV本身思考，有没有可能每个缓存的KV都比之前小？",
+      "claim_basis": "source_claim"
     }
   ],
   "expected_source_attribution": [
@@ -110,5 +148,19 @@
     "Preserve differences in scope between an overview article and a specialized MLA article."
   ],
   "frozen_at": null,
-  "manifest_sha256": null
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "lead",
+    "method": "quotes sliced from block text and re-checked as literal substrings of the stored snapshots",
+    "facts": 12,
+    "excluded": "formula-bearing passages whose variables were dropped by the capture; no fact asserts the MLA latent equation"
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2405.04434",
+      "supports": "the primary DeepSeek-V2 paper defines MLA and reports the KV-cache reduction, which is the external reference for judging the MLA explainer's compression claims",
+      "verified_at": "2026-10-24"
+    }
+  ]
 }

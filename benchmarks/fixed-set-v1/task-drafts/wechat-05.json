@@ -1,0 +1,163 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "wechat-05",
+  "stratum": "wechat",
+  "source_ids": [
+    "wechat-superclue-2408",
+    "wechat-superbench"
+  ],
+  "source_revisions": {
+    "wechat-superclue-2408": {
+      "url": "https://mp.weixin.qq.com/s/uxU_rWvP9HWOMzg7Zg6oKA",
+      "sha256": "56fcde13ad9c03aed964891d5e21d89e3722a2caee28e3b878578847275d4812",
+      "snapshot": "materials/56fcde13ad9c03aed964891d5e21d89e3722a2caee28e3b878578847275d4812.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured in full; leaderboard tables that are images not read"
+    },
+    "wechat-superbench": {
+      "url": "https://mp.weixin.qq.com/s/r_aAjFHTRDBGXhl3bd06XQ",
+      "sha256": "1718d5ca42266ccfbfb8d2bb47268edbc4e8b613e1fffa3006b86bd0131f714b",
+      "snapshot": "materials/1718d5ca42266ccfbfb8d2bb47268edbc4e8b613e1fffa3006b86bd0131f714b.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "article body captured in full; chart images not read"
+    }
+  },
+  "deliverable": "A source-grounded comparison of two Chinese LLM evaluation reports: what each measures, which numbers each reports, and what their differences do and do not license.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two evaluation reports, compare what each measures: name the evaluation systems, categories and any reported scores, citing each article by section."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on the gap between domestic and international models. What does each report claim, with which numbers, and do the two reports measure the same thing when they say \"gap\"?"
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Synthesize what a reader can and cannot conclude from these two reports about Chinese LLM capability in 2024. Distinguish agreement between the reports from claims only one report supports."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "superclue-august-dataset",
+      "source_id": "wechat-superclue-2408",
+      "claim": "The SuperCLUE August report says it covers general capability with a multi-dimension scheme of science, humanities and Hard tracks, that all items are newly written, and that the total is 3226 multi-turn short-answer questions.",
+      "locator": "blk-body-0001 | section: 2. SuperCLUE测评体系及数据集说明",
+      "quote": "本次8月报告聚焦通用能力测评，采用多维度、多层次的综合性测评方案，由理科、文科和Hard三大维度构成。题目均为原创新题，总量为3226道多轮简答题。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superclue-gap-narrowed",
+      "source_id": "wechat-superclue-2408",
+      "claim": "The SuperCLUE August report states that the general-capability gap between the top domestic and top international models kept narrowing, from 30.12% in May 2023 to 1.29% in August 2024.",
+      "locator": "blk-body-0001 | section: 一、关键进展与趋势",
+      "quote": "国内外第一梯队大模型在中文领域的通用能力差距在持续缩小，从2023年5月的30.12%的差距，缩小至2024年8月的1.29%",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superclue-human-correlation",
+      "source_id": "wechat-superclue-2408",
+      "claim": "The SuperCLUE August report reports a Pearson correlation of 0.89 with a P value of 2.46e-07 between SuperCLUE scores and Chatbot Arena scores, presented as evidence that its automated ranking agrees with human anonymous voting.",
+      "locator": "blk-body-0001 | section: 16. 评测与人类一致性验证",
+      "quote": "将SuperCLUE得分与ChatBotArena得分进行相关性计算，得到皮尔逊相关系数：0.89，P值：2.46e-07",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superclue-review-reliability",
+      "source_id": "wechat-superclue-2408",
+      "claim": "The SuperCLUE August report describes a human re-review of 100+ sampled items for each of five models and reports per-model reliability of 88.68% to 97.64%, averaging 94.62%, which it uses to argue its automated scoring is reliable.",
+      "locator": "blk-body-0001 | section: 16. 评测与人类一致性验证",
+      "quote": "可靠性数据分别为88.68%、96.23%、95.28%、97.64%、95.28%，其中可靠性最低有88.68%，最高为模型的97.64%。平均有94.62%的可靠性。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superclue-maturity-ladder",
+      "source_id": "wechat-superclue-2408",
+      "claim": "The SuperCLUE August report grades domestic models by a maturity index: exact instruction following is the only extremely-low-maturity capability with an index below 0.7, while computation, code, long text and high-order reasoning sit in the low band of 0.7 to 0.8.",
+      "locator": "blk-body-0001 | section: 12. SuperCLUE成熟度指数",
+      "quote": "极低成熟度指的是大多数模型无法胜任。SC成熟度指数在0.7以下。当前国内大模型低成熟度的能力是【精确指令遵循】。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superclue-10b-models",
+      "source_id": "wechat-superclue-2408",
+      "claim": "The SuperCLUE August report says GLM-4-9B-Chat scored 61.15, the highest among models under 10B parameters and the only domestic model in that class above 60, while Gemma-2-9b-it scored 60.93 to lead overseas models of the same size.",
+      "locator": "blk-body-0001 | section: 9. 10B级别小模型榜单",
+      "quote": "GLM-4-9B-Chat取得61.15分，取得10B以内模型最高分，并且是国内10B以内唯一超过60分的模型。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superbench-five-categories",
+      "source_id": "wechat-superbench",
+      "claim": "The SuperBench article says the framework covers five evaluation categories, semantics, code, alignment, agent and safety, with 28 sub-categories, in order to assess model capabilities comprehensively rather than through a single leaderboard score.",
+      "locator": "blk-body-0001 | section: SuperBench",
+      "quote": "为了全面地评估大模型的各项能力，SuperBench评测体系包含了语义、代码、对齐、智能体和安全等五个评测大类，28个子类。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superbench-quality-criteria",
+      "source_id": "wechat-superbench",
+      "claim": "The SuperBench article opens by criticising the many uneven Chinese evaluation leaderboards and states its quality criteria for a good evaluation method: openness, dynamism, scientific soundness and authority.",
+      "locator": "blk-body-0001 | section: SuperBench",
+      "quote": "我们认为，好的评测方法应当具备开放性、动态性、科学性和权威性。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superbench-semantic-claude",
+      "source_id": "wechat-superbench",
+      "claim": "In SuperBench's semantics evaluation on ExtremeGLUE, Claude-3 scored 76.7 and took first place, while domestic models GLM-4 and 文心一言4.0 beat the GPT-4 series to take second and third, still about 3 points behind Claude-3.",
+      "locator": "blk-body-0001 | section: PART/ 1 语义评测",
+      "quote": "其中Claude-3得分为76.7，位居第一；国内模型GLM-4和文心一言4.0则超过GPT-4系列模型位居第二和第三位，但是和Claude-3有3分差距。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superbench-code-pass-at-1",
+      "source_id": "wechat-superbench",
+      "claim": "In SuperBench's code evaluation, the article says domestic models still lag clearly behind the international frontier on code writing, and that even the best model's first-pass rate is only about 50%, making code generation a major challenge.",
+      "locator": "blk-body-0001 | section: PART/ 2 代码评测",
+      "quote": "即使是表现最好的模型在代码的一次通过率上仍只有50%左右，代码生成任务对目前的大模型来说仍是一大挑战。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superbench-agent-gap",
+      "source_id": "wechat-superbench",
+      "claim": "In SuperBench's agent evaluation on AgentBench, the article states that domestic models as a whole lag clearly behind the international frontier, that Claude-3 and the GPT-4 series hold the top three places, and that most current models still lack strong agent capability.",
+      "locator": "blk-body-0001 | section: PART/ 4 智能体评测",
+      "quote": "在作为智能体能力评测中，国内模型整体明显落后于国际一流模型",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "superbench-safety-winner",
+      "source_id": "wechat-superbench",
+      "claim": "In SuperBench's safety evaluation on SafetyBench, the article reports that domestic model 文心一言4.0 beat the GPT-4 series and Claude-3 to the highest score of 89.1 points.",
+      "locator": "blk-body-0001 | section: PART/ 5 安全评测",
+      "quote": "国内模型文心一言4.0表现亮眼，力压国际一流模型GPT-4系列模型和Claude-3拿下最高分（89.1分）",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "wechat-superclue-2408",
+    "wechat-superbench"
+  ],
+  "acceptable_partial_outcomes": [
+    "Both reports predate later model releases; do not extend their conclusions to newer models.",
+    "Leaderboard tables that exist only as images were not read; answers must not invent unquoted rows."
+  ],
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "lead",
+    "method": "every quote sliced from the stored snapshot and re-checked as a literal substring",
+    "facts": 12
+  },
+  "authority_anchors": [
+    {
+      "url": "https://www.cluebenchmarks.com/superclue_2408",
+      "supports": "the publisher's own August 2024 SuperCLUE report (PDF, Last-Modified 2024-09-02), used as the primary corroboration for the scores the WeChat repost reports",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}

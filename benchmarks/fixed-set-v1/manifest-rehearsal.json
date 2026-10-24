@@ -1,0 +1,1109 @@
+{
+  "design": "fixed-set-v1",
+  "frozen_at": "2026-10-24T13:16:24+00:00",
+  "manifest_sha256": "f37619719860f9f49a72365d8de625c097b1c11d069fa0c5075cefc89e79ef23",
+  "packages": [
+    {
+      "acceptable_partial_outcomes": [
+        "The transcripts are local ASR of the opening minutes only; answers must not claim slide, frame, caption or other on-screen content, nor any part of the video beyond the captured opening.",
+        "The transcription is noisy and sometimes garbled (for example the university name and the weekly schedule); a garbled passage must be reported as unclear rather than repaired or paraphrased.",
+        "Part 2 is missing the second announced aspect and the middle of the first aspect; the answer must say the announced plan cannot be reconstructed in full."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "The paper's abstract reports that pre-trained language models show 'strong capabilities in solving various NLP tasks' and that model scaling leads to performance improvement. It frames only the 'large model technology' premise of the course, not any sentence the speaker says.",
+          "url": "https://arxiv.org/abs/2303.18223",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded summary of the announced course plan from the two captured openings (parts 1 and 2) of one Bilibili course-introduction video, with per-segment locators, explicit ASR limits, and no claims about slides or later content.",
+      "expected_source_attribution": [
+        "bili-course-overview-p1",
+        "bili-course-overview-p2"
+      ],
+      "package_id": "bili-01",
+      "reference_facts": [
+        {
+          "claim": "The lecturer names the course 'Large Model Technology and Cross-Disciplinary Applications'.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p1-course-title",
+          "locator": "seg 00:18.480 | part 1, course introduction (local ASR transcript; slides/frames not inspected; opening ~1 min)",
+          "quote": "[00:18.480] 它叫大模型技术及交叉应用",
+          "source_id": "bili-course-overview-p1"
+        },
+        {
+          "claim": "He says the course is meant to attract more students from related disciplines.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p1-attract-disciplines",
+          "locator": "seg 00:32.360 | part 1, course aims (local ASR transcript; slides/frames not inspected; preceding lines about law, sound and brain science are partly garbled)",
+          "quote": "这样的话能够吸引更多的相关的学科",
+          "source_id": "bili-course-overview-p1"
+        },
+        {
+          "claim": "He says the course's small project is expected to use large models.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p1-project",
+          "locator": "seg 01:30.520 | part 1, course project (local ASR transcript; slides/frames not inspected; the project is introduced at 01:28.160)",
+          "quote": "然后这个项目就是希望是能够利用大模型",
+          "source_id": "bili-course-overview-p1"
+        },
+        {
+          "claim": "He says the course places relatively strong emphasis on practical work.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p1-practice",
+          "locator": "seg 00:45.160 | part 1, teaching approach (local ASR transcript; slides/frames not inspected)",
+          "quote": "[00:45.160] 那么它是比较的强调实践性",
+          "source_id": "bili-course-overview-p1"
+        },
+        {
+          "claim": "He says the course will cover three areas over roughly three weeks.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p2-three-weeks",
+          "locator": "seg 00:00.000 | part 2, course plan (local ASR transcript; slides/frames not inspected; the 'three aspects' is stated but only the first and third are expanded)",
+          "quote": "我們大概三週的話我們會講三個方面的內容",
+          "source_id": "bili-course-overview-p2"
+        },
+        {
+          "claim": "He says the first area is background knowledge about large models.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p2-first-aspect",
+          "locator": "seg 00:08.000 | part 2, first announced aspect (local ASR transcript; slides/frames not inspected)",
+          "quote": "第一個方面就是會去講大模型的一些背景的知識",
+          "source_id": "bili-course-overview-p2"
+        },
+        {
+          "claim": "He says the third week will concretely present how to draw on large models to solve open-ended problems.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p2-third-week",
+          "locator": "seg 01:00.000 | part 2, third week (local ASR transcript; slides/frames not inspected; the following two short lines (01:05.600 and 01:08.480) carry the 'large-model power' and 'open problems' wording)",
+          "quote": "那么第三周我们是会给大家去具体的呈现一下",
+          "source_id": "bili-course-overview-p2"
+        },
+        {
+          "claim": "He says the course will use biomedicine, legal intelligence and brain science as example fields.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili01-p2-cross-fields",
+          "locator": "seg 01:10.760 | part 2, cross-disciplinary fields (local ASR transcript; slides/frames not inspected; 'brain science' appears in the next line at 01:15.240)",
+          "quote": "[01:10.760] 然后我们会以生物医学法律智能",
+          "source_id": "bili-course-overview-p2"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "bili-course-overview-p1": {
+          "sha256": "7935c6fead906f9760b08a6181296d2c74aa1a79142096e1e4e048815acc58de",
+          "url": "https://www.bilibili.com/video/BV1Qb4SenEKY"
+        },
+        "bili-course-overview-p2": {
+          "sha256": "30ccda9763db9aec3862215617991ea2e6e68687caccf1a80f7a40e20047ea7b",
+          "url": "https://www.bilibili.com/video/BV1Qb4SenEKY/?p=2"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "bilibili",
+      "turns": [
+        {
+          "text": "Using only these two captured openings, summarize the announced course plan: the course title, the audience it is meant to attract, the practical work it includes, and the areas announced for the three weeks. Attribute each point to part 1 or part 2 and give the ASR segment locator.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Part 1 only: what does the speaker say the course hopes to achieve for students from other disciplines, what does he say about how the course is taught, and what project work does he describe? Flag any sentence the ASR renders too noisily to use.",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Part 2 only: lay out the three-week topic sequence and the cross-disciplinary fields it names. State explicitly which parts of the plan are missing from the captured transcript and do not fill the gaps in from outside knowledge.",
+          "turn_id": "followup-2"
+        }
+      ]
+    },
+    {
+      "acceptable_partial_outcomes": [
+        "The transcripts cover only the opening minutes of each video; answers must not claim slide, frame, caption or other on-screen content, nor any part of either video beyond the captured opening.",
+        "The ASR is noisy and mixes Simplified and Traditional characters; a garbled personal name, chapter label, course list, or exercise reference must be reported as unclear rather than repaired.",
+        "The course map in video A cannot be reconstructed in full from the captured speech, and the exam-planning details in video B are only partly captured."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "The MIT 6.006 course description lists 'common algorithms, algorithmic paradigms, and data structures' as one subject and says the course 'emphasizes the relationship between algorithms and programming'; independent confirmation that data structures and algorithms are taught as a joint foundation of programming, the pairing the speaker states as program = data structures + algorithms. It is not evidence for the speaker's own sentences.",
+          "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded summary of what two Bilibili course-opening videos announce about a data-structures course and an exam-prep video series, with per-segment locators, ASR caveats, and no slide-level claims.",
+      "expected_source_attribution": [
+        "bili-video-a",
+        "bili-video-b"
+      ],
+      "package_id": "bili-02",
+      "reference_facts": [
+        {
+          "claim": "The lecturer notes that students who receive the textbook and learn they are taking a course called data structures will have questions.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-course-name",
+          "locator": "seg 00:10.000 | video A, course introduction (local ASR transcript; slides/frames not inspected)",
+          "quote": "当同学们拿到咱们的课本,知道咱们要上一门叫做数据结构的课,同学们就会有一些疑问,",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "He quotes the well-known formula that a program equals data structures plus algorithms.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-formula",
+          "locator": "seg 00:44.960 | video A, why the course matters (local ASR transcript; slides/frames not inspected; the attribution sentence just before is garbled and is not relied on)",
+          "quote": "[00:44.960] 說程序就等於數據結構加算法",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "He says that if one wants to write programs, one must understand data structures and algorithms.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-must-know",
+          "locator": "seg 01:13.120 | video A, why the course matters (local ASR transcript; slides/frames not inspected)",
+          "quote": "那么必然就要懂得数据结构和算法",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "He says the course next introduces basic data structures.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-basic-structures",
+          "locator": "seg 01:36.000 | video A, course content (local ASR transcript; slides/frames not inspected; the chapter-1 description at 01:29.920 is garbled and is not quoted)",
+          "quote": "接下来就要给同学们介绍一些基本的数据结构",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "He says students then learn techniques for processing those data structures.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-processing",
+          "locator": "seg 01:55.960 | video A, course content (local ASR transcript; slides/frames not inspected)",
+          "quote": "再让同学们来学一些处理这些数据结构的",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "He describes the course as a professional foundation course for related majors.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-foundation-course",
+          "locator": "seg 02:29.560 | video A, course status (local ASR transcript; slides/frames not inspected)",
+          "quote": "以及相關專業的一門專業基礎課程",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "He says many other professional courses will use content from data structures and algorithms.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-a-many-courses-use",
+          "locator": "seg 04:11.200 | video A, course status (local ASR transcript; slides/frames not inspected; the list of dependent courses around it is heavily garbled)",
+          "quote": "都会用到咱们的数据结构和算法当中的内容",
+          "source_id": "bili-video-a"
+        },
+        {
+          "claim": "The speaker introduces himself as the main instructor of the Wangdao postgraduate-entrance-exam course series.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-b-instructor-role",
+          "locator": "seg 00:02.160 | video B, instructor introduction (local ASR transcript; slides/frames not inspected; the ASR renders his name oddly, so the name is not claimed)",
+          "quote": "我是王道考研系列课程的主讲人弦语学长",
+          "source_id": "bili-video-b"
+        },
+        {
+          "claim": "He says the textbook that accompanies the video course is the well-known 'Wangdao single-subject book'.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-b-textbook",
+          "locator": "seg 00:29.680 | video B, teaching materials (local ASR transcript; slides/frames not inspected)",
+          "quote": "对了,有同学可能还不知道我们的视频课配套的教材就是传说中的王道单科书",
+          "source_id": "bili-video-b"
+        },
+        {
+          "claim": "He tells students he hopes they will not only listen to the video course.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-b-not-only-videos",
+          "locator": "seg 01:38.680 | video B, study advice (local ASR transcript; slides/frames not inspected; the note-taking line at 01:41.280 is garbled and the hands-on line at 01:46.600 is below the 15-character quote floor)",
+          "quote": "希望大家不要只是听我们的视频课",
+          "source_id": "bili-video-b"
+        },
+        {
+          "claim": "He says this is advice for students applying to schools that set their own exam questions.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-b-self-set-schools",
+          "locator": "seg 02:36.000 | video B, exam audiences (local ASR transcript; slides/frames not inspected)",
+          "quote": "所以这是给报考自主命题学校的同学的一些建议",
+          "source_id": "bili-video-b"
+        },
+        {
+          "claim": "He suggests that students visit the Wangdao forum when they have time.",
+          "claim_basis": "source_claim",
+          "fact_id": "bili02-b-forum",
+          "locator": "seg 04:11.920 | video B, community resources (local ASR transcript; slides/frames not inspected)",
+          "quote": "最后大家没事的时候可以多逛王道论坛",
+          "source_id": "bili-video-b"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "bili-video-a": {
+          "sha256": "39baa22a7f6a7675ba4cb2e9c1273092e27e66a8c215fa4f59ac15392378fd3a",
+          "url": "https://www.bilibili.com/video/BV1nJ411V7bd"
+        },
+        "bili-video-b": {
+          "sha256": "a4212a263a012415cfa8814cea69184fb331775600c59a8a820e1804407be252",
+          "url": "https://www.bilibili.com/video/BV1b7411N798"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "bilibili",
+      "turns": [
+        {
+          "text": "Using only these two captured openings, summarize what each lecturer announces about the subject, the course plan, the teaching materials, and the study method. Separate video A from video B and give the ASR segment locator for each point.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Video A only: how does the speaker justify the course's importance, what sequence of material does he announce from the introductory chapter onward, and what does he say about how other courses use the subject? Do not add material he does not say.",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Video B only: what does the speaker say about the textbook, about how students should use the videos, and for which exam audiences the series is intended? Keep to the opening minutes and mark anything the ASR garbles instead of guessing it.",
+          "turn_id": "followup-2"
+        }
+      ]
+    },
+    {
+      "acceptable_partial_outcomes": [
+        "The articles differ in scope; do not invent a mechanism explanation where only the basics article gives a scenario recommendation.",
+        "Some image diagrams were not returned; answers must not claim to have inspected them."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "vendor default temperature (1.0) and the official per-use-case temperature table, used to judge which article values are API defaults and which are scenario advice",
+          "url": "https://api-docs.deepseek.com/quick_start/parameter_settings",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded comparison of the two articles' explanations of LLM generation parameters, with a compact table, exact section locators, and explicit coverage gaps.",
+      "expected_source_attribution": [
+        "wechat-params-basics",
+        "wechat-params-principles"
+      ],
+      "package_id": "wechat-01",
+      "reference_facts": [
+        {
+          "claim": "The basics article states that for an intelligent customer-service scenario temperature should be set to a low level such as 0.2 while top_p is lowered to about 0.5, in order to reduce randomness and keep answers accurate and consistent.",
+          "claim_basis": "source_claim",
+          "fact_id": "basics-temperature-scenario",
+          "locator": "blk-body-0001 | section: 案例一：智能客服中的参数调优",
+          "quote": "我们可以将temperature（温度值）设置为较低水平（如0.2），同时调低top_p（累积概率）至0.5左右",
+          "source_id": "wechat-params-basics"
+        },
+        {
+          "claim": "The basics article states that top_p (probability truncation, also called nucleus sampling) is usually adjusted as an either-or choice with temperature and that the two parameters need not be modified at the same time.",
+          "claim_basis": "source_claim",
+          "fact_id": "basics-top_p-either-or",
+          "locator": "blk-body-0001 | section: 3.1 主要参数",
+          "quote": "通常和 temperature 二选一调整，不需要同时修改这两个参数。",
+          "source_id": "wechat-params-basics"
+        },
+        {
+          "claim": "The basics article states that a positive frequency_penalty punishes how frequently the model repeats the same words, so the higher the value the less the output reuses wording.",
+          "claim_basis": "source_claim",
+          "fact_id": "basics-frequency_penalty",
+          "locator": "blk-body-0001 | section: 3.1 主要参数",
+          "quote": "正值会惩罚模型重复输出相同字词的频率。值越高，输出越不容易重复用词，以避免内容重复啰嗦",
+          "source_id": "wechat-params-basics"
+        },
+        {
+          "claim": "The basics article states that a positive presence_penalty punishes the model for raising themes already present in the conversation, raising its tendency to introduce new topics.",
+          "claim_basis": "source_claim",
+          "fact_id": "basics-presence_penalty",
+          "locator": "blk-body-0001 | section: 3.1 主要参数",
+          "quote": "正值会惩罚模型重复提及对话中已出现过的主题，提高引入新话题的倾向。",
+          "source_id": "wechat-params-basics"
+        },
+        {
+          "claim": "The basics article states that setting max_tokens prevents overly long output and thereby controls cost, but that setting it too small may leave the answer incomplete.",
+          "claim_basis": "source_claim",
+          "fact_id": "basics-max_tokens",
+          "locator": "blk-body-0001 | section: 3.1 主要参数",
+          "quote": "设置此参数可以防止输出过长（从而控制成本），但若设得过小可能导致回答不完整。",
+          "source_id": "wechat-params-basics"
+        },
+        {
+          "claim": "The basics article's content-creation example raises temperature to about 0.8 while also setting top_p to 0.9, which conflicts with the same article's advice to change only one of the two parameters.",
+          "claim_basis": "source_claim",
+          "fact_id": "basics-temp-top_p-contradiction",
+          "locator": "blk-body-0001 | section: 案例二：内容创作中的参数调优",
+          "quote": "这时，我们可以将temperature调高至0.8左右，同时将top_p设置为0.9",
+          "source_id": "wechat-params-basics"
+        },
+        {
+          "claim": "The principles article states that temperature scales every logit, either flattening or amplifying the gap between the scores of candidate tokens.",
+          "claim_basis": "source_claim",
+          "fact_id": "principles-temperature-logits",
+          "locator": "blk-body-0001 | section: 2.1 temperature（温度）",
+          "quote": "缩放所有 logit，抹平 / 放大差距",
+          "source_id": "wechat-params-principles"
+        },
+        {
+          "claim": "The principles article states that top_p, which belongs to the same nucleus-sampling family as temperature, controls output determinism (lower for accurate factual answers, higher for diverse responses), with a range of 0 to 1 and a default of 1.",
+          "claim_basis": "source_claim",
+          "fact_id": "principles-top_p-nucleus",
+          "locator": "blk-body-0001 | section: 2.4 top_p（概率截断）",
+          "quote": "top_p（与 temperature 同属核采样）可控制模型输出的确定性：需准确、事实性答案时调低参数，追求多样化响应则调高参数。取值 0～1，默认值为 1。",
+          "source_id": "wechat-params-principles"
+        },
+        {
+          "claim": "The principles article states that frequency_penalty applies a proportional penalty to the next token according to how many times it has already appeared in the prompt and reply, so higher values make repeated tokens less likely.",
+          "claim_basis": "source_claim",
+          "fact_id": "principles-frequency_penalty",
+          "locator": "blk-body-0001 | section: 2.2 frequency_penalty（频率惩罚）",
+          "quote": "frequency penalty 会按 token 在提示与回复中已出现的次数，对下一个待生成 token 施加比例惩罚；数值越高，重复出现的 token 概率越低，从而减少回复中的词汇重复。",
+          "source_id": "wechat-params-principles"
+        },
+        {
+          "claim": "The principles article states that presence_penalty penalizes repeated words with a fixed penalty that is the same whether a word appeared twice or ten times, which it distinguishes from frequency_penalty.",
+          "claim_basis": "source_claim",
+          "fact_id": "principles-presence_penalty",
+          "locator": "blk-body-0001 | section: 2.3 presence_penalty（存在惩罚）",
+          "quote": "presence penalty 同样对重复词施加惩罚，但与 frequency penalty 不同，其惩罚力度固定，同一 词无论出现 2 次还是 10 次，惩罚均相同，可避免模型过度重复用词。",
+          "source_id": "wechat-params-principles"
+        },
+        {
+          "claim": "The principles article states that max_tokens is a maximum number of generation steps N at which generation is forcibly terminated, without changing the per-step probability distribution or sampling logic.",
+          "claim_basis": "source_claim",
+          "fact_id": "principles-max_tokens",
+          "locator": "blk-body-0001 | section: 2.5 max_tokens（最大生成长度）",
+          "quote": "max_tokens（max length）是控制大语言模型生成长度的核心参数，其数学本质：设定模型生成 token 的最大步数 N，当生成过程达到第 N 个 token 时强制终止，不改变每一步的概率分布与采样逻辑。",
+          "source_id": "wechat-params-principles"
+        },
+        {
+          "claim": "The principles article states that it explains the parameters from the angle of mathematical formulas and what their settings mean for the model, and it gives no per-scenario recommended values of the kind the basics article supplies.",
+          "claim_basis": "source_claim",
+          "fact_id": "principles-omits-scenario-values",
+          "locator": "blk-body-0001 | section: body（引言，一、核心背景之前）",
+          "quote": "本篇将针对上一篇中的核心参数，从数学公式的角度为大家解释，参数的配置对模型到底意味着什么。",
+          "source_id": "wechat-params-principles"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "wechat-params-basics": {
+          "sha256": "88885576b509dbf6b1c3adb92455d15ba695daf564ab08ef52ef48986257f453",
+          "url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ"
+        },
+        "wechat-params-principles": {
+          "sha256": "00916a9f23b72ee9399d64a6bad59cd9a1e095635fdb13aa2672415891c1f8f5",
+          "url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "wechat",
+      "turns": [
+        {
+          "text": "Using only these two articles, compare how they describe temperature, top_p, frequency_penalty, presence_penalty, and max_tokens. Give the basic article's scenario examples and the principles article's mechanism explanations where present. Cite each claim by article title and section; distinguish what one article omits from what it contradicts.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Focus on temperature and top_p. What ranges/defaults and scenario settings does the basics article give, and how does the principles article explain temperature's effect on logits and softmax? Keep source claims attributed; do not present them as universally correct API guidance.",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Add the articles' descriptions of max_tokens and the two penalties. Explain what each article says about output length, repeated tokens, and repeated topics, cite the relevant headings, and list any gaps or inconsistencies between the articles.",
+          "turn_id": "followup-2"
+        }
+      ]
+    },
+    {
+      "acceptable_partial_outcomes": [
+        "Some article diagrams and equations are images not delivered as text; do not infer their contents.",
+        "Preserve differences in scope between an overview article and a specialized MLA article."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "the primary DeepSeek-V2 paper defines MLA and reports the KV-cache reduction, which is the external reference for judging the MLA explainer's compression claims",
+          "url": "https://arxiv.org/abs/2405.04434",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded comparison of the Transformer overview and DeepSeek MLA explainer, with a concept map, source locators, and explicit text/image coverage gaps.",
+      "expected_source_attribution": [
+        "wechat-transformer-overview",
+        "wechat-deepseek-mla"
+      ],
+      "package_id": "wechat-02",
+      "reference_facts": [
+        {
+          "claim": "The overview article states that, when processing a word, the attention mechanism lets the model focus on other words in the input that are closely related to that word.",
+          "claim_basis": "source_claim",
+          "fact_id": "transformer-attention-focus-related-words",
+          "locator": "blk-body-0001 | section: 2 注意力机制的作用是什么？",
+          "quote": "在处理一个词时，注意力机制使模型能够关注输入中与该词密切相关的其他词。",
+          "source_id": "wechat-transformer-overview"
+        },
+        {
+          "claim": "The overview article states that the self-attention mechanism used by the transformer architecture links every word in the input sequence to every other word.",
+          "claim_basis": "source_claim",
+          "fact_id": "transformer-self-attention-all-pairs",
+          "locator": "blk-body-0001 | section: 2 注意力机制的作用是什么？",
+          "quote": "transformer 架构使用的自注意力机制，会把输入序列里的每一个词和其他所有词关联起来。",
+          "source_id": "wechat-transformer-overview"
+        },
+        {
+          "claim": "The overview article states that, so the model can handle finer distinctions in sentence intent and semantics, the transformer equips every word with multiple attention scores.",
+          "claim_basis": "source_claim",
+          "fact_id": "transformer-multiple-attention-scores",
+          "locator": "blk-body-0001 | section: 2 注意力机制的作用是什么？",
+          "quote": "为了让模型能处理句子意图和语义中更细微的差别，transformer 为每个词都配备了多个注意力得分。",
+          "source_id": "wechat-transformer-overview"
+        },
+        {
+          "claim": "The overview article states that the encoder contains a self-attention layer, which computes the relationships among the different words in the sequence, and a feed-forward layer that takes the attention layer's output as its input.",
+          "claim_basis": "source_claim",
+          "fact_id": "transformer-encoder-self-attention-layer",
+          "locator": "blk-body-0001 | section: 1 什么是 transformer",
+          "quote": "包含自注意力层（Self-attention ）和前馈层（Feed-forward ），前者负责计算序列中不同词汇之间的关系，后者将注意力层的输出作为输入。",
+          "source_id": "wechat-transformer-overview"
+        },
+        {
+          "claim": "The overview article states that the transformer processes all words in the sequence in parallel, which greatly increases computation speed.",
+          "claim_basis": "source_claim",
+          "fact_id": "transformer-parallel-processing-speedup",
+          "locator": "blk-body-0001 | section: 8 transformer 比 RNN 强在哪里？",
+          "quote": "transformer 并行处理序列中的所有词汇，极大提升了计算速度。",
+          "source_id": "wechat-transformer-overview"
+        },
+        {
+          "claim": "The overview article frames its scope as the transformer's NLP applications, its advantages over RNNs, and how attention improves performance, and its body never mentions a KV cache or the GPU memory such a cache occupies.",
+          "claim_basis": "source_claim",
+          "fact_id": "transformer-overview-scope-no-kv-cache",
+          "locator": "blk-body-0001 | section: body",
+          "quote": "本篇将以通俗易懂、图文并茂的方式，为大家讲解 Transformer 在 NLP 中的应用、相比RNN的优势，重点介绍注意力机制如何提升性能。",
+          "source_id": "wechat-transformer-overview"
+        },
+        {
+          "claim": "The MLA explainer states that KV Cache is an engineering optimization that has existed since GPT2 and is mainly used in the generation (decode) stage to cache previously computed key-value pairs, avoiding recomputation and thereby saving compute resources and time.",
+          "claim_basis": "source_claim",
+          "fact_id": "mla-kv-cache-purpose",
+          "locator": "blk-body-0001 | section: 二，KV Cache：推理阶段的工程优化",
+          "quote": "KV Cache是GPT2开始就存在的工程优化。它主要用于在生成阶段（decode）缓存之前计算的键值对，避免重复计算，从而节省计算资源和时间。",
+          "source_id": "wechat-deepseek-mla"
+        },
+        {
+          "claim": "The MLA explainer states that prefill processes the entire input sequence, produces the first output token and initializes the KV cache, while decode generates later tokens one by one and, with a KV cache present, only has to process each newly generated token instead of recomputing the keys and values of all previous tokens.",
+          "claim_basis": "source_claim",
+          "fact_id": "mla-prefill-decode-cache-reuse",
+          "locator": "blk-body-0001 | section: 二，KV Cache：推理阶段的工程优化",
+          "quote": "Prefill阶段处理整个输入序列，生成第一个输出token，并初始化KV缓存。\n\nDecode阶段则逐个生成后续的token，此时如果有KV缓存，每次只需处理新生成的token，而无需重新计算之前所有token的键值。",
+          "source_id": "wechat-deepseek-mla"
+        },
+        {
+          "claim": "The MLA explainer states that MHA contains h Query, Key and Value matrices, and that the Key and Value matrix weights are not shared among all the attention heads.",
+          "claim_basis": "source_claim",
+          "fact_id": "mla-mha-heads-unshared-kv",
+          "locator": "blk-body-0001 | section: 一，多头注意力机制MHA",
+          "quote": "MHA 包含h个Query、Key 和 Value 矩阵，所有注意力头(head)的 Key 和 Value 矩阵权重不共享。",
+          "source_id": "wechat-deepseek-mla"
+        },
+        {
+          "claim": "The MLA explainer states that after trading space for time to speed up inference, GPU memory occupancy became the next thing to optimize, and it asks whether the size of the KV cache can be reduced.",
+          "claim_basis": "source_claim",
+          "fact_id": "mla-space-for-time-memory-pressure",
+          "locator": "blk-body-0001 | section: 三，MQA，GQA：多头注意力机制的降本增效",
+          "quote": "既然我们用空间换时间的方案，加快了推理速度，那占用显存空间又成了一个可以优化的点，有没有可能降低KV Cache的大小呢？",
+          "source_id": "wechat-deepseek-mla"
+        },
+        {
+          "claim": "The MLA explainer states that MQA reduces the contents of the KV cache by sharing keys and values inside the attention mechanism: there are still multiple queries but only one key and one value, so all queries share one set of KV and the KV cache becomes smaller.",
+          "claim_basis": "source_claim",
+          "fact_id": "mla-mqa-shared-kv-reduces-cache",
+          "locator": "blk-body-0001 | section: 三，MQA，GQA：多头注意力机制的降本增效",
+          "quote": "MQA通过在Attention机制里面共享keys和values来减少KV cache的内容，query的数量还是多个，而keys和values只有一个，所有的query共享一组kv，这样KV Cache就变小了。",
+          "source_id": "wechat-deepseek-mla"
+        },
+        {
+          "claim": "The MLA explainer states, in the section introducing MLA, that to cut KV-cache memory further, thinking in terms of the number of cached KVs no longer works, so one must think about the KV itself and whether every cached KV can be smaller than before.",
+          "claim_basis": "source_claim",
+          "fact_id": "mla-latent-shrink-every-cached-kv",
+          "locator": "blk-body-0001 | section: 四，MLA：山穷水尽疑无路，柳暗花明又一村",
+          "quote": "如果想进一步降低KV缓存的占用，从数量上思考已经不行了，那就势必得从KV本身思考，有没有可能每个缓存的KV都比之前小？",
+          "source_id": "wechat-deepseek-mla"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "wechat-deepseek-mla": {
+          "sha256": "4a7fe8348d20618155aef5220589d528018d4d54d36bc77a11c84358029376a3",
+          "url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg"
+        },
+        "wechat-transformer-overview": {
+          "sha256": "5e6225da99a074ed9ab1e6a1eb04cf958cac3deb80096f65f995b8d8ee98abb1",
+          "url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "wechat",
+      "turns": [
+        {
+          "text": "Using only these two articles, explain how they describe attention and Transformer components. Then summarize the MLA article's progression from MHA through MQA/GQA to MLA and identify which details are not established by the returned text. Attribute every claim to a source and section.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Compare the overview article's encoder/decoder and self-attention descriptions with the MLA article's account of MHA, MQA, and GQA. Give the stated trade-offs and cite the section headings; do not fill gaps from memory.",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Explain what the MLA article says about KV Cache and RoPE, and contrast that with the overview article's training/inference description. Note when equations or diagrams were not returned and avoid claiming to have inspected unseen images.",
+          "turn_id": "followup-2"
+        }
+      ]
+    },
+    {
+      "acceptable_partial_outcomes": [
+        "The two articles address different problems; do not invent a joint architecture diagram that neither article draws.",
+        "Inline diagrams were not read; answers must not claim to have inspected them."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "independent evidence that cross-domain text-to-SQL is a hard, separately benchmarked task (Spider, human-labeled complex/cross-domain queries), which is the difficulty the ChatSQL article attributes to real schemas",
+          "url": "https://arxiv.org/abs/1809.08887",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded brief on where text-to-SQL stops being reliable and how an enterprise agent pipeline is meant to absorb that risk, citing each article by section.",
+      "expected_source_attribution": [
+        "wechat-chatsql",
+        "wechat-agent-enterprise"
+      ],
+      "package_id": "wechat-03",
+      "reference_facts": [
+        {
+          "claim": "The ChatSQL article summarizes its own mechanism as a five-stage loop of perception, understanding, generation, execution and feedback, with schema management, prompt engineering, SQL validation and an execution engine as the key components.",
+          "claim_basis": "source_claim",
+          "fact_id": "chatsql-loop",
+          "locator": "blk-body-0001 | section: 1.6 本章小结",
+          "quote": "核心是\"感知-理解-生成-执行-反馈\"的循环。",
+          "source_id": "wechat-chatsql"
+        },
+        {
+          "claim": "The ChatSQL article states that its SQL validator checks syntax and schema before execution, plus a safety check for whether DELETE or DROP appears, and estimates performance; the database is never hit by an unvalidated generated statement.",
+          "claim_basis": "source_claim",
+          "fact_id": "chatsql-validator-guard",
+          "locator": "blk-body-0001 | section: 1.2.3 技术组件：五个核心模块",
+          "quote": "在SQL提交执行前进行检查：语法校验、Schema校验、安全校验（是否包含DELETE/DROP）、性能预估。",
+          "source_id": "wechat-chatsql"
+        },
+        {
+          "claim": "The ChatSQL article lists dialect mismatch as failure mode 3: DATEDIFF and NOW() are MySQL syntax and do not exist in SQLite, so a syntactically plausible generated query still fails on the target engine.",
+          "claim_basis": "source_claim",
+          "fact_id": "chatsql-dialect-mismatch",
+          "locator": "blk-body-0001 | section: 1.4.1 失败模式：五种典型的翻车场景",
+          "quote": "DATEDIFF和NOW()是MySQL语法，在SQLite中不存在。",
+          "source_id": "wechat-chatsql"
+        },
+        {
+          "claim": "The ChatSQL article's recommended default combination is private deployment plus a pipeline architecture plus human-in-the-loop, presented as the balance point between data security, controllability and practicality.",
+          "claim_basis": "source_claim",
+          "fact_id": "chatsql-pragmatic-stack",
+          "locator": "blk-body-0001 | section: 1.1.3 技术分类：三个关键维度",
+          "quote": "一个常见的务实选择是：私有化部署+管道型架构+人机协作——在数据安全、可控性和实用性之间取得较好平衡。",
+          "source_id": "wechat-chatsql"
+        },
+        {
+          "claim": "The ChatSQL article splits accuracy by query complexity: above 70% for low complexity (comfort zone), 30-70% for medium complexity (human-plus-machine zone), and below 30% for high-complexity professional queries that still need a professional data analyst.",
+          "claim_basis": "source_claim",
+          "fact_id": "chatsql-complexity-boundary",
+          "locator": "blk-body-0001 | section: 1.4.3 能力边界：一个清醒的认知",
+          "quote": "高复杂度查询（专业领域）：准确率<30%，需要专业数据分析师",
+          "source_id": "wechat-chatsql"
+        },
+        {
+          "claim": "The ChatSQL article's architecture-selection dimension rates end-to-end as low complexity/low control and suited to fast validation, a pipeline as medium complexity/high control and suited to production systems, and an agent as high complexity with a high capability ceiling.",
+          "claim_basis": "source_claim",
+          "fact_id": "chatsql-pipeline-for-production",
+          "locator": "blk-body-0001 | section: 1.5.2 选型考量：三个关键维度",
+          "quote": "Pipeline：复杂度中、可控性高，适合生产系统",
+          "source_id": "wechat-chatsql"
+        },
+        {
+          "claim": "The enterprise-agent article says rollout should be staged by scenario complexity rather than done in one step, starting with stage 1, the tool-assistant (Copilot) mode that completes a single analysis with a human in the loop.",
+          "claim_basis": "source_claim",
+          "fact_id": "enterprise-three-modes",
+          "locator": "blk-body-0001 | section: 四、落地路径：三种自动化模式的实战演进",
+          "quote": "企业落地不应一蹴而就，建议根据场景复杂度分级实施。阶段一：工具助手(Copilot)--单点提效",
+          "source_id": "wechat-agent-enterprise"
+        },
+        {
+          "claim": "The enterprise-agent article reports the automated storage-governance case: high-confidence items are taken offline or put on cold standby while low-confidence ones only produce a recommendation report, for a 50% storage-cost reduction with zero wrongful deletions.",
+          "claim_basis": "source_claim",
+          "fact_id": "enterprise-storage-roi",
+          "locator": "blk-body-0001 | section: 四、落地路径：三种自动化模式的实战演进",
+          "quote": "分级执行：高置信度直接下线/冷备；低置信度输出建议报告。ROI：存储成本降低50%，且实现了0误删。",
+          "source_id": "wechat-agent-enterprise"
+        },
+        {
+          "claim": "The enterprise-agent article forbids a bare yes/no answer: the agent must emit a structured report of conclusion, reasoning, reasoning process and the original data snapshot, both for human review and for later root-causing why the AI went wrong.",
+          "claim_basis": "source_claim",
+          "fact_id": "enterprise-explainable-output",
+          "locator": "blk-body-0001 | section: 五、工程化交付标准",
+          "quote": "结构化报告：必须输出{结论,理由,推理过程,原始数据快照}",
+          "source_id": "wechat-agent-enterprise"
+        },
+        {
+          "claim": "The enterprise-agent article's closing advice to managers is not to over-trust agents: at this stage a clearly specified workflow is a better fit for enterprise production than a self-planning agent.",
+          "claim_basis": "source_claim",
+          "fact_id": "enterprise-workflow-over-agent",
+          "locator": "blk-body-0001 | section: 6. 总结与展望",
+          "quote": "不要迷信Agent：现阶段，逻辑清晰的Workflow比自主规划的Agent更适合企业生产环境。",
+          "source_id": "wechat-agent-enterprise"
+        },
+        {
+          "claim": "The enterprise-agent article's multi-layer validation section requires a result-check node after key steps and a human-in-the-loop approval before any high-risk action is executed.",
+          "claim_basis": "source_claim",
+          "fact_id": "enterprise-hitl-gate",
+          "locator": "blk-body-0001 | section: 五、工程化交付标准",
+          "quote": "人机回环(HITL)：高风险操作必须经人工Approval才能执行。",
+          "source_id": "wechat-agent-enterprise"
+        },
+        {
+          "claim": "The enterprise-agent article's core architecture abstracts business operations into a perception-decision-action loop, deliberately modelled on a new employee's eyes, hands and brain rather than on a pure text generator.",
+          "claim_basis": "source_claim",
+          "fact_id": "enterprise-perception-decision-action",
+          "locator": "blk-body-0001 | section: 三、核心架构设计：构建 AI 的“眼、手、脑”",
+          "quote": "我们将业务操作抽象为“感知(Perception)-决策(Decision)-执行(Action)”闭环",
+          "source_id": "wechat-agent-enterprise"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "wechat-agent-enterprise": {
+          "sha256": "062aa5ed1e9f6734e923db9e3de72efab53e342ea014e0cf3643afb32026155e",
+          "url": "https://mp.weixin.qq.com/s/IJvzjWMLMhljkMQO2oa2bg"
+        },
+        "wechat-chatsql": {
+          "sha256": "1254e19a25177bb28d11716310e22e3caefcdd80d332108eb68f81d594e93c17",
+          "url": "https://mp.weixin.qq.com/s/6FdfPNi9gOf_QQbwlkAdBQ"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "wechat",
+      "turns": [
+        {
+          "text": "Using only these two articles, explain the ChatSQL pipeline and its failure modes, then explain the enterprise-agent architecture the second article proposes. Cite each claim by article and section.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Focus on the boundary of text-to-SQL reliability: which failure modes does the ChatSQL article itself admit, and which controls (validation, execution checks, human approval) does the enterprise article require? Keep the two articles' claims separate.",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Synthesize: if an enterprise deployed ChatSQL inside the second article's architecture, which of the first article's admitted failures would the second article's controls catch, and which would remain uncovered? Say plainly when the articles do not answer the question.",
+          "turn_id": "followup-2"
+        }
+      ]
+    },
+    {
+      "acceptable_partial_outcomes": [
+        "The code region in the tooling article was captured token-split and is excluded; answers must not quote or reconstruct code from it.",
+        "The framework article compares frameworks qualitatively; do not invent benchmark numbers for them."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "the official MCP documentation, which defines MCP as a standardized connection protocol for tools and data; used to judge the tooling article's description of MCP's role rather than to extend it",
+          "url": "https://modelcontextprotocol.io/docs",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded comparison of Function Calling, MCP and Skills as integration mechanisms, plus how agent frameworks differ, with explicit uncertainty where the two articles answer different questions.",
+      "expected_source_attribution": [
+        "wechat-agent-tooling",
+        "wechat-agent-frameworks"
+      ],
+      "package_id": "wechat-04",
+      "reference_facts": [
+        {
+          "claim": "The tooling article describes MCP as still built on Function Calling: it converts a Function Calling invocation client-side into a JSON+HTTP request and answers it with a server, so existing systems can be used by any LLM.",
+          "claim_basis": "source_claim",
+          "fact_id": "mcp-built-on-function-calling",
+          "locator": "blk-body-0001 | section: MCP",
+          "quote": "MCP的核心其实还是基于FunctionCalling的。它做的事情很简单：把FunctionCalling的调用，在客户端转换成一套JSON+HTTP的请求。",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The tooling article credits MCP with a standardized connection protocol plus JSON-RPC and a standard tool-description format that lowers integration cost, while also saying MCP is a connection standard rather than the only way to connect.",
+          "claim_basis": "source_claim",
+          "fact_id": "mcp-standard-connection",
+          "locator": "blk-body-0001 | section: Function Calling、MCP、Skills的核心定位",
+          "quote": "MCP的价值在于它提供了一套标准化的接驳协议，让不同的工具和数据源能够以统一的方式被LLM使用。通过JSON-RPC协议和标准化的工具描述格式，MCP降低了工具集成的成本，让开发者不需要为每个系统单独编写集成代码。但本质上，MCP更偏重是一套接驳标准，而不是唯一的接驳方式。",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The tooling article says the key point about Skills is that it depends entirely on Function Calling: without Function Calling, Skills cannot work, because loading a skill document is itself a function call.",
+          "claim_basis": "source_claim",
+          "fact_id": "skills-depend-on-function-calling",
+          "locator": "blk-body-0001 | section: Skills",
+          "quote": "这里的关键是，Skills完全依赖于FunctionCalling这个基础能力。如果没有FunctionCalling，Skills就无法工作。",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The tooling article argues against the common view that MCP and Skills are complementary: it says they are more competitive than complementary because both solve the same problem of integrating several existing systems into a multi-step task.",
+          "claim_basis": "source_claim",
+          "fact_id": "mcp-skills-competition",
+          "locator": "blk-body-0001 | section: MCP与Skills的竞争关系",
+          "quote": "虽然很多人认为MCP和Skills是互补关系，但实际上，这两者更多是竞争关系。",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The tooling article says that under Function Calling every existing system has to be integrated separately, since each organisation has its own API, authentication and data format, so developers write a corresponding function implementation per organisation.",
+          "claim_basis": "source_claim",
+          "fact_id": "function-calling-integration-cost",
+          "locator": "blk-body-0001 | section: 工具集成成本太高",
+          "quote": "在FunctionCalling的框架下，每个既有系统都需要单独集成到应用中。每个组织或公司都有自己的API、认证方式、数据格式，开发者需要为每个组织或公司编写对应的函数实现。",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The tooling article states the essence of tool calling: the LLM converts an unstructured user need, a natural-language text, into a structured function call of function name and arguments, and the structured result is returned to the model for its next decision.",
+          "claim_basis": "source_claim",
+          "fact_id": "function-calling-bridges-structures",
+          "locator": "blk-body-0001 | section: 小结：工具调用的本质",
+          "quote": "LLM需要把用户的非结构化需求（一段自然语言文本）转换为结构化的函数调用（函数名和参数）",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The tooling article says the MCP JSON-RPC hop can be replaced outright by a command-line script or a remote curl call made locally, so the protocol-conversion server is not strictly necessary; this is the article's basis for treating the two approaches as rivals.",
+          "claim_basis": "source_claim",
+          "fact_id": "skills-replace-mcp-layer",
+          "locator": "blk-body-0001 | section: MCP与Skills的竞争关系",
+          "quote": "换句话说，MCP的JSON-RPC可以被直接替换为命令行脚本或curl远程调用，在本地直接调用。",
+          "source_id": "wechat-agent-tooling"
+        },
+        {
+          "claim": "The framework article describes LangGraph as first released in January 2024, built on LangChain and using a Pregel graph structure with nodes, edges and conditional edges to make cyclic agent flows and graph traversal more intuitive.",
+          "claim_basis": "source_claim",
+          "fact_id": "langgraph-graph-structure",
+          "locator": "blk-body-0001 | section: 02 LangGraph",
+          "quote": "LangGraph通过引入节点（nodes）、边（edges）以及条件边（conditionaledges）的概念，简化了在智能体中创建循环流程的过程，使得图的遍历变得更加直观。",
+          "source_id": "wechat-agent-frameworks"
+        },
+        {
+          "claim": "The framework article reports that the misleading validation error encountered while building with LangGraph actually came from Pydantic rather than from LangGraph, and that the author eventually rewrote the skills as plain methods with LangChain's @tool decorator.",
+          "claim_basis": "source_claim",
+          "fact_id": "pydantic-error-provenance",
+          "locator": "blk-body-0001 | section: 2.2 使用 LangGraph 面临的挑战",
+          "quote": "这个误导性的错误信息其实来自Pydantic，而非LangGraph。",
+          "source_id": "wechat-agent-frameworks"
+        },
+        {
+          "claim": "The framework article contrasts LlamaIndex Workflows with LangGraph: Workflows connects steps through events rather than edges or conditional edges, with agent logic packaged in steps that correspond to LangGraph's nodes.",
+          "claim_basis": "source_claim",
+          "fact_id": "workflows-events-not-edges",
+          "locator": "blk-body-0001 | section: 03 LlamaIndex Workflows",
+          "quote": "尤其是它采用事件（events）而非边（edges）或条件边（conditionaledges）作为连接逻辑的方式",
+          "source_id": "wechat-agent-frameworks"
+        },
+        {
+          "claim": "The framework article's comparison rates the no-framework approach as the simplest to implement, because all abstractions such as the SkillMap object are defined by the developer, so managing types and objects stays relatively simple.",
+          "claim_basis": "source_claim",
+          "fact_id": "no-framework-simplest",
+          "locator": "blk-body-0001 | section: 04 对这些方法进行比较",
+          "quote": "无框架方法实施起来最简单。由于所有抽象层都是由开发者自行定义（如前例中的SkillMap对象），因此管理不同类型（types）和对象（objects）相对简单。",
+          "source_id": "wechat-agent-frameworks"
+        },
+        {
+          "claim": "The framework article concludes that the plain-code approach may remain an attractive choice forever, provided the abstractions the developer creates are strictly documented and enforced; this echoes the tooling article's point that intermediate layers can be replaced by simpler direct calls.",
+          "claim_basis": "source_claim",
+          "fact_id": "plain-code-still-attractive",
+          "locator": "blk-body-0001 | section: 04 对这些方法进行比较",
+          "quote": "纯代码方法可能永远是一个有吸引力的选择。如果你能够严格地记录并执行所创建的任何抽象概念，那么确保外部框架不会成为你的阻碍就很容易了。",
+          "source_id": "wechat-agent-frameworks"
+        },
+        {
+          "claim": "The framework article reduces framework choice to three questions, the first being whether the project is already deeply integrated with LlamaIndex or LangChain, in which case those two options should be preferred.",
+          "claim_basis": "source_claim",
+          "fact_id": "framework-choice-three-questions",
+          "locator": "blk-body-0001 | section: 05 在选择智能体框架时需要考虑的关键问题",
+          "quote": "你的项目是否已经深度集成了LlamaIndex或LangChain？如果是的话，不妨优先考虑这两个选项。",
+          "source_id": "wechat-agent-frameworks"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "wechat-agent-frameworks": {
+          "sha256": "038f033d46aeb868ab6ef4e772c0ab709e7c3640aeabe8f6af1427401833767b",
+          "url": "https://mp.weixin.qq.com/s/0jB157hXY2AwIcji0jywBQ"
+        },
+        "wechat-agent-tooling": {
+          "sha256": "e92dcf250cb7b729a476a94ac5c7185bc5f6307a6d46fc3090b749ce38fa90dc",
+          "url": "https://mp.weixin.qq.com/s/dAnNHayrE49FEl8TcLII2Q"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "wechat",
+      "turns": [
+        {
+          "text": "Using only these two articles, describe Function Calling, MCP and Skills as the tooling article defines them, then summarize how the framework article compares LangGraph, LlamaIndex Workflows and alternatives.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Explain the tooling article's argument about whether MCP and Skills are complementary or competing, and what evidence it offers. Then state what the framework article says about the cost of adopting a framework.",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Synthesize a decision rule: for a team that must integrate several existing internal systems, what do the two articles together imply about protocol choice versus framework choice, and where do they leave the question open?",
+          "turn_id": "followup-2"
+        }
+      ]
+    },
+    {
+      "acceptable_partial_outcomes": [
+        "Both reports predate later model releases; do not extend their conclusions to newer models.",
+        "Leaderboard tables that exist only as images were not read; answers must not invent unquoted rows."
+      ],
+      "authority_anchors": [
+        {
+          "supports": "the publisher's own August 2024 SuperCLUE report (PDF, Last-Modified 2024-09-02), used as the primary corroboration for the scores the WeChat repost reports",
+          "url": "https://www.cluebenchmarks.com/superclue_2408",
+          "verified_at": "2026-10-24"
+        }
+      ],
+      "deliverable": "A source-grounded comparison of two Chinese LLM evaluation reports: what each measures, which numbers each reports, and what their differences do and do not license.",
+      "expected_source_attribution": [
+        "wechat-superclue-2408",
+        "wechat-superbench"
+      ],
+      "package_id": "wechat-05",
+      "reference_facts": [
+        {
+          "claim": "The SuperCLUE August report says it covers general capability with a multi-dimension scheme of science, humanities and Hard tracks, that all items are newly written, and that the total is 3226 multi-turn short-answer questions.",
+          "claim_basis": "source_claim",
+          "fact_id": "superclue-august-dataset",
+          "locator": "blk-body-0001 | section: 2. SuperCLUE测评体系及数据集说明",
+          "quote": "本次8月报告聚焦通用能力测评，采用多维度、多层次的综合性测评方案，由理科、文科和Hard三大维度构成。题目均为原创新题，总量为3226道多轮简答题。",
+          "source_id": "wechat-superclue-2408"
+        },
+        {
+          "claim": "The SuperCLUE August report states that the general-capability gap between the top domestic and top international models kept narrowing, from 30.12% in May 2023 to 1.29% in August 2024.",
+          "claim_basis": "source_claim",
+          "fact_id": "superclue-gap-narrowed",
+          "locator": "blk-body-0001 | section: 一、关键进展与趋势",
+          "quote": "国内外第一梯队大模型在中文领域的通用能力差距在持续缩小，从2023年5月的30.12%的差距，缩小至2024年8月的1.29%",
+          "source_id": "wechat-superclue-2408"
+        },
+        {
+          "claim": "The SuperCLUE August report reports a Pearson correlation of 0.89 with a P value of 2.46e-07 between SuperCLUE scores and Chatbot Arena scores, presented as evidence that its automated ranking agrees with human anonymous voting.",
+          "claim_basis": "source_claim",
+          "fact_id": "superclue-human-correlation",
+          "locator": "blk-body-0001 | section: 16. 评测与人类一致性验证",
+          "quote": "将SuperCLUE得分与ChatBotArena得分进行相关性计算，得到皮尔逊相关系数：0.89，P值：2.46e-07",
+          "source_id": "wechat-superclue-2408"
+        },
+        {
+          "claim": "The SuperCLUE August report describes a human re-review of 100+ sampled items for each of five models and reports per-model reliability of 88.68% to 97.64%, averaging 94.62%, which it uses to argue its automated scoring is reliable.",
+          "claim_basis": "source_claim",
+          "fact_id": "superclue-review-reliability",
+          "locator": "blk-body-0001 | section: 16. 评测与人类一致性验证",
+          "quote": "可靠性数据分别为88.68%、96.23%、95.28%、97.64%、95.28%，其中可靠性最低有88.68%，最高为模型的97.64%。平均有94.62%的可靠性。",
+          "source_id": "wechat-superclue-2408"
+        },
+        {
+          "claim": "The SuperCLUE August report grades domestic models by a maturity index: exact instruction following is the only extremely-low-maturity capability with an index below 0.7, while computation, code, long text and high-order reasoning sit in the low band of 0.7 to 0.8.",
+          "claim_basis": "source_claim",
+          "fact_id": "superclue-maturity-ladder",
+          "locator": "blk-body-0001 | section: 12. SuperCLUE成熟度指数",
+          "quote": "极低成熟度指的是大多数模型无法胜任。SC成熟度指数在0.7以下。当前国内大模型低成熟度的能力是【精确指令遵循】。",
+          "source_id": "wechat-superclue-2408"
+        },
+        {
+          "claim": "The SuperCLUE August report says GLM-4-9B-Chat scored 61.15, the highest among models under 10B parameters and the only domestic model in that class above 60, while Gemma-2-9b-it scored 60.93 to lead overseas models of the same size.",
+          "claim_basis": "source_claim",
+          "fact_id": "superclue-10b-models",
+          "locator": "blk-body-0001 | section: 9. 10B级别小模型榜单",
+          "quote": "GLM-4-9B-Chat取得61.15分，取得10B以内模型最高分，并且是国内10B以内唯一超过60分的模型。",
+          "source_id": "wechat-superclue-2408"
+        },
+        {
+          "claim": "The SuperBench article says the framework covers five evaluation categories, semantics, code, alignment, agent and safety, with 28 sub-categories, in order to assess model capabilities comprehensively rather than through a single leaderboard score.",
+          "claim_basis": "source_claim",
+          "fact_id": "superbench-five-categories",
+          "locator": "blk-body-0001 | section: SuperBench",
+          "quote": "为了全面地评估大模型的各项能力，SuperBench评测体系包含了语义、代码、对齐、智能体和安全等五个评测大类，28个子类。",
+          "source_id": "wechat-superbench"
+        },
+        {
+          "claim": "The SuperBench article opens by criticising the many uneven Chinese evaluation leaderboards and states its quality criteria for a good evaluation method: openness, dynamism, scientific soundness and authority.",
+          "claim_basis": "source_claim",
+          "fact_id": "superbench-quality-criteria",
+          "locator": "blk-body-0001 | section: SuperBench",
+          "quote": "我们认为，好的评测方法应当具备开放性、动态性、科学性和权威性。",
+          "source_id": "wechat-superbench"
+        },
+        {
+          "claim": "In SuperBench's semantics evaluation on ExtremeGLUE, Claude-3 scored 76.7 and took first place, while domestic models GLM-4 and 文心一言4.0 beat the GPT-4 series to take second and third, still about 3 points behind Claude-3.",
+          "claim_basis": "source_claim",
+          "fact_id": "superbench-semantic-claude",
+          "locator": "blk-body-0001 | section: PART/ 1 语义评测",
+          "quote": "其中Claude-3得分为76.7，位居第一；国内模型GLM-4和文心一言4.0则超过GPT-4系列模型位居第二和第三位，但是和Claude-3有3分差距。",
+          "source_id": "wechat-superbench"
+        },
+        {
+          "claim": "In SuperBench's code evaluation, the article says domestic models still lag clearly behind the international frontier on code writing, and that even the best model's first-pass rate is only about 50%, making code generation a major challenge.",
+          "claim_basis": "source_claim",
+          "fact_id": "superbench-code-pass-at-1",
+          "locator": "blk-body-0001 | section: PART/ 2 代码评测",
+          "quote": "即使是表现最好的模型在代码的一次通过率上仍只有50%左右，代码生成任务对目前的大模型来说仍是一大挑战。",
+          "source_id": "wechat-superbench"
+        },
+        {
+          "claim": "In SuperBench's agent evaluation on AgentBench, the article states that domestic models as a whole lag clearly behind the international frontier, that Claude-3 and the GPT-4 series hold the top three places, and that most current models still lack strong agent capability.",
+          "claim_basis": "source_claim",
+          "fact_id": "superbench-agent-gap",
+          "locator": "blk-body-0001 | section: PART/ 4 智能体评测",
+          "quote": "在作为智能体能力评测中，国内模型整体明显落后于国际一流模型",
+          "source_id": "wechat-superbench"
+        },
+        {
+          "claim": "In SuperBench's safety evaluation on SafetyBench, the article reports that domestic model 文心一言4.0 beat the GPT-4 series and Claude-3 to the highest score of 89.1 points.",
+          "claim_basis": "source_claim",
+          "fact_id": "superbench-safety-winner",
+          "locator": "blk-body-0001 | section: PART/ 5 安全评测",
+          "quote": "国内模型文心一言4.0表现亮眼，力压国际一流模型GPT-4系列模型和Claude-3拿下最高分（89.1分）",
+          "source_id": "wechat-superbench"
+        }
+      ],
+      "rubric_version": "envoy-fixed-set-v1-rubric-1",
+      "source_revisions": {
+        "wechat-superbench": {
+          "sha256": "1718d5ca42266ccfbfb8d2bb47268edbc4e8b613e1fffa3006b86bd0131f714b",
+          "url": "https://mp.weixin.qq.com/s/r_aAjFHTRDBGXhl3bd06XQ"
+        },
+        "wechat-superclue-2408": {
+          "sha256": "56fcde13ad9c03aed964891d5e21d89e3722a2caee28e3b878578847275d4812",
+          "url": "https://mp.weixin.qq.com/s/uxU_rWvP9HWOMzg7Zg6oKA"
+        }
+      },
+      "status": "rehearsal_only",
+      "stratum": "wechat",
+      "turns": [
+        {
+          "text": "Using only these two evaluation reports, compare what each measures: name the evaluation systems, categories and any reported scores, citing each article by section.",
+          "turn_id": "initial"
+        },
+        {
+          "text": "Focus on the gap between domestic and international models. What does each report claim, with which numbers, and do the two reports measure the same thing when they say \"gap\"?",
+          "turn_id": "followup-1"
+        },
+        {
+          "text": "Synthesize what a reader can and cannot conclude from these two reports about Chinese LLM capability in 2024. Distinguish agreement between the reports from claims only one report supports.",
+          "turn_id": "followup-2"
+        }
+      ]
+    }
+  ],
+  "rehearsal": true,
+  "schema_version": "envoy.fixed-set-manifest/1",
+  "sources": [
+    {
+      "canonical_url": "https://www.bilibili.com/video/BV1Qb4SenEKY",
+      "coverage_note": "accepted; local ASR transcript 738 chars from the opening segment only, stored as materials/7935c6fead90...txt; slides/frames not inspected, ASR wording is the only quotable evidence",
+      "package_id": "bili-01",
+      "sha256": "7935c6fead906f9760b08a6181296d2c74aa1a79142096e1e4e048815acc58de",
+      "source_class": "bilibili_video",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://www.bilibili.com/video/BV1Qb4SenEKY/?p=2",
+      "coverage_note": "accepted; local ASR transcript 712 chars from the opening segment only, stored as materials/30ccda9763db...txt; slides/frames not inspected, ASR wording is the only quotable evidence",
+      "package_id": "bili-01",
+      "sha256": "30ccda9763db9aec3862215617991ea2e6e68687caccf1a80f7a40e20047ea7b",
+      "source_class": "bilibili_video",
+      "source_slot": "2"
+    },
+    {
+      "canonical_url": "https://www.bilibili.com/video/BV1nJ411V7bd",
+      "coverage_note": "accepted; local ASR transcript 2431 chars from the opening segment only, stored as materials/39baa22a7f6a...txt; slides/frames not inspected, ASR wording is the only quotable evidence",
+      "package_id": "bili-02",
+      "sha256": "39baa22a7f6a7675ba4cb2e9c1273092e27e66a8c215fa4f59ac15392378fd3a",
+      "source_class": "bilibili_video",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://www.bilibili.com/video/BV1b7411N798",
+      "coverage_note": "accepted; local ASR transcript 2801 chars from the opening segment only, stored as materials/a4212a263a01...txt; slides/frames not inspected, ASR wording is the only quotable evidence",
+      "package_id": "bili-02",
+      "sha256": "a4212a263a012415cfa8814cea69184fb331775600c59a8a820e1804407be252",
+      "source_class": "bilibili_video",
+      "source_slot": "2"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/i6rO6k1Br0XgiA9DRQIaDQ",
+      "coverage_note": "accepted; full article body 10256 chars captured as materials/wechat-params-basics.txt (sha256 88885576b509); inline images not read (no OCR); Envoy result=partial",
+      "package_id": "wechat-01",
+      "sha256": "88885576b509dbf6b1c3adb92455d15ba695daf564ab08ef52ef48986257f453",
+      "source_class": "wechat_article",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/C46jhKFNAhiIuri9d8_MsA",
+      "coverage_note": "accepted; full article body 7654 chars captured as materials/wechat-params-principles.txt (sha256 00916a9f23b7); inline images not read (no OCR); Envoy result=partial",
+      "package_id": "wechat-01",
+      "sha256": "00916a9f23b72ee9399d64a6bad59cd9a1e095635fdb13aa2672415891c1f8f5",
+      "source_class": "wechat_article",
+      "source_slot": "2"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/R3BxCMu5CSFo_HPcVJTuOA",
+      "coverage_note": "accepted; article body 5197 chars captured as materials/5e6225da99a0...txt; formulas and inline images degraded in capture (no math/OCR); Envoy result=partial",
+      "package_id": "wechat-02",
+      "sha256": "5e6225da99a074ed9ab1e6a1eb04cf958cac3deb80096f65f995b8d8ee98abb1",
+      "source_class": "wechat_article",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/WUyY2F6Cr9EU15FHeKM9eg",
+      "coverage_note": "accepted; article body 5896 chars captured as materials/4a7fe8348d20...txt; formulas and inline images degraded in capture (no math/OCR); Envoy result=partial",
+      "package_id": "wechat-02",
+      "sha256": "4a7fe8348d20618155aef5220589d528018d4d54d36bc77a11c84358029376a3",
+      "source_class": "wechat_article",
+      "source_slot": "2"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/6FdfPNi9gOf_QQbwlkAdBQ",
+      "coverage_note": "accepted; 6822 chars stored as materials/1254e19a2517...txt; article body captured in full; inline images were not read, so image-only claims are out of scope",
+      "package_id": "wechat-03",
+      "sha256": "1254e19a25177bb28d11716310e22e3caefcdd80d332108eb68f81d594e93c17",
+      "source_class": "wechat_article",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/IJvzjWMLMhljkMQO2oa2bg",
+      "coverage_note": "accepted; 3739 chars stored as materials/062aa5ed1e9f...txt; article body captured in full; diagrams and screenshots not read",
+      "package_id": "wechat-03",
+      "sha256": "062aa5ed1e9f6734e923db9e3de72efab53e342ea014e0cf3643afb32026155e",
+      "source_class": "wechat_article",
+      "source_slot": "2"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/dAnNHayrE49FEl8TcLII2Q",
+      "coverage_note": "accepted; 9431 chars stored as materials/e92dcf250cb7...txt; article body captured, but the embedded JSON/JS code region came out token-split and is never quoted; images not read",
+      "package_id": "wechat-04",
+      "sha256": "e92dcf250cb7b729a476a94ac5c7185bc5f6307a6d46fc3090b749ce38fa90dc",
+      "source_class": "wechat_article",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/0jB157hXY2AwIcji0jywBQ",
+      "coverage_note": "accepted; 8876 chars stored as materials/038f033d46ae...txt; article body captured in full; screenshots and tables-as-images not read",
+      "package_id": "wechat-04",
+      "sha256": "038f033d46aeb868ab6ef4e772c0ab709e7c3640aeabe8f6af1427401833767b",
+      "source_class": "wechat_article",
+      "source_slot": "2"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/uxU_rWvP9HWOMzg7Zg6oKA",
+      "coverage_note": "accepted; 7429 chars stored as materials/56fcde13ad9c...txt; article body captured in full; leaderboard tables that are images not read",
+      "package_id": "wechat-05",
+      "sha256": "56fcde13ad9c03aed964891d5e21d89e3722a2caee28e3b878578847275d4812",
+      "source_class": "",
+      "source_slot": "1"
+    },
+    {
+      "canonical_url": "https://mp.weixin.qq.com/s/r_aAjFHTRDBGXhl3bd06XQ",
+      "coverage_note": "accepted; 8688 chars stored as materials/1718d5ca4226...txt; article body captured in full; chart images not read",
+      "package_id": "wechat-05",
+      "sha256": "1718d5ca42266ccfbfb8d2bb47268edbc4e8b613e1fffa3006b86bd0131f714b",
+      "source_class": "",
+      "source_slot": "2"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "bili-01",
+  "stratum": "bilibili",
+  "source_ids": [
+    "bili-course-overview-p1",
+    "bili-course-overview-p2"
+  ],
+  "source_revisions": {
+    "bili-course-overview-p1": {
+      "url": "https://www.bilibili.com/video/BV1Qb4SenEKY/",
+      "sha256": "7935c6fead906f9760b08a6181296d2c74aa1a79142096e1e4e048815acc58de",
+      "snapshot": "materials/7935c6fead906f9760b08a6181296d2c74aa1a79142096e1e4e048815acc58de.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "local ASR transcript, 738 chars, opening ~2 min only: first ~12 s is noisy greeting and there is a gap at 00:58-01:28; slides/frames not inspected, ASR wording is the only quotable evidence"
+    },
+    "bili-course-overview-p2": {
+      "url": "https://www.bilibili.com/video/BV1Qb4SenEKY/?p=2",
+      "sha256": "30ccda9763db9aec3862215617991ea2e6e68687caccf1a80f7a40e20047ea7b",
+      "snapshot": "materials/30ccda9763db9aec3862215617991ea2e6e68687caccf1a80f7a40e20047ea7b.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "local ASR transcript, 712 chars (Traditional Chinese), opening ~2 min only: gap at 00:27-00:57 so the second announced aspect is not captured; slides/frames not inspected"
+    }
+  },
+  "deliverable": "A source-grounded summary of the announced course plan from the two captured openings (parts 1 and 2) of one Bilibili course-introduction video, with per-segment locators, explicit ASR limits, and no claims about slides or later content.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two captured openings, summarize the announced course plan: the course title, the audience it is meant to attract, the practical work it includes, and the areas announced for the three weeks. Attribute each point to part 1 or part 2 and give the ASR segment locator."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Part 1 only: what does the speaker say the course hopes to achieve for students from other disciplines, what does he say about how the course is taught, and what project work does he describe? Flag any sentence the ASR renders too noisily to use."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Part 2 only: lay out the three-week topic sequence and the cross-disciplinary fields it names. State explicitly which parts of the plan are missing from the captured transcript and do not fill the gaps in from outside knowledge."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili01-p1-course-title",
+      "source_id": "bili-course-overview-p1",
+      "claim": "The lecturer names the course 'Large Model Technology and Cross-Disciplinary Applications'.",
+      "locator": "seg 00:18.480 | part 1, course introduction (local ASR transcript; slides/frames not inspected; opening ~1 min)",
+      "quote": "[00:18.480] 它叫大模型技术及交叉应用",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p1-attract-disciplines",
+      "source_id": "bili-course-overview-p1",
+      "claim": "He says the course is meant to attract more students from related disciplines.",
+      "locator": "seg 00:32.360 | part 1, course aims (local ASR transcript; slides/frames not inspected; preceding lines about law, sound and brain science are partly garbled)",
+      "quote": "这样的话能够吸引更多的相关的学科",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p1-project",
+      "source_id": "bili-course-overview-p1",
+      "claim": "He says the course's small project is expected to use large models.",
+      "locator": "seg 01:30.520 | part 1, course project (local ASR transcript; slides/frames not inspected; the project is introduced at 01:28.160)",
+      "quote": "然后这个项目就是希望是能够利用大模型",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p1-practice",
+      "source_id": "bili-course-overview-p1",
+      "claim": "He says the course places relatively strong emphasis on practical work.",
+      "locator": "seg 00:45.160 | part 1, teaching approach (local ASR transcript; slides/frames not inspected)",
+      "quote": "[00:45.160] 那么它是比较的强调实践性",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p2-three-weeks",
+      "source_id": "bili-course-overview-p2",
+      "claim": "He says the course will cover three areas over roughly three weeks.",
+      "locator": "seg 00:00.000 | part 2, course plan (local ASR transcript; slides/frames not inspected; the 'three aspects' is stated but only the first and third are expanded)",
+      "quote": "我們大概三週的話我們會講三個方面的內容",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p2-first-aspect",
+      "source_id": "bili-course-overview-p2",
+      "claim": "He says the first area is background knowledge about large models.",
+      "locator": "seg 00:08.000 | part 2, first announced aspect (local ASR transcript; slides/frames not inspected)",
+      "quote": "第一個方面就是會去講大模型的一些背景的知識",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p2-third-week",
+      "source_id": "bili-course-overview-p2",
+      "claim": "He says the third week will concretely present how to draw on large models to solve open-ended problems.",
+      "locator": "seg 01:00.000 | part 2, third week (local ASR transcript; slides/frames not inspected; the following two short lines (01:05.600 and 01:08.480) carry the 'large-model power' and 'open problems' wording)",
+      "quote": "那么第三周我们是会给大家去具体的呈现一下",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili01-p2-cross-fields",
+      "source_id": "bili-course-overview-p2",
+      "claim": "He says the course will use biomedicine, legal intelligence and brain science as example fields.",
+      "locator": "seg 01:10.760 | part 2, cross-disciplinary fields (local ASR transcript; slides/frames not inspected; 'brain science' appears in the next line at 01:15.240)",
+      "quote": "[01:10.760] 然后我们会以生物医学法律智能",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "bili-course-overview-p1",
+    "bili-course-overview-p2"
+  ],
+  "acceptable_partial_outcomes": [
+    "The transcripts are local ASR of the opening minutes only; answers must not claim slide, frame, caption or other on-screen content, nor any part of the video beyond the captured opening.",
+    "The transcription is noisy and sometimes garbled (for example the university name and the weekly schedule); a garbled passage must be reported as unclear rather than repaired or paraphrased.",
+    "Part 2 is missing the second announced aspect and the middle of the first aspect; the answer must say the announced plan cannot be reconstructed in full."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "bili-drafter",
+    "method": "quotes sliced from ASR snapshots and re-checked as literal substrings",
+    "facts": 8
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2303.18223",
+      "supports": "The paper's abstract reports that pre-trained language models show 'strong capabilities in solving various NLP tasks' and that model scaling leads to performance improvement. It frames only the 'large model technology' premise of the course, not any sentence the speaker says.",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}

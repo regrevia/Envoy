@@ -7,18 +7,30 @@ Do not start the confirmatory run while any of the 40 source rows is pending.
 
 ## Intake Snapshot (2026-10-24)
 
-- 34 of 40 source slots contain a unique URL; six slots remain empty.
-- Current intake states: 27 待复核, seven 排除-鲁棒性, and six 待补充.
-  There are currently zero 已接受 sources. These states are deliberately
-  separate from Envoy's per-read result such as `ready`, `partial`, or
-  `blocked`.
-- Populated strata: Bilibili 8/8, Douyin 8/8, WeChat 8/8,
-  cross-platform 6/8, and Xiaohongshu 4/8. All four Xiaohongshu URLs remain
-  failed; no note body or note images were obtained.
-- This round added six candidate reads: three Douyin page-level sources, one
-  Bilibili transcript-only source, and two WeChat text sources. Some may be
-  dropped during task review; partial sources must be scoped to returned
-  material, and none is accepted or frozen.
+- 27 of 50 source slots contain a unique URL; 27 unique
+  canonical URLs across 25 packages.
+- Current intake states: 14 已接受, 9 待复核,
+  4 排除-鲁棒性, 23 待补充. These states are
+  deliberately separate from Envoy's per-read result such as `ready`,
+  `partial`, or `blocked`.
+- Populated strata: Bilibili 8, Douyin 4,
+  Xiaohongshu 4, WeChat 10, cross-platform
+  1. All four Xiaohongshu URLs remain failed; no note
+  body or note images were obtained.
+- The four WeChat parameter articles are 已接受: each body was captured through
+  Envoy as a byte-stable snapshot under `materials/<sha256>.txt`, and their
+  24 reference facts were re-checked as literal substrings of that snapshot.
+- The six WeChat expansion articles (wechat-03/04/05) are also 已接受: 37 reference
+  facts were sliced from their snapshots and re-checked as literal substrings, and the
+  `wechat-04a` embedded code region is explicitly excluded from quotation.
+- Four Bilibili videos are 已接受 on local-ASR transcripts captured from the
+  opening 1.7-5 minutes (`BV1Qb4SenEKY` p1 and p2, `BV1nJ411V7bd`,
+  `BV1b7411N798`), stored as snapshots and accepted with the ASR caveat that
+  frames, slides, and on-screen code were never inspected. Their packages are
+  scoped to what the speaker actually says, never to slide content.
+- The five `*-05` packages are expansion slots added when the design moved
+  from 20 to 25 packages. `xhs-05` is the labeled robustness package: it is
+  scored on access honesty, never on reconstructed note content.
 - There are no duplicate URLs across the populated slots. Package pairing,
   independent fact review, and task quality still need review.
 
@@ -41,17 +53,25 @@ what happened during exploration, but the CSV state is authoritative.
 
 ## Frozen Design
 
-- 20 packages, four each: Bilibili, Douyin, Xiaohongshu, WeChat Official
-  Accounts, and cross-platform synthesis.
-- At least two distinct public source URLs per package; at least 40 unique
+- 25 packages, five each: Bilibili, Douyin, Xiaohongshu, WeChat Official
+  Accounts, and cross-platform synthesis. 20 of them are the original design;
+  the five `*-05` slots are the modest scope expansion, and `xhs-05` is the
+  robustness package for a platform that blocks anonymous reads.
+- At least two distinct public source URLs per package; at least 50 unique
   canonical URLs across the set. A URL may not appear in two packages.
 - Three identical turns in both arms: initial deliverable, a focused
   evidence follow-up, and a second follow-up that requires reuse or coverage
   expansion. Exact text is frozen in the package manifest before either arm.
 - Keep each stratum's source class consistent. Cross-platform packages use
   sources from at least two of the four priority platforms.
+- Every package declares at least one `authority_anchors` entry: an independent
+  authoritative document (vendor API reference, standard, or peer-reviewed
+  paper) that is not one of the package's own sources, plus a note on what it
+  supports. Numeric or regulatory claims that are not quoted from a package
+  source must be marked `claim_basis: external_fact` and carry a corroboration
+  URL and quote; the validator rejects the weaker shape.
 - A and B run once per package with randomized order from
-  `paired_experiment_plan.py --confirmatory-fixed-20`. Each arm has an isolated
+  `paired_experiment_plan.py --confirmatory-fixed`. Each arm has an isolated
   Claude Code profile and material cache; turns remain in the same arm session.
 - B is built from one pinned `main` commit and records its wheel SHA-256,
   source revision, Skill hash, MCP tool catalog, and runtime capability report.
@@ -63,17 +83,29 @@ what happened during exploration, but the CSV state is authoritative.
 ## Source Acceptance
 
 For each URL, record canonical URL, source type, public access result, capture
-time, material/source SHA-256 when content is available, returned coverage,
-and known unresolved gaps. A 404, login wall, TLS failure, or empty extraction
+time, material/source SHA-256 when content is available, returned coverage, and
+known unresolved gaps. A 404, login wall, TLS failure, or empty extraction
 remains a result and must not be swapped after either arm has seen it. If a
 source cannot support a factual task, replace it only before the manifest is
 frozen, document why, and re-freeze the full manifest hash.
 
+Accepted material is stored as a content-addressed snapshot,
+`materials/<sha256>.txt`, and the recorded revision hash is recomputed from that
+file. A source cannot be 已接受 on a hash nobody can reproduce.
+
 Reference facts must be established from the public source independently of
 either model output. Each fact has a stable fact ID, claim, source ID, exact
-locator (timestamp, paragraph/block, or image index), and an adjudication note.
-For inaccessible sources, use a separately labeled robustness package rather
-than inventing reference facts.
+locator (timestamp, paragraph/block, image index, or section), a verbatim
+`quote`, and a `claim_basis` of either `source_claim` or `external_fact`. The
+freeze gate rejects a fact whose quote is not a literal substring of the stored
+snapshot, so paraphrase and invention cannot reach the manifest. For
+inaccessible sources, use a separately labeled robustness package rather than
+inventing reference facts; scored behaviour there is disclosure, not recall.
+
+WeChat captures currently return `result: partial` with a single body paragraph
+and empty image blocks: text claims are in scope, while anything that only
+exists in a figure, table, or formula is out of scope and must be declared as a
+coverage gap rather than guessed.
 
 ## Candidate Revalidation Log
 
@@ -103,10 +135,20 @@ The following are preparation probes only and are not accepted rows:
 | Xiaohongshu `xhslink.com/JNulHU` | Automatic redirect landed on generic `/explore` homepage and recommendations, not a unique note | Not accepted; do not treat homepage cards as note evidence |
 | Xiaohongshu public share candidate | Platform returned risk-control code `300012` before exposing the note | Keep as access-boundary evidence only; don't change egress or use cookies to force a read |
 | Xiaohongshu `67da2ecb000000001c0047e1` and `67c6d4f50000000029039014` | Both exact note URLs resolved to the platform 404 “note temporarily unavailable” page | Not accepted; retain as stale-link failures, not content evidence |
-| WeChat `i6rO6k1Br0XgiA9DRQIaDQ` | Article body resumed to text-complete; parameter basics | Candidate for text-only questions; article images were only partially returned |
-| WeChat `C46jhKFNAhiIuri9d8_MsA` | Article body resumed to text-complete; LLM parameter principles | Candidate for text-only questions; verify claims independently before gold labels |
-| WeChat `R3BxCMu5CSFo_HPcVJTuOA` | Article body resumed to text-complete; Transformer overview | Candidate for text-only questions; article images remain uncovered |
-| WeChat `WUyY2F6Cr9EU15FHeKM9eg` | Article body resumed to text-complete; DeepSeek MLA | Candidate for text-only questions; math/diagram details may depend on images and must be excluded unless inspected |
+| WeChat `i6rO6k1Br0XgiA9DRQIaDQ` | Article body captured, 10256 chars, byte-stable snapshot | 已接受 2026-10-24; six facts quote-verified; images out of scope |
+| WeChat `C46jhKFNAhiIuri9d8_MsA` | Article body captured, 7654 chars, byte-stable snapshot | 已接受 2026-10-24; six facts quote-verified; formulas degraded in capture and excluded |
+| WeChat `R3BxCMu5CSFo_HPcVJTuOA` | Article body captured, 5197 chars, byte-stable snapshot | 已接受 2026-10-24; facts quote-verified; diagrams out of scope |
+| WeChat `WUyY2F6Cr9EU15FHeKM9eg` | Article body captured, 5896 chars, byte-stable snapshot | 已接受 2026-10-24; math/diagram details excluded from scope |
+| Bilibili `BV1Qb4SenEKY` p1 | Course-introduction speech, 738 chars of local ASR (0-100 s) | 已接受 2026-10-24; opening 12 s is garbled and excluded; slides never inspected |
+| Bilibili `BV1Qb4SenEKY` p2 | Same multi-part course, part 2, 712 chars of local ASR (0-111 s) | 已接受 2026-10-24; ASR came back in Traditional Chinese; quotes kept verbatim |
+| Bilibili `BV1nJ411V7bd` | Data-structures course introduction, 2431 chars of local ASR (0-5 min) | 已接受 2026-10-24; first five minutes only, slides not inspected |
+| Bilibili `BV1b7411N798` | Data-structures course introduction, 2801 chars of local ASR (0-5 min) | 已接受 2026-10-24; first five minutes only, slides not inspected |
+| WeChat `6FdfPNi9gOf_QQbwlkAdBQ` | ChatSQL explainer, 6822 chars, byte-stable snapshot | 已接受 2026-10-24; 12 facts quote-verified; images out of scope |
+| WeChat `IJvzjWMLMhljkMQO2oa2bg` | Enterprise AI-agent practice, 3739 chars, byte-stable snapshot | 已接受 2026-10-24; facts quote-verified; diagrams not read |
+| WeChat `dAnNHayrE49FEl8TcLII2Q` | Function Calling / MCP / Skills analysis, 9431 chars | 已接受 2026-10-24; 13 facts; token-split code region excluded |
+| WeChat `0jB157hXY2AwIcji0jywBQ` | Agent framework selection guide, 8876 chars | 已接受 2026-10-24; facts quote-verified; screenshots not read |
+| WeChat `uxU_rWvP9HWOMzg7Zg6oKA` | SuperCLUE 2024-08 Chinese LLM report, 7429 chars | 已接受 2026-10-24; 12 facts; image tables out of scope |
+| WeChat `r_aAjFHTRDBGXhl3bd06XQ` | SuperBench comprehensive evaluation report, 8688 chars | 已接受 2026-10-24; facts quote-verified; charts not read |
 | WeChat `6FdfPNi9gOf_QQbwlkAdBQ` | ChatSQL overview; body resumed to text-complete | Candidate; score source claims about architecture, failure modes and suitability, not correctness of its advice |
 | WeChat `IJvzjWMLMhljkMQO2oa2bg` | Enterprise AI Agent implementation article; body text returned | Candidate; image coverage partial, keep tasks text-scoped |
 | WeChat `dAnNHayrE49FEl8TcLII2Q` | Function Calling, MCP and Skills comparison; body resumed to text-complete | Candidate; author describes their framework perspective, treat as attributed opinion |
@@ -181,20 +223,30 @@ a disclosed `blocked`, not a reconstructed note.
 
 ## Start Gate
 
-1. Complete and independently review all 40 source rows and package/task facts.
+1. Complete and independently review all 50 source rows and package/task facts.
 2. Save the immutable package manifest; record its SHA-256 and rubric version.
    `freeze_manifest.py --check` is the gate: it encodes the set-size, unique-URL,
-   acceptance, revision-hash, turn, and reference-fact rules, so a manifest hash
-   cannot be claimed for a set nobody validated. `--write` refuses while any
+   acceptance, revision-hash, snapshot, verbatim-quote, authority-anchor, turn,
+   and reference-fact rules, so a manifest hash cannot be claimed for a set
+   nobody validated. `--write` refuses while any
    blocker remains; `--rehearsal` relaxes set size for the 2-package run and
-   marks that output rehearsal-only.
+   marks that output rehearsal-only. Because only accepted packages can be
+   rehearsed before the whole set is ready, `--only <package_id,...>` (refused
+   without `--rehearsal`) filters the rows and drafts to that subset before
+   validation, so the printed hash covers exactly the packages in the file.
+   The current rehearsal artifacts are `manifest-rehearsal.json` (7 packages:
+   5 WeChat + 2 Bilibili, 81 facts, sha256 `f37619719860f9f4...79ef23`) and
+   `plan-rehearsal.json` (run `envoy-ab-20261024-58dcd0c7abfd`, 21 tasks,
+   14 unique sources, two strata, cache isolation still `unknown` until the
+   requests run). Both are marked rehearsal-only and prove the pipeline, not
+   the product claim.
 3. Confirm the pinned B build and the server-reported model/gateway policy.
 4. Create the randomized plan with cache status `per_request_salt`; the
    completed server-ledger validator promotes it to
    `verified_per_request_salt` only if all request evidence passes.
 5. Run a separate 2-package instrumentation rehearsal; discard its outputs and
    request IDs from the confirmatory batch.
-6. Begin the 20-package batch only when correlation metadata and server-ledger
+6. Begin the 25-package batch only when correlation metadata and server-ledger
    export are proven end to end. Every formal server request must have a unique
    salt hash and zero cache-read tokens.
 
