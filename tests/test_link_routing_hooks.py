@@ -206,11 +206,7 @@ def test_claude_plugin_hook_config():
     # Claude Code auto-loads hooks/hooks.json; declaring manifest.hooks duplicates it.
     assert "hooks" not in manifest
     assert manifest["mcpServers"] == "./.mcp.json"
-    assert _load_json(CLAUDE_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == [
-        "mcp",
-        "--toolset",
-        "core",
-    ]
+    assert _load_json(CLAUDE_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == ["mcp"]
 
 
 def test_codex_plugin_hook_config():
@@ -224,11 +220,7 @@ def test_codex_plugin_hook_config():
     assert manifest["mcpServers"] == "./.mcp.json"
     assert manifest["interface"]["capabilities"] == ["MCP"]
     assert "envoy hook install --host codex" in manifest["interface"]["longDescription"]
-    assert _load_json(CODEX_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == [
-        "mcp",
-        "--toolset",
-        "core",
-    ]
+    assert _load_json(CODEX_PLUGIN / ".mcp.json")["mcpServers"]["envoy"]["args"] == ["mcp"]
 
 
 def test_hook_scripts_are_identical_and_fail_open_without_envoy(tmp_path):

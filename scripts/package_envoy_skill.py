@@ -62,7 +62,7 @@ def build_bundle(repo_root: Path, output: Path, version: str = SKILL_VERSION) ->
         "entrypoint": "SKILL.md",
         "installation": "INSTALL.md",
         "references": ["references/protocol.md"],
-        "mcp": {"command": "envoy", "args": ["mcp", "--toolset", "core"]},
+        "mcp": {"command": "envoy", "args": ["mcp"]},
         "protocol": "envoy.read/1",
         "credentials_included": False,
         "source": "public_links_only",

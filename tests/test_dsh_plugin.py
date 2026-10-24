@@ -97,7 +97,7 @@ def test_patch_mounts_envoy_mcp_and_skill_provider():
     assert "serverName: envoy" in patch
     assert "transport: stdio" in patch
     assert "command: /bin/sh" in patch
-    assert "exec envoy mcp --toolset core" in patch
+    assert "exec envoy mcp" in patch
     assert "toolCallTimeoutMs: 300000" in patch
     assert "failOnStartupError: true" in patch
     assert "id: envoy-skill" in patch
