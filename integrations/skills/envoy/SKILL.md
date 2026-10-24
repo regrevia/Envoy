@@ -32,7 +32,16 @@ invent a tool call. The selected toolset is fixed for the process lifetime.
 
 ## Discover and Read
 
-For a normal link-reading task, call `envoy_read` directly. Call
+For a normal link-reading task, call `envoy_read` with `source`, `goal`, and,
+for a partial read, `start_seconds` / `end_seconds`. Under MCP the declaration
+shows only those fields; `protocol_version`, `request_id`, `session_id`, the
+`budget` / `retention` / `host_capabilities` / `ocr_*` blocks, and a
+`scope` object are still accepted when you send them explicitly, because they
+are validated by the same `envoy.read/1` models. They are server-filled
+otherwise, so an undeclared field is not a rejected one. The Bash request below
+uses the full explicit form because the CLI reads one complete request.
+
+Call
 `envoy doctor --json` (or `envoy_doctor` under the `full` toolset) when the
 user asks which capabilities are available, an optional operation may be
 needed, or runtime support is unclear. Use its versioned `capabilities`
