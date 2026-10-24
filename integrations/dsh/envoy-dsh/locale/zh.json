@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Envoy 链接阅读器",
+    "description": "通过 Envoy 的 MCP 桥读取公开链接、PDF、图片、视频字幕与本地媒体，并为 Agent 注册 Envoy 链接阅读技能。"
+  }
+}

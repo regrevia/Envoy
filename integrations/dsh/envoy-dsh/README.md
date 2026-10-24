@@ -1,0 +1,119 @@
+# Envoy for DeepSeek Harness
+
+This package is a DeepSeek Harness bundle for [Envoy](../../../README.md). It
+does two things in one install:
+
+1. mounts Envoy's stdio MCP bridge with `@deepseek-ai/dsh-mcp-client`; and
+2. registers an adapted Envoy Agent Skill on the public `ctx.skills` service.
+
+The adaptation keeps Envoy's reading, discovery, expansion, visual handoff, and
+capability behavior. It changes only the integration surface: the skill uses
+the `mcp__envoy__*` tool names that DeepSeek Harness assigns to the mounted
+server.
+
+[中文快速安装](../README.md) · [Envoy 安装指南](../../skills/envoy/INSTALL.md)
+
+## Requirements
+
+- DeepSeek Harness Desktop with the Plugin Manager.
+- The Envoy CLI runtime, version `0.1.6` or a later compatible development
+  build. Follow [INSTALL.md](../../skills/envoy/INSTALL.md) for the wheel,
+  browser setup, and optional ASR/OCR dependencies.
+- `envoy` reachable from one of the PATH entries in the launcher, or an
+  absolute path configured as described below.
+- macOS or Linux. The patch uses `/bin/sh`; Windows users must replace the
+  launcher with a PowerShell or `cmd.exe` equivalent.
+
+## Install
+
+Install the Envoy runtime first, then install this directory as a bundle:
+
+```text
+Plugin Manager → Install bundle → /absolute/path/to/Envoy/integrations/dsh/envoy-dsh
+```
+
+From a DeepSeek Harness agent session, the equivalent action is
+`plugin_manager` with `action: install_bundle` and that absolute directory as
+`target`. The Plugin Manager performs package linking and patch composition;
+do not edit the profile's `package.json` or `cordis.patch.yml` by hand.
+
+The bundle inserts two rows:
+
+| Row | Package | Purpose |
+|---|---|---|
+| `envoy-mcp` | `@deepseek-ai/dsh-mcp-client` | Starts `envoy mcp` and exposes its ten tools as `mcp__envoy__*`. |
+| `envoy-skill` | `envoy-dsh` | Registers the Envoy skill provider. |
+
+## Launcher PATH
+
+The Harness GUI may not inherit a login shell's PATH, so the patch uses:
+
+```sh
+/bin/sh -c 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; exec envoy mcp'
+```
+
+This covers `uv tool install` (`~/.local/bin`), Apple Silicon Homebrew
+(`/opt/homebrew/bin`), and Intel Homebrew or manual installs
+(`/usr/local/bin`). If `envoy` lives elsewhere, edit the `args` in
+`cordis.patch.yml` to use its absolute path, then reinstall or let the Plugin
+Manager reload the bundle. `toolCallTimeoutMs` is 300 seconds, above Envoy's
+default 180-second work budget.
+
+## Verify
+
+After installation, check that:
+
+- Plugin Manager shows **Envoy Link Reader** / **Envoy 链接阅读器** with the
+  bundled bird icon.
+- The agent's tool list contains `mcp__envoy__envoy_read`,
+  `mcp__envoy__envoy_doctor`, and the other Envoy tools.
+- The skill catalog contains `envoy`; loading it shows
+  `# Envoy Link Reader in DeepSeek Harness` and `mcp__envoy__` tool names.
+- A real `mcp__envoy__envoy_doctor` call reports `0.1.6` and the expected
+  capability catalog.
+
+`failOnStartupError: true` makes a missing or broken runtime visible as a
+failed `envoy-mcp` row instead of silently leaving the agent without the
+tools. The rest of the profile remains usable.
+
+## Layout
+
+```text
+integrations/dsh/envoy-dsh/
+├── package.json           # bundle manifest and display exports
+├── cordis.patch.yml       # MCP client + skill provider rows
+├── index.js               # host plugin, no @deepseek-ai imports
+├── locale/{en,zh}.json    # Plugin Manager title and description
+├── icon.png               # downscaled Envoy bird artwork
+├── skill/
+│   ├── envoy.md           # generated DSH skill body
+│   ├── manifest.json      # generated name/description
+│   └── references/
+│       └── protocol.md    # generated protocol reference
+├── README.md
+├── LICENSE
+└── NOTICE
+```
+
+The skill assets are generated from the canonical
+`integrations/skills/envoy/SKILL.md` and
+`integrations/skills/envoy/references/protocol.md`. Do not edit them by hand.
+
+## Regenerate and test
+
+```bash
+python3 scripts/build_envoy_dsh_plugin.py
+python3 scripts/build_envoy_dsh_plugin.py --check
+pytest -q tests/test_dsh_plugin.py
+```
+
+The generator prefixes Envoy tool names, keeps the CLI commands unchanged,
+replaces the generic “MCP-compatible host” launch section with the
+DeepSeek Harness host description, and synchronizes the package version with
+`packages/envoy-cli/pyproject.toml`.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The icon is the Envoy
+bird artwork from `frontend/public/brand/envoy-bird.png`, redistributed under
+the same license.
