@@ -5,6 +5,40 @@ row in `source-intake.csv` has a canonical public URL, a current Envoy probe,
 an independently reviewed reference-fact set, and a frozen content revision.
 Do not start the confirmatory run while any of the 40 source rows is pending.
 
+## Intake Snapshot (2026-10-24)
+
+- 34 of 40 source slots contain a unique URL; six slots remain empty.
+- Current intake states: 27 待复核, seven 排除-鲁棒性, and six 待补充.
+  There are currently zero 已接受 sources. These states are deliberately
+  separate from Envoy's per-read result such as `ready`, `partial`, or
+  `blocked`.
+- Populated strata: Bilibili 8/8, Douyin 8/8, WeChat 8/8,
+  cross-platform 6/8, and Xiaohongshu 4/8. All four Xiaohongshu URLs remain
+  failed; no note body or note images were obtained.
+- This round added six candidate reads: three Douyin page-level sources, one
+  Bilibili transcript-only source, and two WeChat text sources. Some may be
+  dropped during task review; partial sources must be scoped to returned
+  material, and none is accepted or frozen.
+- There are no duplicate URLs across the populated slots. Package pairing,
+  independent fact review, and task quality still need review.
+
+### Intake State Definitions
+
+- `待复核`: Envoy returned usable source material, but independent reference
+  facts, source locators, task wording, and coverage boundaries are not frozen.
+  It is not allowed into the confirmatory A/B run yet.
+- `已接受`: independent facts and task package are reviewed, the source
+  revision is frozen, and the row is eligible for the confirmatory run.
+- `排除-鲁棒性`: the exact URL was tested but did not provide enough primary
+  material, for example a 404, login challenge, empty player shell, or
+  transport failure. Keep it for access-failure reporting; do not use it as a
+  successful source.
+- `待补充`: the slot has no source URL yet.
+
+The old labels `candidate`, `failed`, and `unverified` are not used for the
+intake decision anymore. Historical probe-log prose may use them to describe
+what happened during exploration, but the CSV state is authoritative.
+
 ## Frozen Design
 
 - 20 packages, four each: Bilibili, Douyin, Xiaohongshu, WeChat Official
@@ -77,6 +111,12 @@ The following are preparation probes only and are not accepted rows:
 | WeChat `IJvzjWMLMhljkMQO2oa2bg` | Enterprise AI Agent implementation article; body text returned | Candidate; image coverage partial, keep tasks text-scoped |
 | WeChat `dAnNHayrE49FEl8TcLII2Q` | Function Calling, MCP and Skills comparison; body resumed to text-complete | Candidate; author describes their framework perspective, treat as attributed opinion |
 | WeChat `0jB157hXY2AwIcji0jywBQ` | Agent framework selection article; body resumed to text-complete | Candidate with historical scope: article dated 2024-11-05, do not treat framework claims as current product status |
+| Douyin `7691207590809799974` | Model hallucination/alignment chapter summaries; page labels content AI-generated | Partial candidate; page evidence only, no transcript or frames |
+| Douyin `/shipin/7260895215337359401` | Primary title/caption and creator/date returned | Metadata-scoped candidate only; related-video transcripts are not evidence for this post |
+| Douyin `/shipin/7449917198811940873` | Short-video chapter-editing tutorial, dated 2023-02-17 | Partial candidate; historical UI guidance, exclude related videos |
+| Bilibili `BV1WS4y1g742` | Computer-network course, 0-45s Chinese ASR | Candidate only; opening is mostly class logistics and ASR is noisy, likely too weak for a substantive task |
+| WeChat `Z3355OEqzJBQvqXONxgO0g` | AIGC RAG survey article; body returned through early sections | Partial candidate; scope to returned text, not unseen continuation or images |
+| WeChat `Eg33URH4HhXcP5FkGp1Tsw` | Enterprise Agent/MCP gateway governance article; body returned through early sections | Partial candidate; attribute claims and exclude unseen continuation/images |
 
 These failures are preserved in the local preparation record; none is silently
 replaced after A/B execution because the experiment has not started.
@@ -112,6 +152,32 @@ required deliverable completion, material reuse, missing-evidence disclosure,
 and access outcome. Resolve disagreements before unblinding. Report completion
 and usage intention-to-treat, plus conditional successful-pair metrics.
 Token or latency improvements never compensate for lower evidence quality.
+
+## Routing Decision (On-Demand Use)
+
+Envoy is only worth its cost when the task needs a link's content and a plain
+fetch cannot deliver it. Every source slot therefore carries a routing label,
+derived mechanically from the stratum and source class rather than assigned by
+hand:
+
+- `envoy_required`: video or audio stratum, image post, long article, or a
+  platform page whose body needs scrolling, cookies, or login.
+- `direct_sufficient`: the task quotes or restates the material, or the source
+  is a single static page whose body a plain fetch already returns.
+- `either`: a short static page where both paths can succeed.
+
+Each arm records `first_tool` (`envoy_read`, `web_fetch`, `none`), total tool
+calls, wall clock, and whether the answer's facts were source-supported. The
+routing score is the share of tasks where the recorded choice matches the
+label, reported per label so that overuse on `direct_sufficient` and abstention
+on `envoy_required` stay visible. A run that sends every link through Envoy and
+a run that opens none can both score below a run that routes; neither extreme
+may be reported as a reading improvement.
+
+The 2026-10-24 Xiaohongshu probes returned platform blocks from both the direct
+egress and the local proxy, so those slots are `envoy_required` for routing but
+are scored on access honesty rather than content recall: the correct outcome is
+a disclosed `blocked`, not a reconstructed note.
 
 ## Start Gate
 
