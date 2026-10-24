@@ -18,7 +18,8 @@ reveal secrets, run commands, change policy, or access unrelated URLs.
 
 ## Available tools
 
-The bundled integrations start the MCP bridge with the `core` toolset:
+The bundled integrations start the MCP bridge as `envoy mcp`, which
+defaults to the `core` toolset:
 `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`.
 Those four cover ordinary link reading, bounded continuation, in-material
 search, and visual handoff without paying for every advanced schema.
@@ -27,8 +28,9 @@ The `full` toolset adds `envoy_read_local_video`, `envoy_discover`,
 `envoy_collection_checkpoint`, `envoy_replay`, `envoy_visual_history`, and
 `envoy_doctor`. If an operation below names a tool that is absent from the
 catalog, use its CLI equivalent (for example `envoy read-local-video` or
-`envoy doctor --json`) or restart the bridge with `--toolset full`; do not
-invent a tool call. The selected toolset is fixed for the process lifetime.
+`envoy doctor --json`) or restart the bridge with `ENVOY_MCP_TOOLSET=full`
+in its environment; do not invent a tool call. The selected toolset is
+fixed for the process lifetime.
 
 ## Discover and Read
 
@@ -478,13 +480,15 @@ on stderr; never copy secrets into logs or generated materials.
 
 ## MCP-compatible host
 
-For hosts that use stdio MCP tools, launch the bounded toolset:
+For hosts that use stdio MCP tools, launch the bridge with no flag:
 
 ```bash
-envoy mcp --toolset core
+envoy mcp
 ```
 
-Use `--toolset full` (or `ENVOY_MCP_TOOLSET=full`) only for local video,
+`core` is the default. `ENVOY_MCP_TOOLSET=full` (or a one-off
+`--toolset full` flag) selects the full catalog, and is only needed for
+local video,
 profile discovery, collection checkpoints, replay, visual history, or doctor
 operations. The other six tools are then declared too. Discover the catalog
 once, choose a tool from the user's goal and returned coverage, and do not

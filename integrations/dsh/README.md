@@ -9,10 +9,10 @@
 `envoy-dsh` 是一个 DSH bundle，一次安装插入两个插件行：
 
 - `envoy-mcp`：通过官方 `@deepseek-ai/dsh-mcp-client` 启动
-  `envoy mcp --toolset core`，把 `envoy_read`、`envoy_expand`、
+  `envoy mcp`（默认 `core`），把 `envoy_read`、`envoy_expand`、
   `envoy_search`、`envoy_observe_visual` 四个工具挂载为 `mcp__envoy__*`。
   `full` 工具集额外提供本地视频、主页发现、合集、回放、视觉历史和 doctor
-  工具，需要时把启动参数改为 `--toolset full` 并重启插件。
+  工具，需要时在启动 Harness 的环境里导出 `ENVOY_MCP_TOOLSET=full` 并重启。
 - `envoy-skill`：通过公开的 `ctx.skills` 服务注册 Envoy Skill，内容由
   `integrations/skills/envoy/SKILL.md` 生成，工具名已适配 DSH 前缀。
 

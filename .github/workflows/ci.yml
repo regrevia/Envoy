@@ -50,9 +50,15 @@ jobs:
           tests/test_platform_video_probe.py
           tests/test_envoy_cli_distribution.py
           tests/test_skill_bundle.py
+          tests/test_repo_consistency.py
           tests/test_dsh_plugin.py
           tests/test_public_page_ingestion.py
         working-directory: .
+      - name: 校验版本与生成物 / Check versions and generated artifacts
+        run: |
+          python scripts/check_versions.py --check
+          python scripts/sync_host_skills.py --check
+          python scripts/build_envoy_dsh_plugin.py --check
       - name: 构建无凭据 Skill 包 / Build credential-free Skill bundle
         run: |
           python scripts/package_envoy_skill.py --output /tmp/envoy-skill.zip --json
@@ -87,6 +93,7 @@ jobs:
           tests/core_protocol
           tests/test_envoy_cli_distribution.py
           tests/test_skill_bundle.py
+          tests/test_repo_consistency.py
           tests/test_video_evidence_eval.py
 
   standalone-macos:
@@ -113,6 +120,7 @@ jobs:
           tests/core_protocol
           tests/test_envoy_cli_distribution.py
           tests/test_skill_bundle.py
+          tests/test_repo_consistency.py
           tests/test_video_evidence_eval.py
 
   frontend:

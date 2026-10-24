@@ -3,7 +3,7 @@
 > DeepSeek Harness adaptation: the Envoy MCP bridge is mounted by the
 > `envoy-dsh` plugin with the `core` toolset, so these operations appear as
 > `mcp__envoy__*` tools. Use the mounted tools; do not start a second
-> `envoy mcp` process. Advanced tools require `--toolset full` or the CLI.
+> `envoy mcp` process. Advanced tools require `ENVOY_MCP_TOOLSET=full` or the CLI.
 
 The independent Skill uses `envoy.read/1`.
 

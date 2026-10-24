@@ -9,16 +9,18 @@ The bundled MCP configuration assumes the `envoy` command is available on
   "mcpServers": {
     "envoy": {
       "command": "envoy",
-      "args": ["mcp", "--toolset", "core"]
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-`core` declares the four link tools: read, expand, search, and visual
-observation. Use `full` instead of `core` to expose local-video, profile
-discovery, collection, replay, visual-history, and doctor tools. The toolset is
-fixed for the life of the MCP process.
+`mcp` with no flag declares the four link tools (read, expand, search, and
+visual observation) because `core` is the default. Export
+`ENVOY_MCP_TOOLSET=full` before the host starts the bridge, or pass
+`--toolset full`, to expose local-video, profile discovery, collection,
+replay, visual-history, and doctor tools. The toolset is fixed for the life
+of the MCP process.
 
 ## Link-first hooks
 
