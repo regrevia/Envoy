@@ -537,6 +537,11 @@ _SERVER_FILLED_FIELDS = (
     "video_subtitle_language",
 )
 _RANGE_FIELDS = ("start_seconds", "end_seconds", "locator", "include_visual")
+# One bridge process serves one host session, so a stable identity keeps
+# material scope coherent across calls: re-reading a URL addresses the same
+# persisted material instead of minting a request-scoped duplicate. Replay is
+# excluded because it is defined by the difference between two sessions.
+_PROCESS_SESSION_ID = f"mcp-{uuid.uuid4().hex}"
 
 
 def _server_arguments(name: str, arguments: dict) -> dict:
@@ -567,6 +572,9 @@ def _server_arguments(name: str, arguments: dict) -> dict:
         for field in _SERVER_FILLED_FIELDS:
             if field in fields:
                 prepared.setdefault(field, None)
+        if "session_id" in fields and name != "envoy_replay":
+            if prepared.get("session_id") is None:
+                prepared["session_id"] = _PROCESS_SESSION_ID
     if name in {"envoy_read", "envoy_read_local_video"}:
         flattened = {key: prepared.pop(key) for key in _RANGE_FIELDS if key in prepared}
         scope = prepared.get("scope")
