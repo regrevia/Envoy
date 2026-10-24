@@ -20,6 +20,7 @@ import random
 import re
 import sys
 from datetime import datetime
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 
@@ -320,12 +321,44 @@ def validate_records(
     elif cache_isolation_status is not None and cache_isolation_status not in {
         "verified_disabled",
         "verified_isolated",
+        "verified_per_request_salt",
+        "per_request_salt",
         "cache_confounded",
         "unknown",
     }:
         errors.append(
             "run: cache_isolation_status must be verified_disabled, "
-            "verified_isolated, cache_confounded, or unknown"
+            "verified_isolated, verified_per_request_salt, cache_confounded, or unknown"
+        )
+    if cache_isolation_status == "verified_per_request_salt":
+        evidence = run.get("cache_isolation_evidence")
+        if not isinstance(evidence, dict):
+            errors.append(
+                "run: verified_per_request_salt requires cache_isolation_evidence from the validated server ledger"
+            )
+        else:
+            report_hash = evidence.get("ledger_report_sha256")
+            counts = (
+                evidence.get("server_request_count"),
+                evidence.get("salt_hash_count"),
+                evidence.get("unique_salt_hash_count"),
+            )
+            if (
+                evidence.get("verified") is not True
+                or evidence.get("status") != "verified_per_request_salt"
+                or evidence.get("cache_read_input_tokens") != 0
+                or evidence.get("cache_read_count_complete") is not True
+                or not isinstance(report_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", report_hash)
+                or not all(isinstance(value, int) and value > 0 for value in counts)
+                or len(set(counts)) != 1
+            ):
+                errors.append(
+                    "run: cache_isolation_evidence must reference a validated report with complete unique salt hashes"
+                )
+    elif cache_isolation_status == "per_request_salt" and not allow_unknown_usage:
+        errors.append(
+            "run: per_request_salt is a planned policy; use verified_per_request_salt only after ledger validation"
         )
     for field in ("provider", "model"):
         raw_value = run.get(field)
@@ -1100,6 +1133,29 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "verified_disabled",
         "verified_isolated",
     }
+    salt_evidence = run.get("cache_isolation_evidence")
+    if (
+        run.get("cache_isolation_status") == "verified_per_request_salt"
+        and isinstance(salt_evidence, dict)
+    ):
+        salt_counts = (
+            salt_evidence.get("server_request_count"),
+            salt_evidence.get("salt_hash_count"),
+            salt_evidence.get("unique_salt_hash_count"),
+        )
+        cache_isolation_verified = (
+            salt_evidence.get("verified") is True
+            and salt_evidence.get("status") == "verified_per_request_salt"
+            and salt_evidence.get("cache_read_input_tokens") == 0
+            and salt_evidence.get("cache_read_count_complete") is True
+            and isinstance(salt_evidence.get("ledger_report_sha256"), str)
+            and re.fullmatch(
+                r"[0-9a-f]{64}",
+                salt_evidence["ledger_report_sha256"],
+            ) is not None
+            and all(isinstance(value, int) and value > 0 for value in salt_counts)
+            and len(set(salt_counts)) == 1
+        )
     savings_eligible = (
         len(usage_actual) == len(tasks)
         and quality_non_inferior is True

@@ -273,6 +273,46 @@ def test_agent_product_eval_withholds_savings_when_cache_is_confounded(tmp_path)
     assert "服务端缓存策略：cache_confounded" in markdown.stdout
 
 
+def test_agent_product_eval_accepts_verified_per_request_salt_isolation(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    run = json.loads(lines[0])
+    run["cache_isolation_status"] = "verified_per_request_salt"
+    run["cache_isolation_evidence"] = {
+        "status": "verified_per_request_salt",
+        "verified": True,
+        "server_request_count": 120,
+        "salt_hash_count": 120,
+        "unique_salt_hash_count": 120,
+        "cache_read_input_tokens": 0,
+        "cache_read_count_complete": True,
+        "ledger_report_sha256": "a" * 64,
+    }
+    lines[0] = json.dumps(run)
+    records.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--markdown"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    json_result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(json_result.stdout)
+    assert report["cache_isolation_status"] == "verified_per_request_salt"
+    assert report["cache_isolation_verified"] is True
+    assert report["token_savings_eligible"] is True
+    assert "verified_per_request_salt" in result.stdout
+
+
 def test_agent_product_eval_markdown_withholds_incomplete_savings(tmp_path):
     records = tmp_path / "records.jsonl"
     _write_records(records)

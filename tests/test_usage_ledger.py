@@ -22,6 +22,12 @@ def _plan():
     ], seed=20261023, cache_isolation_status="verified_isolated")
 
 
+def _salt_hash(value):
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _request(plan, arm, role, server_request_id, **overrides):
     package = plan["packages"][0]
     return {
@@ -184,6 +190,110 @@ def test_usage_ledger_rejects_orphan_and_undeclared_server_request_ids():
 
     assert any("not declared by its turn_summary" in error for error in report["validation_errors"])
     assert any("declares missing server requests" in error for error in report["validation_errors"])
+
+
+def test_usage_ledger_verifies_unique_per_request_salt_hashes():
+    plan = build_plan(
+        [{
+            "package_id": "package-1",
+            "source_ids": ["source-1", "source-2"],
+            "source_class": "douyin",
+            "task_manifest_id": "manifest-1",
+        }],
+        seed=20261023,
+        cache_isolation_status="per_request_salt",
+    )
+    records = []
+    for role in ("initial", "followup-1", "followup-2"):
+        for arm in ("baseline", "envoy"):
+            request_id = f"{arm}-{role}-request"
+            records.append(_turn(plan, arm, role, [request_id]))
+            records.append(_request(
+                plan,
+                arm,
+                role,
+                request_id,
+                salt_sha256=_salt_hash(request_id),
+                cache_read_input_tokens=0,
+            ))
+
+    report = aggregate_ledger(plan, records, server_export_complete=True)
+
+    assert report["valid"] is True
+    assert report["cache_isolation_evidence"] == {
+        "status": "verified_per_request_salt",
+        "verified": True,
+        "server_request_count": 6,
+        "salt_hash_count": 6,
+        "unique_salt_hash_count": 6,
+        "cache_read_input_tokens": 0,
+        "cache_read_count_complete": True,
+    }
+
+
+def test_usage_ledger_rejects_missing_or_reused_per_request_salts():
+    plan = build_plan(
+        [{
+            "package_id": "package-1",
+            "source_ids": ["source-1", "source-2"],
+            "source_class": "douyin",
+            "task_manifest_id": "manifest-1",
+        }],
+        seed=20261023,
+        cache_isolation_status="per_request_salt",
+    )
+    records = []
+    for role in ("initial", "followup-1", "followup-2"):
+        for arm in ("baseline", "envoy"):
+            request_id = f"{arm}-{role}-request"
+            records.append(_turn(plan, arm, role, [request_id]))
+            records.append(_request(
+                plan,
+                arm,
+                role,
+                request_id,
+                **({"salt_sha256": _salt_hash("shared")}
+                   if role != "followup-2" or arm != "envoy"
+                   else {}),
+                cache_read_input_tokens=0,
+            ))
+
+    report = aggregate_ledger(plan, records, server_export_complete=True)
+
+    assert report["valid"] is False
+    assert any("requires salt_sha256" in error for error in report["validation_errors"])
+    assert any("salt_sha256 values to be unique" in error for error in report["validation_errors"])
+
+
+def test_usage_ledger_rejects_cache_reads_in_per_request_salt_mode():
+    plan = build_plan(
+        [{
+            "package_id": "package-1",
+            "source_ids": ["source-1", "source-2"],
+            "source_class": "douyin",
+            "task_manifest_id": "manifest-1",
+        }],
+        seed=20261023,
+        cache_isolation_status="per_request_salt",
+    )
+    records = []
+    for role in ("initial", "followup-1", "followup-2"):
+        for arm in ("baseline", "envoy"):
+            request_id = f"{arm}-{role}-request"
+            records.append(_turn(plan, arm, role, [request_id]))
+            records.append(_request(
+                plan,
+                arm,
+                role,
+                request_id,
+                salt_sha256=_salt_hash(request_id),
+                cache_read_input_tokens=1 if role == "initial" else 0,
+            ))
+
+    report = aggregate_ledger(plan, records, server_export_complete=True)
+
+    assert report["valid"] is False
+    assert any("cache_read_input_tokens to be zero" in error for error in report["validation_errors"]), report["validation_errors"]
 
 
 def test_usage_ledger_rejects_unrecognized_fields_even_when_not_named_sensitive():

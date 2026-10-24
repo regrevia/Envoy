@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -130,6 +131,105 @@ def test_plan_records_cache_policy_and_platform_strata(tmp_path):
     plan = json.loads(result.stdout)
     assert plan["cache_isolation_status"] == "verified_isolated"
     assert plan["source_class_package_counts"] == {"bilibili": 1, "wechat": 1}
+
+
+def test_plan_records_per_request_salt_as_unverified_policy(tmp_path):
+    result = _run(tmp_path, [
+        {"package_id": "pkg-a", "source_ids": ["source-a", "source-b"]},
+    ], "--cache-isolation-status", "per_request_salt")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["cache_isolation_status"] == "per_request_salt"
+    assert plan["cache_policy"] == "per_request_salt; verify from completed authoritative request ledger"
+
+
+def test_planner_cannot_mark_per_request_salt_as_verified(tmp_path):
+    result = _run(tmp_path, [
+        {"package_id": "pkg-a", "source_ids": ["source-a", "source-b"]},
+    ], "--cache-isolation-status", "verified_per_request_salt")
+
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr
+
+
+def test_fixed_confirmatory_profile_requires_approved_balanced_twenty(tmp_path):
+    records = []
+    for source_class in (
+        "bilibili",
+        "douyin",
+        "xiaohongshu",
+        "wechat",
+        "cross_platform",
+    ):
+        for index in range(4):
+            package_id = f"{source_class}-{index}"
+            records.append({
+                "package_id": package_id,
+                "source_ids": [f"{package_id}-a", f"{package_id}-b"],
+                "source_class": source_class,
+                "source_manifest_sha256": hashlib.sha256(
+                    f"{package_id}-sources".encode()
+                ).hexdigest(),
+                "task_manifest_sha256": hashlib.sha256(
+                    f"{package_id}-tasks".encode()
+                ).hexdigest(),
+            })
+
+    result = _run(tmp_path, records, "--confirmatory-fixed-20")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["evaluation_profile"] == "fixed_confirmatory_20"
+    assert plan["package_count"] == 20
+    assert plan["unique_source_count"] == 40
+    assert plan["confirmatory_minimum_met"] is True
+
+
+def test_fixed_confirmatory_profile_requires_manifest_content_hashes(tmp_path):
+    records = []
+    for source_class in (
+        "bilibili",
+        "douyin",
+        "xiaohongshu",
+        "wechat",
+        "cross_platform",
+    ):
+        for index in range(4):
+            package_id = f"{source_class}-{index}"
+            records.append({
+                "package_id": package_id,
+                "source_ids": [f"{package_id}-a", f"{package_id}-b"],
+                "source_class": source_class,
+            })
+
+    result = _run(tmp_path, records, "--confirmatory-fixed-20")
+
+    assert result.returncode == 2
+    assert "source_manifest_sha256" in result.stderr
+    assert "task_manifest_sha256" in result.stderr
+
+
+def test_fixed_confirmatory_profile_rejects_unbalanced_strata(tmp_path):
+    records = [
+        {
+            "package_id": f"pkg-{index}",
+            "source_ids": [f"src-{index}-a", f"src-{index}-b"],
+            "source_class": "bilibili",
+            "source_manifest_sha256": hashlib.sha256(
+                f"source-{index}".encode()
+            ).hexdigest(),
+            "task_manifest_sha256": hashlib.sha256(
+                f"task-{index}".encode()
+            ).hexdigest(),
+        }
+        for index in range(20)
+    ]
+
+    result = _run(tmp_path, records, "--confirmatory-fixed-20")
+
+    assert result.returncode == 2
+    assert "four packages in each approved stratum" in result.stderr
 
 
 def test_plan_rejects_unknown_cache_policy(tmp_path):
