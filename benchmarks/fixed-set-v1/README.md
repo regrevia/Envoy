@@ -183,6 +183,11 @@ a disclosed `blocked`, not a reconstructed note.
 
 1. Complete and independently review all 40 source rows and package/task facts.
 2. Save the immutable package manifest; record its SHA-256 and rubric version.
+   `freeze_manifest.py --check` is the gate: it encodes the set-size, unique-URL,
+   acceptance, revision-hash, turn, and reference-fact rules, so a manifest hash
+   cannot be claimed for a set nobody validated. `--write` refuses while any
+   blocker remains; `--rehearsal` relaxes set size for the 2-package run and
+   marks that output rehearsal-only.
 3. Confirm the pinned B build and the server-reported model/gateway policy.
 4. Create the randomized plan with cache status `per_request_salt`; the
    completed server-ledger validator promotes it to
