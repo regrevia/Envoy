@@ -34,6 +34,8 @@ envoy doctor --json
 
 若宿主找不到命令，请在 MCP 配置中使用已安装 `envoy` 的绝对路径。重载后检查 `envoy_doctor` 报告的版本；旧 MCP 进程可能仍在运行。
 
+DeepSeek Harness Desktop 用户可在插件管理器中安装本仓库的 [Envoy DSH 插件](../../dsh/README.md)，一次完成 MCP 桥接与 Skill 注册；该方式仍要求先安装上面的 runtime。
+
 ## 4. 验证首次读取
 
 ```bash
@@ -138,6 +140,10 @@ Those steps are kept explicit so users can review what runs locally.
 Use an absolute path to the installed `envoy` executable if the host does not
 inherit the terminal's PATH. Verify the newly connected MCP's `envoy_doctor`
 version after reloading; an old connection can keep running the old process.
+
+DeepSeek Harness Desktop users can install the repository's
+[Envoy DSH plugin](../../dsh/README.md) from the Plugin Manager to mount the MCP
+bridge and register the skill in one step. It still requires the runtime above.
 
 ## 4. Check the first read
 

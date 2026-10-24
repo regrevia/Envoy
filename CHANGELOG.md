@@ -1,5 +1,22 @@
 # 更新日志 / Changelog
 
+## Unreleased
+
+### 中文
+
+- 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
+  `envoy mcp` 并注册 Envoy Skill，保留原有读取、发现、续读和视觉交接能力。
+- 新增 DSH Skill 生成器与测试，将十个 MCP 工具名适配为 `mcp__envoy__*`，并检查生成文件与
+  CLI 版本同步。
+
+### English
+
+- Add the `integrations/dsh/envoy-dsh` DeepSeek Harness bundle: one Plugin
+  Manager install mounts `envoy mcp` and registers the Envoy skill while
+  preserving reading, discovery, expansion, and visual handoff behavior.
+- Add a DSH skill generator and tests that adapt the ten MCP tools to
+  `mcp__envoy__*` and keep generated files in sync with the CLI version.
+
 ## 0.1.6 - 2026-10-22
 
 ### 中文

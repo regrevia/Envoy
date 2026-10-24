@@ -50,6 +50,7 @@ jobs:
           tests/test_platform_video_probe.py
           tests/test_envoy_cli_distribution.py
           tests/test_skill_bundle.py
+          tests/test_dsh_plugin.py
           tests/test_public_page_ingestion.py
         working-directory: .
       - name: 构建无凭据 Skill 包 / Build credential-free Skill bundle

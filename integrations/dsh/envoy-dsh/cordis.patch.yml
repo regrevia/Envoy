@@ -1,0 +1,26 @@
+# DeepSeek Harness bundle for Envoy.
+#
+# The first row mounts Envoy's stdio MCP bridge. The shell launcher supplies the
+# common uv/Homebrew PATH entries because the Harness GUI is not started from a
+# login shell and may not inherit the terminal PATH. Users who installed Envoy
+# elsewhere should replace `envoy` in the last argument with an absolute path.
+#
+# The second row registers the DeepSeek Harness adaptation of the Envoy Agent
+# Skill. It depends only on the public `ctx.skills` service.
+- insert:
+    - id: envoy-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: envoy
+        transport: stdio
+        command: /bin/sh
+        args:
+          - -c
+          - >-
+            PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH";
+            export PATH; exec envoy mcp
+        toolCallTimeoutMs: 300000
+        failOnStartupError: true
+
+    - id: envoy-skill
+      name: 'envoy-dsh'

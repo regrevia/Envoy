@@ -16,7 +16,7 @@
   <a href="#english">English</a>
 </p>
 
-Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后台运行；遇到登录或验证时才请你接管。安装 Skill、CLI runtime 和 MCP 连接是三个步骤，按[安装指南](integrations/skills/envoy/INSTALL.md)完成即可。
+Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后台运行；遇到登录或验证时才请你接管。安装 Skill、CLI runtime 和 MCP 连接是三个步骤，按[安装指南](integrations/skills/envoy/INSTALL.md)完成即可。DeepSeek Harness Desktop 用户可通过[插件](integrations/dsh/README.md)一次完成 MCP 挂载与 Skill 注册。
 
 ## 能力
 
@@ -34,6 +34,7 @@ Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后�
 ## 文档
 
 - [安装、更新与 MCP 配置](integrations/skills/envoy/INSTALL.md)
+- [DeepSeek Harness 插件](integrations/dsh/README.md)
 - [产品与技术状态](docs/architecture/agent-link-reader-status.md)
 - [平台真实验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)
 - [版本记录](CHANGELOG.md)
@@ -52,7 +53,7 @@ Envoy 通过 Agent Skill + MCP 接入支持 MCP 的 AI。浏览器默认在后�
   Your AI analyzes it and creates the deliverable.
 </p>
 
-Envoy connects to MCP-capable agents through an Agent Skill and MCP server. The browser runs headlessly by default; you are asked to take over only when login or verification is needed. Installing the Skill, CLI runtime, and MCP connection are separate steps. Follow the [installation guide](integrations/skills/envoy/INSTALL.md).
+Envoy connects to MCP-capable agents through an Agent Skill and MCP server. The browser runs headlessly by default; you are asked to take over only when login or verification is needed. Installing the Skill, CLI runtime, and MCP connection are separate steps. Follow the [installation guide](integrations/skills/envoy/INSTALL.md). DeepSeek Harness Desktop users can use the [plugin](integrations/dsh/README.md) to mount MCP and register the skill in one step.
 
 ### Capabilities
 
@@ -70,6 +71,7 @@ We are comparing Envoy with direct reading on the same links and model, measurin
 ### Documentation
 
 - [Installation, updates, and MCP setup](integrations/skills/envoy/INSTALL.md)
+- [DeepSeek Harness plugin](integrations/dsh/README.md)
 - [Product and engineering status](docs/architecture/agent-link-reader-status.md)
 - [Platform acceptance matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md)
 - [Changelog](CHANGELOG.md)

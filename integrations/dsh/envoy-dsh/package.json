@@ -1,0 +1,33 @@
+{
+  "name": "envoy-dsh",
+  "version": "0.1.6",
+  "private": true,
+  "description": "DeepSeek Harness bundle for Envoy: mounts the Envoy MCP bridge and registers the Envoy Agent Skill.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.png"
+  },
+  "files": [
+    "index.js",
+    "skill",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.png",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
