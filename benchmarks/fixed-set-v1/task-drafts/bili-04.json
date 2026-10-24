@@ -1,0 +1,171 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "bili-04",
+  "stratum": "bilibili",
+  "source_ids": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "source_revisions": {
+    "bili-video-a": {
+      "url": "https://www.bilibili.com/video/BV1J8n46FEhy/",
+      "sha256": "3d3dbe0e2cf7131c5ea963a08f908408d3c24633da57263dd9710702b037c82a",
+      "snapshot": "materials/3d3dbe0e2cf7131c5ea963a08f908408d3c24633da57263dd9710702b037c82a.txt",
+      "captured_at": "2026-10-24",
+      "result": "partial",
+      "coverage": "video_asr transcript, zh, 2399 chars / 102 segments, 0:00-2:58 of a 211 s video (the closing ~30 s are not captured); auto-caption homophone noise with mixed Simplified/Traditional characters, and a sponsored smart-toilet segment after 02:19 that is not treated as evidence; frames/slides not inspected; only transcript wording is quotable"
+    },
+    "bili-video-b": {
+      "url": "https://www.bilibili.com/video/BV126nt6GE4W/",
+      "sha256": "319e01f3cbcde165399b406fa2101fc3aa2df55872b78c5edc0e3744b170dc52",
+      "snapshot": "materials/319e01f3cbcde165399b406fa2101fc3aa2df55872b78c5edc0e3744b170dc52.txt",
+      "captured_at": "2026-10-24",
+      "result": "ready",
+      "coverage": "video_asr transcript, zh, 7105 chars / 260 segments, full 0:00-10:30 of a 631 s video; auto-caption homophone noise with mixed Simplified/Traditional characters and garbled product names (DeepSeek, NPM, GitHub); frames/slides not inspected; only transcript wording is quotable"
+    }
+  },
+  "deliverable": "A source-grounded summary of what two Bilibili knowledge videos say - video A (科学科普) on whether smelling a bad smell counts as eating it, and video B on the week-long 'fish bloom' of AI comment bots on Bilibili - with per-segment ASR locators, explicit gaps where the captions are unintelligible, and no frame- or slide-level claims.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two captured ASR transcripts, summarize what each video says: in video A, what the speaker claims about inhaling odour molecules, the kissing comparison, and his explanation for why the smell is judged foul; in video B, how he reconstructs the timeline of the 'fish bloom', what the originating plugin did, and how the 2.0 update tried to stop it. Attribute each point to video A or video B and give the ASR segment locator."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Video A only: what does the speaker say about the mass of odour molecules a sniff carries, about what kissing would imply if smelling counted as eating, and about where the foulness is decided? Stay within the sentences the ASR makes intelligible, flag garbled tokens instead of repairing them, and do not discuss the sponsored product segment as if it were the video's evidence."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Video B only: why, in the speaker's account, did the 2.0 'no public comments' change fail to reduce the bots, what did the author himself report, and what safety advice does the speaker give viewers? Keep to the captured transcript, do not describe any frames or slides, and mark garbled product names as unclear rather than guessing them."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili04-a-sniff-mass",
+      "source_id": "bili-video-a",
+      "claim": "He says that even a big sniff takes in less than 0.001 g of the odour molecules.",
+      "locator": "seg 00:39.400 | video A, how much odour a sniff carries (local ASR transcript; frames/slides not inspected; the ASR renders 吸入 as 吸引 and 不到 as 倒不了)",
+      "quote": "[00:39.400] 吸引进去的臭味分子也倒不了0.001克",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-a-kiss-analogy",
+      "source_id": "bili-video-a",
+      "claim": "He argues that if smelling counted as eating, kissing - which exchanges about 1 gram of saliva - would count as eating the other person.",
+      "locator": "seg 00:44.520 | video A, the kissing comparison (local ASR transcript; frames/slides not inspected; the joke line at 00:46.840 is garbled and is not used)",
+      "quote": "[00:44.520] 那你和对象亲嘴就能交换1克的口水",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-a-brain-not-nose",
+      "source_id": "bili-video-a",
+      "claim": "He says whether a smell is foul or pleasant is decided not by the nose but by the brain.",
+      "locator": "seg 01:55.040 | video A, why the same molecules smell bad to us (local ASR transcript; frames/slides not inspected; the ASR renders 臭 as 抽)",
+      "quote": "[01:55.040] 说明抽还是香不在于鼻子",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-a-survival-advantage",
+      "source_id": "bili-video-a",
+      "claim": "He says the ability to read the smell as foul gave our ancestors a real survival advantage, so the underlying genes were retained.",
+      "locator": "seg 02:11.000 | video A, the evolutionary explanation (local ASR transcript; frames/slides not inspected; the pathogen and parasite words at 02:04.000-02:05.600 are garbled and are not quoted)",
+      "quote": "[02:11.000] 真实的生存优势",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-initial-origin",
+      "source_id": "bili-video-b",
+      "claim": "He identifies one individual developer's upload as the initial origin of the whole event.",
+      "locator": "seg 03:35.700 | video B, the plugin that started it (local ASR transcript; frames/slides not inspected)",
+      "quote": "[03:35.700] 那么这就是这个事件最初始的来源啊",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-daily-browsing",
+      "source_id": "bili-video-b",
+      "claim": "He describes the original plugin's job as browsing Bilibili for the user every day.",
+      "locator": "seg 03:27.700 | video B, what the original plugin did (local ASR transcript; frames/slides not inspected; the following comment-posting line at 03:32.300 is garbled)",
+      "quote": "[03:27.700] 每天替你刷一刷B站",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-2.0-no-public-comments",
+      "source_id": "bili-video-b",
+      "claim": "He describes the 2.0 update as a setting under which not a single public comment is sent.",
+      "locator": "seg 04:45.240 | video B, the 2.0 default change (local ASR transcript; frames/slides not inspected; the private-message wording in the preceding line is garbled)",
+      "quote": "[04:45.240] 公开评论一条都不发的一个设定",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-github-only",
+      "source_id": "bili-video-b",
+      "claim": "He says version 2.0 was published only on GitHub and therefore never reached the default install path.",
+      "locator": "seg 05:07.640 | video B, why the fix did not spread (local ASR transcript; frames/slides not inspected)",
+      "quote": "[05:07.640] 但这就意味着2.0只发布在了Github上面",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-open-source-irrevocable",
+      "source_id": "bili-video-b",
+      "claim": "He stresses that once something has been open-sourced it cannot be taken back, and that the repository had been rewritten many times.",
+      "locator": "seg 05:26.160 | video B, why the author lost control (local ASR transcript; frames/slides not inspected; the counts at 05:29.320 are garbled and are stated only as 'many times')",
+      "quote": "[05:26.160] 我们是收不回来的",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-comment-count",
+      "source_id": "bili-video-b",
+      "claim": "He notes that the author's 2.0 introduction video already carried more than 700 comments shortly after it went up.",
+      "locator": "seg 05:45.800 | video B, the author's own report (local ASR transcript; frames/slides not inspected)",
+      "quote": "[05:45.800] 底下已经有700多条评论",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-main-account",
+      "source_id": "bili-video-b",
+      "claim": "He advises viewers not to use their main Bilibili account for this and to use a secondary one.",
+      "locator": "seg 08:43.200 | video B, the safety advice (local ASR transcript; frames/slides not inspected)",
+      "quote": "[08:43.200] 不要拿自己的大号去做这些事情",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili04-b-dead-internet",
+      "source_id": "bili-video-b",
+      "claim": "He links the episode to the 'dead internet theory', the idea that the future internet will be all bot posts.",
+      "locator": "seg 09:45.200 | video B, the closing framing (local ASR transcript; frames/slides not inspected; this segment is in Traditional characters)",
+      "quote": "[09:45.200] 未來的互聯網全是機器人發帖",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "bili-video-a",
+    "bili-video-b"
+  ],
+  "acceptable_partial_outcomes": [
+    "The transcripts are ASR only: no frames, slides, on-screen text, thumbnails or comments were inspected, and video A's transcript stops at 2:58 of a 3:31 video, so its closing section is uncaptured.",
+    "The ASR is noisy and mixes Simplified and Traditional characters with homophone errors (臭 rendered as 抽, 粪便 as 奋辨, 鼻腔 as 逼腔); garbled personal names, product names, version numbers and the 2015-study details must be reported as unclear rather than repaired.",
+    "Video B's account of the NPM account suspension and the download statistics is the speaker's second-hand reconstruction; video A's sponsored segment (02:19 onward) describes a commercial product and is not an independent authority."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-24",
+    "reviewer": "bili-drafter",
+    "method": "quotes sliced from ASR snapshots and re-checked as literal substrings",
+    "facts": 12
+  },
+  "authority_anchors": [
+    {
+      "url": "https://www.nidcd.nih.gov/health/smell-disorders",
+      "supports": "NIDCD states that olfactory disorders involve the sense of smell and explains that smell molecules reach olfactory receptor cells in the nose which send signals to the brain, and that smell is linked to taste. Independent confirmation of the perception chain video A describes (molecules in, receptors, brain); it is not evidence for the speaker's own sentences.",
+      "verified_at": "2026-10-24"
+    },
+    {
+      "url": "https://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm",
+      "supports": "The Cyberspace Administration of China's Interim Measures for the Management of Generative AI Services (2023) set out requirements for services that generate text and other content, including obligations on providers. Independent confirmation that AI-generated public content is a regulated activity, the premise behind video B's account of mass AI-written comments; it is not evidence for the speaker's own sentences.",
+      "verified_at": "2026-10-24"
+    }
+  ]
+}
