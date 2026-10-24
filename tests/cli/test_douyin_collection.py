@@ -933,3 +933,73 @@ def test_profile_discovery_browser_page_without_candidates_is_bounded(
 
     with pytest.raises(collections.CollectionError, match="No public profile candidates"):
         collections.discover_profile("https://www.douyin.com/user/creator")
+
+
+def test_profile_discovery_retries_through_the_configured_proxy(tmp_path, monkeypatch):
+    """A direct-path SSL failure must retry through the trusted local proxy."""
+
+    import contextlib
+    import ssl
+
+    from envoy_cli import collections, video
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    attempts = []
+
+    class Downloader:
+        def __init__(self, options=None):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, url, download):
+            attempts.append(self.options.get("proxy"))
+            if len(attempts) == 1:
+                raise ssl.SSLError("EOF occurred in violation of protocol")
+            return {
+                "entries": [
+                    {"id": "BV1aa411c7de", "title": "第一条", "ie_key": "Bilibili"},
+                ],
+            }
+
+    monkeypatch.setattr(collections, "_load_yt_dlp", lambda: (Downloader, []), raising=False)
+    monkeypatch.setattr(video, "_load_yt_dlp", lambda: (Downloader, []))
+    monkeypatch.setattr("envoy_cli.media.public_network_guard", contextlib.nullcontext)
+    monkeypatch.setattr("envoy_cli.media.guard_yt_dlp_client", lambda _ydl: None)
+    monkeypatch.setattr(
+        collections,
+        "proxy_plan",
+        lambda: [None, "http://127.0.0.1:7890"],
+        raising=False,
+    )
+
+    result = collections.discover_profile("https://space.bilibili.com/123456/video", limit=5)
+
+    assert attempts == [None, "http://127.0.0.1:7890"]
+    assert result["platform"] == "bilibili"
+    assert result["candidates"][0]["source_url"] == "https://www.bilibili.com/video/BV1aa411c7de"
+
+
+def test_bilibili_space_html_yields_bounded_candidates():
+    from envoy_cli.collections import _bilibili_candidates
+
+    html = (
+        '<a href="//www.bilibili.com/video/BV1aa411c7de" class="bili-video-card">'
+        "第一条 <em>干货</em></a>"
+        '<a href="/video/BV1aa411c7de">重复条目</a>'
+        '<a href="/video/BV1bb411c7df"> </a>'
+    )
+
+    candidates = _bilibili_candidates(html, limit=10)
+
+    assert [item["source_url"] for item in candidates] == [
+        "https://www.bilibili.com/video/BV1aa411c7de",
+        "https://www.bilibili.com/video/BV1bb411c7df",
+    ]
+    assert candidates[0]["title"] == "第一条 干货"
+    assert candidates[0]["platform"] == "bilibili"
+    assert candidates[0]["item_type"] == "video"

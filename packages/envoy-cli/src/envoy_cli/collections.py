@@ -14,6 +14,7 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from .media import interprocess_file_lock
+from .netpolicy import proxy_plan
 
 
 class CollectionError(ValueError):
@@ -230,6 +231,30 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
     raise CollectionError("A public Douyin or Bilibili profile URL is required")
 
 
+_BILIBILI_LINK = re.compile(
+    r'<a[^>]+href="[^"]*?/video/(BV[A-Za-z0-9]{10})[^"]*"[^>]*>(.*?)</a>',
+    re.S,
+)
+_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def _bilibili_candidates(html: str, *, limit: int = 100) -> list[dict]:
+    """Read the video links a rendered Bilibili space actually shows."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for video_id, inner in _BILIBILI_LINK.findall(str(html or "")):
+        if video_id in seen:
+            continue
+        seen.add(video_id)
+        title = " ".join(_HTML_TAG.sub(" ", inner).split())[:200]
+        rows.append({
+            "url": f"https://www.bilibili.com/video/{video_id}",
+            "title": title,
+        })
+    
+    return _candidate_records(rows, limit=limit)
+
+
 def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100) -> list[dict]:
     candidates = []
     seen: set[str] = set()
@@ -337,22 +362,56 @@ def discover_profile(
         "cachedir": False,
         "playlist_items": "1-100",
     }
-    try:
-        with public_network_guard():
-            with youtube_dl(options) as ydl:
-                guard_yt_dlp_client(ydl)
-                info = ydl.extract_info(canonical_profile, download=False)
-    except MediaUnsafeAddress as exc:
-        raise CollectionError("Profile discovery resolved a non-public network address") from exc
-    except Exception as exc:
-        extractor_error = exc
-        info = None
+    info = None
+    for proxy in proxy_plan():
+        options["proxy"] = proxy
+        try:
+            with public_network_guard():
+                with youtube_dl(options) as ydl:
+                    guard_yt_dlp_client(ydl)
+                    info = ydl.extract_info(canonical_profile, download=False)
+        except MediaUnsafeAddress as exc:
+            raise CollectionError(
+                "Profile discovery resolved a non-public network address"
+            ) from exc
+        except Exception as exc:
+            extractor_error = exc
+            info = None
+            continue
+        if isinstance(info, dict):
+            break
     entries = info.get("entries") if isinstance(info, dict) else None
     cursor_mode = "yt_dlp_flat_metadata"
     if isinstance(entries, (list, tuple)):
         candidates = _candidate_records(list(entries), limit=100)
-    elif platform != "douyin":
-        raise CollectionError("No public profile candidates were discovered")
+    elif platform == "bilibili":
+        from . import browser
+        from .reader import _is_public_http_url
+
+        try:
+            page = browser.read_page(
+                canonical_profile,
+                max_work_seconds=max(int(max_work_seconds), 1),
+            )
+        except Exception as exc:
+            detail = (
+                f"yt-dlp space enumeration unavailable ({type(extractor_error).__name__}: "
+                f"{str(extractor_error)[:160]})"
+                if extractor_error
+                else "yt-dlp did not expose a Bilibili space list"
+            )
+            raise CollectionError(
+                f"{detail}; isolated-browser discovery failed "
+                f"({type(exc).__name__}): {str(exc)[:240]}"
+            ) from exc
+        if not _is_public_http_url(page.url, {}):
+            raise CollectionError("The isolated browser resolved the space to a non-public address")
+        candidates = _bilibili_candidates(str(getattr(page, "html", "") or ""), limit=100)
+        cursor_mode = "isolated_browser_bounded_snapshot"
+        if not candidates:
+            raise CollectionError(
+                "No public profile candidates were discovered in the Bilibili space"
+            )
     else:
         from . import browser
         from .reader import _is_public_http_url
