@@ -2,7 +2,7 @@
   "name": "envoy-dsh",
   "version": "0.1.6",
   "private": true,
-  "description": "DeepSeek Harness bundle for Envoy: mounts the Envoy MCP bridge and registers the Envoy Agent Skill.",
+  "description": "DeepSeek Harness bundle for Envoy: reads a pasted Douyin or Bilibili image-note, video, or course episode (or any public link) into traceable material and the Markdown deliverable you asked for.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "./index.js",

@@ -15,6 +15,16 @@ server.
 
 [中文快速安装](../README.md) · [Envoy 安装指南](../../skills/envoy/INSTALL.md)
 
+## What one link gets you
+
+Paste a Douyin or Bilibili share link — a 图文 note, a short video, a course
+episode — and Envoy returns material with source locators: transcript text,
+timestamps, frames, and a `material_id` you can quote from. Ask for a summary,
+notes, or a 干货 writeup and the agent composes it from that material instead of
+guessing from the page title. Articles, PDFs, and audio links go through the
+same path. A batch job over many posts runs `envoy collect`, which checkpoints
+every item, so an interrupted run resumes from where it stopped.
+
 ## Requirements
 
 - DeepSeek Harness Desktop with the Plugin Manager.
