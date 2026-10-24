@@ -297,10 +297,45 @@ export function isOptedOut(text) {
  * @param {string} text
  * @returns {{urls: string[], optedOut: boolean, shouldRoute: boolean}}
  */
+/**
+ * Whether the prompt already carries its own Envoy instruction, such as a task
+ * that is itself about Envoy. The notice restates the routing policy, so
+ * appending it to such a turn spends context without changing behaviour.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function mentionsEnvoyTooling(text) {
+  return (
+    typeof text === 'string' &&
+    /envoy[-_]?(read|expand|search|replay|mcp|link-routing|dsh)|mcp__envoy__|envoy-link-routing/iu.test(
+      text,
+    )
+  )
+}
+
+/**
+ * Inspect one prompt for links and an explicit opt-out. Mirrors hooks.py
+ * `inspect_prompt`; `shouldRoute` is true only for a non-empty URL list with no
+ * opt-out.
+ * @param {string} text
+ * @returns {{urls: string[], optedOut: boolean, shouldRoute: boolean}}
+ */
 export function inspectPrompt(text) {
   const urls = extractPublicUrls(text)
   const optedOut = isOptedOut(text)
   return { urls, optedOut, shouldRoute: urls.length > 0 && !optedOut }
+}
+
+/**
+ * Extract the public links that need routing. A link the prompt already ties
+ * to an Envoy tool is dropped, because the turn states the intent itself.
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function routableUrls(text) {
+  if (typeof text !== 'string' || text.length === 0) return []
+  if (mentionsEnvoyTooling(text)) return []
+  return extractPublicUrls(text)
 }
 
 /**
@@ -452,9 +487,10 @@ export function injectLinkRouting(decision, payload) {
   if (messages.some(isRoutingMessage)) return decision
   if (decision.messages.some(isRoutingMessage)) return decision
   const text = messages.map(messageText).join('\n')
-  const routing = inspectPrompt(text)
-  if (!routing.shouldRoute) return decision
-  const routingMessage = createRoutingUserMessage(routing.urls, {
+  if (isOptedOut(text)) return decision
+  const urls = routableUrls(text)
+  if (urls.length === 0) return decision
+  const routingMessage = createRoutingUserMessage(urls, {
     language: detectRoutingLanguage(text),
   })
   return { ...decision, messages: [routingMessage, ...decision.messages] }

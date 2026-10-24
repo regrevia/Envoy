@@ -504,3 +504,26 @@ console.log(JSON.stringify({
     assert "以图片为准" in payload["zh"]  # Chinese prompt -> zh policy
     assert "https://example.org/b" in payload["en"]
     assert "not a replacement for the host's web search" in payload["en"]
+
+
+def test_link_routing_skips_turns_that_already_route_themselves(tmp_path):
+    """A prompt that names an Envoy tool or the plugin needs no policy notice."""
+
+    payload = _run_node_probe(
+        tmp_path,
+        "self-routing.mjs",
+        PROBE_HEADER
+        + """
+const prompts = [
+  '看看 https://example.com/a 讲什么',
+  '用 envoy_read 检查 https://example.com/a 能否读取',
+  'restart envoy-dsh then open https://example.com/b',
+]
+console.log(JSON.stringify(prompts.map((text) => mod.routableUrls(text))))
+""",
+    )
+    assert payload == [
+        ["https://example.com/a"],
+        [],
+        [],
+    ]
