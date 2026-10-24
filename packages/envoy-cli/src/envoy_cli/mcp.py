@@ -218,8 +218,9 @@ TOOLS = [
         "name": "envoy_discover",
         "description": (
             "Discover a bounded page of public Douyin video and image-note "
-            "candidates. Returns titles and metadata as selection hints only; "
-            "does not download media, run ASR, extract frames, or decide relevance."
+            "candidates, or of a Bilibili space. Returns titles and metadata as "
+            "selection hints only; does not download media, run ASR, extract "
+            "frames, or decide relevance."
         ),
         "inputSchema": {
             "type": "object",

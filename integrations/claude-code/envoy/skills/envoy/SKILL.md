@@ -48,19 +48,32 @@ and keep it in one file, in a stable source order.
   audio, a heading or quoted phrase for an article. Never invent a timestamp,
   a quote, or a section that the material does not contain, and mark what the
   source did not cover instead of filling the gap.
-- **A profile with several videos.** Enumerate first, then read, then compose.
-  `envoy discover --url <profile> --limit 20` returns candidates plus
-  `next_cursor`; pass that cursor back to continue instead of re-scraping. Read
-  the candidates you need with `envoy_read`, then aggregate into one deliverable
-  that lists every included source with its URL.
+- **A profile with several videos.** Run `envoy collect --url <profile> --out
+  notes.md --limit 10` and let it run the loop: it enumerates the profile
+  (Douyin user pages and Bilibili spaces), reads each selected post once,
+  records evidence per candidate, and rewrites the Markdown file after every
+  item, so an interrupted run still leaves a usable partial deliverable. Resume
+  by running the same command again; add `--retry-blocked` to retry items that
+  were blocked or failed, and `--json` for a machine-readable summary. The file
+  is a material pack, not finished prose: every section carries the source URL,
+  its `material_id`, and the excerpt Envoy actually read, plus an `未完成` table.
+  Write the deliverable from those excerpts, and never add a conclusion, quote,
+  or timestamp they do not support.
+- **When discovery needs steering by hand.** `envoy discover --url <profile>
+  --limit 20` returns candidates plus `next_cursor`; pass that cursor back to
+  continue instead of re-scraping. Read the candidates you need with
+  `envoy_read`, then aggregate into one deliverable that lists every included
+  source with its URL.
 - **A local course file.** `envoy read-local-video` takes an `envoy.read/1`
   request JSON naming the local path; use `start_seconds` / `end_seconds` to
   bound a long recording, and `envoy_expand` to continue from a returned
   material when one range is not enough.
 
-Long runs must survive interruption. Persist progress with
-`envoy_collection_checkpoint`, or `envoy collection-checkpoint --request-json`
-when the active toolset does not expose it: `create` fixes the collection,
+Long runs must survive interruption. `envoy collect` already checkpoints
+every item it reads, so prefer it for a profile-to-Markdown job. When you need
+a custom flow, persist progress with `envoy_collection_checkpoint`, or
+`envoy collection-checkpoint --request-json` when the active toolset does not
+expose it: `create` fixes the collection,
 `set_cursor` records how far discovery got, `item_state` / `record_evidence`
 record what each candidate produced, and `get` re-reads the current state. Every
 mutation needs `expected_revision` and a unique `operation_id`, so a retried

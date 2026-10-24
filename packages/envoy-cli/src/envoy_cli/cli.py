@@ -32,6 +32,7 @@ from .ocr import (
 from .package_install import install_media_dependencies
 from . import __version__
 from . import mcp
+from .collect import collect
 from .collections import (
     CollectionBudget,
     CollectionError,
@@ -85,7 +86,7 @@ def _parser() -> argparse.ArgumentParser:
     search = subparsers.add_parser("search", help="find relevant passages in a local material")
     search.add_argument("--request-json", required=True, help="read an envoy.search/1 request from this path or '-' for stdin")
 
-    discover = subparsers.add_parser("discover", help="discover bounded public Douyin profile candidates")
+    discover = subparsers.add_parser("discover", help="discover bounded public Douyin or Bilibili profile candidates")
     discover.add_argument("--url", required=True)
     discover.add_argument("--limit", type=int, default=20)
     discover.add_argument("--cursor")
@@ -99,6 +100,20 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="read one collection checkpoint request from this path or '-' for stdin",
     )
+
+    collect_parser = subparsers.add_parser(
+        "collect",
+        help="enumerate a Douyin or Bilibili profile into one Markdown source pack",
+    )
+    collect_parser.add_argument("--url", required=True)
+    collect_parser.add_argument("--out", required=True)
+    collect_parser.add_argument("--limit", type=int, default=10)
+    collect_parser.add_argument("--goal", default="")
+    collect_parser.add_argument("--collection-id")
+    collect_parser.add_argument("--run-id")
+    collect_parser.add_argument("--max-work-seconds", type=int, default=120)
+    collect_parser.add_argument("--retry-blocked", action="store_true")
+    collect_parser.add_argument("--json", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
@@ -269,6 +284,36 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                 "error": {"code": "collection_error", "message": str(exc)},
             }, ensure_ascii=False))
             return 2
+    if args.command == "collect":
+        try:
+            summary = collect(
+                args.url,
+                args.out,
+                limit=args.limit,
+                goal=args.goal,
+                collection_id=args.collection_id,
+                run_id=args.run_id,
+                max_work_seconds=args.max_work_seconds,
+                retry_blocked=args.retry_blocked,
+            )
+        except CollectionError as exc:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "collection_error", "message": str(exc)},
+            }, ensure_ascii=False))
+            return 2
+        if args.json:
+            print(json.dumps(summary, ensure_ascii=False))
+        else:
+            print(f"Wrote {summary['output']}")
+            print(
+                f"{summary['platform']} · 已完成 {summary['completed']}/{summary['selected']}"
+                f" · 本次读取 {summary['read_now']} · 跳过 {summary['skipped']}"
+            )
+            if summary["pending"]:
+                print(f"未完成 {len(summary['pending'])} 条，状态保存在 {summary['sources']}")
+            print(f"续跑：envoy collect --url {summary['profile_url']} --out {summary['output']}")
+        return 0
     if args.command == "doctor":
         runtime = media_runtime_status(verify_asr=args.verify_asr)
         runtime["browser"] = browser_runtime.browser_runtime_status()
