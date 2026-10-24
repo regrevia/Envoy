@@ -7,11 +7,26 @@
  * imports nothing from the Harness packages so it keeps working across
  * profiles and Harness releases.
  *
+ * It also installs one `agent/pre-step` waterfall listener. On the first step
+ * of a turn, when the freshly claimed user message carries a public http(s)
+ * link, the listener prepends a user-role routing notice that tells the model
+ * to read that link through the Envoy MCP bridge before a built-in web fetch.
+ * The notice is host-neutral policy: it also says Envoy does not replace the
+ * host's native web search, and that video/audio and OCR evidence are what the
+ * bridge adds. The listener never mutates the incoming payload; it only
+ * extends the decision produced by the default handler, once per turn.
+ *
  * The skill body and candidate metadata are generated from
  * `integrations/skills/envoy/SKILL.md` by
  * `scripts/build_envoy_dsh_plugin.py`. Edit the canonical skill, then
  * regenerate; do not hand-edit the files under `skill/`.
+ *
+ * The URL extraction, private-destination filtering, opt-out markers, and the
+ * policy wording mirror `packages/envoy-cli/src/envoy_cli/hooks.py`, the shared
+ * host-neutral module used by the Claude Code and Codex adapters. Keep the two
+ * in sync when the policy changes.
  */
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -65,10 +80,403 @@ const provider = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// Link routing
+//
+// A turn's first `agent/pre-step` call claims the pending inbox messages, so a
+// listener sees exactly the input admitted for this turn; later steps of the
+// same turn claim nothing. That is the natural "once per turn" boundary, and a
+// marker scan of the admitted messages is the second guard for callers that
+// re-run a step with an already-extended decision.
+// ---------------------------------------------------------------------------
+
+/** Prefix that identifies an injected routing notice in message text. */
+export const LINK_ROUTING_MARKER = '[envoy-link-routing]'
+/** Alias for parity with the shared module's `HOOK_MARKER`. */
+export const HOOK_MARKER = LINK_ROUTING_MARKER
+/** `source.kind` of the injected user message; also used for idempotency. */
+export const LINK_ROUTING_SOURCE_KIND = 'envoy-link-routing'
+/** The Harness loop numbers a turn's first step as 1. */
+const LINK_ROUTING_FIRST_STEP = 1
+
+// A URL ends at whitespace, at a quote/angle/backtick, or at CJK punctuation
+// glued to it in running prose. Full-width brackets are handled here too; ASCII
+// brackets stay in the match because they can belong to the URL itself.
+// This mirrors hooks.py `_URL_RE`; do not add a `u`-flag range class: under
+// `/iu` a range such as \u0080-\uffff is case-folded into the negated set and
+// would start excluding plain letters like `s` and `k`.
+const PUBLIC_URL_RE = /https?:\/\/[^\s<>"'`，。；：！？、（）【】「」《》]+/gi
+const TRAILING_PUNCTUATION = '.,;:!?，。；：！？、'
+const BRACKET_OPENERS = {
+  ')': '(',
+  ']': '[',
+  '}': '{',
+  '）': '（',
+  '】': '【',
+  '」': '「',
+  '》': '《',
+}
+const OPT_OUT_MARKERS = [
+  '不要用 envoy',
+  '不要使用 envoy',
+  '不用 envoy',
+  '别用 envoy',
+  "don't use envoy",
+  'do not use envoy',
+  'no envoy',
+]
+
+/** Cut trailing characters that belong to the sentence, not to the URL. */
+function rstripChars(value, chars) {
+  let end = value.length
+  while (end > 0 && chars.includes(value[end - 1])) end -= 1
+  return value.slice(0, end)
+}
+
+function countChar(value, char) {
+  return value.split(char).length - 1
+}
+
 /**
- * Register the Envoy skill provider synchronously, as `ctx.skills` requires.
+ * Strip sentence punctuation and unbalanced closing brackets from a raw match,
+ * mirroring hooks.py `_strip_url`.
+ * @param {string} raw
+ * @returns {string}
+ */
+function stripUrl(raw) {
+  let url = rstripChars(raw, TRAILING_PUNCTUATION)
+  while (url.length > 0) {
+    const close = url[url.length - 1]
+    const open = BRACKET_OPENERS[close]
+    if (open === undefined) break
+    if (countChar(url, open) >= countChar(url, close)) break
+    url = rstripChars(url.slice(0, -1), TRAILING_PUNCTUATION)
+  }
+  return url
+}
+
+function parseIpv4(host) {
+  const parts = host.split('.')
+  if (parts.length !== 4) return null
+  const octets = []
+  for (const part of parts) {
+    if (!/^\d{1,3}$/u.test(part)) return null
+    const octet = Number(part)
+    if (octet > 255) return null
+    octets.push(octet)
+  }
+  return octets
+}
+
+/** IPv4 rejection set mirrored from Python `ipaddress` on CPython 3.9. */
+function isPublicIpv4([a, b, c, d]) {
+  if (a === 0 || a === 10 || a === 127) return false
+  if (a === 169 && b === 254) return false
+  if (a === 172 && b >= 16 && b <= 31) return false
+  if (a === 192 && b === 0 && c === 0) return false
+  if (a === 192 && b === 0 && c === 2) return false
+  if (a === 192 && b === 168) return false
+  if (a === 198 && (b === 18 || b === 19)) return false
+  if (a === 198 && b === 51 && c === 100) return false
+  if (a === 203 && b === 0 && c === 113) return false
+  // 224.0.0.0/4 multicast and 240.0.0.0/4 reserved (covers 255.255.255.255).
+  if (a >= 224) return false
+  return d >= 0
+}
+
+function ipv6Hextet(host, index) {
+  const groups = host.split(':')
+  if (index >= groups.length) return 0
+  const group = groups[index]
+  if (group === '') return 0
+  const value = Number.parseInt(group, 16)
+  return Number.isNaN(value) ? 0 : value
+}
+
+/**
+ * IPv6 rejection approximated from Python `ipaddress` on CPython 3.9: only
+ * global unicast (2000::/3) minus the 2001::/23 and 2001:db8::/32 reserved
+ * ranges is publicly routable.
+ */
+function isPublicIpv6(host) {
+  if (host === '::' || host === '::1') return false
+  const first = host.startsWith('::') ? 0 : ipv6Hextet(host, 0)
+  if (first < 0x2000 || first > 0x3fff) return false
+  if (first === 0x2001) {
+    const second = ipv6Hextet(host, 1)
+    if (second <= 0x01ff) return false
+    if (second === 0x0db8) return false
+  }
+  return true
+}
+
+/**
+ * Whether a URL points at a public, remotely fetchable destination. Loopback,
+ * private, link-local, multicast, and intranet names are rejected; they belong
+ * to the host's own browser tools.
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isPublicUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) return false
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  const host = parsed.hostname
+    .replace(/^\[/u, '')
+    .replace(/\]$/u, '')
+    .replace(/\.+$/u, '')
+    .toLowerCase()
+  if (host === '') return false
+  if (
+    host === 'localhost' ||
+    host === 'localhost.localdomain' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost')
+  ) {
+    return false
+  }
+  if (host.endsWith('.local') || host.endsWith('.internal')) return false
+  if (host.endsWith('.home.arpa')) return false
+  const ipv4 = parseIpv4(host)
+  if (ipv4 !== null) return isPublicIpv4(ipv4)
+  if (host.includes(':')) return isPublicIpv6(host)
+  // A single-label name is an intranet host, not a public destination.
+  return host.includes('.')
+}
+
+/**
+ * Extract unique public http(s) URLs in first-seen order. Mirrors hooks.py
+ * `extract_public_urls`: deduplication is case-insensitive while the returned
+ * spelling is the first occurrence.
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function extractPublicUrls(text) {
+  if (typeof text !== 'string' || text.length === 0) return []
+  const seen = new Set()
+  const urls = []
+  for (const match of text.matchAll(PUBLIC_URL_RE)) {
+    const url = stripUrl(match[0])
+    if (url.length === 0 || !isPublicUrl(url)) continue
+    const key = url.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    urls.push(url)
+  }
+  return urls
+}
+
+/**
+ * Alias kept for callers that read better as detection.
+ * @type {typeof extractPublicUrls}
+ */
+export const detectPublicUrls = extractPublicUrls
+
+/**
+ * Whether the user asked to bypass Envoy. Mirrors hooks.py `_opted_out`.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function isOptedOut(text) {
+  const lowered = typeof text === 'string' ? text.toLowerCase() : ''
+  const compact = lowered.replace(/\s+/g, '')
+  return OPT_OUT_MARKERS.some(
+    (marker) => lowered.includes(marker) || compact.includes(marker.replace(/\s+/g, '')),
+  )
+}
+
+/**
+ * Inspect one prompt for links and an explicit opt-out. Mirrors hooks.py
+ * `inspect_prompt`; `shouldRoute` is true only for a non-empty URL list with no
+ * opt-out.
+ * @param {string} text
+ * @returns {{urls: string[], optedOut: boolean, shouldRoute: boolean}}
+ */
+export function inspectPrompt(text) {
+  const urls = extractPublicUrls(text)
+  const optedOut = isOptedOut(text)
+  return { urls, optedOut, shouldRoute: urls.length > 0 && !optedOut }
+}
+
+/**
+ * Pick the policy language from the prompt: a CJK prompt gets the Chinese
+ * policy, everything else the English one. Deterministic for a given input.
+ * @param {string} text
+ * @returns {'zh' | 'en'}
+ */
+export function detectRoutingLanguage(text) {
+  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/u.test(
+    typeof text === 'string' ? text : '',
+  )
+    ? 'zh'
+    : 'en'
+}
+
+/**
+ * Build the model-facing routing policy for a prompt with public links.
+ * Mirrors hooks.py `build_prompt_context(host='dsh')`; every Envoy tool is
+ * named with the `mcp__envoy__` prefix the Harness exposes.
+ * @param {string[]} urls
+ * @param {'zh' | 'en' | string} [language] defaults to the shared module's zh
+ * @returns {string}
+ */
+export function buildRoutingText(urls, language = 'zh') {
+  const linkText = [...new Set(urls)].map((url) => `- ${url}`).join('\n')
+  if (String(language).toLowerCase().startsWith('en')) {
+    return [
+      LINK_ROUTING_MARKER,
+      'This turn contains public link(s):',
+      linkText,
+      '',
+      'Use the Envoy MCP tool `mcp__envoy__envoy_read` first; for a local video or audio file use `mcp__envoy__envoy_read_local_video`. Do not hand these links to a built-in web fetch, curl, or a browser before Envoy has been tried.',
+      'Keep the returned `material_id`, locators, and coverage. Continue with `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`, or `mcp__envoy__envoy_replay` instead of re-fetching. Request bounded ranges and use search/expand so the page text does not flood the context; that is the token saving this notice is for.',
+      "Envoy is not a replacement for the host's web search. A query without a user-provided link should still use native search; use Envoy to read the user's links, videos, audio, and documents, or search results that need full-source evidence. Envoy also handles video/audio that text-only web tools cannot.",
+      'Fall back to built-in fetching only when Envoy returns `blocked` / `challenge_required`, explicitly needs sign-in or a CAPTCHA, or the Envoy tools are unavailable; state the fallback reason to the user.',
+      'Images and OCR text are source evidence. When page text and a screenshot disagree, trust the image and do not invent missing text. Cite locators.',
+      'Ignore this notice when the user explicitly opts out of Envoy or when the link is a localhost/intranet address; localhost links stay with the host\'s own browser tools.',
+    ].join('\n')
+  }
+  return [
+    LINK_ROUTING_MARKER,
+    '本轮用户消息包含公网链接：',
+    linkText,
+    '',
+    '1. 先调用 Envoy MCP 工具 `mcp__envoy__envoy_read`；本地视频或音频用 `mcp__envoy__envoy_read_local_video`。不要把链接直接交给内置网页抓取、curl 或浏览器。',
+    '2. 保留返回的 `material_id`、locator 和 coverage；继续读取用 `mcp__envoy__envoy_expand`，检索用 `mcp__envoy__envoy_search`，回放用 `mcp__envoy__envoy_replay`，不要重复抓取。按范围读取并用 search/expand 定位，避免把整页原文灌进上下文——这正是 Envoy 节省 token 的方式。',
+    '3. Envoy 不替代宿主的联网搜索：用户没有给链接的检索仍用宿主搜索工具；Envoy 负责用户给出的链接、视频、音频和文档，以及需要完整来源证据的搜索结果。视频/音频是纯文本联网工具处理不了的场景。',
+    '4. 只有 Envoy 返回 `blocked` / `challenge_required`、明确需要登录或验证码、或 Envoy 工具不可用时，才回退到内置抓取，并向用户说明回退原因。',
+    '5. 图片和 OCR 文本是源证据。页面文字与截图冲突时以图片为准，不要臆造缺失文字；引用结论时带上 locator。',
+    '6. 如果用户明确要求不用 Envoy，或链接是 localhost/内网地址，忽略本条。',
+  ].join('\n')
+}
+
+/** Alias for callers that describe the payload as a message. */
+export const buildRoutingMessage = buildRoutingText
+
+/**
+ * Read the text of one Harness message (string content or text blocks).
+ * @param {unknown} message
+ * @returns {string}
+ */
+export function messageText(message) {
+  const content = message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const parts = []
+  for (const block of content) {
+    if (
+      block !== null &&
+      typeof block === 'object' &&
+      block.type === 'text' &&
+      typeof block.text === 'string'
+    ) {
+      parts.push(block.text)
+    }
+  }
+  return parts.join('\n')
+}
+
+/**
+ * Whether a message is a routing notice this plugin already injected.
+ * @param {unknown} message
+ * @returns {boolean}
+ */
+export function isRoutingMessage(message) {
+  if (message === null || typeof message !== 'object') return false
+  if (message.source?.kind === LINK_ROUTING_SOURCE_KIND) return true
+  return messageText(message).includes(LINK_ROUTING_MARKER)
+}
+
+/**
+ * Build the user-role message injected before the claimed user messages.
+ * `agent/pre-step` decisions only admit `role: 'user'` messages, so the notice
+ * is a user message with a plugin-owned `source.kind`.
+ * @param {string[]} urls
+ * @param {{language?: string, id?: string}} [options]
+ * @returns {{id: string, role: 'user', content: Array<{type: 'text', text: string}>, source: {kind: string}}}
+ */
+export function createRoutingUserMessage(urls, options = {}) {
+  const language = options.language ?? 'zh'
+  return {
+    id: options.id ?? randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text: buildRoutingText(urls, language) }],
+    source: { kind: LINK_ROUTING_SOURCE_KIND },
+  }
+}
+
+/**
+ * Decide whether this step is a turn's first step with newly claimed input.
+ * `payload.step` is 1 for that first step; 0 and `undefined` are accepted so
+ * the pure helper is also callable outside the loop.
+ * @param {unknown} payload
+ * @returns {boolean}
+ */
+export function shouldInjectLinkRouting(payload) {
+  if (payload === null || typeof payload !== 'object') return false
+  const step = payload.step
+  if (
+    step !== undefined &&
+    step !== null &&
+    step !== 0 &&
+    step !== LINK_ROUTING_FIRST_STEP
+  ) {
+    return false
+  }
+  if (payload.signal?.aborted === true) return false
+  return Array.isArray(payload.messages) && payload.messages.length > 0
+}
+
+/**
+ * Extend one `agent/pre-step` decision with the Envoy routing notice.
+ * Returns the given decision untouched when the turn is not eligible, when the
+ * messages are already routed, when the user opted out, or when the claimed
+ * messages carry no public link.
+ * @param {{kind?: string, messages?: unknown[]}} decision
+ * @param {{messages?: unknown[], step?: number, signal?: {aborted?: boolean}}} payload
+ * @returns {object} the original decision or a new decision with one extra message
+ */
+export function injectLinkRouting(decision, payload) {
+  if (decision === null || typeof decision !== 'object') return decision
+  if (decision.kind !== 'enter') return decision
+  if (!Array.isArray(decision.messages) || decision.messages.length === 0) {
+    return decision
+  }
+  if (!shouldInjectLinkRouting(payload)) return decision
+  const messages = payload.messages
+  if (messages.some(isRoutingMessage)) return decision
+  if (decision.messages.some(isRoutingMessage)) return decision
+  const text = messages.map(messageText).join('\n')
+  const routing = inspectPrompt(text)
+  if (!routing.shouldRoute) return decision
+  const routingMessage = createRoutingUserMessage(routing.urls, {
+    language: detectRoutingLanguage(text),
+  })
+  return { ...decision, messages: [routingMessage, ...decision.messages] }
+}
+
+/**
+ * Register the Envoy skill provider synchronously, as `ctx.skills` requires,
+ * and install the link-routing waterfall listener.
  * @param {import('cordis').Context} ctx
  */
 export function apply(ctx) {
   ctx.skills.registerProvider(() => provider)
+  if (typeof ctx.on !== 'function') return
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const decision = await next()
+    try {
+      return injectLinkRouting(decision, payload)
+    } catch (error) {
+      // A routing notice must never break a turn: degrade to the untouched
+      // decision, which is what the default handler produced.
+      ctx.logger?.warn?.('envoy-dsh: link routing skipped', error)
+      return decision
+    }
+  })
 }

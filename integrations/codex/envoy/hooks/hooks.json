@@ -1,0 +1,18 @@
+{
+  "description": "Route public links in user prompts through Envoy before built-in web fetching.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}/hooks/envoy-hook.sh\" prompt --host codex",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%PLUGIN_ROOT%\\hooks\\envoy-hook.ps1\" prompt --host codex",
+            "timeout": 10,
+            "statusMessage": "Checking links with Envoy"
+          }
+        ]
+      }
+    ]
+  }
+}

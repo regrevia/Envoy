@@ -225,6 +225,14 @@ TOOLS = [
                     "type": ["string", "null"],
                     "enum": ["fast", "balanced", "quality", "pro", None],
                 },
+                "ocr_backend": {
+                    "type": ["string", "null"],
+                    "enum": ["auto", "vision", "paddleocr", "rapidocr", "tesseract", None],
+                    "description": (
+                        "OCR engine; auto picks macOS Vision > PaddleOCR > "
+                        "RapidOCR > Tesseract."
+                    ),
+                },
                 "ocr_language": {
                     "type": ["string", "null"],
                     "minLength": 2,

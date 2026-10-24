@@ -1,10 +1,12 @@
 # Envoy for DeepSeek Harness
 
 This package is a DeepSeek Harness bundle for [Envoy](../../../README.md). It
-does two things in one install:
+does three things in one install:
 
-1. mounts Envoy's stdio MCP bridge with `@deepseek-ai/dsh-mcp-client`; and
-2. registers an adapted Envoy Agent Skill on the public `ctx.skills` service.
+1. mounts Envoy's stdio MCP bridge with `@deepseek-ai/dsh-mcp-client`;
+2. registers an adapted Envoy Agent Skill on the public `ctx.skills` service;
+3. listens to the `agent/pre-step` event and, on the first step of a turn whose
+   user message contains a public link, prepends one short routing message.
 
 The adaptation keeps Envoy's reading, discovery, expansion, visual handoff, and
 capability behavior. It changes only the integration surface: the skill uses
@@ -42,7 +44,7 @@ The bundle inserts two rows:
 | Row | Package | Purpose |
 |---|---|---|
 | `envoy-mcp` | `@deepseek-ai/dsh-mcp-client` | Starts `envoy mcp` and exposes its ten tools as `mcp__envoy__*`. |
-| `envoy-skill` | `envoy-dsh` | Registers the Envoy skill provider. |
+| `envoy-skill` | `envoy-dsh` | Registers the Envoy skill provider and the link-routing `agent/pre-step` hook. |
 
 ## Launcher PATH
 
@@ -71,6 +73,11 @@ After installation, check that:
   `# Envoy Link Reader in DeepSeek Harness` and `mcp__envoy__` tool names.
 - A real `mcp__envoy__envoy_doctor` call reports `0.1.6` and the expected
   capability catalog.
+- On the **first step** of a turn that contains a public URL, the model sees one
+  injected `[envoy-link-routing]` message. A linkless prompt, a follow-up step,
+  a localhost/private URL, or a prompt containing `不要用 Envoy` gets no
+  injection. The hook fails open: if anything throws, the original turn
+  continues unchanged.
 
 `failOnStartupError: true` makes a missing or broken runtime visible as a
 failed `envoy-mcp` row instead of silently leaving the agent without the
@@ -82,7 +89,7 @@ tools. The rest of the profile remains usable.
 integrations/dsh/envoy-dsh/
 ├── package.json           # bundle manifest and display exports
 ├── cordis.patch.yml       # MCP client + skill provider rows
-├── index.js               # host plugin, no @deepseek-ai imports
+├── index.js               # skill provider + agent/pre-step link hook
 ├── locale/{en,zh}.json    # Plugin Manager title and description
 ├── icon.png               # downscaled Envoy bird artwork
 ├── skill/
@@ -94,6 +101,12 @@ integrations/dsh/envoy-dsh/
 ├── LICENSE
 └── NOTICE
 ```
+
+`index.js` is hand-written and mirrors the shared policy in
+`packages/envoy-cli/src/envoy_cli/hooks.py` (URL extraction, private-address
+filtering, opt-out, six-point wording) without importing host internals. Keep
+the two in sync when the policy changes; `tests/test_dsh_plugin.py` runs the
+same parity corpus through both implementations.
 
 The skill assets are generated from the canonical
 `integrations/skills/envoy/SKILL.md` and

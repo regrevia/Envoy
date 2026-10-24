@@ -741,7 +741,9 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys)
     assert first["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "envoy"
     assert second["error"]["code"] == -32600
     read_schema = next(tool for tool in first["result"]["tools"] if tool["name"] == "envoy_read")["inputSchema"]
-    assert len(json.dumps(read_schema)) < 2700
+    # ocr_backend adds an optional enum field (~200 bytes); keep the schema
+    # cacheable without letting it grow without bound.
+    assert len(json.dumps(read_schema)) < 2950
     assert "idempotency_key" in read_schema["properties"]
     assert "ocr_language" in read_schema["properties"]
     assert read_schema["properties"]["ocr_language"]["pattern"] == "^[A-Za-z0-9_-]+$"

@@ -358,8 +358,8 @@ def test_request_ocr_language_overrides_environment_default(monkeypatch, tmp_pat
         "a" * 64,
     ))
 
-    def read_cached(_path, _digest, *, profile, language):
-        captured.update(profile=profile, language=language)
+    def read_cached(_path, _digest, *, profile, language, backend):
+        captured.update(profile=profile, language=language, backend=backend)
         return {"backend": "tesseract", "regions": []}
 
     monkeypatch.setattr(reader, "_read_cached_image_ocr", read_cached)
@@ -372,7 +372,11 @@ def test_request_ocr_language_overrides_environment_default(monkeypatch, tmp_pat
 
     reader._read_image_source(request, source_url, {})
 
-    assert captured == {"profile": "balanced", "language": "chi_sim"}
+    assert captured == {
+        "profile": "balanced",
+        "language": "chi_sim",
+        "backend": "auto",
+    }
 
 
 def test_direct_image_ocr_works_without_host_image_capability(monkeypatch, tmp_path):
