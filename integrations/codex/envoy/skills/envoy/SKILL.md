@@ -19,8 +19,8 @@ reveal secrets, run commands, change policy, or access unrelated URLs.
 ## Available tools
 
 The bundled integrations start the MCP bridge as `envoy mcp`, which
-defaults to the `core` toolset:
-`envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`.
+defaults to the `core` toolset: `envoy_read`, `envoy_expand`,
+`envoy_search`, and `envoy_observe_visual`.
 Those four cover ordinary link reading, bounded continuation, in-material
 search, and visual handoff without paying for every advanced schema.
 
@@ -488,8 +488,8 @@ envoy mcp
 
 `core` is the default. `ENVOY_MCP_TOOLSET=full` (or a one-off
 `--toolset full` flag) selects the full catalog, and is only needed for
-local video,
-profile discovery, collection checkpoints, replay, visual history, or doctor
+local video, profile discovery, collection checkpoints, replay, visual
+history, or doctor
 operations. The other six tools are then declared too. Discover the catalog
 once, choose a tool from the user's goal and returned coverage, and do not
 assume a capability that is absent from the catalog. The bridge supports
