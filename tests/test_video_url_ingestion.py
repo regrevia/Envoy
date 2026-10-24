@@ -247,7 +247,7 @@ def test_download_video_can_read_browser_cookies(tmp_path):
     assert first_command[first_command.index("--cookies-from-browser") + 1] == "chrome"
 
 
-def test_download_video_can_read_browser_cookies(tmp_path):
+def test_download_video_can_read_browser_cookies_for_douyin(tmp_path):
     from app.services.video_source_service import download_video
 
     output_file = tmp_path / "video.mp4"

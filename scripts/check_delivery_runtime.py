@@ -6,7 +6,6 @@ import importlib.util
 import os
 import shutil
 import subprocess
-import sys
 
 
 REQUIRED_TOOLS = {

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Literal, Optional
 from urllib.parse import urlsplit
 
@@ -497,9 +499,6 @@ _TRUST_STATE = {
 
 
 def _codex_home(home=None) -> "Path":
-    import os
-    from pathlib import Path
-
     if home:
         return Path(home).expanduser()
     return Path(
