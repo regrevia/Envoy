@@ -55,6 +55,7 @@ After installing or updating Envoy, verify the runtime:
 ```bash
 envoy browser setup
 envoy doctor --json
+envoy cache status   # local storage footprint; `envoy cache prune --dry-run` shows what it would reclaim
 ```
 
 The host configuration contains no API keys, cookies, browser paths, or model
