@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from .netpolicy import proxy_plan
+
 
 class MediaProcessingError(RuntimeError):
     pass
@@ -320,6 +322,17 @@ def _configured_proxy_hosts() -> set[str]:
         except ValueError:
             continue
     return hosts
+
+
+def _media_proxy_attempts() -> list[str]:
+    """Ordered yt-dlp proxy attempts: direct first, then the advertised proxy.
+
+    yt-dlp reads the environment and the operating system proxy settings on its
+    own, so a media download would otherwise silently take a different egress
+    path than the page read that found it. ``""`` pins yt-dlp to a direct
+    connection; the shared policy supplies the fallback only when one exists.
+    """
+    return [proxy or "" for proxy in proxy_plan()]
 
 
 def guard_yt_dlp_client(ydl) -> None:
@@ -796,7 +809,8 @@ def _download_audio_for_asr_worker(
         "outtmpl": str(root / "audio.%(ext)s"),
         "progress_hooks": [_download_progress_hook(byte_limit, deadline)],
     }
-    try:
+    def attempt(proxy: str) -> tuple[dict[str, Any], list[Path]]:
+        options["proxy"] = proxy
         with public_network_guard():
             with YoutubeDL(options) as ydl:
                 guard_yt_dlp_client(ydl)
@@ -807,20 +821,34 @@ def _download_audio_for_asr_worker(
                     )
                 if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"}:
                     raise MediaProcessingError("Source did not resolve to one video")
-                candidates = []
+                found = []
                 for item in info.get("requested_downloads", []) or []:
                     if isinstance(item, dict) and item.get("filepath"):
-                        candidates.append(Path(str(item["filepath"])))
-                if not candidates:
+                        found.append(Path(str(item["filepath"])))
+                if not found:
                     try:
-                        candidates.append(Path(ydl.prepare_filename(info)))
+                        found.append(Path(ydl.prepare_filename(info)))
                     except Exception:
                         pass
-                candidates.extend(path for path in root.iterdir() if path.is_file())
-    except MediaProcessingError:
-        raise
-    except Exception as exc:
-        raise MediaProcessingError(f"Audio download failed: {_safe_error(exc)}") from exc
+                found.extend(path for path in root.iterdir() if path.is_file())
+                return info, found
+
+    info: dict[str, Any] = {}
+    candidates: list[Path] = []
+    attempts = _media_proxy_attempts()
+    for index, proxy in enumerate(attempts):
+        try:
+            info, candidates = attempt(proxy)
+            break
+        except MediaBudgetExceeded:
+            raise
+        except MediaProcessingError:
+            if index == len(attempts) - 1:
+                raise
+        except Exception as exc:
+            error = MediaProcessingError(f"Audio download failed: {_safe_error(exc)}")
+            if index == len(attempts) - 1:
+                raise error from exc
 
     media_path = next(
         (
@@ -911,7 +939,8 @@ def _download_video_for_frames_worker(
         "outtmpl": str(root / "video.%(ext)s"),
         "progress_hooks": [_download_progress_hook(byte_limit, deadline)],
     }
-    try:
+    def attempt(proxy: str) -> tuple[dict[str, Any], list[Path]]:
+        options["proxy"] = proxy
         with public_network_guard():
             with YoutubeDL(options) as ydl:
                 guard_yt_dlp_client(ydl)
@@ -922,19 +951,33 @@ def _download_video_for_frames_worker(
                     )
                 if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"}:
                     raise MediaProcessingError("Source did not resolve to one video")
-                candidates = []
+                found = []
                 for item in info.get("requested_downloads", []) or []:
                     if isinstance(item, dict) and item.get("filepath"):
-                        candidates.append(Path(str(item["filepath"])))
+                        found.append(Path(str(item["filepath"])))
                 try:
-                    candidates.append(Path(ydl.prepare_filename(info)))
+                    found.append(Path(ydl.prepare_filename(info)))
                 except Exception:
                     pass
-                candidates.extend(path for path in root.iterdir() if path.is_file())
-    except MediaProcessingError:
-        raise
-    except Exception as exc:
-        raise MediaProcessingError(f"Video download failed: {_safe_error(exc)}") from exc
+                found.extend(path for path in root.iterdir() if path.is_file())
+                return info, found
+
+    info: dict[str, Any] = {}
+    candidates: list[Path] = []
+    attempts = _media_proxy_attempts()
+    for index, proxy in enumerate(attempts):
+        try:
+            info, candidates = attempt(proxy)
+            break
+        except MediaBudgetExceeded:
+            raise
+        except MediaProcessingError:
+            if index == len(attempts) - 1:
+                raise
+        except Exception as exc:
+            error = MediaProcessingError(f"Video download failed: {_safe_error(exc)}")
+            if index == len(attempts) - 1:
+                raise error from exc
 
     video_path = next(
         (

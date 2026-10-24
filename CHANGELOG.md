@@ -14,6 +14,10 @@
   `~/.codex/hooks.json`。
 - 该路由只处理用户给出的链接、视频/音频和需要完整来源证据的读取，**不替代**宿主自带联网
   搜索；模型遇到链接时优先用分段读取/`envoy_expand`/`envoy_search` 控制上下文。
+- 媒体下载（yt-dlp）与页面读取、Chromium 统一走同一套出网策略：**默认直连**，只有直连失败且
+  存在可用代理时才自动回退；`ENVOY_BROWSER_PROXY` 仍可指定代理或设为 `none/off` 禁止代理。
+  此前 yt-dlp 会自行采用系统代理，导致系统代理不可用时页面能读、视频/ASR 抓取却报 SSL 握手
+  超时；现在两条路径的出口一致，且失败后的回退只发生一次。
 - OCR 新增 macOS Vision 与 RapidOCR 后端，默认语言改为 `auto`（中文优先、兼容英文），新增
   `envoy ocr status|test`，并支持 `ENVOY_OCR_BACKEND` / `ENVOY_OCR_LANG`。
 - 新增 MCP `--toolset core|full`（环境变量 `ENVOY_MCP_TOOLSET`）：`core` 只声明
@@ -34,6 +38,12 @@
 
 ### English
 
+- Route media downloads (yt-dlp) through the same outbound policy as page reads
+  and Chromium: connect directly by default and fall back to a proxy only after
+  a direct attempt fails. `ENVOY_BROWSER_PROXY` still pins a proxy or disables
+  proxying with `none`/`off`. yt-dlp previously adopted the operating-system
+  proxy on its own, so with an unreachable proxy a page could be read while its
+  video/ASR capture failed with an SSL handshake timeout.
 - Add MCP `--toolset core|full` (also `ENVOY_MCP_TOOLSET`): `core` declares only
   `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`,
   reducing resident tool declarations from about 19.9 KB to about 8.2 KB.
