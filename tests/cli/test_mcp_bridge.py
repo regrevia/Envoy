@@ -821,50 +821,29 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(capsys)
     assert first["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "envoy"
     assert second["error"]["code"] == -32600
     read_schema = next(tool for tool in first["result"]["tools"] if tool["name"] == "envoy_read")["inputSchema"]
-    # ocr_backend adds an optional enum field (~200 bytes); keep the schema
-    # cacheable without letting it grow without bound.
-    assert len(json.dumps(read_schema)) < 2950
-    assert "idempotency_key" in read_schema["properties"]
-    assert "ocr_language" in read_schema["properties"]
-    assert read_schema["properties"]["ocr_language"]["pattern"] == "^[A-Za-z0-9_-]+$"
-    assert "max_response_chars" in read_schema["properties"]["budget"]["properties"]
-    assert "max_total_response_tokens" in read_schema["properties"]["budget"]["properties"]
-    assert "max_total_response_chars" in read_schema["properties"]["budget"]["properties"]
-    assert "max_total_visual_pixels" in read_schema["properties"]["budget"]["properties"]
-    assert "max_visual_pixels_per_input" in read_schema["properties"]["budget"]["properties"]
-    assert "max_visual_clip_seconds" in read_schema["properties"]["budget"]["properties"]
-    assert "max_total_visual_clip_seconds" in read_schema["properties"]["budget"]["properties"]
-    assert "max_work_seconds" in read_schema["properties"]["budget"]["properties"]
-    assert "max_expansion_rounds" in read_schema["properties"]["budget"]["properties"]
-    assert "max_optional_model_calls" in read_schema["properties"]["budget"]["properties"]
-    image_capability = read_schema["properties"]["host_capabilities"]["properties"]["image_input"]
-    assert image_capability["enum"] == ["none", "local_file", "uri", "inline"]
-    video_capability = read_schema["properties"]["host_capabilities"]["properties"]["video_input"]
-    assert video_capability["enum"] == ["none", "native", "frames"]
-    scope = read_schema["properties"]["scope"]["properties"]
-    assert scope["kind"]["enum"] == ["current_resource", "range", "collection"]
-    assert "include_visual" in scope
-    assert "start_seconds" in scope
-    assert "end_seconds" in scope
-    assert "locator" in scope
-    assert "follow_links" in scope
-    assert "max_items" in scope
-    assert "max_depth" in scope
+    # The declaration is part of every request prefix, so it carries only what a
+    # caller must send. Plumbing and advanced blocks are filled server-side;
+    # they stay accepted but are no longer declared.
+    assert len(json.dumps(read_schema)) < 900
+    assert read_schema["required"] == ["source", "goal"]
     assert "video" in read_schema["properties"]["source"]["properties"]["kind"]["enum"]
-    assert "raw_media" in read_schema["properties"]["retention"]["properties"]
-    host = read_schema["properties"]["host_capabilities"]["properties"]
-    assert host["image_input"]["enum"] == ["none", "local_file", "uri", "inline"]
-    assert "tool_execution" in host
-    assert "usage_reporting" in host
-    assert "async_execution" in host
-    assert host["usage_reporting"]["enum"] == ["actual", "estimated", "unknown"]
-    retention = read_schema["properties"]["retention"]
-    assert retention["additionalProperties"] is False
-    assert retention["properties"]["raw_media"]["enum"] == [
-        "ephemeral",
-        "session",
-        "persistent",
-    ]
+    assert "start_seconds" in read_schema["properties"]
+    assert "end_seconds" in read_schema["properties"]
+    assert "include_visual" in read_schema["properties"]
+    for undeclared in (
+        "idempotency_key",
+        "protocol_version",
+        "request_id",
+        "session_id",
+        "budget",
+        "retention",
+        "host_capabilities",
+        "ocr_language",
+        "scope",
+    ):
+        assert undeclared not in read_schema["properties"]
+    declared_bytes = len(json.dumps(first["result"]["tools"], ensure_ascii=False).encode())
+    assert declared_bytes < 23_000
     descriptions = {tool["name"]: tool["description"] for tool in first["result"]["tools"]}
     assert "stated goal" in descriptions["envoy_read"].lower()
     assert "coverage" in descriptions["envoy_expand"].lower()
@@ -1161,3 +1140,105 @@ def test_mcp_bridge_negotiates_older_supported_legacy_version(capsys):
     response = json.loads(capsys.readouterr().out)
 
     assert response["result"]["protocolVersion"] == "2025-03-26"
+
+
+def test_mcp_bridge_compact_arguments_are_completed_server_side(monkeypatch, capsys):
+    """A declaration-only call must reach the handler without plumbing fields."""
+
+    from envoy_cli import mcp, reader
+
+    html = "<html><head><title>Guide</title></head><body><p>Use a dedicated worker.</p></body></html>"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None: ("https://example.org/", html))
+    metadata = {
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+    }
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "compact-read",
+        "method": "tools/call",
+        "params": {
+            **metadata,
+            "name": "envoy_read",
+            "arguments": {
+                "source": {"url": "https://example.org/"},
+                "goal": "find the deployment guidance",
+                "start_seconds": 0,
+                "end_seconds": 30,
+            },
+        },
+    }])
+    response = json.loads(capsys.readouterr().out)
+
+    assert response["result"]["isError"] is False
+    assert response["result"]["structuredContent"]["result"] == "ready"
+
+
+def test_mcp_bridge_flattened_range_becomes_a_scope(monkeypatch):
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    prepared = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.org/"},
+            "goal": "g",
+            "start_seconds": 10,
+            "end_seconds": 60,
+            "include_visual": True,
+        },
+    )
+    request = ReadRequest.model_validate(prepared)
+    assert request.scope.kind == "range"
+    assert request.scope.start_seconds == 10
+    assert request.scope.end_seconds == 60
+    assert request.scope.include_visual is True
+    # The envelope is server-owned and unique per call.
+    assert prepared["request_id"].startswith("mcp-")
+    assert mcp._server_arguments("envoy_read", {"source": {"url": "u"}, "goal": "g"})["request_id"] != prepared["request_id"]
+
+
+def test_mcp_bridge_explicit_scope_and_budget_win_over_defaults(monkeypatch):
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    prepared = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.org/"},
+            "goal": "g",
+            "scope": {"kind": "range", "start_seconds": 5, "end_seconds": 15},
+            "budget": {"max_response_chars": 20_000},
+            "session_id": "session-a",
+            "request_id": "caller-chosen",
+        },
+    )
+    request = ReadRequest.model_validate(prepared)
+    assert request.scope.start_seconds == 5
+    assert request.budget.max_response_chars == 20_000
+    assert request.session_id == "session-a"
+    assert request.request_id == "caller-chosen"
+
+
+def test_mcp_bridge_undeclared_advanced_blocks_are_still_accepted():
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import (
+        MaterialSearchRequest,
+        VisualObservationHistoryRequest,
+    )
+
+    material_id = "mat-" + "a" * 24
+    model = MaterialSearchRequest
+    model.model_validate(
+        mcp._server_arguments("envoy_search", {"material_id": material_id, "query": "q"})
+    )
+    VisualObservationHistoryRequest.model_validate(
+        mcp._server_arguments("envoy_visual_history", {"material_id": material_id})
+    )
+    schema = next(
+        tool for tool in mcp.tools_for_toolset("core") if tool["name"] == "envoy_search"
+    )["inputSchema"]
+    assert schema["required"] == ["material_id", "query"]

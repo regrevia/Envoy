@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-cli" / "src"))
 
 from envoy_cli import ocr, reader  # noqa: E402
 from envoy_core.schemas.read_v1 import ReadRequest  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -820,18 +821,31 @@ def test_read_request_rejects_unknown_ocr_backend():
         })
 
 
-def test_mcp_envoy_read_schema_exposes_ocr_backend():
+def test_mcp_envoy_read_accepts_ocr_backend_without_declaring_it():
+    """OCR backend stays accepted; the declaration omits it to save prefix bytes."""
+
     from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ReadRequest
 
     tool = next(item for item in mcp.TOOLS if item["name"] == "envoy_read")
-    schema = tool["inputSchema"]["properties"]["ocr_backend"]
+    assert "ocr_backend" not in tool["inputSchema"]["properties"]
 
-    assert schema["enum"] == [
-        "auto",
-        "vision",
-        "paddleocr",
-        "rapidocr",
-        "tesseract",
-        None,
-    ]
-    assert "auto" in schema["description"]
+    prepared = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.org/image.jpg", "kind": "image"},
+            "goal": "read the image",
+            "ocr_backend": "vision",
+        },
+    )
+    assert ReadRequest.model_validate(prepared).ocr_backend == "vision"
+
+    with pytest.raises(ValidationError):
+        ReadRequest.model_validate(mcp._server_arguments(
+            "envoy_read",
+            {
+                "source": {"url": "https://example.org/image.jpg", "kind": "image"},
+                "goal": "read the image",
+                "ocr_backend": "easyocr",
+            },
+        ))

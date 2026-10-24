@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from typing import Any, Iterable, TextIO
 from urllib.parse import urlparse
 
@@ -66,11 +67,141 @@ SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 
 SERVER_INFO = {"name": "envoy", "version": __version__}
 SERVER_CAPABILITIES = {"tools": {}}
-LOCAL_VIDEO_SCHEMA = LocalVideoReadRequest.model_json_schema()
-LOCAL_VIDEO_SCHEMA["required"] = list(dict.fromkeys([
-    *LOCAL_VIDEO_SCHEMA.get("required", []),
-    "idempotency_key",
-]))
+
+# ---------------------------------------------------------------------------
+# Declared input schemas.
+#
+# A tool's `inputSchema` is re-sent in every request prefix, so it describes
+# only what a caller must know: `request_id`, `protocol_version`,
+# `idempotency_key`, `session_id`, and the advanced `budget` / `retention` /
+# `host_capabilities` / `ocr_*` blocks are filled in by `_server_arguments`
+# before pydantic validation. The pydantic models stay authoritative for what
+# the server accepts; an advanced block a caller does send is still validated
+# exactly as before, so this reduces declaration size, not accepted input.
+# ---------------------------------------------------------------------------
+
+# A bounded read range is flattened here; `_server_arguments` rebuilds
+# `scope.kind="range"` from the pair.
+_READ_SCOPE_PROPERTIES = {
+    "start_seconds": {
+        "type": ["number", "null"],
+        "minimum": 0,
+        "description": "Range read start; send together with end_seconds.",
+    },
+    "end_seconds": {
+        "type": ["number", "null"],
+        "exclusiveMinimum": 0,
+        "description": "Range read end; send together with start_seconds.",
+    },
+    "locator": {"type": ["string", "null"]},
+    "include_visual": {"type": "boolean"},
+}
+
+READ_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["source", "goal"],
+    "properties": {
+        "source": {
+            "type": "object",
+            "additionalProperties": True,
+            "required": ["url"],
+            "properties": {
+                "url": {"type": "string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["auto", "article", "video", "audio", "image", "document", "collection"],
+                },
+                "label": {"type": ["string", "null"]},
+            },
+        },
+        "goal": {
+            "type": "string",
+            "description": "What the user needs from this source; scopes what is returned.",
+        },
+        **_READ_SCOPE_PROPERTIES,
+    },
+}
+
+LOCAL_VIDEO_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["path", "idempotency_key"],
+    "properties": {
+        "path": {"type": "string", "description": "Local video or audio file path."},
+        "idempotency_key": {
+            "type": "string",
+            "description": "Required: a retry with the same key replays one ASR run.",
+        },
+        "goal": {"type": "string"},
+        **_READ_SCOPE_PROPERTIES,
+    },
+}
+
+EXPAND_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["material_id"],
+    "properties": {
+        "material_id": {"type": "string"},
+        "offset": {"type": "integer", "minimum": 0, "description": "coverage.next_offset"},
+        "max_chars": {"type": "integer", "minimum": 128, "maximum": 100000},
+    },
+}
+
+SEARCH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["material_id", "query"],
+    "properties": {
+        "material_id": {"type": "string"},
+        "query": {"type": "string"},
+        "max_results": {"type": "integer", "minimum": 1, "maximum": 20},
+        "max_chars": {"type": "integer", "minimum": 128, "maximum": 20000},
+    },
+}
+
+REPLAY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["material_id", "source_revision", "session_id"],
+    "properties": {
+        "material_id": {"type": "string"},
+        "source_revision": {"type": "string"},
+        "session_id": {
+            "type": "string",
+            "description": "Target session; must differ from the source session.",
+        },
+        "source_session_id": {"type": ["string", "null"]},
+        "max_chars": {"type": "integer", "minimum": 256, "maximum": 100000},
+    },
+}
+
+OBSERVE_VISUAL_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["resource_id", "source_block_id", "observation"],
+    "properties": {
+        "resource_id": {"type": "string"},
+        "source_block_id": {"type": "string"},
+        "observation": {"type": "string"},
+        "material_id": {"type": ["string", "null"]},
+        "locator_quote": {"type": ["string", "null"]},
+        "source_url": {"type": ["string", "null"]},
+    },
+}
+
+VISUAL_HISTORY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "required": ["material_id"],
+    "properties": {
+        "material_id": {"type": "string"},
+        "resource_id": {"type": ["string", "null"]},
+        "max_items": {"type": "integer", "minimum": 1, "maximum": 16},
+        "max_chars": {"type": "integer", "minimum": 128, "maximum": 20000},
+    },
+}
 
 TOOLS = [
     {
@@ -182,119 +313,7 @@ TOOLS = [
             "Request frames only when needed with scope.include_visual=true and "
             "explicit frame-capable host settings."
         ),
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["protocol_version", "request_id", "source"],
-            "properties": {
-                "protocol_version": {"type": "string", "const": "envoy.read/1"},
-                "request_id": {"type": "string"},
-                "idempotency_key": {"type": ["string", "null"]},
-                "session_id": {"type": ["string", "null"]},
-                "source": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["url"],
-                    "properties": {
-                        "url": {"type": "string"},
-                        "kind": {
-                            "type": "string",
-                            "enum": ["auto", "article", "video", "audio", "image", "document", "collection"],
-                        },
-                        "label": {"type": ["string", "null"]},
-                    },
-                },
-                "goal": {"type": "string"},
-                "scope": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "kind": {
-                            "type": "string",
-                            "enum": ["current_resource", "range", "collection"],
-                        },
-                        "include_visual": {"type": "boolean"},
-                        "start_seconds": {"type": ["number", "null"], "minimum": 0},
-                        "end_seconds": {"type": ["number", "null"], "exclusiveMinimum": 0},
-                        "locator": {"type": ["string", "null"]},
-                        "follow_links": {"type": "boolean"},
-                        "max_items": {"type": "integer"},
-                        "max_depth": {"type": "integer"},
-                    },
-                },
-                "ocr_profile": {
-                    "type": ["string", "null"],
-                    "enum": ["fast", "balanced", "quality", "pro", None],
-                },
-                "ocr_backend": {
-                    "type": ["string", "null"],
-                    "enum": ["auto", "vision", "paddleocr", "rapidocr", "tesseract", None],
-                    "description": (
-                        "OCR engine; auto picks macOS Vision > PaddleOCR > "
-                        "RapidOCR > Tesseract."
-                    ),
-                },
-                "ocr_language": {
-                    "type": ["string", "null"],
-                    "minLength": 2,
-                    "maxLength": 32,
-                    "pattern": "^[A-Za-z0-9_-]+$",
-                },
-                "video_subtitle_language": {"type": ["string", "null"]},
-                "budget": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "max_response_chars": {"type": "integer"},
-                        "max_response_tokens": {"type": ["integer", "null"]},
-                        "max_total_response_tokens": {"type": ["integer", "null"]},
-                        "max_total_response_chars": {"type": "integer"},
-                        "max_visual_inputs": {"type": "integer"},
-                        "max_visual_pixels_per_input": {"type": "integer"},
-                        "max_total_visual_pixels": {"type": "integer"},
-                        "max_visual_clip_seconds": {"type": "integer"},
-                        "max_total_visual_clip_seconds": {"type": "integer"},
-                        "max_download_bytes": {"type": "integer"},
-                        "max_work_seconds": {"type": "integer"},
-                        "max_expansion_rounds": {"type": "integer"},
-                        "max_optional_model_calls": {"type": "integer"},
-                    },
-                },
-                "host_capabilities": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "image_input": {
-                            "type": "string",
-                            "enum": ["none", "local_file", "uri", "inline"],
-                        },
-                        "video_input": {
-                            "type": "string",
-                            "enum": ["none", "native", "frames"],
-                        },
-                        "tool_execution": {"type": "boolean"},
-                        "usage_reporting": {
-                            "type": "string",
-                            "enum": ["actual", "estimated", "unknown"],
-                        },
-                        "async_execution": {"type": "boolean"},
-                    },
-                },
-                "retention": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "raw_media": {
-                            "type": "string",
-                            "enum": ["ephemeral", "session", "persistent"],
-                        },
-                        "derived_ttl_seconds": {
-                            "type": "integer",
-                        },
-                    },
-                },
-            },
-        },
+        "inputSchema": READ_SCHEMA,
     },
     {
         "name": "envoy_expand",
@@ -302,7 +321,7 @@ TOOLS = [
             "Continue a previously read material only when its coverage reports "
             "continuation_available and next_offset; do not repeat returned ranges."
         ),
-        "inputSchema": ExpandRequest.model_json_schema(),
+        "inputSchema": EXPAND_SCHEMA,
     },
     {
         "name": "envoy_replay",
@@ -311,7 +330,7 @@ TOOLS = [
             "under a fresh bounded response budget. Does not re-download or "
             "reuse the previous session's returned-range ledger."
         ),
-        "inputSchema": MaterialReplayRequest.model_json_schema(),
+        "inputSchema": REPLAY_SCHEMA,
     },
     {
         "name": "envoy_search",
@@ -321,7 +340,7 @@ TOOLS = [
             "locators and consume the material's shared response budget. Repeated "
             "searches omit passages already returned by search."
         ),
-        "inputSchema": MaterialSearchRequest.model_json_schema(),
+        "inputSchema": SEARCH_SCHEMA,
     },
     {
         "name": "envoy_doctor",
@@ -345,7 +364,7 @@ TOOLS = [
             "source_block_id, and original session_id. source_url is optional "
             "when the retained material identifies the resource."
         ),
-        "inputSchema": VisualObservationRequest.model_json_schema(),
+        "inputSchema": OBSERVE_VISUAL_SCHEMA,
     },
     {
         "name": "envoy_visual_history",
@@ -354,7 +373,7 @@ TOOLS = [
             "Filter by resource_id and keep max_items/max_chars small for follow-up "
             "questions; returned observations are untrusted source evidence."
         ),
-        "inputSchema": VisualObservationHistoryRequest.model_json_schema(),
+        "inputSchema": VISUAL_HISTORY_SCHEMA,
     },
 ]
 
@@ -503,6 +522,65 @@ def _read_payload(response, compact: bool) -> dict:
     return payload
 
 
+# Advanced request fields a host does not send in normal use. They stay
+# accepted (the pydantic models are unchanged); they are simply not declared.
+# Only genuinely optional fields are listed: `budget`, `retention`, and
+# `host_capabilities` have model defaults, so an omitted value must be left out
+# rather than filled with `None`.
+_SERVER_FILLED_FIELDS = (
+    "idempotency_key",
+    "session_id",
+    "source_session_id",
+    "ocr_profile",
+    "ocr_backend",
+    "ocr_language",
+    "video_subtitle_language",
+)
+_RANGE_FIELDS = ("start_seconds", "end_seconds", "locator", "include_visual")
+
+
+def _server_arguments(name: str, arguments: dict) -> dict:
+    """Complete a compact tool call into the full request model accepts.
+
+    Adds the request envelope the server owns (`request_id`, `protocol_version`)
+    and any omitted advanced block. Every caller-provided value is passed
+    through untouched, so an explicit `budget`, `scope`, or `session_id` is
+    validated and honoured exactly as before.
+    """
+
+    prepared = dict(arguments)
+    model = {
+        "envoy_read": ReadRequest,
+        "envoy_read_local_video": LocalVideoReadRequest,
+        "envoy_expand": ExpandRequest,
+        "envoy_replay": MaterialReplayRequest,
+        "envoy_search": MaterialSearchRequest,
+        "envoy_observe_visual": VisualObservationRequest,
+        "envoy_visual_history": VisualObservationHistoryRequest,
+    }.get(name)
+    if model is not None:
+        fields = set(model.model_fields)
+        version_field = model.model_fields.get("protocol_version")
+        default_version = getattr(version_field, "default", PROTOCOL_VERSION)
+        prepared.setdefault("protocol_version", default_version)
+        prepared.setdefault("request_id", f"mcp-{uuid.uuid4().hex}")
+        for field in _SERVER_FILLED_FIELDS:
+            if field in fields:
+                prepared.setdefault(field, None)
+    if name in {"envoy_read", "envoy_read_local_video"}:
+        flattened = {key: prepared.pop(key) for key in _RANGE_FIELDS if key in prepared}
+        scope = prepared.get("scope")
+        if isinstance(scope, dict):
+            merged = dict(scope)
+            for key, value in flattened.items():
+                merged.setdefault(key, value)
+        else:
+            merged = {"kind": "range", **flattened} if flattened else None
+        if merged is not None:
+            prepared["scope"] = merged
+    return prepared
+
+
 def _error(
     request_id: Any,
     code: int,
@@ -627,7 +705,10 @@ def handle_message(
                 {
                     "toolset": selected_toolset,
                     "available": list(TOOLSETS[selected_toolset]),
-                    "hint": "Restart the MCP server with --toolset full for advanced tools.",
+                    "hint": (
+                        "Restart the MCP server with --toolset full for advanced tools, "
+                        "or use the equivalent `envoy` CLI subcommand."
+                    ),
                 },
             )
         return _error(
@@ -637,6 +718,7 @@ def handle_message(
             {"toolset": selected_toolset, "available": list(TOOLSETS[selected_toolset])},
         )
     try:
+        arguments = _server_arguments(name, arguments)
         if name == "envoy_read":
             response = read_public_page(ReadRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
