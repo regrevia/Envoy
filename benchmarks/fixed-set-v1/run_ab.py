@@ -164,14 +164,28 @@ def prepare_profile(
         (profile / "home" / ".envoy").mkdir(parents=True, exist_ok=True)
         shutil.copy2(envoy_home / "asr.json", profile / "home" / ".envoy" / "asr.json")
     write_settings(profile, gateway, with_envoy=(arm == "envoy"))
-    installed = arm == "envoy" and any(
-        "envoy@envoy" in path.read_text(encoding="utf-8", errors="ignore")
-        for path in (profile / "claude-config").rglob("*")
-        if path.is_file() and path.stat().st_size < 2_000_000
-    )
-    if arm == "envoy" and not installed:
+    if arm == "envoy" and not plugin_installed(profile):
         install_envoy(profile, token, gateway)
     return profile
+
+
+def plugin_installed(profile: Path) -> bool:
+    """True only when Claude Code recorded an installation, not when the
+    settings merely enable the plugin.
+
+    The previous check scanned every config file for the string "envoy@envoy",
+    which settings.json itself always contains, so install_envoy never ran and
+    the envoy arm silently had no MCP tools.
+    """
+    record = profile / "claude-config" / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    plugins = data.get("plugins")
+    if not isinstance(plugins, dict):
+        return False
+    return any("envoy" in str(key) for key in plugins)
 
 
 def verify_isolation(profile: Path, arm: str) -> None:
@@ -198,11 +212,9 @@ def verify_isolation(profile: Path, arm: str) -> None:
         if (profile / "home" / ".envoy").exists():
             raise SystemExit(f"arm isolation broken: {arm} profile has an envoy home")
     else:
-        if "envoy@envoy" not in text and not any(
-            "envoy" in str(path).lower() for path in config.rglob("*")
-        ):
+        if not plugin_installed(profile):
             raise SystemExit(
-                f"arm isolation broken: envoy profile is missing the plugin in {profile}"
+                f"arm isolation broken: envoy profile has no installed plugin in {profile}"
             )
 
 
@@ -213,7 +225,9 @@ download the media yourself and inspect it (extract frames to look at, pull the
 audio track to transcribe) if that is how you would answer without a reader."""
 
 
-def turn_prompt(draft: dict, role: str, arm: str) -> str:
+def turn_prompt(draft: dict, role: str, arm: str = "") -> str:
+    # The arm only adds the ffmpeg hint; telemetry and review tooling fingerprint
+    # the shared prompt text and call this without an arm.
     urls = [revision["url"] for revision in draft["source_revisions"].values()]
     text = next(turn["text"] for turn in draft["turns"] if turn["turn_id"] == role)
     body = f"{text}\n\nDeliverable: {draft['deliverable']}\n\nSources:\n" + "\n".join(
