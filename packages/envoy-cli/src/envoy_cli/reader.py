@@ -925,18 +925,28 @@ def _http_media_candidates(values: list[str] | None) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
+def _is_cover_preview_media_url(url: str) -> bool:
+    """True for the feed's static cover-preview stack, not a title source."""
+
+    from .browser import _is_preview_media_url
+
+    return _is_preview_media_url(url)
+
+
 _PAGE_MEDIA_PROBE_BYTES = 64 * 1024
 
 
 def _probe_page_media(
     url: str,
     dns_cache: dict[str, bool],
-) -> tuple[str, str] | None:
+) -> tuple[str, str, int] | None:
     """Fingerprint the first bytes of a page media URL.
 
     Mirrors of one file share the digest even when their signed query strings
     differ, which is what makes it safe to keep the first source of a player
-    instead of discarding every candidate as ambiguous.
+    instead of discarding every candidate as ambiguous. The reported length is
+    the full resource size, so a 200 KB teaser clip cannot outrank the real
+    multi-minute player source.
     """
 
     if not _is_public_http_url(url, dns_cache):
@@ -957,6 +967,10 @@ def _probe_page_media(
                     if response.status_code >= 400:
                         return None
                     content_type = str(response.headers.get("content-type") or "").lower()
+                    content_length = _page_media_total_bytes(
+                        response.headers.get("content-range"),
+                        response.headers.get("content-length"),
+                    )
                     digest = hashlib.sha256()
                     remaining = _PAGE_MEDIA_PROBE_BYTES
                     for chunk in response.iter_bytes():
@@ -966,10 +980,54 @@ def _probe_page_media(
                         remaining -= min(len(chunk), remaining)
                         if remaining <= 0:
                             break
-                    return digest.hexdigest(), content_type
+                    return digest.hexdigest(), content_type, content_length
         except (httpx.TimeoutException, httpx.TransportError):
             continue
     return None
+
+
+def _page_media_total_bytes(content_range: str | None, content_length: str | None) -> int:
+    """Full media size, preferring the range total over the partial chunk size."""
+
+    total = str(content_range or "").rpartition("/")[2].strip()
+    for value in (total, content_length):
+        try:
+            size = int(str(value or "").strip())
+        except (TypeError, ValueError):
+            continue
+        if size > 0:
+            return size
+    return 0
+
+
+def _rank_page_media_urls(
+    candidates: list[str],
+    dns_cache: dict[str, bool],
+) -> list[str]:
+    """Order player sources from the largest file down.
+
+    One player publishes the same title through several signed URLs (mirror
+    CDNs, an ``aweme/v1/play`` redirect), and a feed page sometimes binds a
+    short teaser clip beside it. Grouping mirrors by content digest keeps one
+    entry per file; ordering groups by size keeps a 200 KB cover teaser from
+    standing in for the real title when both are exposed.
+    """
+
+    groups: dict[str, dict] = {}
+    unprobed: list[str] = []
+    for url in candidates[:5]:
+        identity = _probe_page_media(url, dns_cache)
+        if identity is None:
+            unprobed.append(url)
+            continue
+        digest, _content_type, size = identity
+        group = groups.setdefault(digest, {"urls": [], "bytes": 0})
+        group["urls"].append(url)
+        group["bytes"] = max(int(group["bytes"]), int(size))
+    ordered: list[str] = []
+    for group in sorted(groups.values(), key=lambda item: -int(item["bytes"])):
+        ordered.extend(group["urls"])
+    return list(dict.fromkeys([*ordered, *unprobed]))
 
 
 def _choose_page_media_url(
@@ -978,24 +1036,10 @@ def _choose_page_media_url(
 ) -> tuple[str | None, int]:
     """Choose one player source, grouping mirrors of the same file together."""
 
-    groups: dict[str, list[str]] = {}
-    unprobed: list[str] = []
-    for url in candidates[:5]:
-        identity = _probe_page_media(url, dns_cache)
-        if identity is None:
-            unprobed.append(url)
-            continue
-        groups.setdefault(identity[0], []).append(url)
-    if groups:
-        first_group = next(
-            (members for url in candidates for members in groups.values() if url in members),
-            None,
-        )
-        if first_group:
-            return first_group[0], len(groups)
-    if unprobed:
-        return unprobed[0], 0
-    return None, len(groups)
+    ranked = _rank_page_media_urls(candidates, dns_cache)
+    if not ranked:
+        return None, 0
+    return ranked[0], len(ranked)
 
 
 def _select_browser_video_url(
@@ -1101,19 +1145,24 @@ def _attach_browser_video_evidence(
     # captured responses are diagnostics and may belong to other clips. The
     # page player also publishes undownloadable player internals (`blob:` MSE
     # sources), which must not compete with the signed URL beside them.
-    eligible_urls = _http_media_candidates(bound_media_urls)
+    bound_urls = _http_media_candidates(bound_media_urls)
+    # A cover teaser is a legal HTTPS player source, so no scheme or host rule
+    # rejects it, and autoplay makes it look loaded. Dropping it means a player
+    # that never mounted reports the login wall instead of publishing a 2.6 s
+    # silent preview as the post.
+    eligible_urls = [url for url in bound_urls if not _is_cover_preview_media_url(url)]
+    preview_only = bool(bound_urls) and not eligible_urls
+    # A cover teaser clip and the real title both bind to the page player, so
+    # DOM order decides nothing here; the file size does. Mirrors of one file
+    # collapse into one entry before the order is taken.
+    ranked_urls = _rank_page_media_urls(eligible_urls, {})
     selected_url = None
     rejected_count = 0
-    if len(eligible_urls) == 1:
-        selected_url, rejected_count = _select_browser_video_url(eligible_urls, {})
-    elif len(eligible_urls) > 1:
-        # A player publishes alternatives for the same title (mirror CDNs, an
-        # `aweme/v1/play` redirect): one file, several signed URLs.
-        chosen_url, _distinct = _choose_page_media_url(eligible_urls, {})
-        if chosen_url:
-            selected_url, rejected_count = _select_browser_video_url([chosen_url], {})
-        else:
-            rejected_count = len(eligible_urls)
+    if ranked_urls:
+        selected_url, rejected_count = _select_browser_video_url([ranked_urls[0]], {})
+        if selected_url is None:
+            rejected_count = max(rejected_count, len(ranked_urls))
+    player_bound = bool(selected_url)
     video_coverage = response.coverage.modalities.get("video") or CoverageItem(
         discovered=1,
         extraction="partial",
@@ -1131,11 +1180,25 @@ def _attach_browser_video_evidence(
         if item not in obsolete_video_gaps
     ]
     if selected_url is None:
-        reason = (
-            "Browser media URLs were private, malformed, or otherwise unsafe for local processing"
-            if rejected_count
-            else "Browser media could not be associated with the requested post because no unique page video URL was exposed"
-        )
+        if not eligible_urls:
+            # The player stayed unbound: a login or verification wall is the
+            # usual reason on feed pages, and it needs a cookie or a one-time
+            # sign-in rather than another silent attempt.
+            reason = (
+                "The page player bound no downloadable source; a login or verification "
+                "wall can keep it from mounting, so retry after importing browser cookies "
+                "or signing in through a visible browser"
+            )
+        elif rejected_count:
+            reason = (
+                "Browser media URLs were private, malformed, or otherwise unsafe "
+                "for local processing"
+            )
+        else:
+            reason = (
+                "Browser media could not be associated with the requested post "
+                "because no unique page video URL was exposed"
+            )
         video_coverage = video_coverage.model_copy(update={
             "discovered": max(int(video_coverage.discovered or 0), 1),
             "extraction": "partial",
@@ -1144,6 +1207,13 @@ def _attach_browser_video_evidence(
                 **video_coverage.details,
                 "browser_media_candidates": len(media_urls),
                 "rejected_media_candidates": rejected_count,
+                "page_player_bound": player_bound,
+                "browser_media_preview_only": preview_only,
+                "needs_user_action": (
+                    _login_user_action(source_url)
+                    if not eligible_urls
+                    else None
+                ),
                 "transcript_source": "unavailable",
                 "visual_inspection": "not_performed",
             },
@@ -6413,6 +6483,38 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
         )
 
 
+def _login_user_action(source_url: str, kind: str = "login_or_verification") -> dict:
+    """The exact choices to hand a user when a page needs their identity.
+
+    Envoy cannot sign in on the user's behalf, so the useful output is not
+    another error string: it is the two legitimate ways to supply a session,
+    each as a runnable command the model can offer.
+    """
+
+    return {
+        "kind": kind,
+        "host": urlparse(str(source_url or "")).hostname or "",
+        "question": (
+            "This page needs a signed-in session or a verification step before "
+            "its player exposes the real source. Import cookies from a local "
+            "browser, or sign in once in a visible window?"
+        ),
+        "options": [
+            {
+                "action": "import_cookies",
+                "sources": ["chrome", "edge", "safari"],
+                "command": "envoy auth import --from chrome",
+                "effect": "Copies that browser's cookies into Envoy's isolated profile",
+            },
+            {
+                "action": "visible_login",
+                "command": "ENVOY_VISIBLE_BROWSER=1 envoy read --request-json <request>",
+                "effect": "Opens a window for one manual sign-in and keeps the session",
+            },
+        ],
+    }
+
+
 def _blocked(
     request: ReadRequest,
     code: ErrorCode,
@@ -6420,6 +6522,9 @@ def _blocked(
     action_required: bool = False,
     details: dict | None = None,
 ) -> ReadResponse:
+    payload = dict(details or {})
+    if action_required and code in {ErrorCode.CHALLENGE_REQUIRED, ErrorCode.AUTH_REQUIRED}:
+        payload.setdefault("needs_user_action", _login_user_action(str(request.source.url)))
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
@@ -6431,7 +6536,7 @@ def _blocked(
                 message=message,
                 retryable=code == ErrorCode.NETWORK_ERROR,
                 action_required=action_required,
-                details=details or {},
+                details=payload,
             )
         ],
     )

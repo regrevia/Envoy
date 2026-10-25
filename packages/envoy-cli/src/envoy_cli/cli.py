@@ -197,6 +197,32 @@ def _parser() -> argparse.ArgumentParser:
     )
     cache_prune.add_argument("--dry-run", action="store_true", help="report without deleting")
     cache_prune.add_argument("--json", action="store_true")
+    auth = subparsers.add_parser(
+        "auth",
+        help="copy a local browser's session for a site that hides content behind a login",
+    )
+    auth_commands = auth.add_subparsers(dest="auth_command", required=True)
+    auth_import = auth_commands.add_parser(
+        "import",
+        help="copy cookies for one domain from a local browser",
+    )
+    auth_import.add_argument(
+        "--from",
+        dest="source",
+        required=True,
+        choices=("chrome", "edge", "brave", "vivaldi", "chromium", "safari"),
+    )
+    auth_import.add_argument(
+        "--domain",
+        action="append",
+        default=[],
+        help="domain to copy, repeatable (for example douyin.com)",
+    )
+    auth_import.add_argument("--url", default=None, help="copy cookies for this link's site")
+    auth_import.add_argument("--json", action="store_true")
+    auth_status = auth_commands.add_parser("status", help="report imported cookies")
+    auth_status.add_argument("--json", action="store_true")
+    auth_commands.add_parser("clear", help="delete imported cookies")
     mcp_parser = subparsers.add_parser("mcp", help="run the stdio MCP bridge")
     mcp_parser.add_argument(
         "--toolset",
@@ -209,6 +235,40 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def _run_auth(args) -> int:
+    from . import cookies as cookie_store
+
+    if args.auth_command == "import":
+        try:
+            report = cookie_store.import_cookies(args.source, args.domain, args.url)
+        except cookie_store.CookieImportError as exc:
+            print(f"envoy auth import: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Imported {report['imported']} cookies for "
+                f"{', '.join(report['domains'])} from {report['source']}"
+            )
+        return 0
+    if args.auth_command == "status":
+        report = cookie_store.cookies_status()
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif not report.get("imported"):
+            print("No imported cookies. Run `envoy auth import --from chrome --domain <site>`.")
+        else:
+            print(
+                f"{report['imported']} cookies for {', '.join(report['domains'] or [])} "
+                f"from {report['source']}, imported {report['imported_at']}"
+            )
+        return 0
+    removed = cookie_store.clear_imported_cookies()
+    print("Deleted imported cookies" if removed else "No imported cookies to delete")
+    return 0
 
 
 def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
@@ -358,6 +418,8 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         else:
             print(cache_storage.render_prune(report))
         return 0
+    if args.command == "auth":
+        return _run_auth(args)
     if args.command == "browser":
         return browser_runtime.setup_browser()
     if args.command == "mcp":
