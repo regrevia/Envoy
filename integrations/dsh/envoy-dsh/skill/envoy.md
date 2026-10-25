@@ -199,6 +199,12 @@ material or report that evidence expired and needs reacquisition. Process only
 selected unfinished items and preserve successful items if another item is
 blocked.
 
+Before reading anything, check what is already available: if this session
+already holds a `material_id` for the source, continue from it with
+`mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search` or `mcp__envoy__envoy_replay`
+instead of reading the URL again, and when context was lost or the work was
+interrupted, recover the material first rather than re-acquiring the source.
+
 Read each selected candidate through `mcp__envoy__envoy_read` using its canonical source
 URL and a goal scoped to the requested deliverable. For video, inspect the
 returned page summary, timed subtitles/ASR, and requested frames as distinct
@@ -551,8 +557,11 @@ proxy environment variables are honored.
 Install FFmpeg and FFprobe with the operating system's package manager if they
 are not already available.
 
-Model files are stored in the local Whisper cache. The ASR model is never sent
-to a provider. Temporary source media is discarded after transcription.
+Model files are not a per-task cache: speech and OCR weights are installed once
+into a shared model directory and reused by every later task, so a second run
+never downloads them again. Treat them as part of the installation, not as
+evidence. The ASR model is never sent to a provider. Temporary source media is
+discarded after transcription.
 
 Direct public image links are a conditional visual handoff: when the request
 declares URI image input, Envoy returns `needs_host` with an `inspect_visual`

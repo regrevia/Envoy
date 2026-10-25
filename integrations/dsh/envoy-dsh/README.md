@@ -28,20 +28,40 @@ The same Envoy skill ships for Codex and Claude Code; this package is the
 DeepSeek Harness build, and the deliverables are the same Markdown, wiki, or
 knowledge-base material on all three hosts.
 
+## Measured against reading the link without Envoy
+
+Same links, same model, 20 sources × 3 questions, 92 turns finished:
+
+| Metric | Without Envoy | With Envoy |
+| --- | ---: | ---: |
+| Answer quotes the source link | 24% | 42% |
+| Turn never reaches a source | 70% | 53% |
+| Empty answer | 4% | 0% |
+| Answer length, median | 3,978 chars | 6,996 chars |
+| First content reached, median | 90 s | 47 s |
+| Not finished in time | 66% | 36% |
+| Model usage on the same task | — | +80% |
+
+Envoy is slower on long video and uses more; both stay in the table. Time
+limits are 15 and 40 minutes, and a timed-out turn is not a failure. Sample is
+92 of 120 turns. Full data: [fixed evaluation set v1](../../../benchmarks/fixed-set-v1/README.md).
+
 ## Requirements
 
 - DeepSeek Harness Desktop with the Plugin Manager.
-- The Envoy CLI runtime, version `0.1.6` or a later compatible development
-  build. Follow [INSTALL.md](../../skills/envoy/INSTALL.md) for the wheel,
-  browser setup, and optional ASR/OCR dependencies.
-- `envoy` reachable from one of the PATH entries in the launcher, or an
-  absolute path configured as described below.
 - macOS or Linux. The patch uses `/bin/sh`; Windows users must replace the
   launcher with a PowerShell or `cmd.exe` equivalent.
 
-## Install
+Nothing else. The launcher uses an `envoy` already on PATH when there is one,
+and otherwise installs the pinned runtime wheel into
+`~/.local/share/envoy-dsh/runtime` on first use, with `uv` or with
+`python3 -m venv`. The one case it cannot cover is a machine that has neither
+`envoy` nor `uv` nor `python3`: the mount then fails with a single line telling
+the user to install `uv`. Browser profiles, ASR, and OCR stay optional and
+on-demand — see [INSTALL.md](../../skills/envoy/INSTALL.md) when a task needs
+them.
 
-Install the Envoy runtime first, then install this directory as a bundle:
+## Install
 
 ```text
 Plugin Manager → Install bundle → /absolute/path/to/Envoy/integrations/dsh/envoy-dsh
@@ -50,7 +70,9 @@ Plugin Manager → Install bundle → /absolute/path/to/Envoy/integrations/dsh/e
 From a DeepSeek Harness agent session, the equivalent action is
 `plugin_manager` with `action: install_bundle` and that absolute directory as
 `target`. The Plugin Manager performs package linking and patch composition;
-do not edit the profile's `package.json` or `cordis.patch.yml` by hand.
+do not edit the profile's `package.json` or `cordis.patch.yml` by hand. The
+runtime download happens on the first `envoy mcp` start, so the first link
+read after installing is slower than the rest.
 
 ## Which profile did it land in
 
@@ -82,20 +104,21 @@ when those are needed. Starting with
 `core` keeps the MCP tool declarations, which enter every request prefix, small
 for ordinary link reading. The choice is static for the process lifetime.
 
-## Launcher PATH
+## Runtime resolution
 
-The Harness GUI may not inherit a login shell's PATH, so the patch uses:
+The Harness GUI may not inherit a login shell's PATH, so the patch prepends the
+usual uv and Homebrew entries and then takes the first of these that answers:
 
-```sh
-/bin/sh -c 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; exec envoy mcp'
-```
+| Order | Source | When it applies |
+|---|---|---|
+| 1 | `ENVOY_BIN` | A pinned binary, including builds newer than the release wheel. |
+| 2 | `envoy` on PATH | `uv tool install`, Homebrew, or a manual install. |
+| 3 | `~/.local/share/envoy-dsh/runtime/bin/envoy` | Provisioned from the pinned release wheel on first start. |
 
-This covers `uv tool install` (`~/.local/bin`), Apple Silicon Homebrew
-(`/opt/homebrew/bin`), and Intel Homebrew or manual installs
-(`/usr/local/bin`). If `envoy` lives elsewhere, edit the `args` in
-`cordis.patch.yml` to use its absolute path, then reinstall or let the Plugin
-Manager reload the bundle. `toolCallTimeoutMs` is 300 seconds, above Envoy's
-default 180-second work budget.
+Set `ENVOY_DSH_VERSION` to provision another released version. To point the
+bridge at a source checkout or a development build, set `ENVOY_BIN` to its
+absolute path. `toolCallTimeoutMs` is 300 seconds, above Envoy's default
+180-second work budget.
 
 ## Verify
 
@@ -109,7 +132,7 @@ After installation, check that:
   restart with `ENVOY_MCP_TOOLSET=full` in the Harness environment.
 - The skill catalog contains `envoy`; loading it shows
   `# Envoy Link Reader in DeepSeek Harness` and `mcp__envoy__` tool names.
-- `envoy doctor --json` reports `0.1.6` and the expected capability catalog.
+- `envoy doctor --json` reports `0.1.8` and the expected capability catalog.
   When the bridge runs with `full`, `mcp__envoy__envoy_doctor` is equivalent.
 - On the **first step** of a turn that contains a public URL, the model sees one
   injected `[envoy-link-routing]` message. A linkless prompt, a follow-up step,

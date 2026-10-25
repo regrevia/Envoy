@@ -1,0 +1,804 @@
+{
+  "a_first_count": 10,
+  "b_first_count": 10,
+  "cache_isolation_evidence": "Every request in this run reports cache_read_input_tokens = 0 and cache_creation_input_tokens = 0, so no prompt cache hit contributed to any token count. cache_salt is unique per turn (not per request), which is why the plan no longer declares per_request_salt: the earlier declaration was factually wrong about the salt granularity.",
+  "cache_isolation_status": "verified_disabled",
+  "cache_policy": "caller must record disabled_or_isolated; otherwise cache-confounded",
+  "confirmatory_minimum_met": true,
+  "evaluation_profile": "fixed_confirmatory_20",
+  "package_count": 20,
+  "package_manifest_sha256": "ff0ae997d5915804997ab7ca0164a4cc27507a812b30fb13bd11460350fdf821",
+  "packages": [
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "wechat-01",
+      "profiles": {
+        "baseline": "profiles/pkg-0001-wechat-01/baseline",
+        "envoy": "profiles/pkg-0001-wechat-01/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 1,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-envoy-session"
+      },
+      "source_class": "wechat",
+      "source_ids": [
+        "wechat-01-wechat-params-basics",
+        "wechat-01-wechat-params-principles"
+      ],
+      "source_manifest_sha256": "d8643827f590caed87f8ee6cc5411e2cddbfa77428f5b29cfb79eb20b1b67208",
+      "task_manifest_id": "manifest-wechat-01",
+      "task_manifest_sha256": "aacf8d3be8e2225810e42efdbcbfa2d1a5c6aeb57a498be2f1c31d1ceba76785",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0001-wechat-01-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "bili-05",
+      "profiles": {
+        "baseline": "profiles/pkg-0002-bili-05/baseline",
+        "envoy": "profiles/pkg-0002-bili-05/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 2,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-envoy-session"
+      },
+      "source_class": "bilibili",
+      "source_ids": [
+        "bili-05-bili-video-a",
+        "bili-05-bili-video-b"
+      ],
+      "source_manifest_sha256": "0c37f1134b1034ae517a38557529fc069dc0a03740375a7aab4ebf22dd7b5be9",
+      "task_manifest_id": "manifest-bili-05",
+      "task_manifest_sha256": "19881bbd98661aebc2e5f04497144538abe0128da7a1e0b8b59c1c25ad8f3985",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0002-bili-05-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "wechat-03",
+      "profiles": {
+        "baseline": "profiles/pkg-0003-wechat-03/baseline",
+        "envoy": "profiles/pkg-0003-wechat-03/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 3,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-envoy-session"
+      },
+      "source_class": "wechat",
+      "source_ids": [
+        "wechat-03-wechat-chatsql",
+        "wechat-03-wechat-agent-enterprise"
+      ],
+      "source_manifest_sha256": "ed56ac08cdc946f60e41636b324f46f6ea17c6e97e26128371b4b6cf0b2fe9e5",
+      "task_manifest_id": "manifest-wechat-03",
+      "task_manifest_sha256": "95f6ec568747ba9c5ae48a6b0b241df210cc1fa413e5e4d63deab623e2bc0d20",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0003-wechat-03-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "cross-05",
+      "profiles": {
+        "baseline": "profiles/pkg-0004-cross-05/baseline",
+        "envoy": "profiles/pkg-0004-cross-05/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 4,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-envoy-session"
+      },
+      "source_class": "cross_platform",
+      "source_ids": [
+        "cross-05-cross-05-bili",
+        "cross-05-cross-05-wechat"
+      ],
+      "source_manifest_sha256": "e2d8c74bcc90ad6106d12bc9a03b95ea89b8232172c066d03756d940b64bab66",
+      "task_manifest_id": "manifest-cross-05",
+      "task_manifest_sha256": "ab22ec1cae07c5bdd48909c8e31658ea94e4bf5b8e4d942205ba628b3a354716",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0004-cross-05-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "cross-04",
+      "profiles": {
+        "baseline": "profiles/pkg-0005-cross-04/baseline",
+        "envoy": "profiles/pkg-0005-cross-04/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 5,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-envoy-session"
+      },
+      "source_class": "cross_platform",
+      "source_ids": [
+        "cross-04-bili-llm-principles",
+        "cross-04-wechat-multimodal"
+      ],
+      "source_manifest_sha256": "8c9e79c2858a172d4ac322d1e4bee2b1ea9007d78154db039d761a98ed3670bf",
+      "task_manifest_id": "manifest-cross-04",
+      "task_manifest_sha256": "077cee05c60ad665fa9414ec2b1b65616e02ad97eabd80aae22fedfe2b74dddb",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0005-cross-04-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "wechat-04",
+      "profiles": {
+        "baseline": "profiles/pkg-0006-wechat-04/baseline",
+        "envoy": "profiles/pkg-0006-wechat-04/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 6,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-envoy-session"
+      },
+      "source_class": "wechat",
+      "source_ids": [
+        "wechat-04-wechat-agent-tooling",
+        "wechat-04-wechat-agent-frameworks"
+      ],
+      "source_manifest_sha256": "422d88fc335ec6934097539a1a5dd7bb98aab39ad01060f695c93c7ae5874d41",
+      "task_manifest_id": "manifest-wechat-04",
+      "task_manifest_sha256": "58bb0f1658c569d556a99305d3e6883580f1e56955428c7e6429a99e74bce138",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0006-wechat-04-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "bili-04",
+      "profiles": {
+        "baseline": "profiles/pkg-0007-bili-04/baseline",
+        "envoy": "profiles/pkg-0007-bili-04/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 7,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-envoy-session"
+      },
+      "source_class": "bilibili",
+      "source_ids": [
+        "bili-04-bili-video-a",
+        "bili-04-bili-video-b"
+      ],
+      "source_manifest_sha256": "2a9a31aa1ee539702cab0f01dce4f2d2dbc434859e8f653cd545b1065e34b3ec",
+      "task_manifest_id": "manifest-bili-04",
+      "task_manifest_sha256": "7183bc7e3cc524696bc72ceca63690320750d5dd964d3d7943be49bafeab6077",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0007-bili-04-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "douyin-02",
+      "profiles": {
+        "baseline": "profiles/pkg-0008-douyin-02/baseline",
+        "envoy": "profiles/pkg-0008-douyin-02/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 8,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-envoy-session"
+      },
+      "source_class": "douyin",
+      "source_ids": [
+        "douyin-02-douyin-float-python",
+        "douyin-02-douyin-ieee754-basics"
+      ],
+      "source_manifest_sha256": "017e6b5e0ea9a9b0124828432921506dfb5860c115792aa5d0ba0be4a4289317",
+      "task_manifest_id": "manifest-douyin-02",
+      "task_manifest_sha256": "0b8ee3141a15c11c21d87706c2d683990a1745d8347a61fcf166ea3b8aabf90c",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0008-douyin-02-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "bili-01",
+      "profiles": {
+        "baseline": "profiles/pkg-0009-bili-01/baseline",
+        "envoy": "profiles/pkg-0009-bili-01/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 9,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-envoy-session"
+      },
+      "source_class": "bilibili",
+      "source_ids": [
+        "bili-01-bili-course-overview-p1",
+        "bili-01-bili-course-overview-p2"
+      ],
+      "source_manifest_sha256": "a9f35a9002afc47c6b1173e2796ce768bf9fd21ef2b4210819a008e4dc844bdb",
+      "task_manifest_id": "manifest-bili-01",
+      "task_manifest_sha256": "22fc77130ae4f79dfea39d1fd874f6a0a547ece9d4022bf263cbf8aabf850f53",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0009-bili-01-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "douyin-01",
+      "profiles": {
+        "baseline": "profiles/pkg-0010-douyin-01/baseline",
+        "envoy": "profiles/pkg-0010-douyin-01/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 10,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-envoy-session"
+      },
+      "source_class": "douyin",
+      "source_ids": [
+        "douyin-01-douyin-logic-adder",
+        "douyin-01-douyin-cpu-timing"
+      ],
+      "source_manifest_sha256": "63fb4eed9d58c16a68c6d7cb5bd8389313d479c39d21cca8b910749b7a6e1524",
+      "task_manifest_id": "manifest-douyin-01",
+      "task_manifest_sha256": "39bd0624d733871f06bdecfe87a6ed28724795d2dc7d7cdf3e9db6b4cd8e5b90",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0010-douyin-01-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "bili-03",
+      "profiles": {
+        "baseline": "profiles/pkg-0011-bili-03/baseline",
+        "envoy": "profiles/pkg-0011-bili-03/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 11,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-envoy-session"
+      },
+      "source_class": "bilibili",
+      "source_ids": [
+        "bili-03-bili-video-a",
+        "bili-03-bili-video-b"
+      ],
+      "source_manifest_sha256": "59d8cd3e111d02a0a1f427e02d891bc2082391e56cb44b2d3e9f88f0e335ac0b",
+      "task_manifest_id": "manifest-bili-03",
+      "task_manifest_sha256": "b7229eb79f812120c53dc48de39720f02599fe8b4abea7d4f0bcede94b1ce790",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0011-bili-03-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "cross-01",
+      "profiles": {
+        "baseline": "profiles/pkg-0012-cross-01/baseline",
+        "envoy": "profiles/pkg-0012-cross-01/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 12,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-envoy-session"
+      },
+      "source_class": "cross_platform",
+      "source_ids": [
+        "cross-01-cross-01-bili",
+        "cross-01-cross-01-wechat"
+      ],
+      "source_manifest_sha256": "48894d0cd5d70cb12a3d054785ddff5c740b7b2226281fa1418c2c9bfd396024",
+      "task_manifest_id": "manifest-cross-01",
+      "task_manifest_sha256": "f516159b31f33fe05b4c1a53e3460dd3c4aa42044b0e50aac02be24b7bb0c4f6",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0012-cross-01-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "wechat-02",
+      "profiles": {
+        "baseline": "profiles/pkg-0013-wechat-02/baseline",
+        "envoy": "profiles/pkg-0013-wechat-02/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 13,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-envoy-session"
+      },
+      "source_class": "wechat",
+      "source_ids": [
+        "wechat-02-wechat-transformer-overview",
+        "wechat-02-wechat-deepseek-mla"
+      ],
+      "source_manifest_sha256": "9ea1e82e7a22a2b1e8f3f5383c14cf4c3d8f0a920788bc113cfbd052b29f9b5d",
+      "task_manifest_id": "manifest-wechat-02",
+      "task_manifest_sha256": "f3095d195baeac2f4390eb3833badcebf5e4e5d6d3b54be12aa564f2395dd552",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0013-wechat-02-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "wechat-05",
+      "profiles": {
+        "baseline": "profiles/pkg-0014-wechat-05/baseline",
+        "envoy": "profiles/pkg-0014-wechat-05/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 14,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-envoy-session"
+      },
+      "source_class": "wechat",
+      "source_ids": [
+        "wechat-05-wechat-superclue-2408",
+        "wechat-05-wechat-superbench"
+      ],
+      "source_manifest_sha256": "ccdc7707c6620d1b5ec191d57149ed14b1f2066f372b9e29fdeb21277827dcda",
+      "task_manifest_id": "manifest-wechat-05",
+      "task_manifest_sha256": "55fcc03942ecdd0c2b8ceed71350a4db3824582d41e1fb923562eff3dd0e1dc7",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0014-wechat-05-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "bili-02",
+      "profiles": {
+        "baseline": "profiles/pkg-0015-bili-02/baseline",
+        "envoy": "profiles/pkg-0015-bili-02/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 15,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-envoy-session"
+      },
+      "source_class": "bilibili",
+      "source_ids": [
+        "bili-02-bili-video-a",
+        "bili-02-bili-video-b"
+      ],
+      "source_manifest_sha256": "ab948f6405c296c9a76d066a2b01db6eaa42d4780e822a43e6c0ddb2451ece77",
+      "task_manifest_id": "manifest-bili-02",
+      "task_manifest_sha256": "15c51918f3274978867882ed5a6765b275b3941b2dcd63a65bdd098290c97c6a",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0015-bili-02-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "douyin-05",
+      "profiles": {
+        "baseline": "profiles/pkg-0016-douyin-05/baseline",
+        "envoy": "profiles/pkg-0016-douyin-05/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 16,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-envoy-session"
+      },
+      "source_class": "douyin",
+      "source_ids": [
+        "douyin-05-douyin-kvcache-prefill-decode",
+        "douyin-05-douyin-kvcache-attention-cost"
+      ],
+      "source_manifest_sha256": "7b312a063507898a9f3759c52cda88d5bf2436dfa4004ebc0addb560fc5bd006",
+      "task_manifest_id": "manifest-douyin-05",
+      "task_manifest_sha256": "04f09641ecda42d2d122235082873d3d4d2d692c17821df2f72ac9de9569233e",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0016-douyin-05-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "cross-02",
+      "profiles": {
+        "baseline": "profiles/pkg-0017-cross-02/baseline",
+        "envoy": "profiles/pkg-0017-cross-02/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 17,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-envoy-session"
+      },
+      "source_class": "cross_platform",
+      "source_ids": [
+        "cross-02-cross-02-bili",
+        "cross-02-cross-02-wechat"
+      ],
+      "source_manifest_sha256": "6241c5fc0413ab8fd4a0176a1e520c6dd2088ea6899155093fa216468af7b2ab",
+      "task_manifest_id": "manifest-cross-02",
+      "task_manifest_sha256": "2e0a8df56fd2c765bcd8fda8d9af41d0a041b93b42695d0dced38dd4952bb234",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0017-cross-02-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "baseline",
+      "package_id": "cross-03",
+      "profiles": {
+        "baseline": "profiles/pkg-0018-cross-03/baseline",
+        "envoy": "profiles/pkg-0018-cross-03/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 18,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-envoy-session"
+      },
+      "source_class": "cross_platform",
+      "source_ids": [
+        "cross-03-bili-llm-terms",
+        "cross-03-wechat-agent-planning"
+      ],
+      "source_manifest_sha256": "4e7e4cddb47e5f73bd801ad50ab6beceff6ed427b10a4c78492666eef5fdc229",
+      "task_manifest_id": "manifest-cross-03",
+      "task_manifest_sha256": "6153a151ef49ee777bedb38c4b4d3e7101980dc0bb5e40a10767f94b5f4a0eeb",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0018-cross-03-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "douyin-03",
+      "profiles": {
+        "baseline": "profiles/pkg-0019-douyin-03/baseline",
+        "envoy": "profiles/pkg-0019-douyin-03/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 19,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-envoy-session"
+      },
+      "source_class": "douyin",
+      "source_ids": [
+        "douyin-03-douyin-deepseek-v3-cost",
+        "douyin-03-douyin-deepseek-v4-efficiency"
+      ],
+      "source_manifest_sha256": "af3c97ef8846deb641951f8f326ebe81f8e874995befa70bd662ca395f89bc63",
+      "task_manifest_id": "manifest-douyin-03",
+      "task_manifest_sha256": "5d95e4fe7e8c141ced1f4c54ee1c11e2625974f1a41b04e01354e979511562bf",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0019-douyin-03-envoy-initial"
+        }
+      }
+    },
+    {
+      "arms": [
+        "baseline",
+        "envoy"
+      ],
+      "first_arm": "envoy",
+      "package_id": "douyin-04",
+      "profiles": {
+        "baseline": "profiles/pkg-0020-douyin-04/baseline",
+        "envoy": "profiles/pkg-0020-douyin-04/envoy"
+      },
+      "reset_between_packages": true,
+      "same_package_session": true,
+      "sequence": 20,
+      "session_ids": {
+        "baseline": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-baseline-session",
+        "envoy": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-envoy-session"
+      },
+      "source_class": "douyin",
+      "source_ids": [
+        "douyin-04-douyin-ai-programmer-role",
+        "douyin-04-douyin-anatomy-claude-skill"
+      ],
+      "source_manifest_sha256": "0f27ce17dfad4387272203a74653f171d3550d30c993f6ae21447c34242d0883",
+      "task_manifest_id": "manifest-douyin-04",
+      "task_manifest_sha256": "6ff283107373ed184467449fa4748f2c3589967ee5fbb65264dda9dffe15877d",
+      "turn_correlation_ids": {
+        "baseline": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-baseline-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-baseline-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-baseline-initial"
+        },
+        "envoy": {
+          "followup-1": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-envoy-followup-1",
+          "followup-2": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-envoy-followup-2",
+          "initial": "envoy-ab-20261025-ff0ae997d591-pkg-0020-douyin-04-envoy-initial"
+        }
+      }
+    }
+  ],
+  "run_id": "envoy-ab-20261025-ff0ae997d591",
+  "schema_version": "envoy.paired-experiment-plan/2",
+  "seed": 20261025,
+  "source_class_package_counts": {
+    "bilibili": 5,
+    "cross_platform": 5,
+    "douyin": 5,
+    "wechat": 5
+  },
+  "task_count": 60,
+  "unique_source_count": 40
+}

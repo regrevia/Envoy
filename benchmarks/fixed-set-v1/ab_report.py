@@ -18,7 +18,12 @@ import statistics
 import sys
 from pathlib import Path
 
+# One cap no longer fits both arms: a long video is still fetching and OCR-ing
+# at 900 s, so the envoy arm is launched with a larger cap and the value that
+# actually applied is read back from the run-log. A single constant here would
+# mislabel every capped envoy row.
 CAP_SECONDS = 900
+ENVOY_CAP_SECONDS = 2400
 
 
 def load_ledger(path: Path) -> list[dict]:
@@ -80,17 +85,18 @@ def main() -> int:
     parser.add_argument("--grade", action="append", default=[])
     parser.add_argument("--out", required=True)
     parser.add_argument("--markdown")
+    parser.add_argument("--run-id", help="run identifier the plan was frozen with")
     args = parser.parse_args()
 
     ledger = load_ledger(Path(args.ledger))
     telemetry: dict[tuple[str, str, str], dict] = {}
     for path in args.telemetry:
         for row in load_runlog([Path(path)]):
-            telemetry[(row["package_id"], row["arm"], row["role"])] = row
+            telemetry[turn_key(row)] = row
     grades: dict[tuple[str, str, str], dict] = {}
     for path in args.grade:
         for row in load_runlog([Path(path)]):
-            grades[(row["package_id"], row["arm"], row["role"])] = row
+            grades[turn_key(row)] = row
     runlog = _dedupe_attempts(load_runlog([Path(p) for p in args.runlog]))
 
     requests: dict[tuple[str, str, str], dict] = {}
@@ -177,6 +183,7 @@ def main() -> int:
         by_arm.setdefault(turn["arm"], []).append(turn)
 
     summary: dict = {
+        "run_id": args.run_id or (runlog[0].get("run_id") if runlog else None),
         "turn_count": len(turns),
         "turn_outcomes": {
             arm: {
@@ -252,6 +259,7 @@ def main() -> int:
         "server_ids_unique": all(t["server_ids_unique"] for t in turns),
         "failed_requests_excluded": sum(t["failure_count"] for t in turns),
         "cap_seconds": CAP_SECONDS,
+        "envoy_cap_seconds": ENVOY_CAP_SECONDS,
     }
     gate["passed"] = all(v for k, v in gate.items() if isinstance(v, bool))
     summary["gate"] = gate
@@ -268,7 +276,7 @@ def main() -> int:
     Path(args.out).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if args.markdown:
-        lines = ["# A/B 结果（服务端账本口径）", "", f"轮次：{summary['turn_count']}，每轮上限 {CAP_SECONDS}s。", ""]
+        lines = ["# A/B 结果（服务端账本口径）", "", f"轮次：{summary['turn_count']}；每轮上限：baseline {CAP_SECONDS}s，envoy {ENVOY_CAP_SECONDS}s。", ""]
         lines.append("| 臂 | 轮次 | completed | blocked | 账本 input tokens | 中位 input | 账本 output | 墙钟合计 s |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for arm, stats in summary["arms"].items():

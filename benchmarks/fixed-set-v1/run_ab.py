@@ -89,6 +89,9 @@ def install_envoy(profile: Path, token: str, gateway: str) -> None:
             raise SystemExit(f"plugin setup failed: {' '.join(command)}: {result.stderr[-400:]}")
 
 
+SHARED_MODEL_CACHE = os.environ.get("AB_MODEL_CACHE", "/tmp/AB3/model-cache")
+
+
 def child_env(profile: Path, token: str, gateway: str, *, with_envoy: bool) -> dict[str, str]:
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -107,6 +110,16 @@ def child_env(profile: Path, token: str, gateway: str, *, with_envoy: bool) -> d
     }
     if with_envoy:
         env["ENVOY_MCP_TOOLSET"] = "full"
+        # ASR/OCR weights are not a cache: whisper-large-v3-mlx alone is 2.9 GB.
+        # Leaving them under the per-profile XDG_CACHE_HOME made every one of the
+        # 20 profiles a fresh 3 GB download, which is both wasteful and a wall
+        # clock penalty that has nothing to do with the task. Weights live in one
+        # host directory; only per-run material stays isolated per profile.
+        models = Path(SHARED_MODEL_CACHE)
+        models.mkdir(parents=True, exist_ok=True)
+        env["HF_HOME"] = str(models)
+        env["HUGGINGFACE_HUB_CACHE"] = str(models / "hub")
+        env["TORCH_HOME"] = str(models / "torch")
         # The isolated HOME hides the Playwright browser cache, which makes every
         # browser-backed read fail with "headless browser failed to start".
         browsers = os.environ.get("ENVOY_PLAYWRIGHT_BROWSERS_PATH")
@@ -157,13 +170,21 @@ def prepare_profile(
 
 def verify_isolation(profile: Path, arm: str) -> None:
     config = profile / "claude-config"
+    # Only configuration surfaces count. Transcripts and session state are the
+    # *result* of a run: a baseline answer that quotes a page mentioning Envoy,
+    # or a resumed profile that still holds yesterday's transcript, would trip
+    # the check without any Envoy capability being present.
+    skip = ("projects", "sessions", "session-env", "history", "todos", "logs", "shell-snapshots", "statsig", "file-history")
     blobs = []
     for path in config.rglob("*"):
-        if path.is_file() and path.stat().st_size < 2_000_000:
-            try:
-                blobs.append(path.read_text(encoding="utf-8", errors="ignore"))
-            except OSError:
-                continue
+        if not path.is_file() or path.stat().st_size >= 2_000_000:
+            continue
+        if path.suffix == ".jsonl" or any(part in skip for part in path.parts):
+            continue
+        try:
+            blobs.append(path.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
     text = "\n".join(blobs).lower()
     if arm == "baseline":
         if "envoy" in text or "envoy-cli" in text or "mcp__envoy" in text:
@@ -185,6 +206,31 @@ def turn_prompt(draft: dict, role: str) -> str:
     return f"{text}\n\nDeliverable: {draft['deliverable']}\n\nSources:\n" + "\n".join(
         f"- {url}" for url in urls
     )
+
+
+def wait_for_gateway(gateway: str, seconds: int = 180) -> None:
+    """Block until the inference gateway accepts connections.
+
+    A turn started while the local proxy is restarting burns its whole timeout and
+    records "Unable to connect to API (ConnectionRefused)", which says nothing
+    about the arm under test. Wait for the socket instead of measuring the outage.
+    """
+    import urllib.error
+    import urllib.request
+
+    deadline = time.time() + seconds
+    probe = gateway.rstrip("/") + "/health/liveliness"
+    while True:
+        try:
+            with urllib.request.urlopen(probe, timeout=10) as response:
+                response.read(64)
+                return
+        except urllib.error.HTTPError:
+            return  # an answer, even an error page, means the listener is up
+        except Exception:
+            if time.time() >= deadline:
+                return  # let the turn record its own failure
+            time.sleep(5)
 
 
 def run_turn(
@@ -217,6 +263,7 @@ def run_turn(
         }
     )
     session_uuid = session_uuid or str(uuid.uuid5(uuid.NAMESPACE_URL, metadata["session_id"]))
+    wait_for_gateway(gateway)
     command = [
         "claude",
         "-p",
@@ -273,6 +320,11 @@ def run_turn(
         "salt_sha256": salt_digest(salt),
         "exit_code": code,
         "elapsed_seconds": elapsed,
+        # Which wall-clock cap this row was cut with. The arms do not share one
+        # cap any more (the baseline keeps the 900 s control limit, the envoy arm
+        # gets 2400 s for long video), so a "blocked" row is only interpretable
+        # next to the cap that produced it.
+        "turn_timeout_seconds": timeout,
         "is_error": bool(payload.get("is_error")) or code != 0,
         "reported_model": payload.get("model") or usage.get("model") or "",
         "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
@@ -282,6 +334,7 @@ def run_turn(
         "result_sha256": hashlib.sha256((payload.get("result") or "").encode("utf-8")).hexdigest(),
         "answer": payload.get("result") or "",
         "stderr_tail": (stderr or "")[-600:],
+        "stdout_tail": (stdout or "")[-600:],
         "started_at": now_iso(),
     }
 
@@ -294,6 +347,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gateway", required=True)
     parser.add_argument("--model", default="anthropic/DeepSeek-V4.1-Flash")
     parser.add_argument("--timeout", type=int, default=1200)
+    parser.add_argument(
+        "--envoy-timeout",
+        type=int,
+        default=0,
+        help=(
+            "wall-clock cap for the envoy arm when it differs from --timeout. "
+            "A long video analysis is not a hung turn: cutting it at the "
+            "baseline cap measures the cap, not the tool. 0 keeps one cap for "
+            "both arms."
+        ),
+    )
+    parser.add_argument(
+        "--retry-capped",
+        action="store_true",
+        help="treat a 900 s / capped row as unfinished so it runs again (use after raising a cap)",
+    )
     parser.add_argument("--limit", type=int, default=0, help="run at most N packages (smoke test)")
     parser.add_argument("--package", action="append", default=[], help="only these package ids")
     parser.add_argument(
@@ -336,7 +405,16 @@ def main(argv: list[str] | None = None) -> int:
             # and a session id left behind by the interrupted attempt makes the
             # CLI answer "Session ID ... is already in use" in 0.4 s - and that
             # key must be attempted again instead of counted.
-            if int(row.get("exit_code") or 0) in {0, 124}:
+            # A 0 with an empty result is not a usable turn: the CLI stopped
+            # after a tool call without writing a final message, or the answer
+            # was an injected "API Error"/"Request timed out" line. Those keys
+            # stay open so --resume retries them instead of counting them as
+            # completed evidence.
+            capped = int(row.get("exit_code") or 0) == 124
+            usable = (not capped or not args.retry_capped) and (
+                capped or int(row.get("result_chars") or 0) > 0
+            )
+            if int(row.get("exit_code") or 0) in {0, 124} and usable:
                 done.add(key)
                 if row.get("session_uuid"):
                     session_for[(row["package_id"], row["arm"])] = row["session_uuid"]
@@ -362,22 +440,20 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{item['package_id']}/{arm}/{role}: already recorded, skipped")
                     continue
                 base_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, session_id))
-                retried = attempts.get((item["package_id"], arm, "initial"), 0)
                 if role == "initial":
                     # Claude Code refuses a session id that already exists in the
-                    # profile ("Session ID ... is already in use"), and it tracks
-                    # ids across `projects/`, `sessions/` and `session-env/`, so
-                    # deleting a transcript is not enough. A retry therefore gets
-                    # its own derived id, recorded in the run log.
-                    session_uuid = (
-                        base_uuid
-                        if retried == 0
-                        else str(
-                            uuid.uuid5(uuid.NAMESPACE_URL, f"{session_id}#attempt{retried + 1}")
-                        )
-                    )
+                    # profile ("Session ID ... is already in use") and it tracks
+                    # ids across `projects/`, `sessions/` and `session-env/`, so a
+                    # killed attempt leaves the id unusable. Any deterministic id
+                    # therefore collides after the first interruption; the id is
+                    # recorded in the run log, so it does not need to be derivable.
+                    session_uuid = str(uuid.uuid4())
                 else:
-                    session_uuid = session_for.get((item["package_id"], arm), base_uuid)
+                    # Resume only works against a session that actually exists.
+                    # Without a completed initial row the deterministic id was
+                    # usually created by the interrupted attempt, and reusing it
+                    # is exactly what makes the CLI answer "already in use".
+                    session_uuid = session_for.get((item["package_id"], arm)) or str(uuid.uuid4())
                 metadata = {
                     "run_id": run_id,
                     "package_id": item["package_id"],
@@ -385,18 +461,69 @@ def main(argv: list[str] | None = None) -> int:
                     "session_id": session_id,
                     "turn_correlation_id": item["turn_correlation_ids"][arm][role],
                 }
-                record = run_turn(
-                    profile,
-                    draft,
-                    role,
-                    token=token,
-                    gateway=args.gateway,
-                    with_envoy=with_envoy,
-                    model=args.model,
-                    timeout=args.timeout,
-                    metadata=metadata,
-                    session_uuid=session_uuid,
+                transient = (
+                    "Connection closed mid-response",
+                    "ConnectionRefused",
+                    "Unable to connect",
+                    "API Error",
+                    "Request timed out",
+                    "overloaded_error",
+                    "socket hang up",
+                    "ECONNRESET",
+                    "rate_limit",
+                    "is already in use",
                 )
+                record = None
+                for attempt in range(3):
+                    if role == "initial" and attempt:
+                        # A failed initial turn may still have registered its
+                        # session id, so the retry needs an id of its own.
+                        session_uuid = str(uuid.uuid4())
+                    record = run_turn(
+                        profile,
+                        draft,
+                        role,
+                        token=token,
+                        gateway=args.gateway,
+                        with_envoy=with_envoy,
+                        model=args.model,
+                        timeout=(args.envoy_timeout or args.timeout) if with_envoy else args.timeout,
+                        metadata=metadata,
+                        session_uuid=session_uuid,
+                    )
+                    if int(record["exit_code"]) == 124:
+                        break
+                    if int(record["exit_code"]) == 0 and int(record.get("result_chars") or 0) > 0:
+                        break
+                    haystack = "".join(
+                        str(record.get(field) or "")
+                        for field in ("answer", "stderr_tail")
+                    )
+                    # An exit 0 with no final text is retried the same way as a
+                    # transport error: nothing usable was produced, so the turn
+                    # is not evidence yet.
+                    empty_result = int(record.get("exit_code") or 0) == 0 and int(
+                        record.get("result_chars") or 0
+                    ) == 0
+                    # A resumed turn can hit "Session ID ... is already in use"
+                    # while the previous CLI process is still releasing it. The
+                    # same id works again a moment later, so the retry waits
+                    # instead of burning the attempt immediately.
+                    if "is already in use" in haystack and attempt < 2:
+                        print(
+                            f"{item['package_id']}/{arm}/{role}: session id still held, "
+                            f"waiting before retry",
+                            flush=True,
+                        )
+                        time.sleep(8)
+                        continue
+                    if not empty_result and not any(marker in haystack for marker in transient):
+                        break
+                    print(
+                        f"{item['package_id']}/{arm}/{role}: attempt {attempt + 1} hit an "
+                        f"infrastructure error, retrying",
+                        flush=True,
+                    )
                 if role == "initial":
                     session_for[(item["package_id"], arm)] = session_uuid
                 answers.write(
