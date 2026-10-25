@@ -71,9 +71,8 @@
 | 回答长度中位 | 3,978 字 | 6,996 字 |
 | 首次读到内容（中位） | 90 秒 | 47 秒 |
 | 限时内没跑完 | 66% | 36% |
-| 同一任务模型用量 | — | 多 80% |
 
-不藏的代价：长视频上 Envoy 更慢，用量也更高。时间上限分别为 15 分钟和 40 分钟，超时轮不算失败。样本 92/120 轮，比例只按这个样本读。见[评测方法](benchmarks/README.md)、[完整数据](benchmarks/fixed-set-v1/README.md)。
+不藏的代价：长视频上 Envoy 更慢。时间上限分别为 15 分钟和 40 分钟，超时轮不算失败。样本 92/120 轮，比例只按这个样本读。见[评测方法](benchmarks/README.md)、[完整数据](benchmarks/fixed-set-v1/README.md)。
 
 ## 文档
 
@@ -153,9 +152,8 @@ Same link, same model, the only difference is whether Envoy is installed. 20 sou
 | Answer length, median | 3,978 chars | 6,996 chars |
 | First content reached, median | 90 s | 47 s |
 | Not finished in time | 66% | 36% |
-| Model usage on the same task | — | +80% |
 
-The costs are not hidden: Envoy is slower on long video and uses more. Time limits are 15 minutes and 40 minutes respectively, and a timed-out turn is not scored as a failure. Sample is 92 of 120 turns; read every rate against that sample. See the [evaluation method](benchmarks/README.md) and the [full data](benchmarks/fixed-set-v1/README.md).
+The costs are not hidden: Envoy is slower on long video. Time limits are 15 minutes and 40 minutes respectively, and a timed-out turn is not scored as a failure. Sample is 92 of 120 turns; read every rate against that sample. See the [evaluation method](benchmarks/README.md) and the [full data](benchmarks/fixed-set-v1/README.md).
 
 ### Documentation
 
