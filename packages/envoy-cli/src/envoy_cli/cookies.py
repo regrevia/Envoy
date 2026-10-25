@@ -108,6 +108,97 @@ def _chromium_key(password: bytes) -> bytes:
     return hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1003, 16)
 
 
+_APP_BOUND_MESSAGE = (
+    "This browser protects its cookies with app-bound encryption, which only the "
+    "browser's own elevation service can unlock; sign in once with "
+    "ENVOY_VISIBLE_BROWSER=1 instead"
+)
+
+
+def _local_state_path(name: str) -> Path | None:
+    for root in _chromium_roots(name):
+        candidate = root / "Local State"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _dpapi_unprotect(payload: bytes) -> bytes:
+    """Decrypt one DPAPI blob with the current Windows user's login credentials."""
+
+    if sys.platform != "win32":
+        raise CookieImportError("Windows DPAPI is not available on this system")
+    import ctypes
+    from ctypes import wintypes
+
+    class DataBlob(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_char)),
+        ]
+
+    buffer = ctypes.create_string_buffer(payload, len(payload))
+    source = DataBlob(len(payload), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    target = DataBlob()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(source), None, None, None, None, 0x1, ctypes.byref(target)
+    ):
+        raise CookieImportError(
+            "Windows refused to unprotect the browser's cookie key; "
+            "sign in once with ENVOY_VISIBLE_BROWSER=1 instead"
+        )
+    try:
+        return ctypes.string_at(target.pbData, target.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(target.pbData)
+
+
+def _windows_master_key(name: str) -> bytes | None:
+    """Read the AES-256 key that Chrome protects with DPAPI inside `Local State`."""
+
+    path = _local_state_path(name)
+    if path is None:
+        return None
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    os_crypt = state.get("os_crypt") if isinstance(state.get("os_crypt"), dict) else {}
+    encoded = str(os_crypt.get("encrypted_key") or "")
+    if encoded:
+        import base64
+
+        try:
+            blob = base64.b64decode(encoded)
+        except ValueError:
+            return None
+        if not blob.startswith(b"DPAPI"):
+            raise CookieImportError(f"{name} stores an unexpected cookie key format")
+        return _dpapi_unprotect(blob[5:])
+    if os_crypt.get("app_bound_encrypted_key"):
+        raise CookieImportError(_APP_BOUND_MESSAGE)
+    return None
+
+
+def _decryption_key(name: str) -> bytes | None:
+    if sys.platform == "win32":
+        return _windows_master_key(name)
+    password = _safe_storage_password(name)
+    return _chromium_key(password) if password else None
+
+
+def _chromium_gcm_plaintext(key: bytes, payload: bytes) -> str:
+    from .aesgcm import decrypt
+
+    try:
+        return decrypt(key, payload).decode("utf-8", "ignore")
+    except ValueError as exc:
+        raise CookieImportError(
+            "Could not decrypt the browser cookie store; "
+            "sign in once with ENVOY_VISIBLE_BROWSER=1 instead"
+        ) from exc
+
+
 def _openssl_decrypt(key: bytes, payload: bytes) -> bytes:
     completed = subprocess.run(
         ["openssl", "enc", "-aes-128-cbc", "-d", "-nopad", "-K", key.hex(), "-iv", "20" * 16],
@@ -143,16 +234,33 @@ def _strip_host_prefix(value: bytes) -> bytes:
     return value
 
 
-def _chromium_plaintext(raw: bytes, key: bytes | None) -> str:
+def _chromium_plaintext(raw: bytes, key: bytes | None, *, platform: str | None = None) -> str:
     if not raw:
         return ""
+    platform = platform or sys.platform
+    if raw[:3] == b"v20":
+        raise CookieImportError(_APP_BOUND_MESSAGE)
     if raw[:3] not in (b"v10", b"v11"):
+        if (
+            platform == "win32"
+            and key is None
+            and any(byte < 0x09 or byte > 0x7E for byte in raw)
+        ):
+            # Chrome before version 80 protected each cookie value with DPAPI.
+            try:
+                return _dpapi_unprotect(raw).decode("utf-8", "ignore")
+            except CookieImportError:
+                return ""
         return raw.decode("utf-8", "ignore")
     if key is None:
         raise CookieImportError(
             "This browser protects its cookies with a key Envoy cannot read on this system; "
             "sign in once with ENVOY_VISIBLE_BROWSER=1 instead"
         )
+    if platform == "win32":
+        # Windows keeps the AES-256-GCM key in Local State, protected by DPAPI,
+        # and does not prepend the SHA256(host_key) header that CBC used.
+        return _chromium_gcm_plaintext(key, raw[3:])
     plaintext = _strip_host_prefix(_unpad(_openssl_decrypt(key, raw[3:])))
     return plaintext.decode("utf-8", "ignore")
 
@@ -190,10 +298,7 @@ def import_chromium_cookies(name: str, domains: list[str]) -> dict:
     databases = _cookie_databases(name)
     if not databases:
         raise CookieImportError(f"No {name} cookie store was found on this machine")
-    key = None
-    password = _safe_storage_password(name)
-    if password:
-        key = _chromium_key(password)
+    key = _decryption_key(name)
     cookies: list[dict] = []
     now = datetime.now(timezone.utc).timestamp()
     for database in databases:

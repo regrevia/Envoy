@@ -90,6 +90,35 @@
   `refresh: true`；重抓遇到登录、验证或源不可用时降级为保留物料并附
   `notices[].refetch_error`，而不是返回 `blocked`。本服务不声明 MCP resources 能力，
   `list_mcp_resources` 为空是设计如此，物料只经 structuredContent 下发。
+- 原始视频改为**默认不落盘**、按需保留：读请求可用
+  `retention.raw_media: persistent`（配合 `derived_ttl_seconds`）把下载的视频留在
+  Envoy 数据目录，同一 `source_revision` 复读直接复用这些字节（`raw_media_reused: true`）
+  而不是再下一次 19.6 MB；`envoy cache status` 新增 `video_media` 计数/占用，
+  `envoy cache prune` 一并清理孤儿目录。
+- ASR 未就绪时不再先下载再报错：视频读取直接返回 `partial`，带
+  `media_fetched: false`、`media_fetch_skipped: local_asr_unavailable` 与安装提示，
+  不再为一个必然失败的转写白下整段视频。
+- 新增 `envoy asr status [--json]`：报告当前模型、引擎、checkpoint 是否在盘以及下一步；
+  `envoy doctor` 的五行摘要同时列出 whisper 模型、ffmpeg/ffprobe、浏览器与已导入 cookie
+  数。磁盘上已有的其他 checkpoint 只在状态里列出（`asr_models_cached`），不会静默顶替
+  用户显式或已持久化的模型选择。
+- 长转写不再悄悄截断：超过 200 段时结果带 `transcript_segments_returned`、
+  `transcript_truncated: true`，并在 `unresolved` 里给出从哪一秒继续读
+  （`scope.start_seconds`），而不是看起来像完整转写。
+- 抽帧时间点钳制在视频时长内（`-ss` 不超过 `duration - 0.05`），片尾请求不再返回空帧。
+- 页面章节列表可能因页面未加载完而偏短：当最后章节早于时长的 90% 时，结果带
+  `chapters_incomplete: true` 与 `page_chapter_span`，避免把半截章节当成完整目录。
+- Windows cookie 导入补齐：从 `Local State` 的 `os_crypt.encrypted_key` 经 DPAPI 取
+  主密钥，`v10` 值按 AES-256-GCM 解密（纯 Python 实现，不引入新依赖）；Chrome 127+
+  的 `v20` app-bound 值需要浏览器提权服务，明确失败并指向 `ENVOY_VISIBLE_BROWSER=1`，
+  不再笼统报“无法解密”。该路径以 NIST/McGrew 向量与注入式 DPAPI 单测验证，尚未在
+  真实 Windows 主机上跑过。
+- `envoy_read` 的工具描述现在声明高级块（`budget`、`retention`、`refresh`），
+  `envoy_observe_visual` 声明 `session_id`，模型不必猜；JSON schema 仍只保留必填项，
+  避免工具声明挤占每次请求的前缀上下文。
+- `challenge_required` / `auth_required` 现在如实标注 `retryable: true`，并在剩余预算
+  不少于 5 秒时内部重试一次（`internal_retry_attempts`），用于站点抖动后自行恢复；
+  仍不绕过验证。
 
 ### English
 
@@ -209,6 +238,48 @@
   notice instead of `blocked`. This server declares no MCP resources
   capability, so an empty `list_mcp_resources` is by design; material only
   travels in `structuredContent`.
+- Downloaded source video is now **not kept by default**, and retention is
+  explicit: a read may pass `retention.raw_media: persistent` (with
+  `derived_ttl_seconds`) to keep the file under Envoy's data root, where a repeat
+  read of the same `source_revision` reuses those bytes
+  (`raw_media_reused: true`) instead of downloading the same 19.6 MB again.
+  `envoy cache status` reports a `video_media` category and `envoy cache prune`
+  removes orphaned media directories.
+- A missing ASR runtime no longer costs a download first: the video read returns
+  `partial` immediately with `media_fetched: false`,
+  `media_fetch_skipped: local_asr_unavailable`, and the install hint, instead of
+  fetching a whole video for a transcription that cannot run.
+- Add `envoy asr status [--json]`: the model in use, the engine, whether the
+  checkpoint is on disk, and the next step; `envoy doctor` now prints a five-line
+  summary of the Whisper model, ffmpeg/ffprobe, browser setup, and imported
+  cookie count. Other checkpoints already on disk are listed
+  (`asr_models_cached`) but never silently replace an explicit or persisted
+  model selection.
+- Long transcripts no longer truncate silently: beyond 200 segments the result
+  carries `transcript_segments_returned` and `transcript_truncated: true`, and
+  `unresolved` names the second to continue from (`scope.start_seconds`) instead
+  of leaving a partial transcript looking complete.
+- Frame seeks are clamped inside the reported duration (`-ss` never exceeds
+  `duration - 0.05`), so a tail frame request no longer comes back empty.
+- A page chapter list can be short because the page has not finished loading:
+  when the last chapter ends before 90% of the duration the result carries
+  `chapters_incomplete: true` and `page_chapter_span`, so a half list is not
+  presented as the full table of contents.
+- Windows cookie import is implemented: the master key is unwrapped with DPAPI
+  from `os_crypt.encrypted_key` in `Local State`, and `v10` values are decrypted
+  as AES-256-GCM (pure Python, no new dependency). Chrome 127+ `v20` app-bound
+  values need the browser elevation service, so they fail explicitly and point
+  at `ENVOY_VISIBLE_BROWSER=1` instead of reporting a generic decryption error.
+  This path is covered by NIST/McGrew vectors and injected DPAPI unit tests; it
+  has not yet run on a real Windows host.
+- The `envoy_read` tool description now declares the advanced blocks (`budget`,
+  `retention`, `refresh`) and `envoy_observe_visual` declares `session_id`, so a
+  model need not guess; the JSON schema still declares only required fields so
+  the per-request tool prefix stays small.
+- `challenge_required` / `auth_required` now report `retryable: true` honestly
+  and are retried once internally when at least 5 seconds of budget remain
+  (`internal_retry_attempts`), absorbing transient site flakiness without ever
+  solving or bypassing a challenge.
 
 **Known boundaries**
 

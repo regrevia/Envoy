@@ -193,6 +193,13 @@ OBSERVE_VISUAL_SCHEMA = {
         "material_id": {"type": ["string", "null"]},
         "locator_quote": {"type": ["string", "null"]},
         "source_url": {"type": ["string", "null"]},
+        "session_id": {
+            "type": ["string", "null"],
+            "description": (
+                "Session that holds the material; pass the original session_id when "
+                "answering from a different process or surface."
+            ),
+        },
     },
 }
 
@@ -329,7 +336,11 @@ TOOLS = [
             "Envoy then serves the material it already retained rather than "
             "re-fetching. Resource descriptors are Envoy artifacts delivered in "
             "structuredContent; this server exposes no MCP resources capability, so "
-            "listing MCP resources is always empty by design."
+            "listing MCP resources is always empty by design. Advanced blocks are "
+            "accepted, not declared: budget {max_work_seconds, max_download_bytes, "
+            "max_response_chars}, retention {raw_media: ephemeral|session|persistent, "
+            "derived_ttl_seconds}, and refresh true to re-read instead of replaying "
+            "retained material."
         ),
         "inputSchema": READ_SCHEMA,
     },
