@@ -186,11 +186,11 @@ def verify_isolation(profile: Path, arm: str) -> None:
         except OSError:
             continue
     text = "\n".join(blobs).lower()
-    if arm == "baseline":
+    if arm != "envoy":
         if "envoy" in text or "envoy-cli" in text or "mcp__envoy" in text:
             raise SystemExit(f"arm isolation broken: baseline profile mentions envoy in {profile}")
         if (profile / "home" / ".envoy").exists():
-            raise SystemExit("arm isolation broken: baseline profile has an envoy home")
+            raise SystemExit(f"arm isolation broken: {arm} profile has an envoy home")
     else:
         if "envoy@envoy" not in text and not any(
             "envoy" in str(path).lower() for path in config.rglob("*")
@@ -200,12 +200,20 @@ def verify_isolation(profile: Path, arm: str) -> None:
             )
 
 
-def turn_prompt(draft: dict, role: str) -> str:
+FFMPEG_ARM_HINT = """
+
+This machine has no reader plugin. `yt-dlp` and `ffmpeg`/`ffprobe` are on PATH:
+download the media yourself and inspect it (extract frames to look at, pull the
+audio track to transcribe) if that is how you would answer without a reader."""
+
+
+def turn_prompt(draft: dict, role: str, arm: str) -> str:
     urls = [revision["url"] for revision in draft["source_revisions"].values()]
     text = next(turn["text"] for turn in draft["turns"] if turn["turn_id"] == role)
-    return f"{text}\n\nDeliverable: {draft['deliverable']}\n\nSources:\n" + "\n".join(
+    body = f"{text}\n\nDeliverable: {draft['deliverable']}\n\nSources:\n" + "\n".join(
         f"- {url}" for url in urls
     )
+    return body + FFMPEG_ARM_HINT if arm == "ffmpeg" else body
 
 
 def wait_for_gateway(gateway: str, seconds: int = 180) -> None:
@@ -267,7 +275,7 @@ def run_turn(
     command = [
         "claude",
         "-p",
-        turn_prompt(draft, role),
+        turn_prompt(draft, role, metadata["arm"]),
         "--output-format",
         "json",
         "--permission-mode",
@@ -342,6 +350,12 @@ def run_turn(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument(
+        "--roles",
+        default="",
+        help="comma list of turn roles to run; empty runs all three. Used to keep "
+        "an extra arm small instead of paying for the whole chain.",
+    )
     parser.add_argument("--drafts", type=Path, default=FIXED_SET / "task-drafts")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--gateway", required=True)
@@ -435,7 +449,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             verify_isolation(profile, arm)
             session_id = item["session_ids"][arm]
-            for role in TURN_ROLES:
+            roles = [r.strip() for r in args.roles.split(",") if r.strip()] or list(TURN_ROLES)
+            for role in roles:
                 if (item["package_id"], arm, role) in done:
                     print(f"{item['package_id']}/{arm}/{role}: already recorded, skipped")
                     continue
