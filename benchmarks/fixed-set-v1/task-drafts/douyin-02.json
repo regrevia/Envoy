@@ -1,0 +1,123 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "douyin-02",
+  "stratum": "douyin",
+  "source_ids": [
+    "douyin-float-python",
+    "douyin-ieee754-basics"
+  ],
+  "source_revisions": {
+    "douyin-float-python": {
+      "url": "https://www.douyin.com/video/7690052789893361826",
+      "sha256": "e3b1224808ecb644d013e0446d78d82f06c2a56b0dc2d64a89e9083de7ab0072",
+      "snapshot": "materials/e3b1224808ecb644d013e0446d78d82f06c2a56b0dc2d64a89e9083de7ab0072.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "page-level text only (title, 章节要点 chapter summaries, 简介/description, comments); the transcript block carried no text, so there is no verbatim oral transcript and no claim may be attributed to spoken wording"
+    },
+    "douyin-ieee754-basics": {
+      "url": "https://www.douyin.com/video/7684954992222031147",
+      "sha256": "4b4fe6583407788895d814d5fabf5b1797bbcffb4ad07a8fd9af46276876ec8b",
+      "snapshot": "materials/4b4fe6583407788895d814d5fabf5b1797bbcffb4ad07a8fd9af46276876ec8b.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "page-level text only (title, 章节要点 chapter summaries, 简介/description, comments); the transcript block carried no text, so there is no verbatim oral transcript and no claim may be attributed to spoken wording"
+    }
+  },
+  "deliverable": "A source-grounded comparison of two short videos' explanations of binary floating-point error and mitigation advice (why 0.1 + 0.2 drifts, what IEEE 754 truncation does, and when to use integers for money), with a claim table, exact section locators, and explicit coverage gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two Douyin pages, compare how they explain floating-point imprecision: the Python π video's account of binary floats and the 0.1 / 0.1 + 0.2 drift, and the 浮点数、字符与常量本质 video's account of IEEE 754 mantissa truncation and its settlement advice. Cite each claim by page title and section heading (合集简介 episode or 章节要点), and keep the two sources separate."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on the mechanism each page offers rather than on advice. What does the Python page say about how a float is stored and why 0.1 cannot be written exactly in binary, and what does the IEEE 754 page say about truncation and error accumulation? Cite the exact section for each statement, and flag any point where one page stops short of the mechanism the other gives."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "List the gaps and disagreements between the two pages: does either page quantify the error, do they agree on the cause, and what practical advice appears on one page only (for example avoiding floats in financial settlement, or the character-type bit-flip point)? Say plainly what these captured page texts cannot support and whether the two videos are answering the same question."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "douyin-02-f01",
+      "source_id": "douyin-float-python",
+      "claim": "Python 的 float 是二进制浮点数，不是十进制小数",
+      "locator": "合集简介/第3集",
+      "quote": "Python 的 float 是二进制浮点数，不是十进制小数。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-02-f02",
+      "source_id": "douyin-float-python",
+      "claim": "0.1 在二进制里写不完，就像 1/3 在十进制里写不完。它只能存个近似值",
+      "locator": "合集简介/第3集",
+      "quote": "0.1 在二进制里写不完，就像 1/3 在十进制里写不完。它只能存个近似值。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-02-f03",
+      "source_id": "douyin-float-python",
+      "claim": "两个近似值一加，就多出一点点",
+      "locator": "合集简介/第3集",
+      "quote": "两个近似值一加，就多出一点点",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-02-f04",
+      "source_id": "douyin-ieee754-basics",
+      "claim": "IEEE 754浮点数采用尾数截断舍入，导致误差累加",
+      "locator": "章节要点",
+      "quote": "IEEE 754浮点数采用尾数截断舍入，导致误差累加。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-02-f05",
+      "source_id": "douyin-ieee754-basics",
+      "claim": "在金融结算中应避免使用浮点数，而应将金额转换为整型",
+      "locator": "章节要点",
+      "quote": "在金融结算中应避免使用浮点数，而应将金额转换为整型。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-02-f06",
+      "source_id": "douyin-ieee754-basics",
+      "claim": "字母型在内存中以数字映射表形式表示，大小写转换通过二进制位翻转实现",
+      "locator": "章节要点",
+      "quote": "字母型在内存中以数字映射表形式表示，大小写转换通过二进制位翻转实现。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "douyin-float-python",
+    "douyin-ieee754-basics"
+  ],
+  "acceptable_partial_outcomes": [
+    "Only page-level text was captured for both videos: chapter summaries (章节要点), 合集简介/description and comments. No oral transcript exists, so answers must not quote or paraphrase spoken narration as if transcribed.",
+    "Neither page carries the full argument behind its summary line; an answer that marks a mechanism as unexplained is correct where the page gives only the summary.",
+    "Numbers and product claims are the pages' own; do not present them as independently verified measurements."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "lead",
+    "method": "every quote re-checked as a literal substring of the stored snapshot (whitespace-insensitive) before drafting",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://docs.python.org/3/tutorial/floatingpoint.html",
+      "supports": "CPython's own documentation that floats are binary fractions and that 0.1 + 0.2 displays as 0.30000000000000004, which backs the topic-level claim behind both videos' 0.1 + 0.2 examples",
+      "verified_at": "2026-10-25"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Floating-point_arithmetic",
+      "supports": "the IEEE 754 representation and rounding behaviour referenced by the second video's mantissa-truncation claim",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "douyin-03",
+  "stratum": "douyin",
+  "source_ids": [
+    "douyin-deepseek-v3-cost",
+    "douyin-deepseek-v4-efficiency"
+  ],
+  "source_revisions": {
+    "douyin-deepseek-v3-cost": {
+      "url": "https://www.douyin.com/video/7691125608985693440",
+      "sha256": "45f25e92f48ab86f2a3eb92ee281f807da05fd46308f85414ef174b1293042b2",
+      "snapshot": "materials/45f25e92f48ab86f2a3eb92ee281f807da05fd46308f85414ef174b1293042b2.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "page-level text only (title, 章节要点 chapter summaries, 简介/description, comments); the transcript block carried no text, so there is no verbatim oral transcript and no claim may be attributed to spoken wording"
+    },
+    "douyin-deepseek-v4-efficiency": {
+      "url": "https://www.douyin.com/video/7633678678350133435",
+      "sha256": "eaa3fe3f6f4ba3713c05b544f970045515e5698ce6c0cf0683d4c914698266b0",
+      "snapshot": "materials/eaa3fe3f6f4ba3713c05b544f970045515e5698ce6c0cf0683d4c914698266b0.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "page-level text only (title, 章节要点 chapter summaries, 简介/description, comments); the transcript block carried no text, so there is no verbatim oral transcript and no claim may be attributed to spoken wording"
+    }
+  },
+  "deliverable": "A source-grounded comparison of how one video accounts for DeepSeek V3's training cost (dollar figure, GPU-hours, efficiency tactics, and the scope caveat) and how the other frames DeepSeek V4's efficiency claims (attention compression, expert parallelism, FP4), with a claim table, exact 章节要点 locators, and explicit gaps between the two frames.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two Douyin pages, compare their accounts of large-model training economics: the V3 page's cost figure and GPU-hour basis, its four efficiency tactics presented through hospital, storage and pipeline analogies, and its scope caveat, versus the V4 page's three software innovations and its hardware-wall framing. Cite each claim by page title and 章节要点 item with its timestamp, and keep marketing framing distinct from stated numbers."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on the efficiency mechanisms. For the V3 page, list the tactics it names and what each analogy is standing in for; for the V4 page, state what each of its three innovations is claimed to compress or save, and how CSA/HCA are described. Attribute every statement to its page and 章节要点 timestamp; do not supply any figure the pages do not state."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Identify the gaps and disagreements between the two pages: whether either page gives a cost per unit of compute that would let the two claims be compared, whether the V3 page's caveat that the figure is training compute cost only conflicts with the V4 page's broader efficiency narrative, and what neither page substantiates. Note also what the missing oral transcript prevents you from attributing."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "douyin-03-f01",
+      "source_id": "douyin-deepseek-v3-cost",
+      "claim": "DeepSeek V3训练计算成本约557.6万美元，来自278.8万个GPU小时",
+      "locator": "章节要点/00:01 引言",
+      "quote": "DeepSeek V3训练计算成本约557.6万美元，来自278.8万个GPU小时。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-03-f02",
+      "source_id": "douyin-deepseek-v3-cost",
+      "claim": "V3省法包括按需叫专家、少搬病历、换轻箱子、少排队",
+      "locator": "章节要点/00:29 V3的省法",
+      "quote": "V3省法包括按需叫专家、少搬病历、换轻箱子、少排队。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-03-f03",
+      "source_id": "douyin-deepseek-v3-cost",
+      "claim": "但这仅为训练计算成本，不代表公司总投入",
+      "locator": "章节要点/01:13 普通人的使用成本",
+      "quote": "但这仅为训练计算成本，不代表公司总投入。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-03-f04",
+      "source_id": "douyin-deepseek-v4-efficiency",
+      "claim": "DeepSeek V4通过混合注意力机制、超细粒度专家并行EP和FP4极低精度量化训练三招软件创新，成功突破硬件墙",
+      "locator": "章节要点",
+      "quote": "DeepSeek V4通过混合注意力机制、超细粒度专家并行EP和FP4极低精度量化训练三招软件创新，成功突破硬件墙",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-03-f05",
+      "source_id": "douyin-deepseek-v4-efficiency",
+      "claim": "通过压缩稀疏注意力，CSA+重度HCA双管齐下，将数据量压缩到几十分之一甚至几百分之一",
+      "locator": "章节要点",
+      "quote": "通过压缩稀疏注意力，CSA+重度HCA双管齐下，将数据量压缩到几十分之一甚至几百分之一。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "douyin-deepseek-v3-cost",
+    "douyin-deepseek-v4-efficiency"
+  ],
+  "acceptable_partial_outcomes": [
+    "Only page-level text was captured for both videos: chapter summaries (章节要点), 合集简介/description and comments. No oral transcript exists, so answers must not quote or paraphrase spoken narration as if transcribed.",
+    "Neither page carries the full argument behind its summary line; an answer that marks a mechanism as unexplained is correct where the page gives only the summary.",
+    "Numbers and product claims are the pages' own; do not present them as independently verified measurements."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "lead",
+    "method": "every quote re-checked as a literal substring of the stored snapshot (whitespace-insensitive) before drafting",
+    "facts": 5
+  },
+  "authority_anchors": [
+    {
+      "url": "https://en.wikipedia.org/wiki/Mixture_of_experts",
+      "supports": "the mixture-of-experts routing idea behind the V3 page's on-demand-expert tactic and the V4 page's fine-grained expert-parallelism claim",
+      "verified_at": "2026-10-25"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Large_language_model",
+      "supports": "the general training-cost and compute-scaling context needed to read a dollar figure and GPU-hour count as compute-cost claims rather than total company spend",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

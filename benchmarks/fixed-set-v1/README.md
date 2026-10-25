@@ -64,6 +64,12 @@ what happened during exploration, but the CSV state is authoritative.
 
 ## Frozen Design
 
+**Frozen shape: 20 packages / 4 strata / 40 unique URLs / 60 turns.** The
+original 25-package, five-stratum (with Xiaohongshu) request could not be frozen
+for measured reasons; see `SCOPE-DEVIATION.md`. The bullets below describe the
+original design intent and are kept for traceability; where they disagree with
+the frozen manifest, the manifest wins.
+
 - 25 packages, five each: Bilibili, Douyin, Xiaohongshu, WeChat Official
   Accounts, and cross-platform synthesis. 20 of them are the original design;
   the five `*-05` slots are the modest scope expansion, and `xhs-05` is the

@@ -70,7 +70,7 @@ def test_plan_freezes_run_identity_and_server_request_correlation(tmp_path):
             "source_class": "douyin",
             "task_manifest_id": f"manifest-{index}",
         }
-        for index in range(25)
+        for index in range(20)
     ]
 
     result = _run(tmp_path, records)
@@ -79,8 +79,8 @@ def test_plan_freezes_run_identity_and_server_request_correlation(tmp_path):
     plan = json.loads(result.stdout)
     assert plan["run_id"].startswith("envoy-ab-")
     assert len(plan["package_manifest_sha256"]) == 64
-    assert plan["task_count"] == 75
-    assert plan["unique_source_count"] == 50
+    assert plan["task_count"] == 60
+    assert plan["unique_source_count"] == 40
     assert plan["confirmatory_minimum_met"] is True
     item = plan["packages"][0]
     assert set(item["session_ids"]) == {"baseline", "envoy"}
@@ -153,12 +153,11 @@ def test_planner_cannot_mark_per_request_salt_as_verified(tmp_path):
     assert "invalid choice" in result.stderr
 
 
-def test_fixed_confirmatory_profile_requires_approved_balanced_twenty_five(tmp_path):
+def test_fixed_confirmatory_profile_requires_approved_balanced_twenty(tmp_path):
     records = []
     for source_class in (
         "bilibili",
         "douyin",
-        "xiaohongshu",
         "wechat",
         "cross_platform",
     ):
@@ -180,9 +179,11 @@ def test_fixed_confirmatory_profile_requires_approved_balanced_twenty_five(tmp_p
 
     assert result.returncode == 0, result.stdout + result.stderr
     plan = json.loads(result.stdout)
-    assert plan["evaluation_profile"] == "fixed_confirmatory_25"
-    assert plan["package_count"] == 25
-    assert plan["unique_source_count"] == 50
+    assert plan["evaluation_profile"] == "fixed_confirmatory_20"
+    assert plan["cache_isolation_status"] == "unknown"
+    assert plan["cache_isolation_verified"] is False
+    assert plan["package_count"] == 20
+    assert plan["unique_source_count"] == 40
     assert plan["confirmatory_minimum_met"] is True
 
 
@@ -191,7 +192,6 @@ def test_fixed_confirmatory_profile_requires_manifest_content_hashes(tmp_path):
     for source_class in (
         "bilibili",
         "douyin",
-        "xiaohongshu",
         "wechat",
         "cross_platform",
     ):
@@ -223,7 +223,7 @@ def test_fixed_confirmatory_profile_rejects_unbalanced_strata(tmp_path):
                 f"task-{index}".encode()
             ).hexdigest(),
         }
-        for index in range(25)
+        for index in range(20)
     ]
 
     result = _run(tmp_path, records, "--confirmatory-fixed")

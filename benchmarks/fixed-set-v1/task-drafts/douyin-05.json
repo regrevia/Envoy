@@ -1,0 +1,113 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "douyin-05",
+  "stratum": "douyin",
+  "source_ids": [
+    "douyin-kvcache-prefill-decode",
+    "douyin-kvcache-attention-cost"
+  ],
+  "source_revisions": {
+    "douyin-kvcache-prefill-decode": {
+      "url": "https://www.douyin.com/video/7691335168054120859",
+      "sha256": "73ebfc62fd8e3a7ae3189a4742b805a9e5fc23552973c96c1d208cce91297c5e",
+      "snapshot": "materials/73ebfc62fd8e3a7ae3189a4742b805a9e5fc23552973c96c1d208cce91297c5e.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy 页面级抓取：标题、章节要点摘要、视频简介与评论等页面文本；transcript 块存在但无正文，未获得口播逐字转写。"
+    },
+    "douyin-kvcache-attention-cost": {
+      "url": "https://www.douyin.com/video/7535317388783766799",
+      "sha256": "c65a9bf5e9270e968bbfa71671e9915305be504cf21a24cf8b38f89394c4a5d3",
+      "snapshot": "materials/c65a9bf5e9270e968bbfa71671e9915305be504cf21a24cf8b38f89394c4a5d3.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy 页面级抓取：标题、章节要点摘要、视频简介与评论等页面文本；transcript 块存在但无正文，未获得口播逐字转写。"
+    }
+  },
+  "deliverable": "A source-grounded comparison of two short KV Cache explainers covering what is cached, why decode gets faster, how cache memory is sized, and where the pages' coverage and labels diverge, with chapter-level citations.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two pages, explain what a KV Cache stores and why generation gets faster with it. Compare how each page frames the cost of producing tokens — page one splits prefill and decode, page two walks the per-token inference steps — and cite the chapter heading each claim comes from (for example kvcache的原理, 缓存内容的解释, KVCache的作用, KVCache的好处)."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on memory. What does each page say the cache size depends on, and what concrete model or figure does either page give? Cite kvcache的显存占用 on page one and KVCache的计算 on page two, and attribute any number to that page only; do not present it as a general benchmark."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Compare reduction and limits. Which structures does page one name for cutting cache memory, and what limitations does it list? Does page two discuss reduction or limits at all? List the gaps between the pages and any place where a page's naming or characterization is internally inconsistent, citing the headings; if a page is silent, say so rather than importing outside knowledge."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "douyin-05-s1-f01",
+      "source_id": "douyin-kvcache-prefill-decode",
+      "claim": "KV Cache通过缓存历史token的键值对，减少了生成新token时的重复计算，提高了大模型的生成速度",
+      "locator": "章节要点",
+      "quote": "KV Cache通过缓存历史token的键值对，减少了生成新token时的重复计算，提高了大模型的生成速度。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-05-s1-f02",
+      "source_id": "douyin-kvcache-prefill-decode",
+      "claim": "首个token慢是因为需要处理整个prompt，后续token快是因为历史计算结果已缓存",
+      "locator": "章节要点",
+      "quote": "首个token慢是因为需要处理整个prompt，后续token快是因为历史计算结果已缓存。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-05-s1-f03",
+      "source_id": "douyin-kvcache-prefill-decode",
+      "claim": "kvcache显存占用与层数、bits大小、batch size、缓存序列长度、kv头数量和头维度成正比",
+      "locator": "章节要点",
+      "quote": "kvcache显存占用与层数、bits大小、batch size、缓存序列长度、kv头数量和头维度成正比。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-05-s2-f01",
+      "source_id": "douyin-kvcache-attention-cost",
+      "claim": "KVCache只需要缓存k和v，因为推理过程中不需要前面TOKEN的query",
+      "locator": "章节要点",
+      "quote": "KVCache只需要缓存k和v，因为推理过程中不需要前面TOKEN的query。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-05-s2-f02",
+      "source_id": "douyin-kvcache-attention-cost",
+      "claim": "KVCache减少重复计算，将注意力机制复杂度从平方规模变为线性规模，提高推理速度",
+      "locator": "章节要点",
+      "quote": "KVCache减少重复计算，将注意力机制复杂度从平方规模变为线性规模，提高推理速度。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-05-s2-f03",
+      "source_id": "douyin-kvcache-attention-cost",
+      "claim": "以llama2-7B模型为例，计算了KVCache所需的显存",
+      "locator": "章节要点",
+      "quote": "以llama2-7B模型为例，计算了KVCache所需的显存。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "acceptable_partial_outcomes": [
+    "The pages are page-level captures: only the title, 章节要点 summary and page text are citable; the spoken track is not a verbatim transcript and answers must not claim to have watched the video.",
+    "Page one's chapter entry for the prefill/decode section is truncated in the capture; answers should cite it by topic rather than inventing the full heading."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "fact-writer-2",
+    "method": "every fact taken verbatim from the package's facts.json rows; quotes re-checked as literal substrings of the stored snapshots",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2309.06180",
+      "supports": "The vLLM PagedAttention paper establishes that KV-cache memory is a dominant cost in LLM serving and is managed in blocks, an independent reference for judging the pages' statements that the cache consumes GPU memory and constrains how many requests can run.",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

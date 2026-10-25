@@ -1,0 +1,118 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "douyin-01",
+  "stratum": "douyin",
+  "source_ids": [
+    "douyin-logic-adder",
+    "douyin-cpu-timing"
+  ],
+  "source_revisions": {
+    "douyin-logic-adder": {
+      "url": "https://www.douyin.com/video/7647491904791186714",
+      "sha256": "750a84bd0474e8558927b518b262a88ac76c89a6264596534400cf583ec5854f",
+      "snapshot": "materials/750a84bd0474e8558927b518b262a88ac76c89a6264596534400cf583ec5854f.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "page-level text only (title, 章节要点 chapter summaries, 简介/description, comments); the transcript block carried no text, so there is no verbatim oral transcript and no claim may be attributed to spoken wording"
+    },
+    "douyin-cpu-timing": {
+      "url": "https://www.douyin.com/video/7543600619257433353",
+      "sha256": "55e7d7b8c03deb2e3b441bc9b2567015dac8c68ef319f5c327fe225ae80ed6c7",
+      "snapshot": "materials/55e7d7b8c03deb2e3b441bc9b2567015dac8c68ef319f5c327fe225ae80ed6c7.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "page-level text only (title, 章节要点 chapter summaries, 简介/description, comments); the transcript block carried no text, so there is no verbatim oral transcript and no claim may be attributed to spoken wording"
+    }
+  },
+  "deliverable": "A source-grounded comparison of how one video builds binary addition from logic gates in domino form (half adder, then full adder) and how the other reasons about CPI, single-cycle clock period, and pipeline clock period on a 408 exam item, with a claim table, exact 章节要点 locators, and explicit coverage gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two Douyin pages, compare what they each explain about computer organisation: the domino-logic video's half-adder and full-adder construction, and the 408 真题讲解 video's CPI reasoning and its single-cycle and pipeline clock-period rules. Cite every claim by page title, the 章节要点 item (with its timestamp where the page shows one), and the source video."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on the arithmetic side and then on the timing side separately. For the domino video, state which gates compose the half adder, how the full adder builds on it, and what the adder is said to accomplish; for the 408 video, state why option B is judged wrong about CPI and cache miss rate, and what rule is given for single-cycle and for pipeline clock periods. Attribute each statement to its page and 章节要点 timestamp; do not add textbook details the pages do not state."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Now identify gaps and disagreements between the two pages: which topics appear on only one page (gate-level adder construction on one side, CPI/clock-period tradeoffs on the other), whether the pipeline clock-period rule is in tension with anything the domino page implies about circuit depth, and what neither page settles. Also note what the captured page text cannot support, given that no oral transcript was obtained."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "douyin-01-f01",
+      "source_id": "douyin-logic-adder",
+      "claim": "计算机可以通过多米诺骨牌模拟逻辑门，实现二进制加法",
+      "locator": "章节要点",
+      "quote": "计算机可以通过多米诺骨牌模拟逻辑门，实现二进制加法。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-01-f02",
+      "source_id": "douyin-logic-adder",
+      "claim": "半加器由与门和或门组成，用于一位二进制加法",
+      "locator": "章节要点/02:03 半加器",
+      "quote": "半加器由与门和或门组成，用于一位二进制加法。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-01-f03",
+      "source_id": "douyin-logic-adder",
+      "claim": "全加器由多个半加器组成，用于多位二进制加法",
+      "locator": "章节要点/02:56 全加器",
+      "quote": "全加器由多个半加器组成，用于多位二进制加法",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-01-f04",
+      "source_id": "douyin-cpu-timing",
+      "claim": "CPI与cache缺失率有关，所以B选项错误",
+      "locator": "章节要点/01:15 选项B",
+      "quote": "CPI与cache缺失率有关，所以B选项错误。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-01-f05",
+      "source_id": "douyin-cpu-timing",
+      "claim": "单周期CPU所有指令周期相同，以最耗时的指令为准",
+      "locator": "章节要点/04:17 选项C",
+      "quote": "单周期CPU所有指令周期相同，以最耗时的指令为准。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-01-f06",
+      "source_id": "douyin-cpu-timing",
+      "claim": "流水线CPU时钟周期以最长流水线为准，因为CPU空间金贵，无法排队",
+      "locator": "章节要点/04:48 选项D",
+      "quote": "流水线CPU时钟周期以最长流水线为准，因为CPU空间金贵，无法排队。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "douyin-logic-adder",
+    "douyin-cpu-timing"
+  ],
+  "acceptable_partial_outcomes": [
+    "Only page-level text was captured for both videos: chapter summaries (章节要点), 合集简介/description and comments. No oral transcript exists, so answers must not quote or paraphrase spoken narration as if transcribed.",
+    "Neither page carries the full argument behind its summary line; an answer that marks a mechanism as unexplained is correct where the page gives only the summary.",
+    "Numbers and product claims are the pages' own; do not present them as independently verified measurements."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "lead",
+    "method": "every quote re-checked as a literal substring of the stored snapshot (whitespace-insensitive) before drafting",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://en.wikipedia.org/wiki/Adder_(electronics)",
+      "supports": "the standard half-adder / full-adder decomposition and carry propagation that the domino video's 章节要点 summarises, used to judge whether the page's gate-level claim is stated accurately",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

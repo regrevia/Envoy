@@ -152,6 +152,113 @@ _DISMISS_LOGIN_OVERLAY_SCRIPT = _DISMISS_LOGIN_OVERLAY_SCRIPT.replace(
     "__LOGIN_OVERLAY_MARKERS__",
     _LOGIN_OVERLAY_MARKERS,
 )
+# Consent walls, app-download banners, newsletter/subscribe dialogs and
+# notification prompts all sit above the content and all have a dismiss control.
+# The login script above is tuned for identity dialogs and skips them, so a
+# second pass handles everything else: it clicks a bounded number of dismissal
+# controls and restores scrolling that the overlay locked, then reports how many
+# clicks it made so the caller can loop until the page settles.
+_GENERIC_OVERLAY_SCRIPT = r"""
+/* dismiss-generic-overlay */
+() => {
+  const overlayIdentity =
+    /modal|popup|overlay|mask|dialog|consent|cookie|gdpr|banner|notice|notification|subscribe|paywall|newsletter|download|app-guide|guide/i;
+  const dismissLabels =
+    /^(×|✕|✖|╳|x|close|close dialog|close popup|dismiss|no thanks|not now|maybe later|later|skip|skip ad|got it|continue|continue in browser|continue on web|stay on web|accept|accept all|accept all cookies|accept cookies|agree|i agree|allow|allow all|关闭|关闭弹窗|关闭窗口|关闭广告|我知道了|知道了|跳过|跳过广告|暂不|暂不开启|暂不打开|以后再说|稍后|稍后再说|取消|继续浏览|继续浏览网页|继续在网页|接受|接受全部|接受所有|同意|同意并继续|同意并关闭|允许|允许全部)$/i;
+  const skipLabels = /登录|登陆|sign in|log in|验证码|立即下载|马上安装|install now/i;
+  const viewportWidth = Math.max(document.documentElement.clientWidth, 1);
+  const viewportHeight = Math.max(document.documentElement.clientHeight, 1);
+  const viewportArea = viewportWidth * viewportHeight;
+
+  const unlockScrolling = () => {
+    for (const node of [document.documentElement, document.body]) {
+      if (!node) continue;
+      const style = getComputedStyle(node);
+      if (["hidden", "clip"].includes(style.overflowY) ||
+          ["hidden", "clip"].includes(style.overflow)) {
+        node.style.setProperty("overflow-y", "auto", "important");
+        node.style.setProperty("overflow-x", "auto", "important");
+      }
+    }
+  };
+
+  const isVisible = (node) => {
+    const box = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return box.width > 0 && box.height > 0 &&
+      style.display !== "none" && style.visibility !== "hidden" &&
+      Number(style.opacity || 1) > 0.01;
+  };
+
+  const isPageChrome = (node) => {
+    if (node.querySelector("video,audio")) return true;
+    if (node.querySelector("article,main")) return true;
+    return (node.innerText || "").length > 2500;
+  };
+
+  const controls = (node) => [...node.querySelectorAll(
+    'button,[role="button"],a,[aria-label],[title],svg,span,div'
+  )].filter(control => control !== node && isVisible(control));
+
+  const label = (control) => [
+    control.innerText || "",
+    control.getAttribute("aria-label") || "",
+    control.getAttribute("title") || "",
+    control.getAttribute("data-e2e") || ""
+  ].join(" ").replace(/\s+/g, " ").trim();
+
+  const candidates = [...document.querySelectorAll(
+    'dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"],' +
+    '[class*="modal" i],[class*="popup" i],[class*="overlay" i],[class*="mask" i],' +
+    '[class*="consent" i],[class*="cookie" i],[class*="gdpr" i],[class*="banner" i],' +
+    '[class*="notice" i],[class*="subscribe" i],[class*="paywall" i],' +
+    '[class*="newsletter" i],[class*="download" i],[id*="cookie" i],[id*="consent" i]'
+  )];
+  let clicked = 0;
+  for (const candidate of candidates) {
+    if (clicked >= 3) break;
+    if (!isVisible(candidate) || isPageChrome(candidate)) continue;
+    const box = candidate.getBoundingClientRect();
+    const style = getComputedStyle(candidate);
+    const positioned = style.position === "fixed" || style.position === "absolute";
+    const area = box.width * box.height;
+    const identity = [
+      candidate.getAttribute("class") || "",
+      candidate.getAttribute("id") || "",
+      candidate.getAttribute("role") || "",
+      candidate.getAttribute("aria-label") || ""
+    ].join(" ");
+    if (!positioned && area < viewportArea * 0.02) continue;
+    if (!overlayIdentity.test(identity) && area < viewportArea * 0.08) continue;
+
+    const visibleControls = controls(candidate);
+    let target = visibleControls.find(control => {
+      const text = label(control);
+      if (!text || text.length > 48) return false;
+      if (skipLabels.test(text)) return false;
+      return dismissLabels.test(text);
+    });
+    if (!target) {
+      target = visibleControls.find(control => {
+        const controlBox = control.getBoundingClientRect();
+        return controlBox.width <= 64 && controlBox.height <= 64 &&
+          controlBox.right >= box.right - Math.min(box.width * 0.12, 72) &&
+          controlBox.top <= box.top + Math.min(box.height * 0.2, 96);
+      });
+    }
+    if (!target) continue;
+    target.dispatchEvent(new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      view: window
+    }));
+    clicked += 1;
+  }
+  unlockScrolling();
+  return clicked;
+}
+"""
+
 _EXPAND_SCRIPT = r"""
 () => {
   const labels = new Set([
@@ -314,22 +421,64 @@ def _navigate(context, page, url: str, dns_cache: dict[str, bool], timeout_ms: i
         pass
 
 
-def _dismiss_login_overlays(page) -> int:
+def _dismiss_overlays(page) -> int:
+    """Clear identity dialogs and every other blocking overlay, silently.
+
+    Two passes because they target different things: the login script is tuned
+    for identity dialogs (and would ignore a cookie wall), the generic script
+    closes consent/app-download/subscribe prompts and restores scrolling. Both
+    run in the main frame and in same-process iframes, and both report the
+    number of clicks so the caller can stop as soon as nothing changes.
+    """
+
     dismissed = 0
-    try:
-        dismissed += int(page.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT) or 0)
-    except Exception:
-        pass
+    scripts = (_DISMISS_LOGIN_OVERLAY_SCRIPT, _GENERIC_OVERLAY_SCRIPT)
+    for script in scripts:
+        try:
+            dismissed += int(page.evaluate(script) or 0)
+        except Exception:
+            pass
     try:
         frames = list(page.frames)
     except Exception:
         frames = []
     for frame in frames[:20]:
+        for script in scripts:
+            try:
+                dismissed += int(frame.evaluate(script) or 0)
+            except Exception:
+                continue
+    return dismissed
+
+
+# Older call sites and tests use the login name; the behaviour is now general.
+_dismiss_login_overlays = _dismiss_overlays
+
+
+def _close_extra_pages(context, keep_page) -> int:
+    """Close popups a page opened in a new tab; they never show useful content."""
+
+    try:
+        pages = list(context.pages)
+    except Exception:
+        return 0
+    closed = 0
+    for candidate in pages:
+        if candidate is keep_page:
+            continue
         try:
-            dismissed += int(frame.evaluate(_DISMISS_LOGIN_OVERLAY_SCRIPT) or 0)
+            candidate.close()
+            closed += 1
         except Exception:
             continue
-    return dismissed
+    return closed
+
+
+def _watch_for_popups(context, keep_page) -> None:
+    try:
+        context.on("page", lambda page: _close_extra_pages(context, keep_page))
+    except Exception:
+        pass
 
 
 def _load_visible_content(page) -> tuple[str, str]:
@@ -532,13 +681,15 @@ def read_page(
                 continue
             try:
                 page = context.pages[0] if context.pages else context.new_page()
+                _watch_for_popups(context, page)
                 _install_media_capture(page)
                 _navigate(context, page, source_url, dns_cache, timeout_ms)
                 _load_visible_content(page)
                 # A login dialog carries text such as `验证码登录`; leaving it in
                 # the DOM made a dismissible overlay look like a security
                 # challenge and escalate to a window the user never asked for.
-                _dismiss_login_overlays(page)
+                _dismiss_overlays(page)
+                _close_extra_pages(context, page)
                 _title, _text, challenge = _page_state(page)
                 if not challenge:
                     return _capture(page, source_url)

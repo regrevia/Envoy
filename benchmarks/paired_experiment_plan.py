@@ -14,14 +14,14 @@ from typing import Any
 
 
 SCHEMA_VERSION = "envoy.paired-experiment-plan/2"
-DESIGN_PACKAGES = 25
+DESIGN_PACKAGES = 20
 DESIGN_PER_STRATUM = 5
-DESIGN_UNIQUE_SOURCES = 50
+DESIGN_UNIQUE_SOURCES = 40
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]+")
 _SOURCE_CLASSES = {
     "bilibili",
-    "douyin",
     "xiaohongshu",
+    "douyin",
     "wechat",
     "cross_platform",
     "robustness",
@@ -118,7 +118,6 @@ def build_plan(
         required_strata = {
             "bilibili",
             "douyin",
-            "xiaohongshu",
             "wechat",
             "cross_platform",
         }
@@ -210,11 +209,9 @@ def build_plan(
         "unique_source_count": len(unique_sources),
         "source_class_package_counts": dict(sorted(source_class_counts.items())),
         "package_manifest_sha256": package_manifest_sha256,
-        "cache_isolation_status": (
-            "per_request_salt"
-            if confirmatory_fixed and cache_isolation_status == "unknown"
-            else cache_isolation_status
-        ),
+        "cache_isolation_status": cache_isolation_status,
+        "cache_isolation_verified": cache_isolation_status
+        in {"per_request_salt", "verified_isolated", "verified_disabled"},
         "confirmatory_minimum_met": (
             len(planned) >= DESIGN_PACKAGES
             and len(planned) * 3 >= DESIGN_PACKAGES * 3
@@ -228,7 +225,7 @@ def build_plan(
             else "caller must record disabled_or_isolated; otherwise cache-confounded"
         ),
         "evaluation_profile": (
-            "fixed_confirmatory_25"
+            "fixed_confirmatory_20"
             if confirmatory_fixed
             else "custom_or_pilot"
         ),
