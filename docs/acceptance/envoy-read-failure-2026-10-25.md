@@ -97,10 +97,15 @@
 
 ## 8. 追加（同一会话的根因更正）
 
-用户后来用同一条视频、同一台机器拿到帧并留在 README 里：CLI 请求体写全
-`scope.include_visual: true` + `host_capabilities {video_input: "frames",
-image_input: "local_file"}` + `retention {raw_media: "persistent"}`，Envoy 就真的
-下载了原片（约 3.66 MB，留在 `~/.envoy/materials/...`）、抽出 6 帧。也就是说
+用户后来用同一条视频、同一台机器拿到帧并留在 README 里。本次修复后又用 CLI
+复跑了一遍（`envoy read --request-json`，请求体写全 `scope.include_visual: true` +
+`host_capabilities {video_input: "frames", image_input: "local_file"}` +
+`retention {raw_media: "persistent"}`）：`media_fetched: true`、
+`downloaded_bytes: 7,789,125`、`duration_seconds: 56.125`、5 个页面候选归并到
+1 个片源、`frame_count: 6`（每帧 1080×1920，时间点 4.68/14.03/23.39/32.74/42.09/
+51.45 s，落盘为 `~/.envoy/materials/frames-.../frame-00N.jpg`）、原片以
+`raw_media_retention: persistent` 留在本地。yt-dlp 仍报 "Fresh cookies are needed"，
+但页面自己暴露的签名片源可用，浏览器捕获路径照常取到原片。也就是说
 第 3 轮之后「Envoy 取不到画面」的结论**不成立**，真正的阻塞是调用方契约：
 
 - MCP `envoy_read` 的 `inputSchema` 当时没有声明 `host_capabilities` 与
