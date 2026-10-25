@@ -25,9 +25,10 @@
   真播放器时直接排除预览域，候选按实测字节数排序并用 sha256 去重，若页面只
   暴露 teaser 就**不下载**，返回 `browser_media_preview_only` 与
   `page_player_bound: false`，并附 `needs_user_action` 让模型请用户选择注入
-  cookie 或一次性可见登录。连续两轮真机实测均为 19,604,211 字节、
-  690.6 秒、354 段 ASR（镜像域为 `v95-web-sz` / `v11-weba` 两个不同 CDN，
-  归并到同一文件）。
+  cookie 或一次性可见登录。连续三轮真机实测（其中一轮是全新进程、cookie 仓库为空、
+  且 yt-dlp 明确报 “Fresh cookies are needed”）均为 19,604,211 字节、690.6 秒、
+  354 段 ASR、6 个候选源（镜像域在 `v95-web-sz` / `v11-weba` 之间漂移），
+  归并到同一文件：仅靠“点掉登录浮层”即可稳定取回原片。
 - 被登录/验证挡住时，`challenge_required` 的 `details.needs_user_action`
   统一给出 `kind`（`login_or_verification`；站点只是要新鲜 cookie、不一定要账号时
   为 `cookies_required`）、`host`、要转述的 `question` 和两条可直接执行的
@@ -35,6 +36,11 @@
   `ENVOY_VISIBLE_BROWSER=1`）。导入命令自带站点范围，授权一个站点不等于交出
   浏览器全部 cookie；模型据此询问用户，而不是自行猜测或静默失败；三宿主
   Skill 文案同步。
+- 素材已下载、ASR 也跑通、但音轨里没有人声时（纯音乐、无声帖）不再返回
+  `blocked` 的空回答：现在返回 `result: partial`，保留标题块与
+  `page_player_bound: true`、时长，并在 `coverage.modalities.video.details.no_speech`
+  与 `unresolved` 里写明「音轨无可识别语音，需要画面或换源」，模型据此告诉用户，
+  而不是把可读的来源报成读取失败。
 
 - 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
   `envoy mcp`（默认 `core`）、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；
@@ -108,9 +114,12 @@
   candidates are ranked by probed byte size and deduped by sha256, and a page
   that exposes only the teaser is **never downloaded** — it returns
   `browser_media_preview_only` with `page_player_bound: false` and a
-  `needs_user_action` block instead. Two consecutive live runs each produced
-  19,604,211 bytes, 690.6 seconds, and 354 ASR segments, with the mirror moving
-  between the `v95-web-sz` and `v11-weba` CDNs for the same file.
+  `needs_user_action` block instead. Three consecutive live runs — one of them a
+  fresh process with an empty cookie store, where yt-dlp itself demanded
+  "Fresh cookies (not necessarily logged in)" — each produced 19,604,211 bytes,
+  690.6 seconds, 354 ASR segments and 6 candidates, with the mirror moving
+  between the `v95-web-sz` and `v11-weba` CDNs for the same file. Dismissing the
+  login dialog is enough; no cookie import is needed for this class of URL.
 - A login or verification wall now carries a structured
   `details.needs_user_action`: the `kind` (`login_or_verification`, or
   `cookies_required` when a site only wants fresh cookies rather than an
@@ -120,6 +129,13 @@
   granting one site never means handing over the whole browser's cookies; the
   host model asks the user rather than guessing or failing silently. The Claude
   Code, Codex, and DSH skill wording is synced with the same behavior.
+- A source that downloads and transcribes but whose audio holds no speech (a
+  music clip or a silent post) no longer returns an empty `blocked` answer: it
+  returns `result: partial` with the title block, `page_player_bound: true`, the
+  duration, `coverage.modalities.video.details.no_speech`, and an `unresolved`
+  line saying the audio carries no detectable speech and frames or another
+  source would be needed — the model reports that instead of calling a readable
+  source a failed read.
 
 - Route media downloads (yt-dlp) through the same outbound policy as page reads
   and Chromium: connect directly by default and fall back to a proxy only after
