@@ -15,6 +15,16 @@
   `needs_user_action`（要转述的问题和两条带站点范围的命令），并让真实缺口排在
   装饰性排除项之前；请求了 `include_visual` 而该来源没有交付任何帧/图时，明确写
   「未交付画面，不要描述画面与镜头节奏」，避免模型拿封面、评论区或壳层文字补想象。
+- 「取画面」的开关不再藏在服务端字段里：`envoy_read` / `envoy_read_local_video`
+  的 `inputSchema` 现在声明 `host_capabilities`（`video_input:
+  none|native|frames`、`image_input: none|local_file|uri`）与 `retention`
+  （`raw_media: ephemeral|session|persistent`、`derived_ttl_seconds`）。请求了
+  `include_visual` 却没声明帧能力时，可见文本与
+  `coverage.modalities.video.details.visual_requirement` 直接给出
+  `host_capabilities {video_input: frames, image_input: local_file}` 加
+  `retention {raw_media: persistent}` 的原文，并写明「按这些字段重读，不要改开
+  独立浏览器面板」。此前该契约不可见，模型会把「没声明能力」读成「Envoy 不能看
+  视频」，转而去侧边栏开页面、撞上验证码，再拿封面帧当观察证据。
 - 隔离浏览器改为**默认全程静默**：登录浮层先被关闭再判定页面状态，浮层自身文案
   （如「验证码登录」）不再被误判成安全验证；确实需要人工验证时返回
   `challenge_required`，不再自动弹窗。只有显式设置 `ENVOY_VISIBLE_BROWSER=1`
@@ -148,6 +158,19 @@
   requested and the source delivered no frames or images, the text says so
   explicitly, so a cover still or a comment section is not rewritten into an
   observed visual style.
+- The switch that unlocks frames is now declared, not hidden: the
+  `envoy_read` / `envoy_read_local_video` `inputSchema` lists
+  `host_capabilities` (`video_input: none|native|frames`, `image_input:
+  none|local_file|uri`) and `retention` (`raw_media: ephemeral|session|persistent`,
+  `derived_ttl_seconds`). When a read requests `include_visual` without declaring
+  frame capability, the visible text and
+  `coverage.modalities.video.details.visual_requirement` carry the exact
+  `host_capabilities {video_input: frames, image_input: local_file}` plus
+  `retention {raw_media: persistent}` request, with the instruction to re-read
+  with it instead of opening a separate browser panel. The contract used to be
+  invisible, so a model read "no capability declared" as "Envoy cannot see
+  video", opened the page in its own browser, hit a captcha, and treated the
+  cover still as observed evidence.
 - Reading in the isolated browser is now **silent by default**: a dismissible
   login dialog is cleared before the page state is judged, so the dialog's own
   wording (for example a `验证码登录` tab) is no longer mistaken for a captcha.

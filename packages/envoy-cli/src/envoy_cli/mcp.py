@@ -100,6 +100,55 @@ _READ_SCOPE_PROPERTIES = {
     "include_visual": {"type": "boolean"},
 }
 
+# Frames are gated on what the caller can consume, so the declaration belongs to
+# the visual request rather than to an advanced block: a caller that sets
+# `include_visual` and omits these gets text only, and cannot tell why.
+_READ_VISUAL_PROPERTIES = {
+    "host_capabilities": {
+        "type": "object",
+        "additionalProperties": True,
+        "description": (
+            "What this host can consume. Video frames are extracted only when "
+            "video_input='frames' and image_input='local_file'; without them the "
+            "read still returns subtitles or ASR but delivers no images."
+        ),
+        "properties": {
+            "video_input": {
+                "type": "string",
+                "enum": ["none", "native", "frames"],
+                "default": "none",
+            },
+            "image_input": {
+                "type": "string",
+                "enum": ["none", "local_file", "uri"],
+                "default": "none",
+            },
+            "tool_execution": {"type": "boolean"},
+            "async_execution": {"type": "boolean"},
+        },
+    },
+    "retention": {
+        "type": "object",
+        "additionalProperties": True,
+        "description": (
+            "raw_media='persistent' keeps the downloaded source file for later "
+            "frame extraction; derived_ttl_seconds bounds the material lease."
+        ),
+        "properties": {
+            "raw_media": {
+                "type": "string",
+                "enum": ["ephemeral", "session", "persistent"],
+                "default": "ephemeral",
+            },
+            "derived_ttl_seconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 31536000,
+            },
+        },
+    },
+}
+
 READ_SCHEMA = {
     "type": "object",
     "additionalProperties": True,
@@ -126,6 +175,7 @@ READ_SCHEMA = {
             "description": "What the user needs from this source; scopes what is returned.",
         },
         **_READ_SCOPE_PROPERTIES,
+        **_READ_VISUAL_PROPERTIES,
     },
 }
 
@@ -141,6 +191,7 @@ LOCAL_VIDEO_SCHEMA = {
         },
         "goal": {"type": "string"},
         **_READ_SCOPE_PROPERTIES,
+        **_READ_VISUAL_PROPERTIES,
     },
 }
 
@@ -327,8 +378,12 @@ TOOLS = [
             "those observations plus text evidence. Report any "
             "uninspected resources; do not repeat envoy_read merely to clear the "
             "original status, and sparse frames never imply full-video coverage. "
-            "Request frames only when needed with scope.include_visual=true and "
-            "explicit frame-capable host settings. The returned text carries "
+            "Request frames with scope.include_visual=true plus "
+            "host_capabilities {video_input:'frames', image_input:'local_file'}; a "
+            "video read without that declaration returns text and names the exact "
+            "fields to send, so re-read with them instead of opening the page in a "
+            "separate browser view. retention {raw_media:'persistent'} keeps the "
+            "source file for later frame extraction. The returned text carries "
             "`material_id` and `source_revision`: keep them, because the full blocks "
             "and resource descriptors live only in structuredContent, which some "
             "hosts do not forward. Once a source has been read, continue with "
@@ -337,10 +392,9 @@ TOOLS = [
             "Envoy then serves the material it already retained rather than "
             "re-fetching. Resource descriptors are Envoy artifacts delivered in "
             "structuredContent; this server exposes no MCP resources capability, so "
-            "listing MCP resources is always empty by design. Advanced blocks are "
-            "accepted, not declared: budget {max_work_seconds, max_download_bytes, "
-            "max_response_chars}, retention {raw_media: ephemeral|session|persistent, "
-            "derived_ttl_seconds}, and refresh true to re-read instead of replaying "
+            "listing MCP resources is always empty by design. budget is accepted "
+            "but not declared: {max_work_seconds, max_download_bytes, "
+            "max_response_chars}; refresh true re-reads instead of replaying "
             "retained material."
         ),
         "inputSchema": READ_SCHEMA,
@@ -566,11 +620,36 @@ def _action_text(action: dict) -> str:
     return " ".join(parts)
 
 
+def _payload_visual_requirement(payload: dict) -> dict | None:
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    for item in modalities.values():
+        if not isinstance(item, dict):
+            continue
+        details = item.get("details")
+        requirement = details.get("visual_requirement") if isinstance(details, dict) else None
+        if isinstance(requirement, dict):
+            return requirement
+    return None
+
+
+def _visual_requirement_text(requirement: dict) -> str:
+    block = json.dumps(requirement, ensure_ascii=False, separators=(", ", ": "))
+    return (
+        f" Frames require {block}; this read omitted that declaration, so no images "
+        "were delivered. Re-read with those fields rather than opening the page in "
+        "a separate browser view."
+    )
+
+
 def _evidence_text(payload: dict, request) -> str:
     include_visual = bool(getattr(getattr(request, "scope", None), "include_visual", False))
     resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
     coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
     modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    requirement = _payload_visual_requirement(payload)
+    if requirement:
+        return _visual_requirement_text(requirement)
     # A text article read with include_visual needs no frame warning; only a source
     # that claimed a visual modality and delivered nothing does.
     visual_source = any(
@@ -690,9 +769,9 @@ def _read_payload(response, compact: bool) -> dict:
 
 # Advanced request fields a host does not send in normal use. They stay
 # accepted (the pydantic models are unchanged); they are simply not declared.
-# Only genuinely optional fields are listed: `budget`, `retention`, and
-# `host_capabilities` have model defaults, so an omitted value must be left out
-# rather than filled with `None`.
+# Only genuinely optional fields are listed, and an omitted value must be left
+# out rather than filled with `None`. The read schemas declare `retention` and
+# `host_capabilities` separately because they gate frame delivery.
 _SERVER_FILLED_FIELDS = (
     "idempotency_key",
     "session_id",

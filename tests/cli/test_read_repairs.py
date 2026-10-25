@@ -166,9 +166,12 @@ def test_tool_declarations_expose_advanced_blocks_and_session():
 
     assert "budget" in description and "retention" in description
     assert "refresh" in description
-    # The declaration is in every request prefix, so advanced blocks stay in the
-    # description instead of the JSON schema.
-    assert len(__import__("json").dumps(mcp.READ_SCHEMA)) < 900
+    # The declaration is in every request prefix, so plumbing and budget stay in
+    # the description instead of the JSON schema. The frame capability is
+    # declared: hiding it in prose made a text-only read look like a hard limit.
+    assert len(__import__("json").dumps(mcp.READ_SCHEMA)) < 2400
+    assert "host_capabilities" in mcp.READ_SCHEMA["properties"]
+    assert "retention" in mcp.READ_SCHEMA["properties"]
     assert "session_id" in mcp.OBSERVE_VISUAL_SCHEMA["properties"]
 
 
