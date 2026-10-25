@@ -94,3 +94,37 @@
 - `needs_user_action` 的「仅封面 preview」分支目前只有单测覆盖，没有真实命中的样本。
 - 2026-10-25 的 A/B 数据里，envoy 臂上限从 900 秒放宽到 2400 秒以容纳合法的长任务，
   baseline 仍为 900 秒；这是口径偏差，报告里按 `timed_out` 单独披露，不当作胜负。
+
+## 8. 追加（同一会话的根因更正）
+
+用户后来用同一条视频、同一台机器拿到帧并留在 README 里：CLI 请求体写全
+`scope.include_visual: true` + `host_capabilities {video_input: "frames",
+image_input: "local_file"}` + `retention {raw_media: "persistent"}`，Envoy 就真的
+下载了原片（约 3.66 MB，留在 `~/.envoy/materials/...`）、抽出 6 帧。也就是说
+第 3 轮之后「Envoy 取不到画面」的结论**不成立**，真正的阻塞是调用方契约：
+
+- MCP `envoy_read` 的 `inputSchema` 当时没有声明 `host_capabilities` 与
+  `retention`（只在服务端注释里写着「高级字段，正常使用不必发送」），模型无从
+  得知「不声明能力 = 帧被门控」，于是把「只回文本」读成「Envoy 看不了视频」。
+- 失败文本只给出 `Envoy read partial: 151 text characters, 2 blocks, 0 resources`
+  和 `[object Object]`，既没写缺哪个字段，也没写可重试的请求；
+  `coverage.modalities[*].details` 里虽有 `unresolved`，但宿主没转发 structuredContent。
+- 于是模型改用主机自己的侧边栏浏览器打开页面（撞上验证码中间页），再把封面
+  teaser/壳层文字当成观察证据——幻觉发生在这一步，不是 Envoy 抽帧失败。
+
+对应修复（本次提交）：
+
+- `mcp.py`：`READ_SCHEMA` / `LOCAL_VIDEO_SCHEMA` 声明 `host_capabilities`
+  （`video_input: none|native|frames`、`image_input: none|local_file|uri`）与
+  `retention`（`raw_media`、`derived_ttl_seconds`）；工具描述写明「要帧就三个字段
+  一起发，只回文本时按回复里的字段重发，不要另开浏览器面板」。
+- `reader.py`：未声明能力时在 `details.visual_requirement` 写出
+  `host_capabilities {video_input: frames, image_input: local_file}` +
+  `retention {raw_media: persistent}`，`unresolved` 同时给出同一句可执行说明。
+- `mcp._tool_content_text`：把 `visual_requirement` 渲染进模型**可见文本**
+  （不依赖 structuredContent），并明确「重发请求而不是开侧边栏浏览器」。
+- 三宿主 Skill（DSH / Claude Code / Codex）同步为祈使句：取画面三个字段必须一起
+  发；失败时读字段补齐后重发。
+
+边界未变：抖音的登录/验证墙仍在，Envoy 不绕验证、不伪造覆盖；能取到的前提是
+用户给出可用的公开片源或授权 cookie。第 7 节列的两条仍开放。

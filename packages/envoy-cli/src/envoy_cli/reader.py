@@ -1276,6 +1276,21 @@ def _attach_browser_video_evidence(
     if not asr_ready and not frame_enabled:
         # Nothing in this response would consume the media, so do not spend the
         # download (and the bandwidth) only to report that ASR cannot run.
+        visual_requirement = None
+        if request.scope.include_visual:
+            visual_requirement = {
+                "host_capabilities": {
+                    "video_input": "frames",
+                    "image_input": "local_file",
+                },
+                "retention": {"raw_media": "persistent"},
+            }
+            unresolved.append(
+                "Visual frames were requested but the host did not declare "
+                "video_input=frames and image_input=local_file; send "
+                "host_capabilities {video_input: frames, image_input: local_file} "
+                "to receive frames"
+            )
         unresolved.append(
             "Local video ASR is unavailable because Whisper is not installed"
             if not runtime.get("asr_installed")
@@ -1294,6 +1309,11 @@ def _attach_browser_video_evidence(
                 "raw_media_retention": retention_mode,
                 "transcript_source": "unavailable",
                 "visual_inspection": "not_performed",
+                **(
+                    {"visual_requirement": visual_requirement}
+                    if visual_requirement
+                    else {}
+                ),
             },
         })
         modalities = dict(response.coverage.modalities)
@@ -5146,8 +5166,18 @@ def _attach_video_frames(
             "extraction": "partial",
             "unresolved": list(dict.fromkeys([
                 *video_coverage.unresolved,
-                "Visual frames were requested but the host did not declare video_input=frames and image_input=local_file",
+                "Visual frames were requested but the host did not declare video_input=frames and image_input=local_file; send host_capabilities {video_input: frames, image_input: local_file} to receive frames",
             ])),
+            "details": {
+                **video_coverage.details,
+                "visual_requirement": {
+                    "host_capabilities": {
+                        "video_input": "frames",
+                        "image_input": "local_file",
+                    },
+                    "retention": {"raw_media": "persistent"},
+                },
+            },
         })
         return response.model_copy(update={
             "result": ReadResult.PARTIAL,

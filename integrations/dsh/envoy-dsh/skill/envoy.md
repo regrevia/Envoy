@@ -148,12 +148,15 @@ The request must include:
 - optionally `video_subtitle_language` as a BCP-47-like language tag when a
   platform extractor exposes public subtitle tracks; Envoy extracts timed
   captions without downloading the video or calling an analysis model
-- for video-content questions, set `scope.include_visual: true`; frame
-  capability alone never enables frame extraction. Declare
-  `host_capabilities.video_input: "frames"` and
-  `host_capabilities.image_input: "local_file"` only when the host can inspect
-  Envoy-delivered local frame resources. Envoy then extracts a bounded,
-  timestamped frame sample within the request budgets
+- for video-content questions, send one request with all of
+  `scope.include_visual: true`,
+  `host_capabilities.video_input: "frames"`, and
+  `host_capabilities.image_input: "local_file"`; Envoy then extracts a bounded,
+  timestamped frame sample within the request budgets. A question about visuals
+  that omits those two capabilities still gets text, and the reply names the
+  exact fields to add: re-read with them instead of opening the page in a
+  separate browser panel. Add `retention.raw_media: "persistent"` when the
+  frames or the source file must outlive the read
 
 Do not put API keys, cookies, browser profile paths, or full chat history in
 the request. Envoy does not read credentials from the user's personal browser.
@@ -343,8 +346,8 @@ captured requests such as recommendations are not assumed to belong to the
 requested post. When that uniquely bound URL is public and safe, including a
 signed URL usable only by the current local browser session, Envoy may use it
 only in a temporary local download within the request budget, run local Whisper
-when installed, and deliver a bounded timestamped frame sample only when the
-request explicitly sets `scope.include_visual: true` and the host declares
+when installed, and deliver a bounded timestamped frame sample when the
+request sets `scope.include_visual: true` together with the host capabilities
 `video_input: "frames"` and `image_input: "local_file"`. These transcript and
 frame blocks are evidence for the host model to inspect; Envoy does not decide
 job locations, company matches, or whether a role is in Shenzhen. If only the
@@ -457,14 +460,16 @@ transcript and preserve uncertain terms as uncertain rather than silently
 rewriting the transcript. No model guarantees correct domain terminology.
 
 When the user's goal depends on video pixels, request
-`scope.include_visual: true` only if the host declares
-`video_input: "frames"` and `image_input: "local_file"`. Envoy then downloads
-within the declared budget, probes duration locally if extractor metadata omits
-it, and returns a small leased set of source-timed frames for host inspection.
-Sparse frames do not imply full-video visual coverage. If subtitles or ASR are
-unavailable but frames were explicitly requested, Envoy can still hand frames
-to the host. Do not use cookies, bypass login/CAPTCHA/anti-bot challenges, or
-claim unsupported source coverage.
+`scope.include_visual: true` with `host_capabilities.video_input: "frames"` and
+`host_capabilities.image_input: "local_file"` in the same call. Envoy then
+downloads within the declared budget, probes duration locally if extractor
+metadata omits it, and returns a small leased set of source-timed frames for
+host inspection. Sparse frames do not imply full-video visual coverage. If
+subtitles or ASR are unavailable but frames were requested, Envoy can still
+hand frames to the host. When a visual request returns text only, read the
+named missing declaration, add it, and re-read; a browser panel is not a
+substitute for Envoy's own download. Do not use cookies, bypass
+login/CAPTCHA/anti-bot challenges, or claim unsupported source coverage.
 
 ### Local Video Files
 

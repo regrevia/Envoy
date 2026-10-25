@@ -858,9 +858,11 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(monkeyp
     assert second["error"]["code"] == -32600
     read_schema = next(tool for tool in first["result"]["tools"] if tool["name"] == "envoy_read")["inputSchema"]
     # The declaration is part of every request prefix, so it carries only what a
-    # caller must send. Plumbing and advanced blocks are filled server-side;
-    # they stay accepted but are no longer declared.
-    assert len(json.dumps(read_schema)) < 900
+    # caller must send. Plumbing and budget stay server-side; `host_capabilities`
+    # and `retention` are declared because they gate frame delivery, and a switch
+    # that only lived in prose was not discoverable (a model read the text-only
+    # reply as "Envoy cannot see video" and opened the page in its own browser).
+    assert len(json.dumps(read_schema)) < 2400
     assert read_schema["required"] == ["source", "goal"]
     assert "video" in read_schema["properties"]["source"]["properties"]["kind"]["enum"]
     assert "start_seconds" in read_schema["properties"]
@@ -872,14 +874,14 @@ def test_mcp_bridge_modern_tools_list_requires_metadata_and_is_cacheable(monkeyp
         "request_id",
         "session_id",
         "budget",
-        "retention",
-        "host_capabilities",
         "ocr_language",
         "scope",
     ):
         assert undeclared not in read_schema["properties"]
+    assert "frames" in read_schema["properties"]["host_capabilities"]["properties"]["video_input"]["enum"]
+    assert "persistent" in read_schema["properties"]["retention"]["properties"]["raw_media"]["enum"]
     declared_bytes = len(json.dumps(first["result"]["tools"], ensure_ascii=False).encode())
-    assert declared_bytes < 23_000
+    assert declared_bytes < 25_000
     descriptions = {tool["name"]: tool["description"] for tool in first["result"]["tools"]}
     assert "stated goal" in descriptions["envoy_read"].lower()
     assert "coverage" in descriptions["envoy_expand"].lower()
