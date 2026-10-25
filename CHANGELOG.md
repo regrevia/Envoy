@@ -14,6 +14,24 @@
   镜像地址（签名 CDN + `aweme/v1/play` 跳转）归并成一个下载目标，不再把多候选
   整体拒绝或误判为“没有唯一的页面视频地址”。真机验证：抖音单条视频静默取回
   7.0 MB 原片、216 秒时长、109 段中文 ASR 与 12 个章节，全程无窗口、无人工介入。
+- 新增 `envoy auth import --from chrome|edge|brave|vivaldi|chromium|safari`
+  （按 `--domain` 或 `--url` 限定范围）把用户本机浏览器已登录的会话写进 Envoy
+  自己的 profile，另有 `envoy auth status` 与 `envoy auth clear`。导入前由模型
+  征得用户同意，不主动读 cookie；密钥从系统钥匙串取，Chromium 的 `v10/v11`
+  值按 OSCrypt 解密、剥离 `SHA256(host_key)` 前缀，Safari 走 `Cookies.binarycookies`；
+  落盘为 0600、只保留 45 天内的 cookie。
+- 修复「封面预览顶替原片」再次复现：抖音的封面 teaser 从静态预览域
+  （`*.douyinstatic.com`）自动播放，会在真播放器挂载前抢先绑定。现在等待
+  真播放器时直接排除预览域，候选按实测字节数排序并用 sha256 去重，若页面只
+  暴露 teaser 就**不下载**，返回 `browser_media_preview_only` 与
+  `page_player_bound: false`，并附 `needs_user_action` 让模型请用户选择注入
+  cookie 或一次性可见登录。连续两轮真机实测均为 19,604,211 字节、
+  690.6 秒、354 段 ASR（镜像域为 `v95-web-sz` / `v11-weba` 两个不同 CDN，
+  归并到同一文件）。
+- 被登录/验证挡住时，`challenge_required` 的 `details.needs_user_action`
+  统一给出 `kind`、`host`、要转述的 `question` 和两条可直接执行的
+  `options`（`envoy auth import …` 与 `ENVOY_VISIBLE_BROWSER=1`），
+  模型据此询问用户，而不是自行猜测或静默失败；三宿主 Skill 文案同步。
 
 - 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
   `envoy mcp`（默认 `core`）、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；
@@ -73,6 +91,29 @@
   rejected multi-candidate or ambiguous set. Verified against the live site:
   one Douyin post returned a 7.0 MB source file, 216 seconds of duration, 109
   Chinese ASR segments, and 12 chapters with no window and no user action.
+- Add `envoy auth import --from chrome|edge|brave|vivaldi|chromium|safari`
+  (scoped by `--domain` or `--url`) to copy a session the user already signed in
+  to in their own browser into Envoy's profile, plus `envoy auth status` and
+  `envoy auth clear`. The model asks before importing and never reads cookies
+  on its own; the key comes from the system keychain, Chromium `v10/v11` values
+  are OSCrypt-decrypted with the `SHA256(host_key)` prefix stripped, Safari is
+  read from `Cookies.binarycookies`, and the store is written 0600 with cookies
+  older than 45 days dropped.
+- Fix the cover-teaser regression that replaced the real post: Douyin's cover
+  teaser autoplays from the static preview stack (`*.douyinstatic.com`) and can
+  bind before the real player mounts. The wait now excludes preview hosts,
+  candidates are ranked by probed byte size and deduped by sha256, and a page
+  that exposes only the teaser is **never downloaded** — it returns
+  `browser_media_preview_only` with `page_player_bound: false` and a
+  `needs_user_action` block instead. Two consecutive live runs each produced
+  19,604,211 bytes, 690.6 seconds, and 354 ASR segments, with the mirror moving
+  between the `v95-web-sz` and `v11-weba` CDNs for the same file.
+- A login or verification wall now carries a structured
+  `details.needs_user_action`: the `kind`, the `host`, a `question` to relay,
+  and two runnable `options` (`envoy auth import …` and
+  `ENVOY_VISIBLE_BROWSER=1`), so the host model asks the user rather than
+  guessing or failing silently. The Claude Code, Codex, and DSH skill wording is
+  synced with the same behavior.
 
 - Route media downloads (yt-dlp) through the same outbound policy as page reads
   and Chromium: connect directly by default and fall back to a proxy only after

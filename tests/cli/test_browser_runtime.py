@@ -986,7 +986,10 @@ def test_browser_video_evidence_does_not_process_unbound_captured_media(monkeypa
     video = response.coverage.modalities["video"]
     assert response.result == ReadResult.PARTIAL
     assert video.extraction == "partial"
-    assert "could not be associated with the requested post" in " ".join(video.unresolved)
+    assert video.details["page_player_bound"] is False
+    unresolved = " ".join(video.unresolved)
+    assert "player bound no downloadable source" in unresolved
+    assert "cookies" in unresolved
 
 
 def test_browser_video_evidence_groups_mirror_sources_of_one_file(monkeypatch, tmp_path):
@@ -995,10 +998,10 @@ def test_browser_video_evidence_groups_mirror_sources_of_one_file(monkeypatch, t
     play_endpoint = "https://www.douyin.com/aweme/v1/play/?aid=6383&biz_sign=zz"
     another_clip = "https://v11-weba.douyinvod.com/bbb/video/tos/cn/other.mp4"
     identities = {
-        mirror_a: ("clip-digest", "video/mp4"),
-        mirror_b: ("clip-digest", "video/mp4"),
-        play_endpoint: ("clip-digest", "video/mp4"),
-        another_clip: ("other-digest", "video/mp4"),
+        mirror_a: ("clip-digest", "video/mp4", 19_604_211),
+        mirror_b: ("clip-digest", "video/mp4", 19_604_211),
+        play_endpoint: ("clip-digest", "video/mp4", 19_604_211),
+        another_clip: ("other-digest", "video/mp4", 5_000_000),
     }
     source_url = "https://www.douyin.com/video/7682646844794539298"
     video_path = tmp_path / "download.mp4"
@@ -1572,3 +1575,145 @@ def test_egress_block_pages_count_as_network_evidence():
         "Verify you are human",
         "Please complete the captcha to continue",
     )
+
+
+TEASER_CLIP = "https://lf-douyin-pc-web.douyinstatic.com/obj/douyin-pc-web/uuu_265.mp4"
+SIGNED_CLIP = "https://v95-web-sz.douyinvod.com/aaa/video/tos/cn/clip.mp4"
+MIRROR_CLIP = "https://v11-weba.douyinvod.com/bbb/video/tos/cn/clip.mp4"
+
+
+def test_await_page_video_url_keeps_waiting_past_a_cover_teaser():
+    """A bound teaser is proof the player is still mounting, not a source."""
+
+    class Page:
+        def __init__(self, screens):
+            self.screens = list(screens)
+
+        @property
+        def frames(self):
+            return []
+
+        def evaluate(self, script, *_args):
+            if "overlay" in script:
+                return 0
+            if "currentSrc" in script:
+                return self.screens.pop(0) if self.screens else []
+            return True
+
+        def wait_for_timeout(self, _milliseconds):
+            return None
+
+    assert browser._await_page_video_url(Page([[TEASER_CLIP], [SIGNED_CLIP]]), timeout_seconds=2) == [
+        SIGNED_CLIP
+    ]
+
+
+def test_await_page_video_url_returns_nothing_when_only_a_teaser_ever_binds():
+    class Page:
+        @property
+        def frames(self):
+            return []
+
+        def evaluate(self, script, *_args):
+            if "overlay" in script:
+                return 0
+            if "currentSrc" in script:
+                return [TEASER_CLIP]
+            return True
+
+        def wait_for_timeout(self, _milliseconds):
+            return None
+
+    assert browser._await_page_video_url(Page(), timeout_seconds=0) == []
+
+
+def test_page_media_preview_hosts_are_recognized():
+    assert browser._is_preview_media_url(TEASER_CLIP) is True
+    assert browser._is_preview_media_url("https://lf-douyin-pc-web.douyinstatic.com/obj/x.mp4") is True
+    assert browser._is_preview_media_url(SIGNED_CLIP) is False
+    assert browser._is_preview_media_url("") is False
+
+
+def test_page_media_ranking_prefers_the_full_title_over_a_cover_teaser(monkeypatch):
+    identities = {
+        TEASER_CLIP: ("teaser-digest", "video/mp4", 199_802),
+        SIGNED_CLIP: ("clip-digest", "video/mp4", 19_604_211),
+        MIRROR_CLIP: ("clip-digest", "video/mp4", 19_604_211),
+    }
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_probe_page_media", lambda url, _cache: identities.get(url))
+
+    ranked = reader._rank_page_media_urls([TEASER_CLIP, SIGNED_CLIP, MIRROR_CLIP], {})
+
+    assert ranked == [SIGNED_CLIP, MIRROR_CLIP, TEASER_CLIP]
+
+
+def test_page_media_total_bytes_prefers_the_range_total():
+    assert reader._page_media_total_bytes("bytes 0-65535/19604211", "65536") == 19_604_211
+    assert reader._page_media_total_bytes(None, "19604211") == 19_604_211
+    assert reader._page_media_total_bytes("bytes */0", "0") == 0
+    assert reader._page_media_total_bytes(None, None) == 0
+
+
+def test_browser_video_evidence_refuses_a_cover_preview_as_the_post(monkeypatch):
+    """The teaser must never be published as the requested title.
+
+    Publishing it is worse than reporting a login wall: the download succeeds,
+    the transcript comes back empty, and the answer looks like a real read.
+    """
+
+    source_url = "https://www.douyin.com/video/7682646844794539298"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", lambda *_args, **_kwargs: pytest.fail(
+        "a cover preview must never be published as the requested title"
+    ))
+
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-teaser-only",
+        "source": {"url": source_url, "kind": "video"},
+    })
+    response = reader._attach_browser_video_evidence(
+        request,
+        source_url,
+        [TEASER_CLIP],
+        ReadResponse(
+            request_id=request.request_id,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        ),
+        bound_media_urls=[TEASER_CLIP],
+    )
+
+    video = response.coverage.modalities["video"]
+    assert video.details["browser_media_preview_only"] is True
+    assert video.details["page_player_bound"] is False
+    action = video.details["needs_user_action"]
+    assert action["kind"] == "login_or_verification"
+    assert action["host"] == "www.douyin.com"
+    assert [option["action"] for option in action["options"]] == [
+        "import_cookies",
+        "visible_login",
+    ]
+    assert "player bound no downloadable source" in " ".join(video.unresolved)
+
+
+def test_blocked_challenge_carries_the_session_choices():
+    from envoy_core.schemas.read_v1 import ErrorCode
+
+    request = ReadRequest.model_validate({
+        "request_id": "blocked-challenge",
+        "source": {"url": "https://www.douyin.com/video/1", "kind": "video"},
+    })
+    blocked = reader._blocked(
+        request,
+        ErrorCode.CHALLENGE_REQUIRED,
+        "The page blocks isolated headless reading",
+        action_required=True,
+    )
+    details = blocked.errors[0].details
+    assert details["needs_user_action"]["host"] == "www.douyin.com"
+    commands = [option["command"] for option in details["needs_user_action"]["options"]]
+    assert "envoy auth import --from chrome" in commands
+
+    plain = reader._blocked(request, ErrorCode.BUDGET_EXCEEDED, "too large")
+    assert "needs_user_action" not in plain.errors[0].details

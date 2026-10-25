@@ -303,12 +303,28 @@ only then does it wait for the user before resuming within the request's
 `max_work_seconds` budget (180 seconds by default). No host browser automation
 tool is required.
 
+When a page needs the user's own session, the block arrives as data instead of
+prose: the error's `details.needs_user_action` names the `kind`, the `host`, a
+`question` to relay, and two runnable `options` — `envoy auth import --from
+chrome|edge|safari` (copies that browser's cookies for this domain into Envoy's
+isolated profile) and `ENVOY_VISIBLE_BROWSER=1` (one manual sign-in in a
+window). Ask the user which one they want, and never read their cookies without
+that permission. Both are maintenance commands, so run them through the `envoy`
+CLI rather than through the mounted `mcp__envoy__` tools. Imported cookies live
+in Envoy's own profile, stay scoped to the requested domain, can be inspected
+with `envoy auth status`, and are removed with `envoy auth clear`.
+
 Feed pages such as Douyin reveal their player once a login dialog is dismissed:
 the element first exposes only a `blob:` MSE source, or none at all. Envoy
 waits briefly for a real HTTP source, ignores `blob:`/`data:` player internals,
 and groups the player's mirror URLs (a signed CDN link plus an `aweme/v1/play`
 redirect) by probing the first bytes of each file, so one post yields one
-downloadable video rather than an ambiguous or rejected candidate set.
+downloadable video rather than an ambiguous or rejected candidate set. A cover
+teaser from the platform's static preview stack (for Douyin, `*.douyinstatic.com`)
+is never the post: it autoplays before the real player mounts, so it is dropped
+from the candidate set, and a page that exposes only that teaser reports
+`browser_media_preview_only` with the same `needs_user_action` block instead of
+returning a short silent download.
 
 The isolated browser waits for dynamic content, scrolls the page, and clicks
 ordinary page controls such as “展开”, “阅读全文”, or “继续阅读”. It also

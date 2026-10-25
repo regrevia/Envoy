@@ -524,7 +524,20 @@ def _is_http_media_url(value: str) -> bool:
     return str(value or "").strip().lower().startswith(("http://", "https://"))
 
 
-def _await_page_video_url(page, timeout_seconds: float = 4.0) -> list[str]:
+# A feed page publishes a short muted teaser clip next to the real player
+# (Douyin serves it from `lf-douyin-pc-web.douyinstatic.com`). The teaser is a
+# legal HTTPS video URL that autoplays, so a player which has not mounted yet
+# looks resolved: capture downloads a 2.6 s silent preview and every later
+# stage reports "no audio" instead of "the player never loaded".
+_PREVIEW_MEDIA_HOSTS = ("douyinstatic.com",)
+
+
+def _is_preview_media_url(value: str) -> bool:
+    host = (urlparse(str(value or "")).hostname or "").lower()
+    return any(host == suffix or host.endswith("." + suffix) for suffix in _PREVIEW_MEDIA_HOSTS)
+
+
+def _await_page_video_url(page, timeout_seconds: float = 12.0) -> list[str]:
     """Give a lazy player a bounded chance to publish a real media URL.
 
     Feed pages reveal the player when a login overlay goes away: the element
@@ -532,22 +545,30 @@ def _await_page_video_url(page, timeout_seconds: float = 4.0) -> list[str]:
     binds the signed CDN URL once it starts loading. Waiting on an unstarted
     element is cheap; waiting on one that is already playing (bilibili-style
     MSE, which keeps ``blob:`` forever) is not, so a playing element returns
-    immediately.
+    immediately. A bound teaser URL does not count as resolved: it keeps the
+    wait alive until the real source appears or the window closes.
     """
 
     deadline = time.monotonic() + max(float(timeout_seconds), 0.0)
     while True:
         urls = [url for url in _page_video_urls(page) if _is_http_media_url(url)]
-        if urls:
-            return urls
-        try:
-            stalled = bool(page.evaluate(
-                """() => [...document.querySelectorAll('video')].some(node =>
-                     Number(node.readyState || 0) < 2 || Number(node.currentTime || 0) <= 0)"""
-            ))
-        except Exception:
+        playable = [url for url in urls if not _is_preview_media_url(url)]
+        if playable:
+            return playable
+        if time.monotonic() >= deadline:
             return []
-        if not stalled or time.monotonic() >= deadline:
+        if urls:
+            # Only a teaser is bound, which is proof the player is still mounting.
+            stalled = True
+        else:
+            try:
+                stalled = bool(page.evaluate(
+                    """() => [...document.querySelectorAll('video')].some(node =>
+                         Number(node.readyState || 0) < 2 || Number(node.currentTime || 0) <= 0)"""
+                ))
+            except Exception:
+                return []
+        if not stalled:
             return []
         _dismiss_login_overlays(page)
         page.wait_for_timeout(300)
@@ -604,6 +625,29 @@ def _page_media_urls(page) -> list[str]:
     ]))
 
 
+def _apply_imported_cookies(context, source_url: str) -> int:
+    """Load the cookies the user imported for this site, if any.
+
+    Injection is scoped to the requested host, so the isolated profile never
+    picks up unrelated sessions, and a missing store is a no-op: anonymous
+    pages keep reading exactly as before.
+    """
+
+    try:
+        from .cookies import load_cookies_for
+
+        cookies = load_cookies_for(source_url)
+    except Exception:
+        return 0
+    if not cookies:
+        return 0
+    try:
+        context.add_cookies(cookies)
+    except Exception:
+        return 0
+    return len(cookies)
+
+
 def read_page(
     source_url: str,
     *,
@@ -655,12 +699,14 @@ def read_page(
             if not headless:
                 kwargs["args"].append("--new-window")
             try:
-                return playwright.chromium.launch_persistent_context(str(profile), **kwargs)
+                context = playwright.chromium.launch_persistent_context(str(profile), **kwargs)
             except Exception as exc:
                 mode = "headless" if headless else "visible"
                 raise BrowserRuntimeUnavailable(
                     f"Could not start the {mode} Envoy browser ({type(exc).__name__})"
                 ) from exc
+            _apply_imported_cookies(context, source_url)
+            return context
 
         challenge_proxy: str | None = None
         last_error: Exception | None = None
