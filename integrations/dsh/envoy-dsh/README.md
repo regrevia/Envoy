@@ -52,6 +52,21 @@ From a DeepSeek Harness agent session, the equivalent action is
 `target`. The Plugin Manager performs package linking and patch composition;
 do not edit the profile's `package.json` or `cordis.patch.yml` by hand.
 
+## Which profile did it land in
+
+A bundle install targets one profile, so a machine with several profiles can
+have Envoy in one and not the other. Confirm the profile of the session you are
+actually using before concluding it is missing:
+
+```bash
+echo "$DSH_PROFILE"                                  # the profile this shell serves
+readlink ~/.dsh/profiles/$DSH_PROFILE/node_modules/envoy-dsh
+```
+
+A symlink pointing at this directory means the repo copy is live and edits apply
+without reinstalling. The `envoy` skill appearing in the skill catalog is the
+same evidence seen from inside a session.
+
 The bundle inserts two rows:
 
 | Row | Package | Purpose |

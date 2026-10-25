@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 from pathlib import Path
 
 CAP_SECONDS = 900
@@ -41,6 +42,32 @@ def load_runlog(paths: list[Path]) -> list[dict]:
     return rows
 
 
+def _dedupe_attempts(rows: list[dict]) -> list[dict]:
+    """Keep one row per (package, arm, role): completed, then capped, then failed.
+
+    A dead gateway makes the CLI exit 1 within minutes; those rows are real
+    ledger traffic but not model results, so a later successful attempt for the
+    same key replaces them. The number of replaced attempts is reported.
+    """
+    rank = {0: 0, 124: 1}
+    best: dict[tuple[str, str, str], dict] = {}
+    replaced = 0
+    for row in rows:
+        key = (row["package_id"], row["arm"], row["role"])
+        score = rank.get(int(row.get("exit_code") or 0), 2)
+        current = best.get(key)
+        if current is None:
+            best[key] = row
+            continue
+        current_score = rank.get(int(current.get("exit_code") or 0), 2)
+        replaced += 1
+        if score <= current_score:
+            best[key] = row
+    if replaced:
+        print(f"note: replaced {replaced} superseded turn attempt(s)", file=sys.stderr)
+    return list(best.values())
+
+
 def turn_key(row: dict) -> tuple[str, str, str]:
     return (row["package_id"], row["arm"], row["turn_correlation_id"])
 
@@ -64,7 +91,7 @@ def main() -> int:
     for path in args.grade:
         for row in load_runlog([Path(path)]):
             grades[(row["package_id"], row["arm"], row["role"])] = row
-    runlog = load_runlog([Path(p) for p in args.runlog])
+    runlog = _dedupe_attempts(load_runlog([Path(p) for p in args.runlog]))
 
     requests: dict[tuple[str, str, str], dict] = {}
     for row in ledger:
