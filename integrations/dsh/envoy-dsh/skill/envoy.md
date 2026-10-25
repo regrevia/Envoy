@@ -304,15 +304,18 @@ only then does it wait for the user before resuming within the request's
 tool is required.
 
 When a page needs the user's own session, the block arrives as data instead of
-prose: the error's `details.needs_user_action` names the `kind`, the `host`, a
-`question` to relay, and two runnable `options` — `envoy auth import --from
-chrome|edge|safari` (copies that browser's cookies for this domain into Envoy's
+prose: the error's `details.needs_user_action` names the `kind`
+(`login_or_verification`, or `cookies_required` when a site only demands fresh
+cookies rather than an account), the `host`, a `question` to relay, and two
+runnable `options` — `envoy auth import --from chrome|edge|safari --domain
+<host>` (copies that browser's cookies for this site alone into Envoy's
 isolated profile) and `ENVOY_VISIBLE_BROWSER=1` (one manual sign-in in a
-window). Ask the user which one they want, and never read their cookies without
-that permission. Both are maintenance commands, so run them through the `envoy`
-CLI rather than through the mounted `mcp__envoy__` tools. Imported cookies live
-in Envoy's own profile, stay scoped to the requested domain, can be inspected
-with `envoy auth status`, and are removed with `envoy auth clear`.
+window). Relay the command as given: the `--domain` flag is what keeps the
+import scoped. Ask the user which one they want, and never read their cookies
+without that permission. Both are maintenance commands, so run them through the
+`envoy` CLI rather than through the mounted `mcp__envoy__` tools. Imported
+cookies live in Envoy's own profile, stay scoped to the requested domain, can be
+inspected with `envoy auth status`, and are removed with `envoy auth clear`.
 
 Feed pages such as Douyin reveal their player once a login dialog is dismissed:
 the element first exposes only a `blob:` MSE source, or none at all. Envoy

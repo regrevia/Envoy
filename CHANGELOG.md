@@ -29,9 +29,12 @@
   690.6 秒、354 段 ASR（镜像域为 `v95-web-sz` / `v11-weba` 两个不同 CDN，
   归并到同一文件）。
 - 被登录/验证挡住时，`challenge_required` 的 `details.needs_user_action`
-  统一给出 `kind`、`host`、要转述的 `question` 和两条可直接执行的
-  `options`（`envoy auth import …` 与 `ENVOY_VISIBLE_BROWSER=1`），
-  模型据此询问用户，而不是自行猜测或静默失败；三宿主 Skill 文案同步。
+  统一给出 `kind`（`login_or_verification`；站点只是要新鲜 cookie、不一定要账号时
+  为 `cookies_required`）、`host`、要转述的 `question` 和两条可直接执行的
+  `options`（`envoy auth import --from chrome --domain <host>` 与
+  `ENVOY_VISIBLE_BROWSER=1`）。导入命令自带站点范围，授权一个站点不等于交出
+  浏览器全部 cookie；模型据此询问用户，而不是自行猜测或静默失败；三宿主
+  Skill 文案同步。
 
 - 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
   `envoy mcp`（默认 `core`）、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；
@@ -109,11 +112,14 @@
   19,604,211 bytes, 690.6 seconds, and 354 ASR segments, with the mirror moving
   between the `v95-web-sz` and `v11-weba` CDNs for the same file.
 - A login or verification wall now carries a structured
-  `details.needs_user_action`: the `kind`, the `host`, a `question` to relay,
-  and two runnable `options` (`envoy auth import …` and
-  `ENVOY_VISIBLE_BROWSER=1`), so the host model asks the user rather than
-  guessing or failing silently. The Claude Code, Codex, and DSH skill wording is
-  synced with the same behavior.
+  `details.needs_user_action`: the `kind` (`login_or_verification`, or
+  `cookies_required` when a site only wants fresh cookies rather than an
+  account), the `host`, a `question` to relay, and two runnable `options`
+  (`envoy auth import --from chrome --domain <host>` and
+  `ENVOY_VISIBLE_BROWSER=1`). The import option carries the site scope, so
+  granting one site never means handing over the whole browser's cookies; the
+  host model asks the user rather than guessing or failing silently. The Claude
+  Code, Codex, and DSH skill wording is synced with the same behavior.
 
 - Route media downloads (yt-dlp) through the same outbound policy as page reads
   and Chromium: connect directly by default and fall back to a proxy only after

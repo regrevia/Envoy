@@ -1713,7 +1713,31 @@ def test_blocked_challenge_carries_the_session_choices():
     details = blocked.errors[0].details
     assert details["needs_user_action"]["host"] == "www.douyin.com"
     commands = [option["command"] for option in details["needs_user_action"]["options"]]
-    assert "envoy auth import --from chrome" in commands
+    assert any(
+        command.startswith("envoy auth import --from chrome") for command in commands
+    )
+    assert any("--domain douyin.com" in command for command in commands)
 
     plain = reader._blocked(request, ErrorCode.BUDGET_EXCEEDED, "too large")
     assert "needs_user_action" not in plain.errors[0].details
+
+
+def test_a_fresh_cookie_demand_asks_for_a_scoped_import():
+    """A site may want cookies without wanting an account; say so, and scope it."""
+
+    action = reader._login_user_action(
+        "https://www.douyin.com/video/7688250071749610794",
+        kind="cookies_required",
+    )
+
+    assert action["kind"] == "cookies_required"
+    assert action["host"] == "www.douyin.com"
+    import_option = action["options"][0]
+    assert import_option["command"] == (
+        "envoy auth import --from chrome --domain douyin.com"
+    )
+    assert "not necessarily what it wants" in action["question"]
+    assert [option["action"] for option in action["options"]] == [
+        "import_cookies",
+        "visible_login",
+    ]
