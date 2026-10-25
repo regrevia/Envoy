@@ -95,7 +95,7 @@ def test_app_bound_encryption_is_named_as_the_blocker(monkeypatch, tmp_path):
     monkeypatch.setattr(cookies, "_chromium_roots", lambda name: [root])
     with pytest.raises(cookies.CookieImportError, match="app-bound"):
         cookies._windows_master_key("chrome")
-    with pytest.raises(cookies.CookieImportError, match="ENVOY_VISIBLE_BROWSER=1"):
+    with pytest.raises(cookies.CookieImportError, match="ask the user to sign in"):
         cookies._chromium_plaintext(b"v20payload", b"k" * 32, platform="win32")
 
 

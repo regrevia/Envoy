@@ -3,9 +3,13 @@
 
 Automatic and deliberately conservative: a fact counts as covered when at least
 60% of the distinctive words in its English ``claim`` appear in the answer, and
-citations are counted by looking for each source's host or full URL. The host
-agent still spot-checks samples; this script never rewrites an answer and never
-fills in a fact that is absent from it.
+a citation counts only when the answer names the same *article* - host + path,
+plus the query parameters that select the piece on hosts like WeChat. Matching
+the bare host is kept only as a diagnostic (``legacy_host_mentions``), because
+many independent articles share one host and host matching credited an answer
+for sources it never mentioned. The host agent still spot-checks samples; this
+script never rewrites an answer and never fills in a fact that is absent from
+it. Neither fact overlap nor URL presence is a correctness check.
 
 Usage:
     python3 ab_grade.py --answers /tmp/AB3/s0/answers.jsonl ... --drafts task-drafts --out grade.jsonl
@@ -17,6 +21,7 @@ import argparse
 import json
 import re
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 STOPWORDS = set(
     """about above after again against also among because been before being between both
@@ -36,6 +41,81 @@ def tokens(text: str) -> set[str]:
 
 def answer_tokens(answer: str) -> set[str]:
     return tokens(answer)
+
+
+# An answer cites a source by writing its URL. The host alone is not a citation:
+# WeChat blog posts and Bilibili videos of different authors share a host, so
+# host matching handed every same-host source a hit. Canonical identity is
+# host + path + the parameters that pick the article; tracking parameters are
+# dropped on both sides so a share-sheet URL still matches its canonical source.
+_URL_RE = re.compile(
+    r"""(?<![\w@.%/-])(?:https?://)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?:/[^\s<>"'`，。；！？、）】」』]*)?""",
+    re.I | re.ASCII,
+)
+
+_TRACKING_PARAM = re.compile(
+    r"^(?:utm_\w+|spm\w*|share\w*|fbclid|gclid|from|source|vd_source|scene|ref\w*|xsec_\w+|is_share)$",
+    re.I,
+)
+
+# Hosts that keep the article identity in the query string instead of the path.
+_QUERY_IDENTITY = {
+    "mp.weixin.qq.com": ("__biz", "mid", "idx", "sn"),
+}
+
+
+def extract_urls(text: str) -> list[str]:
+    urls: list[str] = []
+    for raw in _URL_RE.findall(text or ""):
+        cleaned = raw.rstrip(".,;:!?)]}>'")
+        if cleaned:
+            urls.append(cleaned)
+    return urls
+
+
+def canonical_article(url: str) -> str:
+    """Article-level identity for one URL, or ``""`` when there is no host.
+
+    Deliberately strict: two URLs share an identity only when host, path and the
+    article-selecting parameters agree. A bare host never equals an article URL.
+    """
+    raw = (url or "").strip().strip("<>\"'")
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "https://" + raw.lstrip("/")
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower()
+    if not host:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    path = re.sub(r"/{2,}", "/", parts.path or "/")
+    if path != "/":
+        path = path.rstrip("/")
+    identity = _QUERY_IDENTITY.get(host)
+    kept: list[tuple[str, str]] = []
+    for name, value in parse_qsl(parts.query, keep_blank_values=True):
+        lower = name.lower()
+        if identity:
+            if lower not in identity:
+                continue
+        elif _TRACKING_PARAM.match(lower):
+            continue
+        kept.append((lower, value))
+    query = "&".join(f"{name}={value}" for name, value in sorted(kept))
+    if path == "/" and not query:
+        # A site root is a valid identity only for a source that is itself the
+        # site root; it is not an article identity.
+        return host
+    return f"{host}{path}" + (f"?{query}" if query else "")
+
+
+def cited_article_keys(answer: str) -> set[str]:
+    return {key for key in (canonical_article(url) for url in extract_urls(answer)) if key}
 
 
 def fact_covered(claim: str, answer_words: set[str]) -> tuple[bool, float, list[str]]:
@@ -94,16 +174,15 @@ def load_attribution(manifest: Path | None, materials: Path) -> dict[str, list[d
 
 
 def attribution_hits(hints: list[dict], answer: str) -> list[int]:
+    """Credit a source only when the answer names it: its title, its author, or
+    its exact article URL. A shared host is not an attribution."""
     hits: list[int] = []
-    lowered = answer.lower()
+    cited = cited_article_keys(answer)
     for index, hint in enumerate(hints):
         title = (hint.get("title") or "")[:12]
         author = hint.get("author") or ""
-        url = (hint.get("url") or "").lower()
-        host = re.sub(r"^https?://", "", url).split("/")[0]
-        if (title and title in answer) or (author and author in answer):
-            hits.append(index + 1)
-        elif host and host in lowered:
+        key = canonical_article(hint.get("url") or "")
+        if (title and title in answer) or (author and author in answer) or (key and key in cited):
             hits.append(index + 1)
     return hits
 
@@ -117,14 +196,31 @@ def load_drafts(drafts: Path) -> dict[str, dict]:
 
 
 def citation_hits(sources: list[dict], answer: str) -> list[str]:
+    """Source ids whose *article* URL appears in the answer (canonical match)."""
+    cited = cited_article_keys(answer)
     hits: list[str] = []
-    lowered = answer.lower()
+    for source in sources:
+        key = canonical_article(source.get("url") or "")
+        if key and key in cited:
+            hits.append(source.get("source_id") or source.get("url") or "")
+    return hits
+
+
+def legacy_host_mentions(sources: list[dict], answer: str) -> list[str]:
+    """The old host-substring rule, kept only to measure how much it over-counted.
+
+    Not a hit list: an entry here says the answer repeated a host, which is all
+    the old rule inspected. It is reported next to the article-level hits so the
+    difference is auditable instead of silently dropped.
+    """
+    lowered = (answer or "").lower()
+    hits: list[str] = []
     for source in sources:
         url = (source.get("url") or "").strip()
         if not url:
             continue
         host = re.sub(r"^https?://", "", url).split("/")[0].lower()
-        if url.lower() in lowered or host in lowered:
+        if host and host in lowered:
             hits.append(source.get("source_id") or url)
     return hits
 
@@ -140,6 +236,14 @@ def main() -> int:
         "--materials", default=str(Path(__file__).resolve().parent / "materials")
     )
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--include-recovered",
+        action="store_true",
+        help=(
+            "also grade transcript-recovered answers (default: terminal answers only). "
+            "Recovered text is diagnostic for blocked turns; it must not enter an A/B comparison."
+        ),
+    )
     args = parser.parse_args()
 
     package_urls_map = load_package_urls(Path(args.manifest))
@@ -171,6 +275,10 @@ def main() -> int:
                 {"source_id": source_id, "url": package_urls[index] if index < len(package_urls) else ""}
                 for index, source_id in enumerate(draft.get("source_ids", []))
             ]
+            answer_source = row.get("answer_source") or "terminal"
+            if answer_source != "terminal" and not args.include_recovered:
+                continue
+            answer_text = row.get("answer") or ""
             records.append(
                 {
                     "run_id": row.get("run_id"),
@@ -179,13 +287,16 @@ def main() -> int:
                     "role": row["role"],
                     "turn_correlation_id": row.get("turn_correlation_id"),
                     "is_error": row.get("is_error"),
-                    "answer_chars": len(row.get("answer") or ""),
+                    "answer_chars": len(answer_text),
+                    "answer_source": answer_source,
+                    "answer_chars_source": len(answer_text),
                     "facts_total": len(facts),
                     "facts_hit": len(hit_ids),
                     "fact_coverage": round(len(hit_ids) / len(facts), 3) if facts else None,
                     "mean_claim_overlap": round(sum(ratios) / len(ratios), 3) if ratios else None,
                     "fact_hits": hit_ids,
-                    "host_mentions": citation_hits(sources, row.get("answer") or ""),
+                    "citation_hits": citation_hits(sources, row.get("answer") or ""),
+                    "legacy_host_mentions": legacy_host_mentions(sources, row.get("answer") or ""),
                     "attributed_sources": attribution_hits(
                         attribution_map.get(row["package_id"], []), row.get("answer") or ""
                     ),
@@ -193,9 +304,11 @@ def main() -> int:
                 }
             )
     # One turn can be graded from the printed answer and, when the CLI printed
-    # nothing, from the text recovered out of the transcript. Keep the longest
-    # answer per turn so a recovered row can never overwrite a real one and a
-    # turn is never counted twice.
+    # nothing, from the text recovered out of the transcript. Recovered rows are
+    # dropped by default: they describe turns that never produced an answer, so
+    # mixing them into an arm inflates its fact coverage and makes the two arms
+    # incomparable. --include-recovered keeps them, labelled by answer_source.
+    # Keep the longest answer per turn so a turn is never counted twice.
     best: dict[tuple[str, str, str], dict] = {}
     for record in records:
         key = (record["package_id"], record["arm"], record["role"])

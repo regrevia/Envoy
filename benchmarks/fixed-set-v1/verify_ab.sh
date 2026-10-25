@@ -5,7 +5,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 AB_DIR="${1:?usage: verify_ab.sh <ab-dir> <run-id>}"
 RUN_ID="${2:?usage: verify_ab.sh <ab-dir> <run-id>}"
-OUT="$AB_DIR/report"
+OUT="${AB_REPORT_DIR:-$AB_DIR/report}"
 mkdir -p "$OUT"
 
 ROOTS=()
@@ -30,8 +30,8 @@ for shard in "$AB_DIR"/s* "$AB_DIR"/plan-s*; do
   ANSWER_ARGS+=(--answers "$shard/answers.jsonl")
 done
 # Turns that printed no final text still left text in the transcript: a capped
-# turn, or one that stopped after a tool call. Recovering it keeps the quality
-# denominator honest, and every recovered row is labelled by source.
+# turn, or one that stopped after a tool call. Recovering it is diagnostic only:
+# it explains why a turn blocked, and it must not enter the two-arm comparison.
 BACKFILL_ARGS=()
 for shard in "$AB_DIR"/s* "$AB_DIR"/plan-s*; do
   [ -f "$shard/answers.jsonl" ] || continue
@@ -39,8 +39,16 @@ for shard in "$AB_DIR"/s* "$AB_DIR"/plan-s*; do
 done
 python3 "$ROOT/backfill_answers.py" "${BACKFILL_ARGS[@]}" --out "$OUT/answers-recovered.jsonl" \
   | python3 -c "import json,sys; r=json.load(sys.stdin); print(json.dumps({'answers_recovered': r['recovered']}))"
-python3 "$ROOT/ab_grade.py" "${ANSWER_ARGS[@]}" --answers "$OUT/answers-recovered.jsonl" \
-  --out "$OUT/grade.jsonl"
+# Grade the terminal answers only. Recovered transcript text exists for the
+# blocked turns (diagnosis), but it is never part of the A/B comparison: a turn
+# that produced no answer must not gain facts from a partial transcript, and
+# only baseline has such rows. Set INCLUDE_RECOVERED=1 to grade it as well; the
+# rows are then labelled by answer_source.
+GRADE_ARGS=("${ANSWER_ARGS[@]}")
+if [ "${INCLUDE_RECOVERED:-0}" = "1" ]; then
+  GRADE_ARGS+=(--answers "$OUT/answers-recovered.jsonl" --include-recovered)
+fi
+python3 "$ROOT/ab_grade.py" "${GRADE_ARGS[@]}" --out "$OUT/grade.jsonl"
 
 T0=$(python3 - "$AB_DIR" <<'PY'
 import json, sys, pathlib

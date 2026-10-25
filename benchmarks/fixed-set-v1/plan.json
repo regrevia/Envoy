@@ -50,8 +50,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "bili-05",
@@ -89,8 +89,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "wechat-03",
@@ -128,8 +128,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "cross-05",
@@ -167,8 +167,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "cross-04",
@@ -323,8 +323,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "bili-01",
@@ -362,8 +362,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "douyin-01",
@@ -401,8 +401,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "bili-03",
@@ -635,8 +635,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "cross-02",
@@ -713,8 +713,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "douyin-03",
@@ -752,8 +752,8 @@
     },
     {
       "arms": [
-        "baseline",
-        "envoy"
+        "envoy",
+        "baseline"
       ],
       "first_arm": "envoy",
       "package_id": "douyin-04",

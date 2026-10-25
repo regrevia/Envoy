@@ -4,7 +4,9 @@
 [`envoy-dsh/`](envoy-dsh/)。安装后由 DSH 插件管理器统一管理，既保留 Envoy
 原有能力，也把 Envoy 注册为 Agent Skill。
 
-当前插件版本：`0.1.8`（`dev` 分支上的开发版）。
+当前插件版本：`0.1.8`（`dev` 分支上的开发版）；要求 CLI runtime `>= 0.1.8`。
+版本、最低 runtime、协议版本、源码提交和产物校验值统一记录在
+[`integrations/release-manifest.json`](../release-manifest.json)。
 
 ## 它做什么
 
@@ -22,12 +24,20 @@
 
 ## 前置条件
 
-1. 已安装 Envoy CLI runtime（`0.1.6` 或兼容的后续开发版本），并完成
-   `envoy browser setup`。参见
-   [Envoy 安装指南](../skills/envoy/INSTALL.md)。
+1. 已安装 Envoy CLI runtime `>= 0.1.8`，并完成 `envoy browser setup`。参见
+   [Envoy 安装指南](../skills/envoy/INSTALL.md)。没有 runtime 时，本插件会在
+   `~/.local/share/envoy-dsh/runtime` 自备一份。
 2. 使用 DSH Desktop 的插件管理器安装本目录。
 3. macOS 或 Linux。补丁使用 `/bin/sh`，Windows 需改用 PowerShell 或
    `cmd.exe` 启动器。
+
+## 可见窗口不由 agent 打开
+
+Envoy 默认无头读取。页面需要用户登录或验证时，工具返回
+`details.needs_user_action` 且带 `requires_human: true`：把问题与选项转述给
+用户，停下等待，不要设置 `ENVOY_VISIBLE_BROWSER`，也不要执行任何开窗命令。
+可见模式只对人类的交互式终端生效（stdin 与 stdout 都是 TTY 且显式 opt-in），
+本插件的 stdio 传输下 CLI 一律拒绝；读到需要登录却看不到窗口属于预期行为。
 
 ## 安装
 
@@ -49,8 +59,24 @@
   `mcp__envoy__envoy_observe_visual`；高级工具需重启为 `full` 后才出现；
 - 技能目录出现 `envoy`，加载后以
   `# Envoy Link Reader in DeepSeek Harness` 开头；
-- `envoy doctor --json` 返回 `0.1.6`；使用 `full` 时也可调用
+- `envoy doctor --json` 的 `cli_version` 不低于 `0.1.8`；使用 `full` 时也可调用
   `mcp__envoy__envoy_doctor`。
+
+## 升级
+
+启动器每次挂载前对比 `envoy --version` 与插件要求的最低 runtime：
+
+- 自备 runtime 版本过低：用发行版 wheel 原地升级 venv，再挂载。venv 独立于
+  `~/.envoy`，既有 ASR/OCR 配置和已下载模型不受影响，不会重复下载。
+- `ENVOY_BIN` 或 PATH 上的 `envoy` 版本过低：直接失败并打印升级命令，不静默
+  使用不兼容的 CLI。
+- 更新插件或修改 `ENVOY_DSH_VERSION` 后，下一次挂载即按新版本重新校验。
+
+校验清单与源码是否一致：
+
+```bash
+python3 scripts/check_release_manifest.py --check
+```
 
 ## PATH 与超时
 

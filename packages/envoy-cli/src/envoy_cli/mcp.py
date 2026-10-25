@@ -9,7 +9,7 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Any, Iterable, TextIO
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse
 
 from envoy_core.schemas.read_v1 import (
     ExpandRequest,
@@ -41,6 +41,7 @@ from .media import media_runtime_status
 from .ocr import available_ocr_backends
 from .reader import (
     PublicPageError,
+    _estimated_tokens,
     _redact_url,
     expand_material,
     read_public_page,
@@ -549,13 +550,19 @@ def _state_not_writable_payload(request_id: str, message: str) -> dict:
             "details": {
                 "needs_user_action": {
                     "kind": "state_not_writable",
+                    "requires_human": True,
                     "question": "Envoy cannot write its state directory in this host.",
                     "options": [{
                         "kind": "set_writable_state_dir",
                         "effect": "Keep retained material in a writable directory",
-                        "command": (
-                            "env ENVOY_LOCAL_DATA_DIR="
-                            f"{state_storage.fallback_root()} envoy mcp"
+                        # A state directory is fixed when the host starts the MCP
+                        # process, so this is a host-operator action rather than
+                        # a tool the model can call mid-turn.
+                        "instruction": (
+                            "Restart this host's Envoy MCP process with "
+                            "ENVOY_LOCAL_DATA_DIR set to "
+                            f"{state_storage.fallback_root()} so retained material "
+                            "lands in a writable directory."
                         ),
                     }],
                 },
@@ -604,13 +611,18 @@ def _payload_needs_user_action(payload: dict) -> dict | None:
 
 def _action_text(action: dict) -> str:
     parts: list[str] = []
+    if action.get("requires_human"):
+        parts.append("Ask the user to do this")
     question = str(action.get("question") or "").strip()
     if question:
         parts.append(question)
     options = [item for item in (action.get("options") or []) if isinstance(item, dict)]
     for option in options[:2]:
-        kind = str(option.get("kind") or "").strip()
-        effect = str(option.get("effect") or "").strip()
+        kind = str(option.get("kind") or option.get("action") or "").strip()
+        # A human action carries prose; an executable shortcut would be a command.
+        effect = str(
+            option.get("instruction") or option.get("effect") or option.get("message") or ""
+        ).strip()
         command = str(option.get("command") or "").strip()
         label = ": ".join(part for part in (kind, effect) if part)
         if command:
@@ -842,20 +854,152 @@ def _local_video_arguments(read_arguments: dict, path: str) -> dict:
 
 # A read is the expensive part. Once a source has been read in this bridge
 # process, a later failure of the same source (auth wall, challenge, transient
-# block) must not cost the host the evidence it already received: re-reading
-# from the retained material keeps the session movable instead of dead.
+# block) must not cost the host the evidence it already received: returning the
+# retained material keeps the session movable instead of dead.
+#
+# Retained material is addressed by the URL's *identity*, not by its text. The
+# query string says which item of a site is meant (`?v=<video id>`,
+# `?__biz=...&mid=...&idx=...`), so it is kept except for parameters that only
+# describe the visit. Keying on scheme+host+path alone served one item's
+# material for a different item of the same site.
+_BLOCKED_RESULTS = {"blocked", "failed"}
 _RETAINABLE_RESULTS = {"ready", "partial", "needs_host"}
 _RETAINED_READS: dict[str, dict] = {}
+
+# Parameters that never change which page or media the URL addresses.
+_TRACKING_QUERY_PARAMETERS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_name", "utm_reader", "utm_brand", "utm_social",
+    "gclid", "dclid", "fbclid", "msclkid", "yclid", "twclid", "igshid",
+    "spm", "spm_id_from", "scm", "from", "from_source", "from_spmid",
+    "vd_source", "share_source", "share_medium", "share_plat",
+    "share_session_id", "share_tag", "timestamp", "_t", "tt_from",
+    "is_from_webapp", "ref", "referrer", "mc_cid", "mc_eid",
+})
+
+# Identity often travels in the query string, so a parameter that looks like a
+# tracker stays when it is one of these. A wrong reuse serves the wrong item; a
+# missed reuse only costs one read, so the tie always goes to reading again.
+_IDENTITY_QUERY_PARAMETERS = frozenset({
+    "v", "p", "t", "id", "fid", "mid", "sn", "idx", "index", "list", "bvid",
+    "aid", "cid", "item_ids", "item_id", "note_id", "video_id", "aweme_id",
+    "chksm", "scene", "subscene", "ascene", "devicetype", "version",
+    "nettype", "pass_ticket", "wx_header", "sharer_sharetime",
+    "sharer_shareid", "sessionid", "feed_id", "article_id", "biz", "appmsgid",
+})
+
+_VISUAL_BLOCK_KINDS = frozenset({
+    "visual", "image", "images", "frame", "frames", "video_frame", "screenshot",
+    "visual_observation",
+})
+_VIDEO_INPUT_RANK = {"none": 0, "native": 1, "frames": 2}
+_IMAGE_INPUT_RANK = {"none": 0, "uri": 1, "local_file": 2}
 
 
 def _retained_key(url: str) -> str:
     parsed = urlparse(str(url or "").strip())
     if not parsed.scheme or not parsed.netloc:
         return ""
-    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path}"
+    kept = [
+        (name, value)
+        for name, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if name.lower() not in _TRACKING_QUERY_PARAMETERS
+        or name.lower() in _IDENTITY_QUERY_PARAMETERS
+    ]
+    query = urlencode(sorted(kept))
+    suffix = f"?{query}" if query else ""
+    fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path}{suffix}{fragment}"
 
 
-def _remember_read(arguments: dict, payload: dict) -> None:
+def _refresh_requested(arguments: dict) -> bool:
+    """Only a real boolean opt-in counts; "false" must not read as "refresh"."""
+
+    return arguments.get("refresh") is True
+
+
+def _request_material_needs(arguments: dict) -> dict:
+    scope = arguments.get("scope") if isinstance(arguments.get("scope"), dict) else {}
+    budget = arguments.get("budget") if isinstance(arguments.get("budget"), dict) else {}
+    host = arguments.get("host_capabilities") if isinstance(arguments.get("host_capabilities"), dict) else {}
+    return {
+        "start_seconds": scope.get("start_seconds"),
+        "end_seconds": scope.get("end_seconds"),
+        "include_visual": bool(scope.get("include_visual")),
+        "video_input": str(host.get("video_input") or "none"),
+        "image_input": str(host.get("image_input") or "none"),
+        "max_response_chars": int(budget.get("max_response_chars") or 12_000),
+        "max_response_tokens": budget.get("max_response_tokens"),
+        "ocr_profile": arguments.get("ocr_profile"),
+        "ocr_backend": arguments.get("ocr_backend"),
+        "ocr_language": arguments.get("ocr_language"),
+        "video_subtitle_language": arguments.get("video_subtitle_language"),
+    }
+
+
+def _payload_has_visual(payload: dict) -> bool:
+    for block in payload.get("blocks") or []:
+        if isinstance(block, dict) and str(block.get("kind") or "").lower() in _VISUAL_BLOCK_KINDS:
+            return True
+    modalities = (payload.get("coverage") or {}).get("modalities") or {}
+    if isinstance(modalities, dict):
+        for name, item in modalities.items():
+            if str(name).lower() not in {
+                "visual", "frames", "video_frames", "images", "visual_observation",
+            }:
+                continue
+            if isinstance(item, dict) and any(
+                isinstance(item.get(key), int) and item[key] > 0
+                for key in ("delivered", "returned", "observed", "extracted")
+            ):
+                return True
+    return False
+
+
+def _retained_needs_cover(have: dict, need: dict) -> bool:
+    if (have.get("start_seconds"), have.get("end_seconds")) != (
+        need.get("start_seconds"),
+        need.get("end_seconds"),
+    ):
+        # Another window is different work; it does not invalidate this one.
+        return False
+    if need.get("include_visual") and not have.get("include_visual"):
+        return False
+    if _VIDEO_INPUT_RANK.get(need.get("video_input"), 0) > _VIDEO_INPUT_RANK.get(
+        have.get("video_input"), 0
+    ):
+        return False
+    if _IMAGE_INPUT_RANK.get(need.get("image_input"), 0) > _IMAGE_INPUT_RANK.get(
+        have.get("image_input"), 0
+    ):
+        return False
+    for key in ("ocr_profile", "ocr_backend", "ocr_language", "video_subtitle_language"):
+        if need.get(key) != have.get(key) and (need.get(key) or have.get(key)):
+            return False
+    return True
+
+
+def _retained_serves(stored: dict, arguments: dict, compact: bool | None = None) -> bool:
+    if compact is not None and bool(stored.get("compact")) != bool(compact):
+        # A compact payload omits fields a legacy client expects, and vice versa.
+        return False
+    need = _request_material_needs(arguments)
+    if not _retained_needs_cover(stored.get("needs") or {}, need):
+        return False
+    # The retained response was shaped under the budget of its own request.
+    # A tighter budget now would be violated by returning it unchanged.
+    if (stored.get("served_chars") or 0) > need["max_response_chars"]:
+        return False
+    max_tokens = need["max_response_tokens"]
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        if (stored.get("served_tokens") or 0) > max_tokens:
+            return False
+    if need["include_visual"] and not stored.get("visual_delivered"):
+        return False
+    return True
+
+
+def _remember_read(arguments: dict, payload: dict, compact: bool | None = None) -> None:
     source = arguments.get("source")
     if not isinstance(source, dict):
         return
@@ -864,10 +1008,25 @@ def _remember_read(arguments: dict, payload: dict) -> None:
         return
     if not payload.get("material_id"):
         return
+    needs = _request_material_needs(arguments)
+    existing = _RETAINED_READS.get(key)
+    if (
+        existing is not None
+        and existing.get("visual_delivered")
+        and not needs.get("include_visual")
+    ):
+        # A later narrow read must not evict the frames an earlier read delivered.
+        return
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     _RETAINED_READS[key] = {
         "payload": payload,
         "material_id": payload.get("material_id"),
         "source_revision": payload.get("source_revision"),
+        "needs": needs,
+        "served_chars": len(serialized),
+        "served_tokens": _estimated_tokens(serialized),
+        "visual_delivered": _payload_has_visual(payload),
+        "compact": None if compact is None else bool(compact),
     }
 
 
@@ -878,8 +1037,33 @@ def _retained_read(arguments: dict) -> dict | None:
     return _RETAINED_READS.get(_retained_key(str(source.get("url") or "")))
 
 
-def _retained_payload(retained: dict, exc: Any = None) -> dict:
+def _retained_candidate(arguments: dict, compact: bool | None = None) -> dict | None:
+    """Retained material that still satisfies this exact request, if any."""
+    stored = _retained_read(arguments)
+    if stored is None or not _retained_serves(stored, arguments, compact):
+        return None
+    return stored
+
+
+def _blocked_reason(payload: dict) -> str:
+    for key in ("errors", "notices"):
+        items = payload.get(key)
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("message"):
+                    return str(item["message"])
+    return "the source could not be read again"
+
+
+def _retained_payload(
+    retained: dict,
+    exc: Any = None,
+    request_id: Any = None,
+    blocked: dict | None = None,
+) -> dict:
     payload = dict(retained["payload"])
+    if request_id is not None:
+        payload["request_id"] = str(request_id)
     payload["served_from_retained_material"] = True
     notices = payload.get("notices")
     notice: dict = {
@@ -888,13 +1072,18 @@ def _retained_payload(retained: dict, exc: Any = None) -> dict:
             "The source could not be re-read, so the material already retained "
             "in this session was returned instead; nothing was re-fetched"
         )
-        if exc is not None
+        if exc is not None or blocked is not None
         else (
             "This source was read earlier in this session, so the retained material "
             "was returned; nothing was re-fetched. Send refresh=true to read it again"
         ),
     }
-    if exc is not None:
+    if blocked is not None:
+        notice["refetch_error"] = {
+            "code": str(blocked.get("result") or "blocked"),
+            "message": _blocked_reason(blocked),
+        }
+    elif exc is not None:
         notice["refetch_error"] = {
             "code": getattr(getattr(exc, "code", None), "value", "unknown"),
             "message": str(exc),
@@ -1113,17 +1302,36 @@ def handle_message(
     try:
         arguments = _server_arguments(name, arguments)
         if name == "envoy_read":
+            fresh_read = False
             local_path = _local_source_path(arguments)
             if local_path is None:
-                retained = _retained_read(arguments)
-                if retained is not None and not arguments.get("refresh"):
-                    payload = _retained_payload(retained)
+                retained = (
+                    None
+                    if _refresh_requested(arguments)
+                    else _retained_candidate(arguments, modern_request)
+                )
+                if retained is not None:
+                    payload = _retained_payload(retained, request_id=arguments.get("request_id"))
                 else:
                     read_arguments = {
                         key: value for key, value in arguments.items() if key != "refresh"
                     }
                     response = read_public_page(ReadRequest.model_validate(read_arguments))
                     payload = _read_payload(response, compact=modern_request)
+                    fresh_read = True
+                    if payload.get("result") in _BLOCKED_RESULTS:
+                        # A re-read that is blocked must not lose evidence that is
+                        # still valid in this session.
+                        retained = _retained_candidate(arguments, modern_request)
+                        if retained is not None:
+                            payload = _retained_payload(
+                                retained,
+                                request_id=arguments.get("request_id"),
+                                blocked=payload,
+                            )
+                            # The payload is the earlier request's material: its
+                            # needs must not be recorded as this request's needs.
+                            fresh_read = False
             else:
                 path = Path(local_path)
                 if not path.is_file():
@@ -1150,7 +1358,9 @@ def handle_message(
                         )
                     )
                     payload = _read_payload(response, compact=modern_request)
-            _remember_read(arguments, payload)
+                    fresh_read = True
+            if fresh_read:
+                _remember_read(arguments, payload, modern_request)
         elif name == "envoy_read_local_video":
             response = read_local_video(LocalVideoReadRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
@@ -1324,9 +1534,11 @@ def handle_message(
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
     except PublicPageError as exc:
-        retained = _retained_read(arguments)
+        # A failed refetch falls back to this session's material even when the
+        # caller asked to refresh: the notice marks it and the error is returned.
+        retained = _retained_candidate(arguments, modern_request)
         if retained is not None:
-            payload = _retained_payload(retained, exc)
+            payload = _retained_payload(retained, exc, request_id=arguments.get("request_id"))
         else:
             payload = {
                 "protocol_version": "envoy.read/1",

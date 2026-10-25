@@ -12,6 +12,7 @@ access is a deliberate act by the user; nothing here runs during a normal read.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import sqlite3
@@ -110,8 +111,8 @@ def _chromium_key(password: bytes) -> bytes:
 
 _APP_BOUND_MESSAGE = (
     "This browser protects its cookies with app-bound encryption, which only the "
-    "browser's own elevation service can unlock; sign in once with "
-    "ENVOY_VISIBLE_BROWSER=1 instead"
+    "browser's own elevation service can unlock; ask the user to sign in once "
+    "in their own terminal with visible browser mode enabled"
 )
 
 
@@ -145,7 +146,8 @@ def _dpapi_unprotect(payload: bytes) -> bytes:
     ):
         raise CookieImportError(
             "Windows refused to unprotect the browser's cookie key; "
-            "sign in once with ENVOY_VISIBLE_BROWSER=1 instead"
+            "ask the user to sign in once in their own terminal with visible "
+            "browser mode enabled"
         )
     try:
         return ctypes.string_at(target.pbData, target.cbData)
@@ -195,7 +197,8 @@ def _chromium_gcm_plaintext(key: bytes, payload: bytes) -> str:
     except ValueError as exc:
         raise CookieImportError(
             "Could not decrypt the browser cookie store; "
-            "sign in once with ENVOY_VISIBLE_BROWSER=1 instead"
+            "ask the user to sign in once in their own terminal with visible "
+            "browser mode enabled"
         ) from exc
 
 
@@ -254,8 +257,9 @@ def _chromium_plaintext(raw: bytes, key: bytes | None, *, platform: str | None =
         return raw.decode("utf-8", "ignore")
     if key is None:
         raise CookieImportError(
-            "This browser protects its cookies with a key Envoy cannot read on this system; "
-            "sign in once with ENVOY_VISIBLE_BROWSER=1 instead"
+            "This browser protects its cookies with a key Envoy cannot read on this "
+            "system; ask the user to sign in once in their own terminal with "
+            "visible browser mode enabled"
         )
     if platform == "win32":
         # Windows keeps the AES-256-GCM key in Local State, protected by DPAPI,
@@ -275,20 +279,228 @@ def _chromium_expiry(value) -> float:
     return max(float(stamp) / 1_000_000 - 11_644_473_600, 0.0)
 
 
+# A built-in subset of the Public Suffix List, enough to tell "the site the user
+# is on" from "a suffix strangers share".  The full list is ~10k rules and
+# changes monthly; importing a snapshot would mean a shipping data file plus an
+# update path, and for cookie import the cost of a missing rule is bounded: an
+# unlisted ccTLD behaves like the PSL default rule "*" (the last two labels are
+# the site), which can only make the scope narrower than the site, never wider
+# than a public suffix.  Multi-label suffixes that would widen the scope into
+# unrelated sites are the ones listed here.
+_PUBLIC_SUFFIX_RULES = frozenset({
+    # United Kingdom
+    "ac.uk", "co.uk", "gov.uk", "ltd.uk", "me.uk", "net.uk", "nhs.uk", "org.uk",
+    "plc.uk", "police.uk", "sch.uk",
+    # Japan
+    "ac.jp", "ad.jp", "co.jp", "ed.jp", "go.jp", "gr.jp", "lg.jp", "ne.jp", "or.jp",
+    # Australia / New Zealand
+    "asn.au", "com.au", "edu.au", "gov.au", "id.au", "net.au", "org.au",
+    "ac.nz", "co.nz", "geek.nz", "gen.nz", "govt.nz", "kiwi.nz", "maori.nz",
+    "net.nz", "org.nz", "school.nz",
+    # Greater China
+    "ac.cn", "com.cn", "edu.cn", "gov.cn", "net.cn", "org.cn",
+    "com.hk", "edu.hk", "gov.hk", "idv.hk", "net.hk", "org.hk",
+    "com.tw", "edu.tw", "gov.tw", "idv.tw", "net.tw", "org.tw",
+    # South and South-East Asia
+    "com.sg", "edu.sg", "gov.sg", "net.sg", "org.sg",
+    "com.my", "edu.my", "gov.my", "net.my", "org.my",
+    "ac.in", "co.in", "edu.in", "firm.in", "gen.in", "gov.in", "ind.in", "net.in",
+    "org.in", "res.in",
+    "ac.kr", "co.kr", "go.kr", "ne.kr", "or.kr", "pe.kr", "re.kr",
+    "co.th", "ac.th", "go.th", "in.th", "net.th", "or.th",
+    "com.ph", "edu.ph", "gov.ph", "net.ph", "org.ph",
+    "ac.id", "co.id", "go.id", "net.id", "or.id", "sch.id", "web.id",
+    "com.vn", "edu.vn", "gov.vn", "net.vn", "org.vn",
+    "com.bd", "edu.bd", "gov.bd", "net.bd", "org.bd",
+    "com.pk", "edu.pk", "gov.pk", "net.pk", "org.pk",
+    "biz.np", "com.np", "edu.np", "gov.np", "info.np", "net.np", "org.np",
+    # Africa
+    "ac.za", "co.za", "gov.za", "net.za", "org.za", "web.za",
+    "com.eg", "edu.eg", "gov.eg", "net.eg", "org.eg",
+    "com.ng", "edu.ng", "gov.ng", "net.ng", "org.ng",
+    # Americas
+    "com.br", "edu.br", "gov.br", "net.br", "org.br", "art.br", "blog.br",
+    "com.ar", "edu.ar", "gov.ar", "net.ar", "org.ar",
+    "com.mx", "edu.mx", "gob.mx", "net.mx", "org.mx",
+    "com.co", "edu.co", "gov.co", "net.co", "org.co",
+    "com.pe", "edu.pe", "gob.pe", "net.pe", "nom.pe", "org.pe",
+    "com.ve", "edu.ve", "gob.ve", "net.ve", "org.ve",
+    "com.ec", "edu.ec", "gob.ec", "net.ec", "org.ec",
+    "com.uy", "edu.uy", "gub.uy", "net.uy", "org.uy",
+    # Europe and the Middle East
+    "com.tr", "edu.tr", "gov.tr", "net.tr", "org.tr", "av.tr", "bel.tr", "biz.tr",
+    "info.tr", "k12.tr", "name.tr", "pol.tr", "tel.tr", "web.tr",
+    "com.ua", "edu.ua", "gov.ua", "net.ua", "org.ua",
+    "ac.il", "co.il", "gov.il", "muni.il", "net.il", "org.il",
+    "com.sa", "edu.sa", "gov.sa", "med.sa", "net.sa", "org.sa", "pub.sa", "sch.sa",
+})
+
+# Wildcard rules (the PSL's "*.suffix" form) and their exceptions ("!host").
+# A wildcard makes every direct child of the suffix a public suffix, so
+# foo.ck is a registry, not a site.
+_PUBLIC_SUFFIX_WILDCARDS = frozenset({
+    "bd", "ck", "er", "fk", "jm", "kh", "mm", "np", "pg",
+    "kawasaki.jp", "kitakyushu.jp", "platform.sh",
+})
+_PUBLIC_SUFFIX_EXCEPTIONS = frozenset({
+    "city.kawasaki.jp", "city.kitakyushu.jp", "www.ck",
+})
+
+
+# Private sections: hosting providers that give every customer its own name
+# under a shared suffix (evil.github.io, myblog.blogspot.com, app.vercel.app).
+# Tumblr and S3 are the classic case: the shared suffix is not a registry, so
+# the site is "private suffix + one label".  These never take part in the
+# ICANN wildcard/exception rules above; they are matched exactly.
+_PRIVATE_SUFFIX_RULES = frozenset({
+    "appspot.com", "azurewebsites.net", "bitbucket.io", "blogspot.com",
+    "cloudfront.net", "compute.amazonaws.com", "firebaseapp.com", "github.io",
+    "githubusercontent.com", "gitlab.io", "herokuapp.com", "myshopify.com",
+    "netlify.app", "notion.site", "pages.dev", "readthedocs.io",
+    "s3.amazonaws.com", "vercel.app", "web.app", "workers.dev",
+})
+
+def _host_labels(host: str) -> list[str]:
+    return [label for label in str(host or "").strip().strip(".").lower().split(".") if label]
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(str(host or "").strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
+def _canonical_host(host: str) -> str:
+    """One spelling for every host: no brackets, no port, no trailing dot."""
+
+    if _is_ip_literal(host):
+        return str(ipaddress.ip_address(str(host).strip("[]")))
+    return ".".join(_host_labels(host))
+
+
+def _strip_port(value: str) -> str:
+    """Drop a port the way urlparse would, including [::1]:443."""
+
+    raw = str(value or "").strip()
+    if raw.startswith("["):
+        end = raw.find("]")
+        return raw[1:end] if end != -1 else raw.strip("[]")
+    if raw.count(":") == 1:
+        return raw.split(":", 1)[0]
+    return raw
+
+
+def _is_local_host(host: str) -> bool:
+    host = _canonical_host(host)
+    return host == "localhost" or host.endswith(".localhost") or _is_ip_literal(host)
+
+
+def _idna(host: str) -> str:
+    """Compare registrable names, not their Unicode spelling."""
+
+    host = str(host or "").strip().lower().rstrip(".")
+    if not host or _is_ip_literal(host):
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return host
+
+
+def _public_suffix(host: str) -> str:
+    """The ICANN boundary for host, per the built-in rules."""
+
+    labels = _host_labels(host)
+    if len(labels) <= 1:
+        return ".".join(labels)
+    # Exception rules win over wildcards: !www.ck means www.ck is a site.
+    for index in range(len(labels)):
+        if ".".join(labels[index:]) in _PUBLIC_SUFFIX_EXCEPTIONS:
+            return ".".join(labels[index + 1:])
+    matched = 1  # the PSL default rule "*": an unknown TLD is a suffix itself
+    for index in range(len(labels)):
+        candidate = ".".join(labels[index:])
+        if candidate in _PUBLIC_SUFFIX_RULES:
+            matched = max(matched, len(labels) - index)
+        if index + 1 < len(labels) and ".".join(labels[index + 1:]) in _PUBLIC_SUFFIX_WILDCARDS:
+            matched = max(matched, len(labels) - index)
+    return ".".join(labels[len(labels) - matched:])
+
+
+def _private_suffix(host: str) -> str:
+    """The longest hosting-provider suffix that owns host, or ""."""
+
+    labels = _host_labels(host)
+    for index in range(len(labels)):
+        candidate = ".".join(labels[index:])
+        if candidate in _PRIVATE_SUFFIX_RULES:
+            return candidate
+    return ""
+
+
+def _public_suffix_error(scope: str) -> CookieImportError:
+    return CookieImportError(
+        f"{scope} 是公共后缀，请输入站点域名，例如 example.co.uk"
+    )
+
+
+def _registrable_domain(host: str) -> str:
+    """The site host belongs to: "suffix + one label", private sections included."""
+
+    private = _private_suffix(host)
+    boundary = private or _public_suffix(host)
+    if host == boundary:
+        raise _public_suffix_error(host)
+    labels = _host_labels(host)
+    return ".".join(labels[-(len(_host_labels(boundary)) + 1):])
+
+
+def _scope_for(value: str) -> str:
+    """Validate one import scope: a site, a subdomain of it, or a local host."""
+
+    host = _canonical_host(_strip_port(value))
+    if not host:
+        raise CookieImportError("请输入站点域名，例如 example.co.uk")
+    if _is_local_host(host):
+        return host
+    if "." not in host or host in (_public_suffix(host), _private_suffix(host)):
+        raise _public_suffix_error(host)
+    return host
+
+
+def _scope_from_host(host: str) -> str:
+    """The site to import for a page: a local host, or the registrable domain."""
+
+    host = _canonical_host(_strip_port(host))
+    if not host:
+        raise CookieImportError("这个链接没有可用的站点域名，请输入站点域名，例如 example.co.uk")
+    if _is_local_host(host):
+        return host
+    try:
+        return _registrable_domain(host)
+    except CookieImportError as error:
+        raise CookieImportError(
+            f"该链接只包含公共后缀 {host}，请输入站点域名，例如 example.co.uk"
+        ) from error
+
+
 def _matches_domain(host_key: str, domains: list[str]) -> bool:
-    host = str(host_key or "").lstrip(".").lower()
+    host = _idna(_canonical_host(_strip_port(host_key)))
     if not host:
         return False
-    return any(host == domain or host.endswith("." + domain) for domain in domains)
+    return any(
+        host == domain or host.endswith("." + domain)
+        for domain in (_idna(_canonical_host(_strip_port(item))) for item in domains)
+        if domain
+    )
 
 
 def _domain_filter(domains: list[str] | None, source_url: str | None) -> list[str]:
-    wanted = [str(item).strip().lstrip(".").lower() for item in domains or [] if str(item).strip()]
+    wanted = [_scope_for(str(item)) for item in domains or [] if str(item).strip()]
     if not wanted and source_url:
-        host = (urlparse(source_url).hostname or "").lower()
-        labels = host.split(".")
-        if len(labels) >= 2:
-            wanted = [".".join(labels[-2:])]
+        wanted = [_scope_from_host(urlparse(source_url).hostname or "")]
     if not wanted:
         raise CookieImportError("Name the domain to copy cookies for, or pass the link to read")
     return wanted
@@ -431,8 +643,9 @@ def import_safari_cookies(domains: list[str]) -> dict:
 def _save_cookies(source: str, domains: list[str], cookies: list[dict]) -> dict:
     if not cookies:
         raise CookieImportError(
-            f"{source} holds no cookie for {' or '.join(domains)}; sign in to that site in "
-            f"{source} first, or use ENVOY_VISIBLE_BROWSER=1"
+            f"{source} holds no cookie for {' or '.join(domains)}; ask the user to sign "
+            f"in to that site in {source}, in their own terminal with visible browser "
+            f"mode enabled"
         )
     target = cookie_store_path()
     payload = {
@@ -492,10 +705,13 @@ def load_cookies_for(url: str) -> list[dict]:
         return []
     selected = []
     for cookie in cookies:
-        domain = str(cookie.get("domain") or "").lstrip(".").lower()
-        if not domain:
+        try:
+            domain = _scope_for(str(cookie.get("domain") or ""))
+        except CookieImportError:
+            # A store written before scopes were validated can hold a public
+            # suffix (or a bare junk value); never hand those out.
             continue
-        if host == domain or host.endswith("." + domain):
+        if _matches_domain(host, [domain]):
             selected.append({key: value for key, value in cookie.items() if value not in ("", None)})
     return selected[:200]
 

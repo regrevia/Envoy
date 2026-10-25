@@ -873,24 +873,33 @@ def _read_with_isolated_browser(
     except browser.BrowserChallengeRequired as exc:
         return None, exc
     except (browser.BrowserRuntimeUnavailable, browser.BrowserReadError) as exc:
-        return None, str(exc)
+        # The caller distinguishes these by type and maps them to ErrorCode, so
+        # the failure must stay an exception rather than a formatted string.
+        return None, exc
     except Exception as exc:
         return None, exc
     if not _is_public_http_url(page.url, dns_cache):
-        return None, "The browser resolved the source to a non-public address"
+        return None, PublicPageError(
+            "The browser resolved the source to a non-public address",
+            ErrorCode.SOURCE_UNAVAILABLE,
+        )
     return page, None
 
 
 def _browser_read_failure_code(error) -> ErrorCode:
-    from .browser import BrowserChallengeRequired
+    from .browser import BrowserChallengeRequired, BrowserReadError, BrowserRuntimeUnavailable
 
+    if isinstance(error, BrowserRuntimeUnavailable):
+        # A missing browser binary or runtime is a capability gap, not a page
+        # that demanded credentials; doctor and the model can act on that.
+        return ErrorCode.MISSING_CAPABILITY
+    if isinstance(error, BrowserChallengeRequired):
+        return ErrorCode.CHALLENGE_REQUIRED
+    if isinstance(error, BrowserReadError):
+        return ErrorCode.NETWORK_ERROR
     if isinstance(error, TimeoutError) or type(error).__name__ == "TimeoutError":
         return ErrorCode.NETWORK_ERROR
-    return (
-        ErrorCode.CHALLENGE_REQUIRED
-        if isinstance(error, BrowserChallengeRequired)
-        else ErrorCode.AUTH_REQUIRED
-    )
+    return ErrorCode.AUTH_REQUIRED
 
 
 def _browser_page_has_video(page, requested_kind: str) -> bool:
@@ -936,53 +945,81 @@ def _is_cover_preview_media_url(url: str) -> bool:
 
 
 _PAGE_MEDIA_PROBE_BYTES = 64 * 1024
+# A prefix probe spends a request per candidate, so it obeys a hop cap, its own
+# wall-clock deadline, and a byte allowance drawn from the download budget: a
+# page cannot turn a size hint into an unbounded fetch.
+_PAGE_MEDIA_PROBE_MAX_HOPS = 5
+_PAGE_MEDIA_PROBE_MAX_CANDIDATES = 5
+_PAGE_MEDIA_PROBE_DEADLINE_SECONDS = 15.0
 
 
 def _probe_page_media(
     url: str,
     dns_cache: dict[str, bool],
+    *,
+    deadline: float | None = None,
 ) -> tuple[str, str, int] | None:
     """Fingerprint the first bytes of a page media URL.
 
-    Mirrors of one file share the digest even when their signed query strings
-    differ, which is what makes it safe to keep the first source of a player
-    instead of discarding every candidate as ambiguous. The reported length is
-    the full resource size, so a 200 KB teaser clip cannot outrank the real
-    multi-minute player source.
+    Redirects are followed here instead of by httpx so every hop passes the
+    public-address check: a CDN that answers ``302 http://127.0.0.1/...`` must
+    be refused before the second request is sent. The digest covers only the
+    first :data:`_PAGE_MEDIA_PROBE_BYTES`, so it proves a shared prefix, never
+    file equality; callers compare the reported full size as well.
     """
 
+    if not str(url).lower().startswith(("http://", "https://")):
+        return None
     if not _is_public_http_url(url, dns_cache):
         return None
+    if deadline is None:
+        deadline = time.monotonic() + _PAGE_MEDIA_PROBE_DEADLINE_SECONDS
     headers = {
         "Range": f"bytes=0-{_PAGE_MEDIA_PROBE_BYTES - 1}",
         "User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)",
     }
     for proxy in proxy_plan():
+        if time.monotonic() >= deadline:
+            return None
         try:
             with httpx.Client(
                 timeout=httpx.Timeout(10),
-                follow_redirects=True,
+                follow_redirects=False,
                 trust_env=False,
                 proxy=proxy,
             ) as client:
-                with client.stream("GET", url, headers=headers) as response:
-                    if response.status_code >= 400:
+                current = url
+                for _hop in range(_PAGE_MEDIA_PROBE_MAX_HOPS + 1):
+                    if time.monotonic() >= deadline:
                         return None
-                    content_type = str(response.headers.get("content-type") or "").lower()
-                    content_length = _page_media_total_bytes(
-                        response.headers.get("content-range"),
-                        response.headers.get("content-length"),
-                    )
-                    digest = hashlib.sha256()
-                    remaining = _PAGE_MEDIA_PROBE_BYTES
-                    for chunk in response.iter_bytes():
-                        if not chunk:
+                    with client.stream("GET", current, headers=headers) as response:
+                        status = int(response.status_code)
+                        if status in {301, 302, 303, 307, 308}:
+                            location = str(response.headers.get("location") or "").strip()
+                            if not location:
+                                return None
+                            current = urljoin(current, location)
+                            if not _is_public_http_url(current, dns_cache):
+                                return None
                             continue
-                        digest.update(chunk[:remaining])
-                        remaining -= min(len(chunk), remaining)
-                        if remaining <= 0:
-                            break
-                    return digest.hexdigest(), content_type, content_length
+                        if status < 200 or status >= 400:
+                            return None
+                        content_type = str(response.headers.get("content-type") or "").lower()
+                        content_length = _page_media_total_bytes(
+                            response.headers.get("content-range"),
+                            response.headers.get("content-length"),
+                        )
+                        digest = hashlib.sha256()
+                        remaining = _PAGE_MEDIA_PROBE_BYTES
+                        for chunk in response.iter_bytes():
+                            if not chunk:
+                                continue
+                            digest.update(chunk[:remaining])
+                            remaining -= min(len(chunk), remaining)
+                            if remaining <= 0:
+                                break
+                        return digest.hexdigest(), content_type, content_length
+                return None
         except (httpx.TimeoutException, httpx.TransportError):
             continue
     return None
@@ -1002,34 +1039,103 @@ def _page_media_total_bytes(content_range: str | None, content_length: str | Non
     return 0
 
 
+def _media_identity_key(identity: tuple[str, str, int] | None) -> tuple[str, str, int]:
+    """The full identity of one file: prefix digest, type, and total size."""
+
+    if identity is None:
+        return ("", "", 0)
+    digest, content_type, size = identity
+    return (str(digest), str(content_type or ""), int(size or 0))
+
+
+def _probe_page_media_identities(
+    candidates: list[str],
+    dns_cache: dict[str, bool],
+    *,
+    max_probe_bytes: int | None = None,
+    deadline: float | None = None,
+) -> tuple[dict[str, tuple[str, str, int]], int]:
+    """Probe candidates in DOM order until bytes or time run out.
+
+    Returns the identities that came back and the bytes the probing charged;
+    a failed probe still spends a request, so it is charged too.
+    """
+
+    identities: dict[str, tuple[str, str, int]] = {}
+    spent = 0
+    remaining = max_probe_bytes
+    for candidate in candidates[:_PAGE_MEDIA_PROBE_MAX_CANDIDATES]:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        if remaining is not None:
+            if remaining < _PAGE_MEDIA_PROBE_BYTES:
+                break
+            remaining -= _PAGE_MEDIA_PROBE_BYTES
+        spent += _PAGE_MEDIA_PROBE_BYTES
+        identity = _probe_page_media(candidate, dns_cache)
+        if identity is not None:
+            identities[candidate] = identity
+    return identities, spent
+
+
+def _order_media_urls(
+    candidates: list[str],
+    identities: dict[str, tuple[str, str, int]],
+) -> list[str]:
+    """Group mirrors of one file and order groups from the largest file down.
+
+    Two URLs are one file only when digest, content type, *and* total size
+    match; a shared 64 KiB prefix with a different size is two files, and
+    treating it as a mirror is exactly how a recommendation outranked the post.
+    Unprobed candidates keep their DOM order after the known files.
+    """
+
+    groups: dict[tuple, dict] = {}
+    ordered_groups: list[dict] = []
+    for url in candidates:
+        identity = identities.get(url)
+        key = ("file", *_media_identity_key(identity)) if identity is not None else ("unprobed", url)
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "urls": [],
+                "bytes": _media_identity_key(identity)[2] if identity is not None else 0,
+                "probed": identity is not None,
+            }
+            groups[key] = group
+            ordered_groups.append(group)
+        group["urls"].append(url)
+    ordered_groups.sort(key=lambda item: (0 if item["probed"] else 1, -int(item["bytes"])))
+    return list(dict.fromkeys(url for group in ordered_groups for url in group["urls"]))
+
+
 def _rank_page_media_urls(
     candidates: list[str],
     dns_cache: dict[str, bool],
+    *,
+    max_probe_bytes: int | None = None,
+    deadline: float | None = None,
 ) -> list[str]:
     """Order player sources from the largest file down.
 
     One player publishes the same title through several signed URLs (mirror
-    CDNs, an ``aweme/v1/play`` redirect), and a feed page sometimes binds a
-    short teaser clip beside it. Grouping mirrors by content digest keeps one
-    entry per file; ordering groups by size keeps a 200 KB cover teaser from
-    standing in for the real title when both are exposed.
+    CDNs, an ``aweme/v1/play`` redirect) and a feed page sometimes binds a short
+    teaser clip beside it. Grouping real mirrors keeps one entry per file;
+    ordering groups by size keeps a 200 KB cover teaser from standing in for
+    the real title when both are exposed.
+
+    ``max_probe_bytes`` and ``deadline`` bound the probing requests themselves,
+    which is a network cost the download budget also pays. A caller that omits
+    them keeps the historical unbounded behaviour for ranking-only use.
     """
 
-    groups: dict[str, dict] = {}
-    unprobed: list[str] = []
-    for url in candidates[:5]:
-        identity = _probe_page_media(url, dns_cache)
-        if identity is None:
-            unprobed.append(url)
-            continue
-        digest, _content_type, size = identity
-        group = groups.setdefault(digest, {"urls": [], "bytes": 0})
-        group["urls"].append(url)
-        group["bytes"] = max(int(group["bytes"]), int(size))
-    ordered: list[str] = []
-    for group in sorted(groups.values(), key=lambda item: -int(item["bytes"])):
-        ordered.extend(group["urls"])
-    return list(dict.fromkeys([*ordered, *unprobed]))
+    identities, _spent = _probe_page_media_identities(
+        candidates,
+        dns_cache,
+        max_probe_bytes=max_probe_bytes,
+        deadline=deadline,
+    )
+    return _order_media_urls(candidates, identities)
 
 
 def _choose_page_media_url(
@@ -1069,6 +1175,106 @@ def _select_browser_video_url(
             continue
         accepted.append(value)
     return (accepted[0] if accepted else None), rejected
+
+
+_WORK_ID_PATH_PATTERNS = (
+    re.compile(r"/(?:video|videos|shorts|reel|reels|watch|p|status|note|item|moments?)/([0-9A-Za-z_-]{6,})"),
+    re.compile(r"(?<![0-9A-Za-z])(BV[0-9A-Za-z]{8,})"),
+)
+_WORK_ID_QUERY_KEYS = (
+    "v",
+    "vid",
+    "video_id",
+    "videoid",
+    "item_id",
+    "aweme_id",
+    "note_id",
+    "object_id",
+)
+
+
+def _page_work_tokens(source_url: str) -> list[str]:
+    """Identifiers the requested page uses for its own work.
+
+    A media URL that repeats one of these is the requested post; a
+    recommendation repeats a different id. Only long, id-shaped values count,
+    so a shared host or a generic ``video`` path segment decides nothing.
+    """
+
+    try:
+        parsed = urlparse(source_url)
+    except ValueError:
+        return []
+    tokens: list[str] = []
+    path = str(parsed.path or "")
+    for pattern in _WORK_ID_PATH_PATTERNS:
+        for match in pattern.finditer(path):
+            tokens.append(match.group(1))
+    for segment in path.split("/"):
+        value = segment.strip()
+        if len(value) >= 6 and value.isdigit():
+            tokens.append(value)
+    for key, value in parse_qsl(parsed.query or "", keep_blank_values=False):
+        if str(key).lower() in _WORK_ID_QUERY_KEYS:
+            tokens.append(str(value).strip())
+    return list(dict.fromkeys(token.lower() for token in tokens if len(token) >= 6))
+
+
+def _media_url_carries_token(candidate: str, tokens: list[str]) -> str | None:
+    lowered = candidate.lower()
+    for token in tokens:
+        if token in lowered:
+            return token
+    return None
+
+
+def _browser_media_binding(
+    source_url: str,
+    candidates: list[str],
+    identities: dict[str, tuple[str, str, int]],
+) -> dict:
+    """Decide which candidate may be published as the requested post.
+
+    Signals, strongest first, using only what the browser page exposes:
+
+    * the requested work id appearing in the media URL (a CDN path or signed
+      filename that repeats the post id),
+    * a page that exposes exactly one distinct file.
+
+    Two distinct files with no matching id is not a ranking problem: byte size
+    says nothing about which file the post is, so the honest answer is
+    "unconfirmed" rather than the largest neighbour.
+    """
+
+    tokens = _page_work_tokens(source_url)
+    matched: list[tuple[str, str]] = []
+    for candidate in candidates:
+        token = _media_url_carries_token(candidate, tokens)
+        if token is not None:
+            matched.append((candidate, token))
+    if len(matched) == 1:
+        return {
+            "selected_url": matched[0][0],
+            "reason": "work_id",
+            "work_id": matched[0][1],
+        }
+    if len(matched) > 1:
+        matched_urls = [url for url, _token in matched]
+        keys = {_media_identity_key(identities[url]) for url in matched_urls if url in identities}
+        if len(keys) == 1 and all(url in identities for url in matched_urls):
+            return {
+                "selected_url": matched_urls[0],
+                "reason": "work_id",
+                "work_id": matched[0][1],
+            }
+        return {"selected_url": None, "reason": "unconfirmed", "work_id": None}
+    if len(candidates) == 1:
+        return {"selected_url": candidates[0], "reason": "single_player", "work_id": None}
+    probed = {url: identity for url, identity in identities.items() if url in candidates}
+    keys = {_media_identity_key(identity) for identity in probed.values()}
+    if keys and len(keys) == 1 and len(probed) == len(candidates):
+        return {"selected_url": candidates[0], "reason": "single_player", "work_id": None}
+    return {"selected_url": None, "reason": "unconfirmed", "work_id": None}
 
 
 def _chapter_timestamp(value: str) -> float | None:
@@ -1176,17 +1382,6 @@ def _attach_browser_video_evidence(
     # silent preview as the post.
     eligible_urls = [url for url in bound_urls if not _is_cover_preview_media_url(url)]
     preview_only = bool(bound_urls) and not eligible_urls
-    # A cover teaser clip and the real title both bind to the page player, so
-    # DOM order decides nothing here; the file size does. Mirrors of one file
-    # collapse into one entry before the order is taken.
-    ranked_urls = _rank_page_media_urls(eligible_urls, {})
-    selected_url = None
-    rejected_count = 0
-    if ranked_urls:
-        selected_url, rejected_count = _select_browser_video_url([ranked_urls[0]], {})
-        if selected_url is None:
-            rejected_count = max(rejected_count, len(ranked_urls))
-    player_bound = bool(selected_url)
     video_coverage = response.coverage.modalities.get("video") or CoverageItem(
         discovered=1,
         extraction="partial",
@@ -1203,65 +1398,6 @@ def _attach_browser_video_evidence(
         item for item in video_coverage.unresolved
         if item not in obsolete_video_gaps
     ]
-    if selected_url is None:
-        if not eligible_urls:
-            # The player stayed unbound: a login or verification wall is the
-            # usual reason on feed pages, and it needs a cookie or a one-time
-            # sign-in rather than another silent attempt.
-            reason = (
-                "The page player bound no downloadable source; a login or verification "
-                "wall can keep it from mounting, so retry after importing browser cookies "
-                "or signing in through a visible browser"
-            )
-        elif rejected_count:
-            reason = (
-                "Browser media URLs were private, malformed, or otherwise unsafe "
-                "for local processing"
-            )
-        else:
-            reason = (
-                "Browser media could not be associated with the requested post "
-                "because no unique page video URL was exposed"
-            )
-        video_coverage = video_coverage.model_copy(update={
-            "discovered": max(int(video_coverage.discovered or 0), 1),
-            "extraction": "partial",
-            "unresolved": list(dict.fromkeys([*unresolved, reason])),
-            "details": {
-                **video_coverage.details,
-                "browser_media_candidates": len(media_urls),
-                "rejected_media_candidates": rejected_count,
-                "page_player_bound": player_bound,
-                "browser_media_preview_only": preview_only,
-                "needs_user_action": (
-                    _login_user_action(source_url)
-                    if not eligible_urls
-                    else None
-                ),
-                "transcript_source": "unavailable",
-                "visual_inspection": "not_performed",
-            },
-        })
-        modalities = dict(response.coverage.modalities)
-        modalities["video"] = video_coverage
-        return response.model_copy(update={
-            "result": ReadResult.PARTIAL,
-            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
-        })
-
-    root = _material_root()
-    media_dir = root / f"video-{response.material_id or 'browser'}"
-    if media_dir.is_symlink() or (media_dir.exists() and not media_dir.is_dir()):
-        video_coverage = video_coverage.model_copy(update={
-            "extraction": "failed",
-            "unresolved": list(dict.fromkeys([*unresolved, "Video staging path is not a regular directory"])),
-        })
-        modalities = dict(response.coverage.modalities)
-        modalities["video"] = video_coverage
-        return response.model_copy(update={
-            "result": ReadResult.PARTIAL,
-            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
-        })
     frame_enabled = (
         request.scope.include_visual
         and request.host_capabilities.video_input == "frames"
@@ -1273,9 +1409,71 @@ def _attach_browser_video_evidence(
     ) > 0
     runtime = media_runtime_status()
     asr_ready = bool(runtime.get("asr_installed") and runtime.get("asr_model_available"))
+    media_budget = int(request.budget.max_download_bytes or 0)
+
+    def _browser_video_gap(
+        reason: str,
+        details: dict,
+        *,
+        handoff: bool = False,
+    ) -> ReadResponse:
+        """Return a gap response that keeps the media out of the answer.
+
+        A gap never carries a media URL: the whole point is that this read could
+        not decide (or afford) which file is the post, so publishing a signed
+        CDN link would assert the association it just refused to make.
+        """
+
+        gap_coverage = video_coverage.model_copy(update={
+            "discovered": max(int(video_coverage.discovered or 0), 1),
+            "extraction": "partial",
+            "unresolved": list(dict.fromkeys([*unresolved, reason])),
+            "details": {**video_coverage.details, **details},
+        })
+        modalities = dict(response.coverage.modalities)
+        modalities["video"] = gap_coverage
+        update: dict = {
+            "result": ReadResult.NEEDS_HOST if handoff else ReadResult.PARTIAL,
+            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+        }
+        if handoff:
+            update["execution_state"] = ExecutionState.WAITING_FOR_HOST
+            update["needs"] = [
+                Need(
+                    action_id=f"confirm-page-video-{response.material_id or request.request_id}",
+                    type="request_input",
+                    purpose="confirm which page video is the requested post",
+                    reason=(
+                        "The page exposes several different video files and none matches "
+                        "the requested post id"
+                    ),
+                )
+            ]
+        return response.model_copy(update=update)
+
+    if not eligible_urls:
+        # The player stayed unbound: a login or verification wall is the usual
+        # reason on feed pages, and it needs a cookie or a one-time sign-in
+        # rather than another silent attempt.
+        return _browser_video_gap(
+            (
+                "The page player bound no downloadable source; a login or verification "
+                "wall can keep it from mounting, so retry after importing browser cookies "
+                "or signing in through a visible browser"
+            ),
+            {
+                "browser_media_candidates": len(media_urls),
+                "rejected_media_candidates": 0,
+                "page_player_bound": False,
+                "browser_media_preview_only": preview_only,
+                "needs_user_action": _login_user_action(source_url),
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+        )
     if not asr_ready and not frame_enabled:
         # Nothing in this response would consume the media, so do not spend the
-        # download (and the bandwidth) only to report that ASR cannot run.
+        # probe requests or the download only to report that ASR cannot run.
         visual_requirement = None
         if request.scope.include_visual:
             visual_requirement = {
@@ -1296,16 +1494,21 @@ def _attach_browser_video_evidence(
             if not runtime.get("asr_installed")
             else "Local video ASR is unavailable because its Whisper model is not prepared"
         )
-        video_coverage = video_coverage.model_copy(update={
-            "discovered": 1,
-            "processed": 0,
-            "extraction": "partial",
-            "unresolved": list(dict.fromkeys(unresolved)),
-            "details": {
-                **video_coverage.details,
-                "browser_media_url": _media_origin(selected_url),
+        return _browser_video_gap(
+            (
+                "Browser media was not fetched because no local consumer "
+                "(ASR or frame inspection) is available"
+            ),
+            {
+                "browser_media_candidates": len(media_urls),
+                "browser_media_candidate_files": 0,
+                "page_player_bound": False,
+                "browser_media_preview_only": preview_only,
+                "needs_user_action": None,
                 "media_fetched": False,
                 "media_fetch_skipped": "local_asr_unavailable",
+                "media_selection": "not_probed",
+                "media_selection_reason": "no_consumer",
                 "raw_media_retention": retention_mode,
                 "transcript_source": "unavailable",
                 "visual_inspection": "not_performed",
@@ -1315,6 +1518,103 @@ def _attach_browser_video_evidence(
                     else {}
                 ),
             },
+        )
+    if media_budget <= 0:
+        return _browser_video_gap(
+            (
+                "Browser media was not fetched because budget.max_download_bytes is 0; "
+                "raise budget.max_download_bytes to let Envoy download and transcribe "
+                "the page video"
+            ),
+            {
+                "browser_media_candidates": len(media_urls),
+                "browser_media_candidate_files": 0,
+                "page_player_bound": False,
+                "browser_media_preview_only": preview_only,
+                "needs_user_action": None,
+                "media_fetched": False,
+                "media_fetch_skipped": "download_budget_exhausted",
+                "media_selection": "not_probed",
+                "media_selection_reason": "download_budget_exhausted",
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+        )
+
+    # Probing is a network cost, so it obeys the download budget and the read
+    # deadline; a page cannot make this read fetch more than the download would.
+    probe_deadline = time.monotonic() + max(1.0, float(_remaining_work_seconds(request)))
+    identities, probe_spent = _probe_page_media_identities(
+        eligible_urls,
+        {},
+        max_probe_bytes=min(
+            media_budget,
+            _PAGE_MEDIA_PROBE_MAX_CANDIDATES * _PAGE_MEDIA_PROBE_BYTES,
+        ),
+        deadline=probe_deadline,
+    )
+    ranked_urls = _order_media_urls(eligible_urls, identities)
+    binding = _browser_media_binding(source_url, ranked_urls, identities)
+    selected_url = binding["selected_url"]
+    rejected_count = 0
+    if selected_url is not None:
+        selected_url, rejected_count = _select_browser_video_url([selected_url], {})
+        if selected_url is None:
+            rejected_count = max(rejected_count, 1)
+    distinct_files = (
+        len({_media_identity_key(identity) for identity in identities.values()})
+        or len(ranked_urls)
+    )
+    if selected_url is None:
+        if rejected_count:
+            reason = (
+                "Browser media URLs were private, malformed, or otherwise unsafe "
+                "for local processing"
+            )
+            selection_reason = "unsafe_candidate"
+        else:
+            reason = (
+                "Browser media could not be confirmed as the requested post: the page "
+                f"exposes {distinct_files} different video files and nothing in this read "
+                "identifies which one belongs to this post, so open the post video "
+                "directly or confirm the player and retry"
+            )
+            selection_reason = "multiple_distinct_page_media"
+        return _browser_video_gap(
+            reason,
+            {
+                "browser_media_candidates": len(media_urls),
+                "browser_media_candidate_files": distinct_files,
+                "rejected_media_candidates": rejected_count,
+                "page_player_bound": False,
+                "browser_media_preview_only": preview_only,
+                "needs_user_action": None,
+                "media_fetched": False,
+                "media_fetch_skipped": "media_selection_unconfirmed",
+                "media_selection": "unconfirmed",
+                "media_selection_reason": selection_reason,
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+            handoff=frame_enabled,
+        )
+
+    selection_details = {
+        "media_selection": binding["reason"],
+        "media_selection_reason": None,
+        "browser_media_candidate_files": distinct_files,
+        "media_probe_bytes": probe_spent,
+    }
+    if binding.get("work_id"):
+        selection_details["media_selected_work_id"] = binding["work_id"]
+    download_budget = max(0, media_budget - probe_spent)
+
+    root = _material_root()
+    media_dir = root / f"video-{response.material_id or 'browser'}"
+    if media_dir.is_symlink() or (media_dir.exists() and not media_dir.is_dir()):
+        video_coverage = video_coverage.model_copy(update={
+            "extraction": "failed",
+            "unresolved": list(dict.fromkeys([*unresolved, "Video staging path is not a regular directory"])),
         })
         modalities = dict(response.coverage.modalities)
         modalities["video"] = video_coverage
@@ -1322,6 +1622,24 @@ def _attach_browser_video_evidence(
             "result": ReadResult.PARTIAL,
             "coverage": response.coverage.model_copy(update={"modalities": modalities}),
         })
+    if download_budget <= 0:
+        return _browser_video_gap(
+            (
+                "Browser media was not fetched because the media prefix probes used the "
+                "whole budget.max_download_bytes allowance"
+            ),
+            {
+                **selection_details,
+                "browser_media_candidates": len(media_urls),
+                "page_player_bound": True,
+                "browser_media_preview_only": preview_only,
+                "needs_user_action": None,
+                "media_fetched": False,
+                "media_fetch_skipped": "download_budget_exhausted",
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+        )
     if keep_media:
         media_dir.mkdir(mode=0o700, exist_ok=True)
 
@@ -1437,51 +1755,125 @@ def _attach_browser_video_evidence(
                     f"{chapter_span[1]:.0f}s of a {float(duration):.0f}s video, "
                     "so the chapter list is incomplete; reload the page for a fuller list"
                 )
-            remaining_chars = max(
-                0,
-                request.budget.max_response_chars
-                - sum(
-                    len(block.content.text)
-                    for block in blocks
-                    if isinstance(block.content, TextContent)
-                ),
+            page_text = "\n".join(
+                block.content.text
+                for block in blocks
+                if isinstance(block.content, TextContent)
             )
-            asr_char_count = 0
-            for index, cue in enumerate(transcript_segments[:200], start=1):
-                cue_text = " ".join(str(cue.get("text") or "").split())
-                try:
-                    start = float(cue["start"])
-                    end = float(cue["end"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if not cue_text or start < 0 or end <= start:
-                    continue
-                if len(cue_text) > remaining_chars - asr_char_count:
-                    unresolved.append("ASR transcript was truncated by the response character budget")
-                    break
-                asr_char_count += len(cue_text)
+            asr_extracted = {
+                "source": "asr",
+                "title": str(response.blocks[0].content.text)
+                if response.blocks
+                and isinstance(response.blocks[0].content, TextContent)
+                else request.source.label or "Video transcript",
+                "language": language,
+                "model": asr_model,
+                "transcription_status": asr_status,
+                "processed_until_seconds": asr_processed_until,
+                "cues": transcript_segments,
+            }
+            # Charge the page blocks already in this answer against the same
+            # budget the transcript is taken under, then derive the delivered
+            # ASR blocks from the text that budget actually produced.
+            transcript_lines = _video_transcript_lines(request, asr_extracted)
+            transcript_title_block = _video_title_block(
+                source_url, transcript_lines["title"]
+            )
+            delivery = _video_transcript_budget(
+                request,
+                transcript_lines,
+                transcript_title_block,
+                consumed_chars=len(page_text),
+                consumed_tokens=_estimated_tokens(page_text),
+            )
+            delivered_end = int(delivery["returned_end"])
+            considered_spans = transcript_lines["spans"][:200]
+            delivered_spans = [
+                span for span in considered_spans
+                if int(span["end_offset"]) <= delivered_end
+            ]
+            for index, span in enumerate(delivered_spans, start=1):
+                cue_text = re.sub(
+                    r"^\[[0-9:.]+\]\s*",
+                    "",
+                    transcript_lines["full_text"][
+                        int(span["start_offset"]):int(span["end_offset"])
+                    ],
+                )
                 blocks.append(MaterialBlock(
                     id=f"blk-video-asr-{index:04d}",
                     kind=MaterialKind.TRANSCRIPT,
-                    content=TextContent(type="text", text=cue_text, language=language),
+                    content=TextContent(
+                        type="text",
+                        text=cue_text,
+                        language=transcript_lines["language"] or None,
+                    ),
                     origin=MaterialOrigin.ASR,
                     locator=VideoLocator(
                         type="video_time",
                         source_url=_redact_url(source_url),
-                        start_seconds=start,
-                        end_seconds=end,
+                        start_seconds=float(span["start_seconds"]),
+                        end_seconds=float(span["end_seconds"]),
                     ),
-                    parent_id=blocks[0].id if blocks else None,
+                    parent_id=response.blocks[0].id if response.blocks else None,
                     order=len(blocks),
                     quality=Quality(engine=f"whisper-{asr_model or 'local'}"),
                 ))
-            returned_segments = min(len(transcript_segments), 200)
-            if len(transcript_segments) > returned_segments:
+            returned_segments = len(delivered_spans)
+            segment_inventory = len(transcript_lines["spans"])
+            delivered_until = (
+                float(delivered_spans[-1]["end_seconds"])
+                if delivered_spans
+                else (
+                    float(asr_processed_until)
+                    if asr_processed_until is not None
+                    else None
+                )
+            )
+            continuation_start = (
+                float(delivered_spans[-1]["end_seconds"]) if delivered_spans else None
+            )
+            retention_available = request.retention.derived_ttl_seconds > 0
+            continuation_available = (
+                delivery["response_partial"]
+                and not transcript_lines["source_truncated"]
+                and retention_available
+            )
+            if delivered_end < len(transcript_lines["full_text"]):
+                limiting = (
+                    "response token budget"
+                    if delivery["response_token_limit"] is not None
+                    else "response character budget"
+                )
                 unresolved.append(
-                    f"The transcript has {len(transcript_segments)} segments but only the first "
+                    f"ASR transcript was truncated by the {limiting}; "
+                    f"{segment_inventory - returned_segments} later segment(s) remain "
+                    "undelivered, so continue with scope.start_seconds"
+                )
+            elif segment_inventory > returned_segments:
+                unresolved.append(
+                    f"The transcript has {segment_inventory} segments but only the first "
                     f"{returned_segments} are returned; continue after "
-                    f"{float(transcript_segments[returned_segments - 1].get('end') or 0):.1f}s "
-                    "with scope.start_seconds"
+                    f"{delivered_until:.1f}s with scope.start_seconds"
+                )
+            coverage_end = (
+                float(request.scope.end_seconds)
+                if request.scope.end_seconds is not None
+                else (float(duration) if duration else None)
+            )
+            unprocessed_seconds = None
+            if (
+                asr_status == "partial"
+                and coverage_end is not None
+                and delivered_until is not None
+                and coverage_end > delivered_until
+            ):
+                unprocessed_seconds = coverage_end - delivered_until
+                unresolved.append(
+                    f"Local ASR stopped at {_format_video_time(delivered_until)}; "
+                    f"{unprocessed_seconds:.0f}s of the {coverage_end:.0f}s window "
+                    "remains untranscribed, continue with "
+                    f"scope.start_seconds={delivered_until:.1f}"
                 )
 
             persisted_transcript = None
@@ -1489,18 +1881,9 @@ def _attach_browser_video_evidence(
                 persisted_transcript = _video_subtitle_response(
                     request,
                     source_url,
-                    {
-                        "source": "asr",
-                        "title": str(response.blocks[0].content.text)
-                        if response.blocks
-                        and isinstance(response.blocks[0].content, TextContent)
-                        else request.source.label or "Video transcript",
-                        "language": language,
-                        "model": asr_model,
-                        "transcription_status": asr_status,
-                        "processed_until_seconds": asr_processed_until,
-                        "cues": transcript_segments,
-                    },
+                    asr_extracted,
+                    consumed_chars=len(page_text),
+                    consumed_tokens=_estimated_tokens(page_text),
                 )
 
             confidence, speech_seconds, speech_ratio = _transcript_confidence(
@@ -1522,6 +1905,7 @@ def _attach_browser_video_evidence(
                 "unresolved": list(dict.fromkeys(unresolved)),
                 "details": {
                     **video_coverage.details,
+                    **selection_details,
                     "browser_media_url": _media_origin(selected_url),
                     "media_downloaded_bytes": downloaded_bytes,
                     "duration_seconds": duration or None,
@@ -1534,7 +1918,27 @@ def _attach_browser_video_evidence(
                     "chapters_incomplete": chapters_incomplete,
                     "transcript_segment_count": len(transcript_segments),
                     "transcript_segments_returned": returned_segments,
-                    "transcript_truncated": len(transcript_segments) > returned_segments,
+                    "transcript_truncated": segment_inventory > returned_segments,
+                    "transcript_processed_until_seconds": (
+                        float(asr_processed_until)
+                        if asr_processed_until is not None
+                        else None
+                    ),
+                    "transcript_delivered_until_seconds": delivered_until,
+                    "transcript_unprocessed_seconds": (
+                        round(unprocessed_seconds, 3)
+                        if unprocessed_seconds is not None
+                        else None
+                    ),
+                    "continuation_available": continuation_available,
+                    "transcript_continuation_start_seconds": continuation_start,
+                    "requested_start_seconds": request.scope.start_seconds,
+                    "requested_end_seconds": request.scope.end_seconds,
+                    **_token_budget_details(
+                        request,
+                        int(delivery["returned_tokens"]),
+                        transcript_lines["full_text"][delivered_end:],
+                    ),
                     "speech_seconds": round(speech_seconds, 3),
                     "speech_coverage": round(speech_ratio, 4),
                     "transcript_confidence": confidence,
@@ -4672,17 +5076,38 @@ def _video_locator_for_range(source_url: str, spans: list[dict], start: int, end
     )
 
 
-def _video_subtitle_response(
-    request: ReadRequest,
-    source_url: str,
-    extracted: dict,
-) -> ReadResponse:
+def _video_title_block(source_url: str, title: str) -> MaterialBlock:
+    return MaterialBlock(
+        id="blk-title",
+        kind=MaterialKind.HEADING,
+        content=TextContent(type="text", text=title),
+        origin=MaterialOrigin.SOURCE_TEXT,
+        locator=WebLocator(
+            type="web",
+            source_url=_redact_url(source_url),
+            block_id="blk-title",
+            quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+        ),
+        order=0,
+    )
+
+
+def _video_transcript_lines(request: ReadRequest, extracted: dict) -> dict:
+    """Format cues into numbered transcript lines whose spans index the text.
+
+    This is the single place that decides which cues the requested window
+    contains; both the stored material and the browser-video coverage read the
+    delivered text through it, so they cannot disagree about the same budget.
+    """
+
     is_asr = str(extracted.get("source") or "") == "asr"
     transcript_source = "asr" if is_asr else (
         "automatic_subtitles" if extracted.get("automatic") else "manual_subtitles"
     )
     transcript_origin = MaterialOrigin.ASR if is_asr else MaterialOrigin.SUBTITLE
-    transcript_processing_partial = is_asr and extracted.get("transcription_status") == "partial"
+    transcript_processing_partial = (
+        is_asr and extracted.get("transcription_status") == "partial"
+    )
     title = str(extracted.get("title") or request.source.label or "Video transcript")
     language = str(extracted.get("language") or "")
     requested_start = request.scope.start_seconds
@@ -4730,6 +5155,103 @@ def _video_subtitle_response(
         spans = [item for item in spans if item["start_offset"] < len(full_text)]
         for item in spans:
             item["end_offset"] = min(item["end_offset"], len(full_text))
+    return {
+        "is_asr": is_asr,
+        "transcript_source": transcript_source,
+        "transcript_origin": transcript_origin,
+        "transcript_processing_partial": transcript_processing_partial,
+        "title": title,
+        "language": language,
+        "requested_start": requested_start,
+        "requested_end": requested_end,
+        "parts": parts,
+        "spans": spans,
+        "full_text": full_text,
+        "no_cues_in_requested_range": no_cues_in_requested_range,
+        "source_truncated": source_truncated,
+    }
+
+
+def _video_transcript_budget(
+    request: ReadRequest,
+    lines: dict,
+    title_block: MaterialBlock,
+    *,
+    consumed_chars: int = 0,
+    consumed_tokens: int = 0,
+) -> dict:
+    """Take the delivered transcript text under the shared response budget.
+
+    ``consumed_chars``/``consumed_tokens`` let a caller that already wrote page
+    blocks into the same response charge them against the one budget, so a
+    token limit applies to the whole answer rather than to each path alone.
+    """
+
+    full_text = lines["full_text"]
+    spent_chars = max(0, int(consumed_chars))
+    spent_tokens = max(0, int(consumed_tokens))
+    available_chars = max(
+        0,
+        _response_char_budget(request) - len(title_block.model_dump_json()) - 256 - spent_chars,
+    )
+    response_token_limit = request.budget.max_response_tokens
+    if request.budget.max_total_response_tokens is not None:
+        response_token_limit = (
+            min(response_token_limit, request.budget.max_total_response_tokens)
+            if response_token_limit is not None
+            else request.budget.max_total_response_tokens
+        )
+    title_tokens = _estimated_tokens(lines["title"])
+    body_token_limit = (
+        max(0, response_token_limit - title_tokens - spent_tokens)
+        if response_token_limit is not None
+        else None
+    )
+    returned_text, returned_end = _take_text_budgeted(
+        full_text,
+        0,
+        available_chars,
+        body_token_limit,
+    )
+    returned_tokens = title_tokens + spent_tokens + _estimated_tokens(returned_text)
+    response_partial = (
+        returned_end < len(full_text)
+        or lines["source_truncated"]
+        or lines["transcript_processing_partial"]
+    )
+    return {
+        "available_chars": available_chars,
+        "response_token_limit": response_token_limit,
+        "title_tokens": title_tokens,
+        "body_token_limit": body_token_limit,
+        "returned_text": returned_text,
+        "returned_end": returned_end,
+        "returned_tokens": returned_tokens,
+        "response_partial": response_partial,
+    }
+
+
+def _video_subtitle_response(
+    request: ReadRequest,
+    source_url: str,
+    extracted: dict,
+    *,
+    consumed_chars: int = 0,
+    consumed_tokens: int = 0,
+) -> ReadResponse:
+    lines = _video_transcript_lines(request, extracted)
+    is_asr = lines["is_asr"]
+    transcript_source = lines["transcript_source"]
+    transcript_origin = lines["transcript_origin"]
+    transcript_processing_partial = lines["transcript_processing_partial"]
+    title = lines["title"]
+    language = lines["language"]
+    requested_start = lines["requested_start"]
+    requested_end = lines["requested_end"]
+    spans = lines["spans"]
+    full_text = lines["full_text"]
+    source_truncated = lines["source_truncated"]
+    no_cues_in_requested_range = lines["no_cues_in_requested_range"]
     source_revision = hashlib.sha256(
         f"{source_url}\n{language}\n{full_text}".encode("utf-8", errors="replace")
     ).hexdigest()
@@ -4748,44 +5270,18 @@ def _video_subtitle_response(
             source_revision,
             existing_material,
         )
-    title_block = MaterialBlock(
-        id="blk-title",
-        kind=MaterialKind.HEADING,
-        content=TextContent(type="text", text=title),
-        origin=MaterialOrigin.SOURCE_TEXT,
-        locator=WebLocator(
-            type="web",
-            source_url=_redact_url(source_url),
-            block_id="blk-title",
-            quote=title[:MAX_LOCATOR_QUOTE_CHARS],
-        ),
-        order=0,
+    title_block = _video_title_block(source_url, title)
+    budget = _video_transcript_budget(
+        request,
+        lines,
+        title_block,
+        consumed_chars=consumed_chars,
+        consumed_tokens=consumed_tokens,
     )
-    available_chars = max(
-        0,
-        _response_char_budget(request) - len(title_block.model_dump_json()) - 256,
-    )
-    response_token_limit = request.budget.max_response_tokens
-    if request.budget.max_total_response_tokens is not None:
-        response_token_limit = (
-            min(response_token_limit, request.budget.max_total_response_tokens)
-            if response_token_limit is not None
-            else request.budget.max_total_response_tokens
-        )
-    title_tokens = _estimated_tokens(title)
-    body_token_limit = (
-        max(0, response_token_limit - title_tokens)
-        if response_token_limit is not None
-        else None
-    )
-    returned_text, returned_end = _take_text_budgeted(
-        full_text,
-        0,
-        available_chars,
-        body_token_limit,
-    )
-    returned_tokens = title_tokens + _estimated_tokens(returned_text)
-    response_partial = returned_end < len(full_text) or source_truncated or transcript_processing_partial
+    returned_text = budget["returned_text"]
+    returned_end = budget["returned_end"]
+    returned_tokens = budget["returned_tokens"]
+    response_partial = budget["response_partial"]
     text_block = None
     if returned_text:
         text_block = MaterialBlock(
@@ -6165,11 +6661,15 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     action_required=True,
                 )
             if isinstance(browser_error, Exception):
+                failure_code = _browser_read_failure_code(browser_error)
                 return _blocked(
                     request,
-                    _browser_read_failure_code(browser_error),
+                    failure_code,
                     str(browser_error),
-                    action_required=True,
+                    action_required=failure_code in {
+                        ErrorCode.CHALLENGE_REQUIRED,
+                        ErrorCode.AUTH_REQUIRED,
+                    },
                 )
             if len(text) < 20 and not parser.images and not parser.video_urls:
                 if browser_attempted and browser_error is None:
@@ -6770,51 +7270,62 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
 
 
 def _login_user_action(source_url: str, kind: str = "login_or_verification") -> dict:
-    """The exact choices to hand a user when a page needs their identity.
+    """The choices to hand a human when a page needs their identity.
 
-    Envoy cannot sign in on the user's behalf, so the useful output is not
-    another error string: it is the two legitimate ways to supply a session,
-    each as a runnable command the model can offer. The import command carries
-    the offending host as its scope, so granting access to this site never
-    means handing over every cookie in the browser.
+    Envoy never opens a foreground window on its own: a model that copied a
+    runnable command from here would only hit the non-interactive refusal.
+    Each option is therefore a human action, with the command kept out of any
+    string a model could paste and execute unattended.
     """
 
     host = urlparse(str(source_url or "")).hostname or ""
-    domain = host[4:] if host.startswith("www.") else host
-    import_command = "envoy auth import --from chrome"
-    if domain:
-        import_command = f"{import_command} --domain {domain}"
     question = (
         "This page needs a signed-in session or a verification step before "
-        "its player exposes the real source. Import cookies from a local "
-        "browser, or sign in once in a visible window?"
+        "its player exposes the real source. Ask the user to import cookies "
+        "from a local browser, or to sign in once from a terminal."
     )
     if kind == "cookies_required":
         question = (
             f"{host or 'This site'} asked for fresh cookies before serving this "
             "source, and a signed-in account is not necessarily what it wants. "
-            "Copy the cookies of that browser for this site, or open one "
-            "visible window and let the site set them itself?"
+            "Ask the user to copy the cookies of that browser for this site, or "
+            "to open one visible window from their terminal so the site sets "
+            "them itself."
         )
 
     return {
         "kind": kind,
         "host": host,
         "question": question,
+        "requires_human": True,
         "options": [
             {
                 "action": "import_cookies",
+                "requires_human": True,
+                "instruction": (
+                    "In a terminal, run Envoy's cookie import for this site "
+                    "and pick the browser that holds the session; the cookies "
+                    "then live in Envoy's isolated profile."
+                ),
                 "sources": ["chrome", "edge", "safari"],
-                "command": import_command,
                 "effect": (
-                    "Copies that browser's cookies for this site into Envoy's "
-                    "isolated profile"
+                    "That browser's cookies for this site are copied into "
+                    "Envoy's isolated profile"
                 ),
             },
             {
-                "action": "visible_login",
-                "command": "ENVOY_VISIBLE_BROWSER=1 envoy read --request-json <request>",
-                "effect": "Opens a window for one manual sign-in and keeps the session",
+                "action": "human_sign_in",
+                "requires_human": True,
+                "instruction": (
+                    "From a terminal, read this page once with visible browser "
+                    "mode enabled and complete the normal sign-in there; the "
+                    "session is kept in ~/.envoy/browser-profile and reused by "
+                    "later headless reads."
+                ),
+                "effect": (
+                    "One sign-in at the user's terminal keeps the local browser "
+                    "profile usable for later headless reads"
+                ),
             },
         ],
     }

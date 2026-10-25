@@ -76,20 +76,44 @@ def main() -> int:
     # Q1: without Envoy, can a linked source be read?
     lines.append("## 1. 不装 Envoy 时链接能否读取")
     lines.append("")
-    lines.append("| 臂 | 轮次 | 归属来源命中 | 来源总数 | 答案中位字符 | 零来源轮次 | 空答案 |")
+    lines.append(
+        "| 臂 | 轮次 | 文章级引用命中 | host 级归属（诊断） | 来源总数 | 答案中位字符 | 空答案 |"
+    )
     lines.append("|---|---:|---:|---:|---:|---:|---:|")
     for arm in ("baseline", "envoy"):
         items = by_arm.get(arm, [])
-        attributed = sum(count(t.get("attributed_sources")) for t in items)
+        citations = sum(count(t.get("citation_hits")) for t in items)
+        legacy_hosts = "N/A" if not any("legacy_host_mentions" in t for t in items) else str(
+            sum(count(t.get("legacy_host_mentions")) for t in items)
+        )
         declared = sum(count(t.get("sources_total")) for t in items)
-        empty = sum(1 for t in items if not count(t.get("attributed_sources")))
         lines.append(
-            f"| {arm} | {len(items)} | {attributed} | {declared} | "
-            f"{fmt(median([int(t.get('answer_chars') or 0) for t in items if int(t.get('answer_chars') or 0) > 0]))} | {empty} | "
+            f"| {arm} | {len(items)} | {citations} | {legacy_hosts} | {declared} | "
+            f"{fmt(median([int(t.get('answer_chars') or 0) for t in items if int(t.get('answer_chars') or 0) > 0]))} | "
             f"{sum(1 for t in items if not int(t.get('answer_chars') or 0))} |"
         )
     lines.append("")
-    lines.append("来源命中＝答案里出现了该 package 声明的 source 定位（URL/ID）。")
+    lines.append(
+        "文章级引用命中＝答案里出现与声明来源同一文章的规范化 URL（host+path+文章参数）；"
+        "host 级归属（诊断）只是答案提到了该 host，不当作引用。"
+    )
+    lines.append("")
+    lines.append("| 臂 | facts 命中/总数（阈值 0.6） | 有 fact 命中的轮次 |")
+    lines.append("|---|---:|---:|")
+    for arm in ("baseline", "envoy"):
+        items = by_arm.get(arm, [])
+        hits = sum(int(t.get("facts_hit") or 0) for t in items)
+        total = sum(int(t.get("facts_total") or 0) for t in items)
+        with_fact = sum(1 for t in items if int(t.get("facts_hit") or 0) > 0)
+        lines.append(f"| {arm} | {hits}/{total} | {with_fact}/{len(items)} |")
+    lines.append("")
+    lines.append(
+        "facts 阈值＝每条 claim 的英文特征词（≥4 字母、去停用词）覆盖率 ≥0.6；"
+        "总数 516＝20 包事实×3 轮重复计数，不是 516 条唯一事实。"
+    )
+    lines.append(
+        "评级默认只用终端 answers.jsonl；transcript 回收文本不进入两臂对比（见 grade 的 answer_source）。"
+    )
     lines.append("")
 
     # Q2: token cost
@@ -118,6 +142,10 @@ def main() -> int:
             lines.append(
                 f"两臂都 completed 且两侧账本均非零的 {len(deltas)} 对：envoy 输入 token 相对变化中位数 "
                 f"{fmt(median(deltas), 1, '%')}（正数＝envoy 更贵）。"
+            )
+            lines.append(
+                "口径：上句是每对 (envoy-baseline)/baseline 的中位数，不是账本合计的倍数；"
+                "summary.md 的 completed 配对倍数按两臂 input 合计相比，两者不可互相换算。"
             )
         else:
             lines.append("两侧账本均非零的配对为 0，不给 token 对比结论。")

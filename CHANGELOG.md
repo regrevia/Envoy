@@ -4,6 +4,18 @@
 
 ### 中文
 
+- 安装/升级链路对齐：`INSTALL.md` 指向的正式发行版、wheel 名和 Release 链接统一为
+  `0.1.8`（`hook install` 只存在于 0.1.7 及以后，旧文档却让人先装 0.1.6），
+  `scripts/check_versions.py` 仍然校验文档里的版本号。
+- DSH 插件启动器不再「有旧 runtime 就直接用」：每次挂载先比对 `envoy --version`
+  与插件要求的最低 runtime，自备 runtime 过低时原地升级（venv 与 `~/.envoy` 分离，
+  ASR/OCR 配置与已下载模型保留），`ENVOY_BIN`/PATH 上的外部 runtime 过低时直接报
+  升级命令而不是静默使用不兼容 CLI。
+- 新增 `integrations/release-manifest.json` 与 `scripts/check_release_manifest.py`：
+  Skill/插件版本、最低兼容 runtime、协议版本写在一处，安装侧读它，发布时用
+  `--emit` 生成带源码提交和产物 sha256 的清单随 Release 发布；CI 校验四处不漂移。
+- 自动发布只在同一 SHA 的 CI 成功后打标签（最多等 40 分钟），并且只由 tag push
+  触发一次 `release.yml`；此前 tag push 与 `workflow_call` 会各发布一次。
 - 状态目录不可写（宿主沙箱、只读容器、CI 只挂只读 `$HOME`）不再让整次读取失败：
   物料根按「显式配置 → `~/.envoy` → 系统临时目录」依次探测可写落点；跨进程读锁
   拿不到时退化为不串行执行，并在 `coverage.modalities[*].details.state_lock` 标注
@@ -12,7 +24,7 @@
   `state_not_writable`（含 `ENVOY_LOCAL_DATA_DIR=<可写目录>` 的修复命令），不再只回
   `invalid_request` 或让 MCP 客户端只能看到 `[object Object]`。
 - `envoy_read` 的可见文本补齐行动信息：`partial` 时直接列出 `unresolved` 与
-  `needs_user_action`（要转述的问题和两条带站点范围的命令），并让真实缺口排在
+  `needs_user_action`（要转述的问题和两条带站点范围的选项），并让真实缺口排在
   装饰性排除项之前；请求了 `include_visual` 而该来源没有交付任何帧/图时，明确写
   「未交付画面，不要描述画面与镜头节奏」，避免模型拿封面、评论区或壳层文字补想象。
 - 「取画面」的开关不再藏在服务端字段里：`envoy_read` / `envoy_read_local_video`
@@ -27,8 +39,9 @@
   视频」，转而去侧边栏开页面、撞上验证码，再拿封面帧当观察证据。
 - 隔离浏览器改为**默认全程静默**：登录浮层先被关闭再判定页面状态，浮层自身文案
   （如「验证码登录」）不再被误判成安全验证；确实需要人工验证时返回
-  `challenge_required`，不再自动弹窗。只有显式设置 `ENVOY_VISIBLE_BROWSER=1`
-  才启用可见浏览器回退。
+  `challenge_required`，不再自动弹窗。可见浏览器回退只属于人类自己的交互式终端：
+  stdin 与 stdout 同时是 TTY 且显式设置 `ENVOY_VISIBLE_BROWSER=1`；在 agent、MCP
+  宿主或任何非交互进程里一律拒绝，agent 不得自行设置该变量。
 - 修复抖音类 feed 页拿不到原片：播放器起步只有 `blob:` MSE 源甚至没有源，Envoy
   现在会短暂等待真实 HTTP 片源出现（已播放的 MSE 页面立即返回），忽略
   `blob:`/`data:` 播放器内部地址，并用每个候选前 64 KiB 的 sha256 指纹把同一文件的
@@ -52,11 +65,13 @@
   归并到同一文件：仅靠“点掉登录浮层”即可稳定取回原片。
 - 被登录/验证挡住时，`challenge_required` 的 `details.needs_user_action`
   统一给出 `kind`（`login_or_verification`；站点只是要新鲜 cookie、不一定要账号时
-  为 `cookies_required`）、`host`、要转述的 `question` 和两条可直接执行的
-  `options`（`envoy auth import --from chrome --domain <host>` 与
-  `ENVOY_VISIBLE_BROWSER=1`）。导入命令自带站点范围，授权一个站点不等于交出
-  浏览器全部 cookie；模型据此询问用户，而不是自行猜测或静默失败；三宿主
-  Skill 文案同步。
+  为 `cookies_required`）、`host`、要转述的 `question` 和两条人类动作
+  `options`：`import_cookies`（由用户在自己的终端运行
+  `envoy auth import --from chrome --domain <host>`，导入自带站点范围，授权一个
+  站点不等于交出浏览器全部 cookie）与 `human_sign_in`（请用户登录/验证一次）。
+  每条选项都带 `requires_human: true` 和 `instruction`，不带可直接执行的
+  `command` 字段；模型据此询问并等待人类，而不是把选项当工具调用、自行打开
+  窗口或设置 `ENVOY_VISIBLE_BROWSER`。三宿主 Skill 文案同步。
 - 素材已下载、ASR 也跑通、但音轨里没有人声时（纯音乐、无声帖）不再返回
   `blocked` 的空回答：现在返回 `result: partial`，保留标题块与
   `page_player_bound: true`、时长，并在 `coverage.modalities.video.details.no_speech`
@@ -140,20 +155,63 @@
 - `challenge_required` / `auth_required` 现在如实标注 `retryable: true`，并在剩余预算
   不少于 5 秒时内部重试一次（`internal_retry_attempts`），用于站点抖动后自行恢复；
   仍不绕过验证。
+- 页面视频绑定不再“看到播放器就用第一个地址”：`envoy_read` 依次用房源 JSON-LD
+  `contentUrl`、`og:video`、播放器状态、主播放器 `currentSrc` 与 URL 身份确认候选，
+  字节数只在已归因的镜像之间排序；无法唯一确认时**不下载**，返回
+  `media_selection: "unconfirmed"` 并把视觉选择交回模型。候选探测跟随重定向
+  （最多 5 跳、每跳最多读 64 KiB），并把已耗字节计入下载预算。
+- 长转写按共享预算分段交付：新增 `transcript_processed_until_seconds`、
+  `transcript_delivered_until_seconds`、`transcript_segment_count`、
+  `transcript_unprocessed_seconds`、`continuation_available` 与
+  `transcript_continuation_start_seconds`，可以从没读到的秒数继续，而不是把截断
+  当成完整转写。
+- 保留物料缓存修复：被拦截的重读不再把错误写进缓存，而是回退到已有物料并带
+  `refetch_error`；`PublicPageError` 保留 `needs` 与 `request_id`；OCR 比较改为
+  对称；URL fragment 进入缓存键；`visual_observation` 不再被普通读取冒充；只有
+  `refresh` 严格为 `true` 才强制刷新；`compact` 成为独立缓存维度。
+- cookie 域范围改用公共后缀私有表与 registrable domain 规则（含 20 个托管后缀）：
+  `www.ck`、`city.kawasaki.jp`、`*.compute.amazonaws.com` 这类主机按站点匹配而不是
+  按后缀匹配；单标签主机只接受 `localhost` 与 IP 字面量，其余一律 fail-closed；
+  cookie 导入失败的提示改成「请人类在自己的终端登录一次」，不再给可直接执行的
+  环境变量命令。
+- 评测口径修正：评级默认只用终端答案并给每行写 `answer_source`，transcript 回收
+  文本需显式 `INCLUDE_RECOVERED=1` 且只作诊断；引用只统计文章级
+  `citation_hits`，host 归属降级为诊断列；facts 阈值与 516 的重复计数写进所有表
+  脚注；token 对比只给倍数并写明「envoy 更贵」，不再出现负百分比形式的「节省」。
+  验收记录与产物按重算结果重写，撤回 `81/516`、`29 vs 42`、`95/120` 等旧数字。
 
 ### English
 
+- Install and upgrade paths now agree: `INSTALL.md` names release `0.1.8` in its
+  prose, wheel name, and Release link, because `envoy hook install` only exists
+  from 0.1.7 on while the document used to install 0.1.6 first.
+- The DSH bundle launcher no longer accepts any existing runtime: on every mount
+  it compares `envoy --version` with the bundled minimum, upgrades its private
+  venv in place when the runtime is older (the venv is separate from `~/.envoy`,
+  so ASR/OCR settings and downloaded models are kept), and fails with the
+  upgrade command when `ENVOY_BIN` or a PATH runtime is too old.
+- `integrations/release-manifest.json` plus `scripts/check_release_manifest.py`
+  declare the Skill/plugin version, the minimum compatible runtime, and the
+  protocol versions in one place; installers read them, `release.yml` emits the
+  published copy with the source commit and artifact sha256 values, and CI fails
+  on drift.
+- Auto release tags only after CI succeeds on the same SHA (up to 40 minutes of
+  waiting) and lets the tag push be the single `release.yml` trigger; the tag
+  push and the `workflow_call` used to publish each release twice.
 - An unwritable state directory (host sandbox, read-only container, CI mounting
   `$HOME` read-only) no longer fails the read: the material root probes the
   configured path, then `~/.envoy`, then the system temp directory; an
   unavailable cross-process lock degrades to an unserialized read and says so
   in `coverage.modalities[*].details.state_lock`, while the evidence already
   gathered is still returned.
-- State-directory failures now name the fix in both the CLI and MCP:
-  `state_not_writable` with an `ENVOY_LOCAL_DATA_DIR=<writable dir>` command,
-  instead of `invalid_request` or an MCP client seeing `[object Object]`.
+- State-directory failures now name the fix instead of returning
+  `invalid_request` or letting an MCP client see `[object Object]`: the CLI
+  command carries an `ENVOY_LOCAL_DATA_DIR=<writable dir>` retry, and the MCP
+  payload returns `state_not_writable` with a `requires_human` instruction to
+  restart the host process against that directory.
 - The visible `envoy_read` text carries the action on a `partial` result: the
-  `unresolved` reasons and `needs_user_action` question plus its scoped commands,
+  `unresolved` reasons and `needs_user_action` question plus its site-scoped
+  options,
   with real gaps ahead of cosmetic exclusions. When `include_visual` was
   requested and the source delivered no frames or images, the text says so
   explicitly, so a cover still or a comment section is not rewritten into an
@@ -175,8 +233,10 @@
   login dialog is cleared before the page state is judged, so the dialog's own
   wording (for example a `验证码登录` tab) is no longer mistaken for a captcha.
   A page that genuinely needs verification returns `challenge_required`
-  instead of opening a window; visible browser mode now requires
-  `ENVOY_VISIBLE_BROWSER=1`.
+  instead of opening a window; visible browser mode belongs to a human's own
+  interactive terminal only (stdin and stdout must both be a TTY plus an
+  explicit `ENVOY_VISIBLE_BROWSER=1`) and is refused in an agent, MCP host, or
+  any non-interactive process, so an agent must never set that variable.
 - Fix original-video capture on feed pages such as Douyin: the player may start
   with only a `blob:` MSE source or none at all. Envoy now waits briefly for a
   real HTTP source (returning immediately when the page is already playing
@@ -209,12 +269,16 @@
 - A login or verification wall now carries a structured
   `details.needs_user_action`: the `kind` (`login_or_verification`, or
   `cookies_required` when a site only wants fresh cookies rather than an
-  account), the `host`, a `question` to relay, and two runnable `options`
-  (`envoy auth import --from chrome --domain <host>` and
-  `ENVOY_VISIBLE_BROWSER=1`). The import option carries the site scope, so
-  granting one site never means handing over the whole browser's cookies; the
-  host model asks the user rather than guessing or failing silently. The Claude
-  Code, Codex, and DSH skill wording is synced with the same behavior.
+  account), the `host`, a `question` to relay, and two human-action `options`:
+  `import_cookies` (the user runs
+  `envoy auth import --from chrome --domain <host>` in their own terminal; the
+  import carries the site scope, so granting one site never means handing over
+  the whole browser's cookies) and `human_sign_in` (the user signs in or passes
+  verification once). Every option carries `requires_human: true` and an
+  `instruction`, never a runnable `command`, so the host model asks and waits
+  instead of calling an option, opening a window, or setting
+  `ENVOY_VISIBLE_BROWSER` itself. The Claude Code, Codex, and DSH skill wording
+  is synced with the same behavior.
 - A source that downloads and transcribes but whose audio holds no speech (a
   music clip or a silent post) no longer returns an empty `blocked` answer: it
   returns `result: partial` with the title block, `page_player_bound: true`, the
@@ -325,10 +389,42 @@
   `retention`, `refresh`) and `envoy_observe_visual` declares `session_id`, so a
   model need not guess; the JSON schema still declares only required fields so
   the per-request tool prefix stays small.
-- `challenge_required` / `auth_required` now report `retryable: true` honestly
-  and are retried once internally when at least 5 seconds of budget remain
-  (`internal_retry_attempts`), absorbing transient site flakiness without ever
-  solving or bypassing a challenge.
+- Page-video binding no longer takes the first address that looks like a player:
+  `envoy_read` confirms candidates through feed JSON-LD `contentUrl`,
+  `og:video`, player state, the main player's `currentSrc`, and URL identity,
+  and ranks byte size only among mirrors already attributed to one file. When
+  it cannot confirm one file it **does not download**, returns
+  `media_selection: "unconfirmed"`, and hands the visual choice back to the
+  model. Probing follows redirects (at most 5 hops, at most 64 KiB per hop) and
+  charges the bytes read to the download budget.
+- Long transcripts are delivered in shared-budget slices:
+  `transcript_processed_until_seconds`, `transcript_delivered_until_seconds`,
+  `transcript_segment_count`, `transcript_unprocessed_seconds`,
+  `continuation_available`, and `transcript_continuation_start_seconds` let a
+  caller resume from the second it has not read instead of mistaking a
+  truncated transcript for a complete one.
+- Retained-material cache fixes: a blocked refetch no longer poisons the cache
+  and falls back to the existing material with `refetch_error`;
+  `PublicPageError` keeps `needs` and `request_id`; OCR comparison is
+  symmetric; the URL fragment is part of the cache key; a `visual_observation`
+  is not passed off as a plain read; only `refresh` strictly equal to `true`
+  forces a refetch; `compact` is an independent cache dimension.
+- Cookie domain scope now uses the public-suffix private list and registrable
+  domains (20 hosting suffixes), so hosts such as `www.ck`,
+  `city.kawasaki.jp`, and `*.compute.amazonaws.com` match by site rather than
+  by suffix; single-label hosts accept only `localhost` and IP literals, and
+  everything else fails closed. Cookie-import errors now ask the human to sign
+  in once in their own terminal instead of printing a runnable environment
+  variable command.
+- Evaluation methodology fixes: grading uses terminal answers only, stamps
+  `answer_source` on every row, and admits transcript-recovered text only
+  behind an explicit `INCLUDE_RECOVERED=1` diagnostic switch; citations count
+  only article-level `citation_hits` while host attribution is a diagnostic
+  column; every table footnote states the facts threshold and the duplicated
+  516 count; token comparisons report a multiplier and say Envoy is more
+  expensive, never a negative percentage that reads as savings. The acceptance
+  record and artifacts are regenerated from the recomputed run, withdrawing
+  `81/516`, `29 vs 42`, `95/120`, and the other superseded numbers.
 
 **Known boundaries**
 

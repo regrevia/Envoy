@@ -303,24 +303,28 @@ loading, and a dismissible dialog is cleared before the page is judged, so its
 own wording (for example a `验证码登录` tab) is never mistaken for a captcha.
 Reading stays headless and silent: nothing is shown on screen and no user
 action is requested. A page that genuinely needs a login or verification
-action returns `challenge_required`; Envoy does not open a window unless
-visible browser mode is explicitly enabled with `ENVOY_VISIBLE_BROWSER=1`, and
-only then does it wait for the user before resuming within the request's
-`max_work_seconds` budget (180 seconds by default). No host browser automation
-tool is required.
+action returns `challenge_required` instead of `empty_content`. Envoy opens a
+visible window only when a human runs the CLI in their own interactive terminal
+(stdin and stdout are both a TTY) and explicitly opts in with
+`ENVOY_VISIBLE_BROWSER=1`; under an agent or MCP host there is no TTY, so the
+runtime refuses and stays headless, then waits for the human within the
+request's `max_work_seconds` budget (180 seconds by default).
+No host browser automation tool is required.
 
 When a page needs the user's own session, the block arrives as data instead of
-prose: the error's `details.needs_user_action` names the `kind`
-(`login_or_verification`, or `cookies_required` when a site only demands fresh
-cookies rather than an account), the `host`, a `question` to relay, and two
-runnable `options` — `envoy auth import --from chrome|edge|safari --domain
-<host>` (copies that browser's cookies for this site alone into Envoy's
-isolated profile) and `ENVOY_VISIBLE_BROWSER=1` (one manual sign-in in a
-window). Relay the command as given: the `--domain` flag is what keeps the
-import scoped. Ask the user which one they want, and never read their cookies
-without that permission. Imported cookies live in Envoy's own profile, stay
-scoped to the requested domain, can be inspected with `envoy auth status`, and
-are removed with `envoy auth clear`.
+prose: the error's `details.needs_user_action` carries `requires_human: true`,
+names the `kind` (`login_or_verification`, or `cookies_required` when a site only
+demands fresh cookies rather than an account), the `host`, a `question` to
+relay, and the legitimate options. Treat every option as data for the human, not
+as a tool call. The `import_cookies` option asks the human to run Envoy's
+cookie import (`envoy auth import --from chrome|edge|safari --domain <host>`)
+in a terminal, which copies that browser's cookies for this site alone into
+Envoy's isolated profile; the `--domain` flag is what keeps it scoped, and only
+the human runs it. The `human_sign_in` option is an instruction
+for the human to run in their own terminal; do not execute it, and do not set
+`ENVOY_VISIBLE_BROWSER` yourself. Imported cookies live in Envoy's own profile,
+stay scoped to the requested domain, can be inspected with `envoy auth status`,
+and are removed with `envoy auth clear`.
 
 Feed pages such as Douyin reveal their player once a login dialog is dismissed:
 the element first exposes only a `blob:` MSE source, or none at all. Envoy
@@ -350,8 +354,10 @@ signed URL usable only by the current local browser session, Envoy may use it
 only in a temporary local download within the request budget, run local Whisper
 when installed, and deliver a bounded timestamped frame sample when the
 request sets `scope.include_visual: true` together with the host capabilities
-`video_input: "frames"` and `image_input: "local_file"`. These transcript and
-frame blocks are evidence for the host model to inspect; Envoy does not decide
+`video_input: "frames"` and `image_input: "local_file"`. The frame capability
+alone never enables frame extraction: without `scope.include_visual: true`, the
+read returns text, subtitles, and ASR only. These transcript and frame blocks
+are evidence for the host model to inspect; Envoy does not decide
 job locations, company matches, or whether a role is in Shenzhen. If only the
 video page is readable but no safe local media URL is available, Envoy marks the
 material `partial` and states which video evidence is missing. Signed media URLs
@@ -472,6 +478,33 @@ hand frames to the host. When a visual request returns text only, read the
 named missing declaration, add it, and re-read; a browser panel is not a
 substitute for Envoy's own download. Do not use cookies, bypass
 login/CAPTCHA/anti-bot challenges, or claim unsupported source coverage.
+
+### A human action is not a tool call
+
+These are hard rules, not preferences:
+
+- Never set `ENVOY_VISIBLE_BROWSER`, and never run a command that opens a
+  foreground window. Visible mode exists only for a human at their own
+  interactive terminal; the runtime refuses it when stdin or stdout is not a
+  TTY, so an agent that tries it only burns the request.
+- When a response carries `needs_user_action` or `requires_human: true`, stop
+  calling tools and relay the action to the human verbatim: one sign-in, one
+  cookie import, one scan, one verification. Ask the `question`, offer the
+  listed options as choices, then wait; resume only after the human confirms.
+- Never work around a sign-in: do not forge or write cookies, swap user agents,
+  retry through another tool, or claim the content is unobtainable while a
+  stated human action is pending. `blocked` with `action_required` is a handoff,
+  not a puzzle to solve.
+- After the human signs in once, `~/.envoy/browser-profile` keeps that session
+  and later headless reads reuse it. Do not delete that directory or any
+  profile path to "reset" a site; clear a scoped import with `envoy auth clear`
+  and leave profile removal to the human.
+- Frame and visual extraction still requires the caller to declare
+  `host_capabilities.video_input: "frames"` and
+  `host_capabilities.image_input: "local_file"`, plus
+  `retention.raw_media: "persistent"` when frames must outlive the read.
+  Without those declarations no frames arrive; that is the contract, not a bug,
+  so re-read with them instead of opening the page elsewhere.
 
 ### Local Video Files
 

@@ -56,6 +56,16 @@ the user to install `uv`. Browser profiles, ASR, and OCR stay optional and
 on-demand — see [INSTALL.md](../../skills/envoy/INSTALL.md) when a task needs
 them.
 
+## A visible window is not the agent's to open
+
+Envoy reads headlessly. When a page needs the user's identity, the tool returns
+`requires_human: true` inside `details.needs_user_action`; relay the question and
+options to the user, stop, and wait for their answer. Do not set
+`ENVOY_VISIBLE_BROWSER`, and do not run a command that opens a window. Visible
+mode only works for a human at an interactive terminal (stdin and stdout both a
+TTY, with explicit opt-in); the CLI refuses it under this plugin's stdio
+transport, so a login prompt with no window on screen is expected.
+
 ## Install
 
 ```text

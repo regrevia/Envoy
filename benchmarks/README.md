@@ -80,7 +80,7 @@ calls, visual inputs, repeated downloads, and actual host usage.
 For the planned self-hosted Claude Code CLI comparison, follow the
 [multi-link paired experiment protocol](../docs/superpowers/specs/2026-10-23-envoy-agent-benchmark-design.md).
 It defines the four priority Chinese platforms, baseline tool inventory,
-randomized per-package A/B order, isolated CLI profiles, authoritative
+a declared per-package `first_arm` order, isolated CLI profiles, authoritative
 inference-server token accounting, and the cache-confounded reporting rule.
 
 Generate an auditable per-package order before launching the host agent:
@@ -117,7 +117,7 @@ The first approved fixed set uses exactly 20 packages (four in each of the
 Bilibili, Douyin, Xiaohongshu, WeChat, and cross-platform strata), three
 identical scripted turns per package, and at least 40 unique public URLs. Freeze
 the package manifest, exact turn text, source revisions, reference facts, and
-rubric before generating the randomized plan. Candidate URLs are not accepted
+rubric before generating the plan. Candidate URLs are not accepted
 sources until both arms' required access condition and source evidence have
 been revalidated. Do not replace an inaccessible URL after seeing an arm's
 result; record the failure in the assigned pair.
