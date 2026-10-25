@@ -148,7 +148,10 @@ def main() -> int:
     run["run_id"] = summary.get("run_id") or "envoy-ab-run"
 
     turns = summary["turns"]
-    started = sorted(turn for turn in turns if turn.get("wall_seconds") is not None)
+    started = sorted(
+        (turn for turn in turns if turn.get("wall_seconds") is not None),
+        key=lambda turn: turn["wall_seconds"],
+    )
     if started:
         run["started_at"] = min(
             (turn.get("started_at") for turn in started if turn.get("started_at")),
@@ -231,6 +234,7 @@ def main() -> int:
                     "cache_creation_input_tokens": envoy_turn.get("ledger_cache_creation"),
                     "input_tokens": envoy_turn.get("ledger_input_tokens"),
                     "output_tokens": envoy_turn.get("ledger_output_tokens"),
+                    "baseline_usage_status": "actual",
                     "baseline_usage_breakdown_status": "actual",
                     "baseline_uncached_input_tokens": base_turn.get("ledger_input_tokens"),
                     "baseline_cache_read_input_tokens": base_turn.get("ledger_cache_read"),

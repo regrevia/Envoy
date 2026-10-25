@@ -192,6 +192,17 @@ def main() -> int:
                     "sources_total": len(sources),
                 }
             )
+    # One turn can be graded from the printed answer and, when the CLI printed
+    # nothing, from the text recovered out of the transcript. Keep the longest
+    # answer per turn so a recovered row can never overwrite a real one and a
+    # turn is never counted twice.
+    best: dict[tuple[str, str, str], dict] = {}
+    for record in records:
+        key = (record["package_id"], record["arm"], record["role"])
+        current = best.get(key)
+        if current is None or record["answer_chars"] > current["answer_chars"]:
+            best[key] = record
+    records = list(best.values())
     Path(args.out).write_text(
         "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
         encoding="utf-8",

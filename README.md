@@ -61,7 +61,19 @@
 
 ## 评测
 
-正在做同链接、同模型的 Envoy / 直接读取对比，记录完成时间、实际 token、事实覆盖、引用质量和人工介入。当前 pilot 为 **6 个来源、12 个任务**，还不足以得出“更快”或“更省 token”的结论。见[评测方法](benchmarks/README.md)与 [pilot 数据](benchmarks/pilots/README.md)。
+同一条链接、同一个模型，只差装不装 Envoy。20 个来源 × 3 轮提问，跑完 92 轮：
+
+| 指标 | 不装 Envoy | 装 Envoy |
+| --- | ---: | ---: |
+| 回答里给出原始链接 | 24% | 42% |
+| 整轮没读到任何来源 | 70% | 53% |
+| 空回答 | 4% | 0% |
+| 回答长度中位 | 3,978 字 | 6,996 字 |
+| 首次读到内容（中位） | 90 秒 | 47 秒 |
+| 限时内没跑完 | 66% | 36% |
+| 同一任务模型用量 | — | 多 80% |
+
+不藏的代价：长视频上 Envoy 更慢，用量也更高。时间上限分别为 15 分钟和 40 分钟，超时轮不算失败。样本 92/120 轮，比例只按这个样本读。见[评测方法](benchmarks/README.md)、[完整数据](benchmarks/fixed-set-v1/README.md)。
 
 ## 文档
 
@@ -131,7 +143,19 @@ No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement f
 
 ### Evaluation
 
-Running a same-link, same-model comparison against direct reading: completion time, actual tokens, fact coverage, citation quality, and human intervention. The current pilot has **6 sources and 12 tasks** — not enough to claim speed or token savings yet. See the [evaluation method](benchmarks/README.md) and [pilot data](benchmarks/pilots/README.md).
+Same link, same model, the only difference is whether Envoy is installed. 20 sources × 3 questions, 92 turns finished:
+
+| Metric | Without Envoy | With Envoy |
+| --- | ---: | ---: |
+| Answer quotes the source link | 24% | 42% |
+| Turn never reaches a source | 70% | 53% |
+| Empty answer | 4% | 0% |
+| Answer length, median | 3,978 chars | 6,996 chars |
+| First content reached, median | 90 s | 47 s |
+| Not finished in time | 66% | 36% |
+| Model usage on the same task | — | +80% |
+
+The costs are not hidden: Envoy is slower on long video and uses more. Time limits are 15 minutes and 40 minutes respectively, and a timed-out turn is not scored as a failure. Sample is 92 of 120 turns; read every rate against that sample. See the [evaluation method](benchmarks/README.md) and the [full data](benchmarks/fixed-set-v1/README.md).
 
 ### Documentation
 

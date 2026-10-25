@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import run_ab  # noqa: E402
+
+# Matches a command whose program is envoy: `envoy read ...`, `./envoy ...`,
+# `cd /tmp && /x/bin/envoy ...`. A mere mention such as `echo envoy docs` is
+# not a call, so the token must open a command segment.
+ENVOY_CMD = re.compile(r"(?:^|[;&|(`]|\$\()\s*(?:[\w.~/-]*/)?envoy(?![\w-])")
 
 
 def parse_ts(value: str) -> datetime | None:
@@ -108,6 +114,7 @@ def target_of(tool_input: dict) -> str | None:
 def summarise(segment: list[dict]) -> dict:
     names: list[str] = []
     targets: list[str] = []
+    bash_envoy_calls = 0
     first_result_ms: int | None = None
     start_stamp: datetime | None = None
     for entry in segment:
@@ -122,6 +129,12 @@ def summarise(segment: list[dict]) -> dict:
                 continue
             if block.get("type") == "tool_use":
                 names.append(block.get("name") or "")
+                # The skill ships as a CLI, so the envoy arm calls it through
+                # Bash rather than an mcp__envoy__* tool. Counting only MCP
+                # names reported zero envoy calls for every envoy turn.
+                command = str((block.get("input") or {}).get("command") or "")
+                if block.get("name") == "Bash" and ENVOY_CMD.search(command):
+                    bash_envoy_calls += 1
                 target = target_of(block.get("input") or {})
                 if target:
                     targets.append(target)
@@ -130,9 +143,9 @@ def summarise(segment: list[dict]) -> dict:
     return {
         "tool_calls": len(names),
         "tool_names": names,
-        "envoy_calls": sum(
-            1 for name in names if name.startswith("mcp__") and "envoy" in name
-        ),
+        "envoy_calls": bash_envoy_calls
+        + sum(1 for name in names if name.startswith("mcp__") and "envoy" in name),
+        "envoy_bash_calls": bash_envoy_calls,
         "unique_targets": len(set(targets)),
         "repeated_targets": len(targets) - len(set(targets)),
         "first_evidence_ms": first_result_ms,
