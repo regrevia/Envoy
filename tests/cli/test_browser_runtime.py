@@ -43,6 +43,7 @@ class FakePage:
         self.goto_response = FakeResponse()
         self.context = None
         self.chromium = None
+        self.closed = False
 
     def route(self, pattern, handler):
         self.routes.append((pattern, handler))
@@ -63,6 +64,13 @@ class FakePage:
 
     def evaluate(self, script):
         self.chromium.evaluated_scripts.append(script)
+        if (
+            "dismiss-generic-overlay" in script
+            and self.chromium.blocking_overlays > 0
+        ):
+            self.chromium.blocking_overlays -= 1
+            self.body_text = self.chromium.article_text
+            return 1
         if (
             self.context
             and self.context.headless
@@ -120,6 +128,9 @@ class FakePage:
     def content(self):
         return f"<html><head><title>{self.title()}</title></head><body>{self.body_text}</body></html>"
 
+    def close(self):
+        self.closed = True
+
 
 class FakeContext:
     def __init__(self, headless, initial_text):
@@ -128,10 +139,15 @@ class FakeContext:
         self.page.context = self
         self.closed = False
         self.routes = []
+        self.extra_pages = []
+        self.listeners = {}
 
     @property
     def pages(self):
-        return [self.page]
+        return [self.page, *self.extra_pages]
+
+    def on(self, event, handler):
+        self.listeners[event] = handler
 
     def new_page(self):
         return self.page
@@ -152,6 +168,8 @@ class FakeChromium:
         self.static_login_overlay = False
         self.reopen_overlay_after_scroll = False
         self.post_dismissal_text = None
+        self.blocking_overlays = 0
+        self.article_text = "正文：这是一篇关于检索增强生成的深度长文，包含方法与实验结论。"
         self.evaluated_scripts = []
         self.launches = []
 
@@ -339,6 +357,72 @@ def test_login_overlay_in_static_hashed_card_is_closed_headlessly(tmp_path, monk
     assert "公开播放器内容" in result.text
     assert chromium.static_login_overlay is False
     assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+
+
+def test_consent_wall_is_dismissed_without_showing_a_window(tmp_path):
+    chromium = FakeChromium("本网站使用 Cookie，请接受后继续阅读。")
+    chromium.blocking_overlays = 1
+
+    result = browser.read_page(
+        "https://example.org/consent-article",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+    )
+
+    assert "检索增强生成" in result.text
+    assert chromium.blocking_overlays == 0
+    assert [launch[1]["headless"] for launch in chromium.launches] == [True]
+    assert any("dismiss-generic-overlay" in script for script in chromium.evaluated_scripts)
+
+
+def test_popup_tab_is_closed_and_does_not_become_the_read_result(tmp_path):
+    chromium = FakeChromium("请下载 App 后阅读全文")
+    chromium.blocking_overlays = 1
+    context_ref = []
+
+    original_launch = chromium.launch_persistent_context
+
+    def launch(user_data_dir, **kwargs):
+        context = original_launch(user_data_dir, **kwargs)
+        popup = FakePage("只存在于弹窗里的替代正文")
+        popup.context = context
+        popup.chromium = chromium
+        popup.closed = False
+        context.extra_pages.append(popup)
+        context_ref.append(popup)
+        return context
+
+    chromium.launch_persistent_context = launch
+
+    result = browser.read_page(
+        "https://example.org/app-wall",
+        profile_dir=tmp_path / "profile",
+        playwright_factory=lambda: FakePlaywrightManager(chromium),
+    )
+
+    assert "检索增强生成" in result.text
+    assert context_ref and context_ref[0].closed is True
+    assert "page" in chromium.launches[0][0].listeners
+
+
+def test_close_extra_pages_never_closes_the_main_page():
+    class Context:
+        def __init__(self, pages):
+            self._pages = pages
+
+        @property
+        def pages(self):
+            return self._pages
+
+    main = FakePage("main")
+    popup = FakePage("popup")
+    popup.closed = False
+
+    closed = browser._close_extra_pages(Context([main, popup]), main)
+
+    assert closed == 1
+    assert popup.closed is True
+    assert main.closed is False
 
 
 def test_login_overlay_appearing_during_lazy_load_is_closed_before_capture(tmp_path):
@@ -662,6 +746,39 @@ def test_reader_preserves_browser_challenge_instead_of_returning_empty_content(
     assert response.errors[0].code.value == "challenge_required"
     assert response.errors[0].action_required is True
     assert "visible page still requires login" in response.errors[0].message
+
+
+def test_machine_error_envelope_is_not_returned_as_page_material():
+    payload = '{"error":{"message":"您当前请求存在异常，暂时限制本次访问。"}}'
+
+    assert reader._looks_like_machine_error_payload(payload) is True
+    assert reader._looks_like_machine_error_payload('{"code":0,"data":[1,2,3]}') is False
+    assert reader._looks_like_machine_error_payload(
+        "A normal article paragraph that is comfortably longer than a JSON envelope."
+    ) is False
+
+
+def test_json_error_page_is_reported_as_blocked_not_as_content(monkeypatch):
+    source_url = "https://www.zhihu.com/question/19550225"
+    payload = '{"error":{"message":"您当前请求存在异常，暂时限制本次访问。"}}'
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args, **_kwargs: (source_url, f"<html><body><pre>{payload}</pre></body></html>"),
+    )
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "json-error-envelope",
+        "source": {"url": source_url},
+    }))
+
+    assert response.result is ReadResult.BLOCKED
+    assert response.errors[0].code.value in {"auth_required", "challenge_required"}
+    assert response.errors[0].action_required is True
+    assert "请求存在异常" not in " ".join(
+        block.text.value for block in response.blocks if block.text
+    )
 
 
 def test_browser_navigation_timeout_is_reported_as_network_error(monkeypatch):

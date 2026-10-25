@@ -1,0 +1,118 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "cross-02",
+  "stratum": "cross_platform",
+  "source_ids": [
+    "cross-02-bili",
+    "cross-02-wechat"
+  ],
+  "source_revisions": {
+    "cross-02-bili": {
+      "url": "https://www.bilibili.com/video/BV12pEFzGEyQ/",
+      "sha256": "7e8306e52d71e349c3776c4aeded814881cee838a5fdff6a6dcf5d48ae845828",
+      "snapshot": "materials/7e8306e52d71e349c3776c4aeded814881cee838a5fdff6a6dcf5d48ae845828.txt",
+      "captured_at": "2026-10-25",
+      "result": "ready",
+      "coverage": "Envoy page-level capture of the video page: title, description, chapter markers and comments; the site has no subtitle track, so spoken content comes from local ASR and may contain recognition errors."
+    },
+    "cross-02-wechat": {
+      "url": "https://mp.weixin.qq.com/s/F-shRy1m7wQIS87ujOS7Dw",
+      "sha256": "1af62ce31c6044e5b2be31b2ee59033858aa87db2e161918b5d69e93395946df",
+      "snapshot": "materials/1af62ce31c6044e5b2be31b2ee59033858aa87db2e161918b5d69e93395946df.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy page-level capture of the article body and headings; inline images were not read, so image-only claims are out of scope."
+    }
+  },
+  "deliverable": "A source-grounded comparison of how a RAG explainer video and a Chinese translation of an arXiv RAG survey describe the retrieval-augmented generation pipeline and the problems it still faces, with per-source timestamps and section locators.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two sources, compare how they describe the RAG pipeline: the video's indexing and search-generation modules and the survey's retriever-plus-generator abstraction. Cite every claim by source plus timestamp or section, and do not merge the two accounts into one."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Drill into chunking and retrieval. What does the video say about why documents are split into blocks and what problem an oversized document causes? What does the survey say about sparse retrieval and BM25? Attribute each claim to its own source and note where the video is silent."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Compare the challenges each source raises: the video's enumerated problems with RAG and its proposed solutions, and the survey's stated motivation for RAG and its discussion of limitations and future directions. Say where the framings differ, where one source is silent, and which claims are the survey authors' own position rather than a consensus."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "c02-bili-two-modules",
+      "source_id": "cross-02-bili",
+      "claim": "The video says a typical RAG system architecture basically contains two main modules.",
+      "locator": "ASR transcript 00:09.900 (pipeline overview)",
+      "quote": "那目前的Rug的系统价格基本上是包含两个主要的模块",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c02-bili-context-limit",
+      "source_id": "cross-02-bili",
+      "claim": "The video says an oversized document causes problems partly because the large model's supported context length is limited.",
+      "locator": "ASR transcript 02:46.720 (why chunking is needed)",
+      "quote": "我们的大模型它支持的上下文长度是有限的",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c02-bili-eight-problems",
+      "source_id": "cross-02-bili",
+      "claim": "The video says it has collected eight problems that RAG currently faces together with corresponding solutions.",
+      "locator": "ASR transcript 08:49.600 (challenges section closing)",
+      "quote": "以上就是目前Rug所面临的八大问题以及对应解决方案",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c02-wechat-rag-definition",
+      "source_id": "cross-02-wechat",
+      "claim": "The survey states that RAG introduces an information-retrieval step that retrieves relevant objects from an available data store in order to augment the generation process.",
+      "locator": "body | section: 摘要/引言（RAG 定义段）",
+      "quote": "RAG引入信息检索过程，通过从可用数据存储中检索相关对象来增强生成过程",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c02-wechat-bm25",
+      "source_id": "cross-02-wechat",
+      "claim": "The survey states that BM25 is a hard-to-surpass baseline for industrial-scale web search.",
+      "locator": "body | section: 第 II 节 检索 > 稀疏检索",
+      "quote": "BM25 在工业规模的网络搜索中是一个难以超越的基准",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c02-wechat-four-paradigms",
+      "source_id": "cross-02-wechat",
+      "claim": "The survey states that it classifies RAG basic paradigms into 4 categories according to how the retriever augments the generator.",
+      "locator": "body | section: 第 III 节 增强 > RAG 基础范式分类",
+      "quote": "根据检索器如何增强生成器，我们将 RAG 基础范式分类为 4 个不同类别",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "cross-02-bili",
+    "cross-02-wechat"
+  ],
+  "acceptable_partial_outcomes": [
+    "The video transcript is local ASR output that contains recognition errors (for example Rug for RAG, 相量 for 向量, 减锁 for 检索); answers must quote it as captured and must not silently correct it.",
+    "The survey text is a Chinese translation of arXiv:2402.19473; its section numbers follow the translation, so answers must not invent subsection numbers that are absent from the captured text.",
+    "Neither source reports an end-to-end evaluation of a specific deployed RAG system; answers must not present their design claims as measured results."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "bili-accepter",
+    "method": "every reference_facts quote re-checked as a whitespace-squashed literal substring of the stored snapshot before hand-off",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2005.11401",
+      "supports": "the original RAG paper that defines retrieval-augmented generation as a parametric generator combined with a non-parametric retrieval index; used to check the video's two-module framing and the survey's retriever-plus-generator abstraction at topic level",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

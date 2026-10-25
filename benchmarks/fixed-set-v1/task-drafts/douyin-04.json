@@ -1,0 +1,105 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "douyin-04",
+  "stratum": "douyin",
+  "source_ids": [
+    "douyin-ai-programmer-role",
+    "douyin-anatomy-claude-skill"
+  ],
+  "source_revisions": {
+    "douyin-ai-programmer-role": {
+      "url": "https://www.douyin.com/video/7690237459598648128",
+      "sha256": "da7408658f8a72942a5f4dc8bc0856262311680070a527ff0e52b42fa28cac80",
+      "snapshot": "materials/da7408658f8a72942a5f4dc8bc0856262311680070a527ff0e52b42fa28cac80.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy 页面级抓取：标题、章节要点摘要、视频简介与评论等页面文本；transcript 块存在但无正文，未获得口播逐字转写。"
+    },
+    "douyin-anatomy-claude-skill": {
+      "url": "https://www.douyin.com/video/7696321857919110243",
+      "sha256": "2f798f3d63589c4515647cba8b28216ff9d16870197d076bf963181797684691",
+      "snapshot": "materials/2f798f3d63589c4515647cba8b28216ff9d16870197d076bf963181797684691.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy 页面级抓取：标题、章节要点摘要、视频简介与评论等页面文本；transcript 块存在但无正文，未获得口播逐字转写。"
+    }
+  },
+  "deliverable": "A source-grounded comparison of a programmer-role commentary and a Claude Code skill demo, separating what each page claims about AI-assisted coding from what it actually demonstrates, with chapter-level citations and explicit coverage gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two pages, compare what each says AI-assisted coding changes. One page argues about the programmer's role and responsibility; the other demos an open-source Claude Code skill called Anatomy. Cite each claim by page title and by the chapter heading from that page's 章节要点 list (for example AI编程的影响, 程序员的新能力要求, Anatomy的介绍, 使用方法), and mark anything a page does not cover as not covered."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Focus on page one's account of ability. What does it say stops being the differentiator and what replaces it, and what does it say about who is accountable for the final result? Give the chapter headings that carry those statements. Then describe what page two shows a user doing with Anatomy, including any concrete interaction or number it reports, and cite 使用方法 and 安装与使用."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Compare coverage rather than topic. Which page offers evidence for its claims and which only asserts them? List the gaps: what page one never demonstrates about AI coding, what page two never evaluates about the tool, and any point where the two pages disagree or where a page's own summary and chapter entries do not line up. Cite headings, and say plainly when neither page answers a question instead of filling it in."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "douyin-04-s1-f01",
+      "source_id": "douyin-ai-programmer-role",
+      "claim": "AI辅助写代码普及后，程序员的工作变得更轻松，但责任更重",
+      "locator": "章节要点",
+      "quote": "AI辅助写代码普及后，程序员的工作变得更轻松，但责任更重。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-04-s1-f02",
+      "source_id": "douyin-ai-programmer-role",
+      "claim": "未来，程序员的核心能力将不再是编码速度，而是需求判断、系统设计、测试验证和解决实际问题",
+      "locator": "章节要点",
+      "quote": "未来，程序员的核心能力将不再是编码速度，而是需求判断、系统设计、测试验证和解决实际问题。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-04-s2-f01",
+      "source_id": "douyin-anatomy-claude-skill",
+      "claim": "GitHub上开源的Claude Code技能Anatomy，能通过代码画出可交互的机器模型",
+      "locator": "章节要点",
+      "quote": "GitHub上开源的Claude Code技能Anatomy，能通过代码画出可交互的机器模型",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-04-s2-f02",
+      "source_id": "douyin-anatomy-claude-skill",
+      "claim": "用户可通过简单描述和真实数字，实现机器的拆分、慢放和实时渲染",
+      "locator": "章节要点",
+      "quote": "用户可通过简单描述和真实数字，实现机器的拆分、慢放和实时渲染。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "douyin-04-s2-f03",
+      "source_id": "douyin-anatomy-claude-skill",
+      "claim": "安装简单，无需API Key和依赖",
+      "locator": "章节要点",
+      "quote": "安装简单，无需API Key和依赖。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "acceptable_partial_outcomes": [
+    "The pages are page-level captures: only the title, 章节要点 summary, description and page text are citable; the spoken track is not a verbatim transcript and answers must not claim to have watched the video.",
+    "Page two's transcript-like block is noisy machine transcription with garbled proper nouns; it is out of scope and must not be quoted or corrected into a cleaner script."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "fact-writer-2",
+    "method": "every fact taken verbatim from the package's facts.json rows; quotes re-checked as literal substrings of the stored snapshots",
+    "facts": 5
+  },
+  "authority_anchors": [
+    {
+      "url": "https://github.com/anthropics/claude-code",
+      "supports": "Anthropic's public Claude Code repository shows Claude Code is a real coding agent with an extension/skill mechanism, which is the product category page two's Anatomy skill belongs to; it is not evidence for either page's own claims.",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

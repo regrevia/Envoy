@@ -810,7 +810,30 @@ EGRESS_CHALLENGE_MARKERS = (
     "请求过于频繁",
     "too many requests",
     "300012",
+    "请求存在异常",
+    "限制本次访问",
 )
+
+
+def _looks_like_machine_error_payload(text: str) -> bool:
+    """True when a browser-read "page" is really a JSON error envelope.
+
+    Some sites answer an automated visit with a 200 response whose body is a
+    short JSON object such as ``{"error":{"message":"...restricted..."}}``.
+    Parsed as HTML that becomes a hundred characters of error JSON, which would
+    be handed to the caller as if it were the page's material.
+    """
+
+    stripped = text.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return False
+    if len(stripped) > 600 or "\n\n" in stripped:
+        return False
+    lowered = stripped.lower()
+    if any(marker in lowered for marker in ('"error"', '"errmsg"', '"errorcode"')):
+        return True
+    code = re.search(r'"code"\s*:\s*(-?\d+)', lowered)
+    return bool(code and code.group(1) not in {"0", "200"})
 
 
 def _challenge_suggests_egress_issue(title: str, text: str) -> bool:
@@ -5692,7 +5715,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 "the platform returned its own error page instead of content.",
                 details={"diagnosis": "source_not_found"},
             )
-        if _looks_like_access_challenge(title, text):
+        if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
             if not browser_attempted:
                 browser_page, browser_error = _read_with_isolated_browser(
                     request,
@@ -5745,7 +5768,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     )
                     text = _clean_text(parser.text_parts)
                     browser_error = None
-        if _looks_like_access_challenge(title, text):
+        if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
             return _blocked(
                 request,
                 _browser_read_failure_code(browser_error)
@@ -5775,7 +5798,7 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                     title = _clean_text(parser.title_parts) or final_url
                     source_text_truncated = _source_text_was_truncated(parser.text_parts)
                     text = _clean_text(parser.text_parts)
-            if _looks_like_access_challenge(title, text):
+            if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
                 return _blocked(
                     request,
                     _browser_read_failure_code(browser_error)

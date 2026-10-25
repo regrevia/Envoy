@@ -1,0 +1,123 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "cross-04",
+  "stratum": "cross_platform",
+  "source_ids": [
+    "bili-llm-principles",
+    "wechat-multimodal"
+  ],
+  "source_revisions": {
+    "bili-llm-principles": {
+      "url": "https://www.bilibili.com/video/BV1wC411H7Mh/",
+      "sha256": "008adebba4d639fd0c0bf0a5ad3ff4ae9a4253d741bd7c3c29611fcc9c96f45a",
+      "snapshot": "materials/008adebba4d639fd0c0bf0a5ad3ff4ae9a4253d741bd7c3c29611fcc9c96f45a.txt",
+      "captured_at": "2026-10-25",
+      "result": "ready",
+      "coverage": "Envoy page-level capture of the video page: title, description, chapter markers and comments; the site has no subtitle track, so spoken content comes from local ASR and may contain recognition errors."
+    },
+    "wechat-multimodal": {
+      "url": "https://mp.weixin.qq.com/s/DXoeQqjVoDLxGV2oZeL95Q",
+      "sha256": "7a367521de64acaa733101da548961f735d0a02117dd5a2a4439b8cce71fd334",
+      "snapshot": "materials/7a367521de64acaa733101da548961f735d0a02117dd5a2a4439b8cce71fd334.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy page-level capture of the article body and headings; inline images were not read, so image-only claims are out of scope."
+    }
+  },
+  "deliverable": "A source-grounded comparison of how a Bilibili lecture on LLM fundamentals and a WeChat survey of multimodal models explain where model capability and cross-modal alignment come from, with timestamp and heading locators plus explicit gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two sources, compare what each says about how a model represents and combines information: the Bilibili lecture's account of the base architecture and what it does with knowledge, and the WeChat survey's account of aligning image and text representations. Cite the transcript by [mm:ss] and the article by heading. Identify where the two could be read as competing accounts of where capability comes from."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Give one mechanism from each. From the Bilibili lecture, explain the worked example of extracting a company's vector and what it says the parameters are concentrated in, with timestamps. From the WeChat survey, explain the CLIP training objective and the ALBEF fix for alignment before fusion, with the heading. Attribute every claim and do not merge the two explanations into one."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Using only these two snapshots, state the silences and the tension: what the Bilibili lecture never discusses about images or multimodal models, what the WeChat survey never discusses about tokens, context windows or the statistical view of training, and how each source attributes capability to a different factor. Mark topics that are merely absent as absent, cite a timestamp or heading for each point you assert, and do not fill a silence from outside knowledge."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili-two-core-structures",
+      "source_id": "bili-llm-principles",
+      "claim": "The Bilibili lecture states that the base architecture has two core structures, which the transcript names as multi-head attention and the feed-forward network FFN (ASR renders them as 多扯托的灯神 and 前一样使你网络).",
+      "locator": "[01:20.700]",
+      "quote": "然后它这里其实有两个核心的一个结构",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili-still-statistics",
+      "source_id": "bili-llm-principles",
+      "claim": "The lecture says that whether the model samples or takes the maximum-probability path, its essence is still statistics, and that machine learning is in one phrase statistical machine intelligence.",
+      "locator": "[07:35.360]",
+      "quote": "仍然就是一句话叫做统计机智能",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili-compressed-intelligence",
+      "source_id": "bili-llm-principles",
+      "claim": "The lecture compares the model to reading a very thick book until only a few hundred characters remain in your head, and calls this compressed intelligence.",
+      "locator": "[09:18.320]",
+      "quote": "最终的可能呢,整本书在你脑子里呢,可能就是几百字,就可以把这个书给高度概括了",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-clip-pairs",
+      "source_id": "wechat-multimodal",
+      "claim": "The survey states that CLIP, proposed by OpenAI in 2021, was trained with contrastive learning on roughly 400 million image-text pairs scraped from the web.",
+      "locator": "CLIP: 连接文本和图像的桥梁 | 正文第 1 段",
+      "quote": "该模型使用大量（约 4 亿）从网页中爬取的图像-文本对(pair)数据进行对比学习。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-clip-objective",
+      "source_id": "wechat-multimodal",
+      "claim": "The survey says the CLIP training objective is to maximize the scores on the diagonal of the similarity matrix and minimize those off it, treating each row or column as an N-way classification whose label is the true pair.",
+      "locator": "CLIP: 连接文本和图像的桥梁 | 训练目标",
+      "quote": "最大化对角线上的分数，并最小化对角线外的分数",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-albef-align-before-fuse",
+      "source_id": "wechat-multimodal",
+      "claim": "The survey credits ALBEF with solving image-text alignment and interaction in multimodal work, using a contrastive loss before multimodal interaction because earlier features were not aligned.",
+      "locator": "ALBEF：先对齐后融合 | 正文第 1 段",
+      "quote": "ALBEF 解决了多模态领域中图像和文本对齐、交互的问题。",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "bili-llm-principles",
+    "wechat-multimodal"
+  ],
+  "acceptable_partial_outcomes": [
+    "The Bilibili snapshot is ASR text that stops at about 12 minutes into a lecture whose title also promises training, hallucination, RAG and multimodal segments; no answer may present those later segments as captured.",
+    "The lecture never mentions images or vision-language models in its captured text, so a comparison must record that silence instead of inventing a multimodal view from it.",
+    "Inline formulas and diagrams in the WeChat survey were not read; answers must not claim to have inspected them."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "wechat-accepter",
+    "method": "every quote re-checked as a literal substring of the stored snapshot after squashing whitespace",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2103.00020",
+      "supports": "the original CLIP paper behind the survey's figure of about 400 million image-text pairs and its contrastive-objective description, used to check that the survey is reporting a published training setup rather than its own invention",
+      "verified_at": "2026-10-25"
+    },
+    {
+      "url": "https://arxiv.org/abs/2107.07651",
+      "supports": "the ALBEF paper the survey describes as aligning before fusing, used to check the survey's attribution of the contrastive-loss-before-interaction design",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

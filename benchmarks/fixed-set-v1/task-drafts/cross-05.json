@@ -1,0 +1,118 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "cross-05",
+  "stratum": "cross_platform",
+  "source_ids": [
+    "cross-05-bili",
+    "cross-05-wechat"
+  ],
+  "source_revisions": {
+    "cross-05-bili": {
+      "url": "https://www.bilibili.com/video/BV1xTNDzEEUF/",
+      "sha256": "3383ae2fe07b8184f47690e31e1b88367ee8ca802a3b8b7d1f4654ea2c028c05",
+      "snapshot": "materials/3383ae2fe07b8184f47690e31e1b88367ee8ca802a3b8b7d1f4654ea2c028c05.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy capture of the video page plus a local ASR transcript with [mm:ss.mmm] timestamps; the recognition quality is poor (e.g. 文太相物, 不顺格, 深度系形的炭), the transcript is 2433 characters and stops before any end-of-video summary, so spoken detail beyond the captured segments is out of scope."
+    },
+    "cross-05-wechat": {
+      "url": "https://mp.weixin.qq.com/s/rqYcu5ouwl04ucqxBxdMDQ",
+      "sha256": "e8ab4f50155f8cf1700d5250915a1026549443e8d0da9766785695c0786ff568",
+      "snapshot": "materials/e8ab4f50155f8cf1700d5250915a1026549443e8d0da9766785695c0786ff568.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy page-level capture of the article body and headings (5298 characters); inline figures with △ markers were not read, so claims that live only in the diagrams are out of scope."
+    }
+  },
+  "deliverable": "A source-grounded comparison of what a multimodal project produces on screen in one Bilibili demo and what a WeChat article says must be produced before an image score can be trusted, citing ASR timestamps and article headings and stating plainly where the two never meet.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two snapshots, describe what each source says a vision model puts out. For the Bilibili video cite the [mm:ss] timestamp of each claim and quote the transcript exactly, including its recognition errors; for the WeChat article cite the heading. Then say which of the two discusses judging the output and which does not, and do not credit either source with a claim it never makes."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Take the Bilibili demo's generation step and the WeChat article's evidence pipeline in turn. For the video, explain from the transcript what modality the script is asked to emit at [03:37.020] and what the presenter points at after the run at [04:16.560], keeping the garbled terms verbatim. For the article, name the 7 perception attributes and the number of visual-evidence tools, and give the reported average PLCC/SRCC, each under its heading."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Now state the gaps explicitly. Does the captured Bilibili transcript ever mention scoring, a metric, a benchmark or a quality judgement? Does the WeChat article describe running a demo, a dataset of depth or detection outputs, or a video? Name any claim in one source with no counterpart in the other, note that the video transcript is ASR text whose garbled terms must not be silently corrected, and cite a timestamp or heading for every point you do assert."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili-multimodal-opening",
+      "source_id": "cross-05-bili",
+      "claim": "The video opens by announcing the current state of the presenter's multimodal project, which the ASR renders as 文太相物 (a recognition error for a multimodal term that the transcript never spells correctly); the intended object is a multimodal model, not a text-only one.",
+      "locator": "[00:00.000]",
+      "quote": "我们的文太相物现在的最新发展",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili-visible-depth-output",
+      "source_id": "cross-05-bili",
+      "claim": "While walking through the generation script, the presenter says the output is switched from infrared to visible light plus a depth-style channel; the ASR writes the modality words as 火外魔炭, 可見光 and 深度系形的炭, so the passage shows a multimodal output being produced but not what the model emits downstream.",
+      "locator": "[03:37.020]",
+      "quote": "我現在打成可見光跟深度系形的炭",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili-model-output-demo",
+      "source_id": "cross-05-bili",
+      "claim": "After running the demo the presenter says the model has been 端确把握了 (ASR garble) and points to 多么太特有的一些性情, i.e. multimodal-specific behaviour he considers visible in the output; the transcript never states a quality score, a metric or a judging criterion.",
+      "locator": "[04:16.560]",
+      "quote": "可以看到我们的模型已经被端确把握了,大家可以看到它有一些多么太特有的一些性情",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-semantic-bias",
+      "source_id": "cross-05-wechat",
+      "claim": "The article's root-cause claim is that current MLLM scoring relies on semantic-biased internal visual representations rather than verifiable low-level degradation evidence, so the model has no information with which to perceive noise or blur and can only guess.",
+      "locator": "大模型打质量分，为什么会“凭感觉”？",
+      "quote": "现有MLLM打分，依赖的是带有语义偏见的内部视觉表征，而不是可验证的底层退化证据。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-evidence-tool-library",
+      "source_id": "cross-05-wechat",
+      "claim": "To supply that missing evidence the team defined 7 key perception attributes (structure, sharpness, noise, artifact, brightness, colour, naturalness) and built 15 visual-evidence tools from them, each of which renders one degradation into a structured evidence image.",
+      "locator": "核心思路：给大模型配一个“检测工具箱”",
+      "quote": "团队梳理出IQA中7个关键感知属性——结构、锐度、噪声、伪影、亮度、色彩、自然度，并据此设计了15种视觉证据。",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-sota-plcc-srcc",
+      "source_id": "cross-05-wechat",
+      "claim": "The reported result is a composite SOTA over 7 image-quality benchmarks with average PLCC/SRCC of 0.795/0.784, which the article presents together with an interpretable, traceable evaluation process rather than a bare score.",
+      "locator": "实验结果：7大基准综合SOTA",
+      "quote": "IQA-T1取得了综合最优（SOTA）的成绩，平均PLCC/SRCC达到0.795/0.784",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "cross-05-bili",
+    "cross-05-wechat"
+  ],
+  "acceptable_partial_outcomes": [
+    "The Bilibili transcript is local ASR with heavy recognition errors and stops mid-flow; answers must quote it as-is, may gloss a garbled term only when they flag it as a guess, and must not invent a timestamp.",
+    "The captured transcript never mentions scoring, metrics or benchmark numbers, so an answer that says the video evaluates image quality is wrong.",
+    "The WeChat article's figures marked with △ were not read; no answer may claim to have inspected them."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "wechat-accepter",
+    "method": "every quote re-checked as a literal substring of the stored snapshot after squashing whitespace",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2312.17090",
+      "supports": "independent record of teaching LMMs to produce visual quality scores (Q-Align), used to check that scoring an image with a multimodal model and reporting it as a correlation against human opinion is a separately documented task rather than something the WeChat article invented",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

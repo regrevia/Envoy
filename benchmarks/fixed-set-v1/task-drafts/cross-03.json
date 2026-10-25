@@ -1,0 +1,118 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "cross-03",
+  "stratum": "cross_platform",
+  "source_ids": [
+    "bili-llm-terms",
+    "wechat-agent-planning"
+  ],
+  "source_revisions": {
+    "bili-llm-terms": {
+      "url": "https://www.bilibili.com/video/BV1aXEFzQELc/",
+      "sha256": "1f6ca618db3dc914cf5340cbfebeee5bdf5c22736ef3b3421f938dc4b2f2ee3c",
+      "snapshot": "materials/1f6ca618db3dc914cf5340cbfebeee5bdf5c22736ef3b3421f938dc4b2f2ee3c.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy page-level capture of the video page: title, description, chapter markers and comments; the site has no subtitle track, so spoken content comes from local ASR and may contain recognition errors."
+    },
+    "wechat-agent-planning": {
+      "url": "https://mp.weixin.qq.com/s/7XvAcTst9OU_4orDr-dD-w",
+      "sha256": "f1b1acfee88a039ad3f8a4c47a1ae36c30982d654b5a498c2928b8436391126a",
+      "snapshot": "materials/f1b1acfee88a039ad3f8a4c47a1ae36c30982d654b5a498c2928b8436391126a.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy page-level capture of the article body and headings; inline images were not read, so image-only claims are out of scope."
+    }
+  },
+  "deliverable": "A source-grounded comparison of how a Bilibili primer and a WeChat engineering article explain the step from prompt-only LLM use to model-invoked tools, with timestamp and heading locators and explicit coverage gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two sources, compare what each says about why a model needs to call tools or functions instead of relying on the prompt alone. Cite the Bilibili transcript by [mm:ss] and the WeChat article by its numbered section heading. State where one source gives a motivation the other never mentions, and where they describe different mechanisms for what looks like the same goal."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Now take one mechanism from each. Explain, in the Bilibili primer's own terms, how a function call reaches an outside API and what returns to the model, citing the timestamp. Then explain the WeChat article's approach to making a model plan before each tool call, naming the fields of its think-and-plan tool and the prompt rule it imposes, with the section heading. Keep every claim attributed to its source."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Using only these two snapshots, list what is missing or in tension: which of the two never defines 'Agent' or 'MCP' in its captured text despite the title, which gives no evaluation numbers, and which one discusses tokens, context windows and model choice. Name any claim in one source that has no counterpart in the other, and say plainly when a topic is absent rather than contradicted. Cite a timestamp or heading for every point you do assert."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "bili-token-basic-unit",
+      "source_id": "bili-llm-terms",
+      "claim": "The Bilibili transcript states that a token is the basic unit through which the model splits and understands text, and that inference then runs over those tokens (the ASR renders 处理 as 促离).",
+      "locator": "[06:00.000]",
+      "quote": "Token是模型促离和理解文本的一个基本单位",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili-context-window-overflow",
+      "source_id": "bili-llm-terms",
+      "claim": "The transcript describes the failure case in which pasted content exceeds the model's context window, and reports the model replying that the input must be adjusted and tried again.",
+      "locator": "[03:52.200]",
+      "quote": "就是你的内容超过了你的上下文",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "bili-function-call-api",
+      "source_id": "bili-llm-terms",
+      "claim": "The transcript attributes function calling to OpenAI: the model can directly invoke an API (transcribed as 愛不公) to fetch information such as a weather forecast, and the result is passed back to the model.",
+      "locator": "[16:11.020]",
+      "quote": "可以讓模型去直接調用愛不公",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-openai-planning-gain",
+      "source_id": "wechat-agent-planning",
+      "claim": "The WeChat article reports that OpenAI's explicit-planning guidance raised SWE-bench pass rate by 4%, and that OpenAI drove this by prompting the model to think rather than by prompt instructions alone.",
+      "locator": "01 为什么需要规划 | OpenAI 小节",
+      "quote": "使得（SWE-bench）通过率提高了4%，OpenAI 是通过 Prompt 引导模型思考",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-think-tool-benchmark",
+      "source_id": "wechat-agent-planning",
+      "claim": "The article reports that on the τ-bench airline domain the optimized think tool reached pass^1 of 0.570 against a 0.370 baseline, a 54% relative gain.",
+      "locator": "01 为什么需要规划 | Anthropic 小节（τ-bench 结果）",
+      "quote": "而基线仅为 0.370——相对提升了 54%",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "wechat-tool-over-prompt",
+      "source_id": "wechat-agent-planning",
+      "claim": "The article argues that invoking a named tool is an executable, judgeable instruction whereas 'make a plan' is a vague one, so expressing planning as a tool call improves instruction following with open models that were not fine-tuned for it.",
+      "locator": "01 为什么需要规划 | 我们选择的方案",
+      "quote": "「调用xx工具」是一个可明确执行和评判的指令，而「做一个规划」是一个模糊的指令",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "bili-llm-terms",
+    "wechat-agent-planning"
+  ],
+  "acceptable_partial_outcomes": [
+    "The Bilibili snapshot is ASR text with recognition errors and stops mid-sentence in the function-call code segment; answers must quote the transcript as-is and must not smooth over garbled terms.",
+    "Neither captured snapshot contains a definition of Agent or MCP, so an answer that supplies one from outside knowledge is wrong.",
+    "Inline diagrams in the WeChat article were not read; no answer may claim to have inspected them."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "wechat-accepter",
+    "method": "every quote re-checked as a literal substring of the stored snapshot after squashing whitespace",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2406.12045",
+      "supports": "independent copy of the τ-bench benchmark the article cites for its think-tool pass^1 numbers, used to check that 0.570 and 0.370 are benchmark figures rather than general model claims",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}

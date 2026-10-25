@@ -1,0 +1,118 @@
+{
+  "schema_version": "envoy.fixed-evaluation-package/1",
+  "status": "frozen_reference_reviewed",
+  "package_id": "cross-01",
+  "stratum": "cross_platform",
+  "source_ids": [
+    "cross-01-bili",
+    "cross-01-wechat"
+  ],
+  "source_revisions": {
+    "cross-01-bili": {
+      "url": "https://www.bilibili.com/video/BV1kx4y1x7bu/",
+      "sha256": "6a763baa8a1efda812232c63f114790036c9dc36a03f576fe66e216b5026bbd7",
+      "snapshot": "materials/6a763baa8a1efda812232c63f114790036c9dc36a03f576fe66e216b5026bbd7.txt",
+      "captured_at": "2026-10-25",
+      "result": "ready",
+      "coverage": "Envoy page-level capture of the video page: title, description, chapter markers and comments; the site has no subtitle track, so spoken content comes from local ASR and may contain recognition errors."
+    },
+    "cross-01-wechat": {
+      "url": "https://mp.weixin.qq.com/s/IlaQw6Ut25NNoTZkxs63Vg",
+      "sha256": "6d7efb71404f4d5a38af03633abcb85b5d4eb2040a785afe550fe344e672aa90",
+      "snapshot": "materials/6d7efb71404f4d5a38af03633abcb85b5d4eb2040a785afe550fe344e672aa90.txt",
+      "captured_at": "2026-10-25",
+      "result": "partial",
+      "coverage": "Envoy page-level capture of the article body and headings; inline images were not read, so image-only claims are out of scope."
+    }
+  },
+  "deliverable": "A source-grounded comparison of how a conference-talk video and a Chinese survey article explain KV-cache memory waste and the PagedAttention mechanism behind vLLM, with per-source timestamps and headings and explicit gaps.",
+  "rubric_version": "envoy-fixed-set-v1-rubric-1",
+  "turns": [
+    {
+      "turn_id": "initial",
+      "text": "Using only these two sources, compare how they explain why large-model inference is slow and what each says about KV-cache memory. Give the video's account of cache preallocation and fragmentation and the article's survey of acceleration methods. Cite every claim by source plus timestamp or heading, and keep the two accounts separate."
+    },
+    {
+      "turn_id": "followup-1",
+      "text": "Drill into PagedAttention. What does the video say about allocating the KV cache in blocks, the operating-system virtual-memory analogy, and copy-on-write when a block is shared by several sequences? What does the article say about storing keys and values non-contiguously and about where memory waste can still occur? Attribute each mechanism to its own source."
+    },
+    {
+      "turn_id": "followup-2",
+      "text": "Compare the two sources' numbers and silences: the video's KV-cache utilisation figure and its batch-size/throughput claims, the article's waste range and its caveat that higher TFLOPs/s does not mean higher throughput. Say where they agree, where one is silent, and what neither source measures."
+    }
+  ],
+  "reference_facts": [
+    {
+      "fact_id": "c01-bili-utilisation",
+      "source_id": "cross-01-bili",
+      "claim": "The video states that the real utilisation rate inside the KV cache is only 20% to 40%.",
+      "locator": "ASR transcript 03:05.120 (KV cache memory waste section)",
+      "quote": "但是KVCatch里实际的利用率只有20%到40%",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c01-bili-preallocation",
+      "source_id": "cross-01-bili",
+      "claim": "The video says one cause of that waste is that at generation time the model does not know how many tokens it will produce.",
+      "locator": "ASR transcript 03:17.400 (first cause of waste)",
+      "quote": "因为在大模型生成时并不知道要生成多少个头肯",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c01-bili-copy-on-write",
+      "source_id": "cross-01-bili",
+      "claim": "The video describes the copy-on-write trigger as a sequence finding that the reference count of the block it wants to keep writing into is not 1.",
+      "locator": "ASR transcript 10:09.980 (copy-on-write mechanism)",
+      "quote": "也就是他发现自己要继续写入的Block的引用数不是1",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c01-wechat-waste-range",
+      "source_id": "cross-01-wechat",
+      "claim": "The article states that existing systems waste 60% to 80% of memory resources because of memory fragmentation and over-reservation.",
+      "locator": "body | section: 模型结构改进 > Page attention",
+      "quote": "现有的系统由于内存的碎片化和过度预留，浪费了60% - 80%的内存资源",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c01-wechat-noncontiguous",
+      "source_id": "cross-01-wechat",
+      "claim": "The article states that PagedAttention stores contiguous keys and values in non-contiguous memory space.",
+      "locator": "body | section: 模型结构改进 > Page attention",
+      "quote": "PagedAttention在非连续的内存空间中存储连续的键和值",
+      "claim_basis": "source_claim"
+    },
+    {
+      "fact_id": "c01-wechat-tflops-caveat",
+      "source_id": "cross-01-wechat",
+      "claim": "The article warns that doubling TFLOPs/s does not mean the model's throughput doubles.",
+      "locator": "body | section: 模型结构改进 > flash attention",
+      "quote": "这里TFLOPs/s 翻倍并不代表模型吞吐量翻倍",
+      "claim_basis": "source_claim"
+    }
+  ],
+  "expected_source_attribution": [
+    "cross-01-bili",
+    "cross-01-wechat"
+  ],
+  "acceptable_partial_outcomes": [
+    "The video transcript is local ASR output that contains recognition errors (for example KVCatch for KV cache, 弦存 for 显存); answers must quote it as captured and must not silently correct it.",
+    "The video's 24x and batch-size/throughput figures are the speaker's reported numbers, not a benchmark of this deployment; do not generalise them.",
+    "The article's diagrams and benchmark tables were captured only as text rows; answers must not claim to have inspected images."
+  ],
+  "frozen_at": null,
+  "manifest_sha256": null,
+  "reference_review": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "bili-accepter",
+    "method": "every reference_facts quote re-checked as a whitespace-squashed literal substring of the stored snapshot before hand-off",
+    "facts": 6
+  },
+  "authority_anchors": [
+    {
+      "url": "https://arxiv.org/abs/2309.06180",
+      "supports": "the PagedAttention paper, which documents the 60-80% KV-cache memory waste caused by fragmentation and over-reservation and proposes paged non-contiguous storage; used to judge the article's waste range and the video's utilisation figure at topic level",
+      "verified_at": "2026-10-25"
+    }
+  ]
+}
