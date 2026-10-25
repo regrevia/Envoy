@@ -41,9 +41,8 @@ Same links, same model, 20 sources × 3 questions, 92 turns finished:
 | First content reached, median | 90 s | 47 s |
 | Not finished in time | 66% | 36% |
 
-Envoy is slower on long video; that stays in the table. Time
-limits are 15 and 40 minutes, and a timed-out turn is not a failure. Sample is
-92 of 120 turns. Full data: [fixed evaluation set v1](../../../benchmarks/fixed-set-v1/README.md).
+Time limits are 15 and 40 minutes, and a timed-out turn is not a failure.
+Sample is 92 of 120 turns. Full data: [fixed evaluation set v1](../../../benchmarks/fixed-set-v1/README.md).
 
 ## Requirements
 
