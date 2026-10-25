@@ -75,12 +75,35 @@ def _asr_config_path() -> Path:
     return _config_root() / "asr.json"
 
 
+def cached_asr_models() -> list[str]:
+    """Whisper checkpoints already on disk, largest first."""
+
+    directory = asr_model_cache_dir()
+    found = [
+        name for name in SUPPORTED_ASR_MODELS if (directory / f"{name}.pt").is_file()
+    ]
+
+    def size(name: str) -> int:
+        try:
+            return (directory / f"{name}.pt").stat().st_size
+        except OSError:
+            return 0
+
+    return sorted(found, key=size, reverse=True)
+
+
 def selected_asr_model() -> str:
     override = os.getenv("ENVOY_ASR_MODEL", "").strip()
     if override:
         return override
-    model = str(_read_asr_config().get("model") or "base")
-    return model if model in SUPPORTED_ASR_MODELS else "base"
+    configured = str(_read_asr_config().get("model") or "").strip()
+    if configured in SUPPORTED_ASR_MODELS:
+        # An explicit or persisted selection wins even when its weights are not
+        # on disk: silently switching models would change the transcript.
+        return configured
+    # Checkpoints on disk do not choose the model: a stale cache must never
+    # override the configured name, and envoy asr status reports both.
+    return "base"
 
 
 def _read_asr_config() -> dict[str, Any]:
@@ -585,6 +608,8 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
         "asr_engine": "openai-whisper" if asr_installed else None,
         "asr_installed": asr_installed,
         "asr_model": model_name,
+        "asr_models_cached": cached_asr_models(),
+        "asr_model_from_cache": model_name != str(asr_config.get("model") or ""),
         "asr_model_available": model_available,
         "asr_configured": bool(asr_config.get("enabled")) or bool(os.getenv("ENVOY_ASR_MODEL", "").strip()),
         "asr_model_file_present": model_file_present,
@@ -1016,6 +1041,7 @@ def extract_video_frames(
     *,
     max_visual_pixels_per_input: int,
     max_work_seconds: int,
+    duration_seconds: float | None = None,
 ) -> list[dict[str, Any]]:
     ffmpeg = shutil.which(os.getenv("FFMPEG_BIN", "ffmpeg"))
     ffprobe = shutil.which(os.getenv("FFPROBE_BIN", "ffprobe"))
@@ -1053,6 +1079,10 @@ def extract_video_frames(
     frames = []
     for index, timestamp in enumerate(timestamps):
         seconds = max(float(timestamp), 0)
+        if duration_seconds and duration_seconds > 0:
+            # Seeking at (or past) the exact end decodes no frame; stay inside
+            # the stream that actually exists.
+            seconds = min(seconds, max(float(duration_seconds) - 0.05, 0.0))
         if time.monotonic() >= deadline:
             raise MediaBudgetExceeded("Frame extraction exceeded max_work_seconds")
         output = root / f"frame-{index + 1:03d}.jpg"

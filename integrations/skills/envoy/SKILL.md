@@ -376,6 +376,12 @@ or noise and the lines may be hallucinated, so say that rather than quoting them
 as speech. A source that downloads but has no detectable speech comes back
 `partial` with a `no_speech` detail, not as a failed read.
 
+Page chapter lists are scraped from page text, so a page that has not finished
+loading can return fewer chapters than it has. When the returned chapters stop
+well before the reported duration, the result says the chapter list is
+incomplete (`chapters_incomplete: true`); reload the page for a fuller list
+rather than presenting the short list as the full chapter list.
+
 For a video request, inspect all returned timestamped page-chapter, subtitle,
 ASR, and frame blocks together. Preserve their source time locators and origin;
 do not merge page chapter summaries into speech transcripts or imply that a
@@ -502,6 +508,10 @@ are also re-evaluated. Completed `partial` and `needs_host` evidence still repla
 finish its handoff/continuation, or choose a new key for an intentional fresh read.
 See the retained-read rule below before retrying a URL that was already read.
 
+A retained raw video is keyed by source URL, `material_id` and
+`source_revision`, so it is only reused for the same revision and is pruned when
+the derived evidence expires. Pass `refresh: true` to re-fetch media as well.
+
 Reading the same URL again in the same session answers from the material the
 process already retained: the result sets `served_from_retained_material: true`
 and makes no network request. Pass `refresh: true` only for a deliberate new
@@ -585,8 +595,28 @@ are not already available.
 Model files are not a per-task cache: speech and OCR weights are installed once
 into a shared model directory and reused by every later task, so a second run
 never downloads them again. Treat them as part of the installation, not as
-evidence. The ASR model is never sent to a provider. Temporary source media is
-discarded after transcription.
+evidence. The ASR model is never sent to a provider. Check which checkpoint is in use before a long video read:
+
+```bash
+envoy asr status
+```
+
+Downloaded source video is temporary by default: it is deleted after the read.
+Set `retention.raw_media` to `persistent` on the read (or in the read request
+JSON) to keep the video under Envoy's data root, so reading the same
+`source_revision` again reuses those bytes instead of downloading them again;
+the reused run reports `raw_media_reused: true`. Kept media counts as disk
+usage, not evidence, and can be inspected or deleted:
+
+```bash
+envoy cache status
+envoy cache prune
+```
+
+When the Whisper runtime or its model is missing, a video read returns
+`partial` immediately with `media_fetched: false` and
+`media_fetch_skipped: local_asr_unavailable` instead of downloading media it
+cannot transcribe; install ASR and retry.
 
 Direct public image links are a conditional visual handoff: when the request
 declares URI image input, Envoy returns `needs_host` with an `inspect_visual`

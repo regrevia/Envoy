@@ -21,6 +21,7 @@ from pathlib import Path
 MATERIAL_DIR = "materials"
 FRAMES_PREFIX = "frames-"
 OCR_CACHE_DIRS = ("ocr-cache", "ocr-inputs")
+MEDIA_PREFIX = "video-"
 
 _MATERIAL_ID = re.compile(r"mat-[a-f0-9]{24}")
 
@@ -169,6 +170,19 @@ def cache_status(
         items = sorted(directory.iterdir()) if directory.is_dir() else []
         ocr[name.replace("-", "_")] = _summary(items)
 
+    materials = root / MATERIAL_DIR
+    media = sorted(materials.glob(f"{MEDIA_PREFIX}*")) if materials.is_dir() else []
+    live_media = []
+    for path in media:
+        material_id = path.name.removeprefix(MEDIA_PREFIX)
+        try:
+            populated = path.is_dir() and not path.is_symlink() and any(path.iterdir())
+        except OSError:
+            populated = False
+        if material_id in live and populated:
+            live_media.append(path)
+    orphan_media = [path for path in media if path not in live_media]
+
     operations = sorted(root.glob("operation-*.json")) if root.is_dir() else []
     expired_operations = [
         path for path in operations if 0 < _operation_expiry(path) <= current
@@ -192,6 +206,11 @@ def cache_status(
             "orphan_bytes": sum(_size(path) for path in orphan_frames),
         },
         **ocr,
+        "video_media": {
+            **_summary(live_media),
+            "orphan_count": len(orphan_media),
+            "orphan_bytes": sum(_size(path) for path in orphan_media),
+        },
         "operations": {
             **_summary(operations),
             "expired_count": len(expired_operations),
@@ -239,6 +258,17 @@ def prune_cache(
         elif frame.name.removeprefix(FRAMES_PREFIX) not in live:
             removed.append(_remove(frame, root, dry_run))
 
+    materials = root / MATERIAL_DIR
+    if materials.is_dir():
+        for media in sorted(materials.glob(f"{MEDIA_PREFIX}*")):
+            material_id = media.name.removeprefix(MEDIA_PREFIX)
+            try:
+                populated = media.is_dir() and not media.is_symlink() and any(media.iterdir())
+            except OSError:
+                populated = False
+            if material_id not in live or not populated:
+                removed.append(_remove(media, root, dry_run))
+
     for name in OCR_CACHE_DIRS:
         directory = root / name
         if not directory.is_dir():
@@ -275,6 +305,7 @@ def render_status(report: dict) -> str:
         "frames": "video frames",
         "ocr_inputs": "ocr downloads",
         "ocr_cache": "ocr results",
+        "video_media": "raw video media",
         "operations": "operation ledgers",
     }
     for key, label in labels.items():

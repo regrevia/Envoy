@@ -1082,6 +1082,28 @@ def _chapter_timestamp(value: str) -> float | None:
     return None
 
 
+def _chapter_span_state(
+    chapter_blocks: list[MaterialBlock],
+    duration: float | None,
+) -> tuple[tuple[float, float] | None, bool]:
+    starts = [
+        float(block.locator.start_seconds)
+        for block in chapter_blocks
+        if getattr(block.locator, "start_seconds", None) is not None
+    ]
+    if not starts:
+        return None, False
+    ends = [
+        float(block.locator.end_seconds)
+        for block in chapter_blocks
+        if getattr(block.locator, "end_seconds", None) is not None
+    ]
+    span = (min(starts), max(ends or starts))
+    if not duration:
+        return span, False
+    return span, span[1] < float(duration) * 0.9
+
+
 def _page_video_chapter_blocks(
     text: str,
     source_url: str,
@@ -1238,10 +1260,52 @@ def _attach_browser_video_evidence(
             "result": ReadResult.PARTIAL,
             "coverage": response.coverage.model_copy(update={"modalities": modalities}),
         })
-    media_dir.mkdir(mode=0o700, exist_ok=True)
+    frame_enabled = (
+        request.scope.include_visual
+        and request.host_capabilities.video_input == "frames"
+        and request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
+    )
+    retention_mode = str(getattr(request.retention, "raw_media", "ephemeral") or "ephemeral")
+    keep_media = retention_mode == "persistent" and int(
+        getattr(request.retention, "derived_ttl_seconds", 0) or 0
+    ) > 0
+    runtime = media_runtime_status()
+    asr_ready = bool(runtime.get("asr_installed") and runtime.get("asr_model_available"))
+    if not asr_ready and not frame_enabled:
+        # Nothing in this response would consume the media, so do not spend the
+        # download (and the bandwidth) only to report that ASR cannot run.
+        unresolved.append(
+            "Local video ASR is unavailable because Whisper is not installed"
+            if not runtime.get("asr_installed")
+            else "Local video ASR is unavailable because its Whisper model is not prepared"
+        )
+        video_coverage = video_coverage.model_copy(update={
+            "discovered": 1,
+            "processed": 0,
+            "extraction": "partial",
+            "unresolved": list(dict.fromkeys(unresolved)),
+            "details": {
+                **video_coverage.details,
+                "browser_media_url": _media_origin(selected_url),
+                "media_fetched": False,
+                "media_fetch_skipped": "local_asr_unavailable",
+                "raw_media_retention": retention_mode,
+                "transcript_source": "unavailable",
+                "visual_inspection": "not_performed",
+            },
+        })
+        modalities = dict(response.coverage.modalities)
+        modalities["video"] = video_coverage
+        return response.model_copy(update={
+            "result": ReadResult.PARTIAL,
+            "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+        })
+    if keep_media:
+        media_dir.mkdir(mode=0o700, exist_ok=True)
 
     duration = float(duration_seconds or 0)
     downloaded = None
+    media_reused = False
     transcript_source = "unavailable"
     transcript_segments: list[dict] = []
     language = None
@@ -1251,21 +1315,45 @@ def _attach_browser_video_evidence(
     asr_elapsed_ms = None
     downloaded_bytes = None
     frame_response = response
-    frame_enabled = (
-        request.scope.include_visual
-        and
-        request.host_capabilities.video_input == "frames"
-        and request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
-    )
     try:
         with tempfile.TemporaryDirectory(prefix="envoy-browser-video-") as temporary_dir:
-            downloaded = download_video_for_frames(
-                selected_url,
-                temporary_dir,
-                max_download_bytes=request.budget.max_download_bytes,
-                max_work_seconds=_remaining_work_seconds(request),
+            media_prefix = _browser_media_prefix(
+                selected_url, response.material_id, response.source_revision
             )
+            cached_media = None
+            if keep_media:
+                cached_media = next(
+                    (
+                        item for item in sorted(media_dir.glob(f"{media_prefix}*"))
+                        if item.is_file() and not item.is_symlink() and item.stat().st_size > 0
+                    ),
+                    None,
+                )
+            if cached_media is not None:
+                downloaded = {
+                    "path": str(cached_media),
+                    "duration": None,
+                    "downloaded_bytes": cached_media.stat().st_size,
+                }
+                media_reused = True
+            else:
+                downloaded = download_video_for_frames(
+                    selected_url,
+                    temporary_dir,
+                    max_download_bytes=request.budget.max_download_bytes,
+                    max_work_seconds=_remaining_work_seconds(request),
+                )
+                media_reused = False
             video_path = Path(downloaded["path"]).resolve()
+            if keep_media and not media_reused and video_path.is_file():
+                target = media_dir / f"{media_prefix}{video_path.suffix or '.mp4'}"
+                try:
+                    os.replace(video_path, target)
+                    video_path = target
+                    downloaded = {**downloaded, "path": str(target)}
+                    _prune_browser_media(media_dir, keep_prefix=media_prefix)
+                except OSError:
+                    pass  # fall back to the temporary copy for this read
             if not video_path.is_file() or video_path.stat().st_size <= 0:
                 raise MediaProcessingError("Browser video download did not produce a usable file")
             duration = duration or float(downloaded.get("duration") or 0)
@@ -1320,6 +1408,13 @@ def _attach_browser_video_evidence(
                 duration=duration or None,
             )
             blocks.extend(chapter_blocks)
+            chapter_span, chapters_incomplete = _chapter_span_state(chapter_blocks, duration)
+            if chapters_incomplete:
+                unresolved.append(
+                    "Page chapters stop at "
+                    f"{chapter_span[1]:.0f}s of a {float(duration):.0f}s video, "
+                    "so the chapter list is incomplete; reload the page for a fuller list"
+                )
             remaining_chars = max(
                 0,
                 request.budget.max_response_chars
@@ -1358,6 +1453,14 @@ def _attach_browser_video_evidence(
                     order=len(blocks),
                     quality=Quality(engine=f"whisper-{asr_model or 'local'}"),
                 ))
+            returned_segments = min(len(transcript_segments), 200)
+            if len(transcript_segments) > returned_segments:
+                unresolved.append(
+                    f"The transcript has {len(transcript_segments)} segments but only the first "
+                    f"{returned_segments} are returned; continue after "
+                    f"{float(transcript_segments[returned_segments - 1].get('end') or 0):.1f}s "
+                    "with scope.start_seconds"
+                )
 
             persisted_transcript = None
             if transcript_segments:
@@ -1381,7 +1484,7 @@ def _attach_browser_video_evidence(
             confidence, speech_seconds, speech_ratio = _transcript_confidence(
                 transcript_segments, duration
             )
-            if confidence == "low":
+            if confidence == "low" and transcript_source == "asr":
                 unresolved.append(
                     "The audio is mostly music or noise: "
                     f"{len(transcript_segments)} short speech segment(s) cover "
@@ -1405,11 +1508,19 @@ def _attach_browser_video_evidence(
                     "asr_model": asr_model,
                     "asr_duration_ms": asr_elapsed_ms,
                     "page_chapter_count": len(chapter_blocks),
+                    "page_chapter_span": list(chapter_span) if chapter_span else None,
+                    "chapters_incomplete": chapters_incomplete,
                     "transcript_segment_count": len(transcript_segments),
+                    "transcript_segments_returned": returned_segments,
+                    "transcript_truncated": len(transcript_segments) > returned_segments,
                     "speech_seconds": round(speech_seconds, 3),
                     "speech_coverage": round(speech_ratio, 4),
                     "transcript_confidence": confidence,
                     "frame_inspection": "requested" if frame_enabled else "host_capability_missing",
+                    "media_fetched": True,
+                    "raw_media_retention": retention_mode,
+                    "raw_media_reused": media_reused,
+                    "raw_media_path": str(video_path) if keep_media else None,
                 },
             })
             modalities = dict(response.coverage.modalities)
@@ -1502,6 +1613,30 @@ def _take_text_range(text: str, offset: int, max_chars: int) -> tuple[str, int]:
         if boundary >= offset + max_chars // 2:
             end = boundary + (2 if text[boundary:boundary + 2] in {". ", "! ", "? "} else 1)
     return text[offset:end], end
+
+
+BROWSER_MEDIA_PREFIX = "source-"
+
+
+def _browser_media_prefix(source_url: str, material_id, source_revision) -> str:
+    """A stable file prefix so the same video is fetched once per revision."""
+
+    seed = "|".join([
+        _redact_url(str(source_url or "")),
+        str(material_id or ""),
+        str(source_revision or ""),
+    ])
+    return f"{BROWSER_MEDIA_PREFIX}{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:20]}-"
+
+
+def _prune_browser_media(media_dir: Path, keep_prefix: str) -> None:
+    for item in media_dir.glob(f"{BROWSER_MEDIA_PREFIX}*"):
+        if item.name.startswith(keep_prefix):
+            continue
+        try:
+            item.unlink()
+        except OSError:
+            pass
 
 
 def _material_root() -> Path:
@@ -5092,6 +5227,7 @@ def _attach_video_frames(
                 timestamps,
                 max_visual_pixels_per_input=per_frame_limit,
                 max_work_seconds=remaining_work,
+                duration_seconds=duration,
             )
             if not extracted_frames:
                 raise MediaProcessingError("No video frames were extracted")
@@ -5559,8 +5695,45 @@ def _read_video_media_url(request: ReadRequest, media_source: dict) -> ReadRespo
         )
 
 
-@_serialize_read_request
+_CHALLENGE_RETRY_DELAY_SECONDS = 1.0
+
+
 def read_public_page(request: ReadRequest) -> ReadResponse:
+    response = _read_public_page_once(request)
+    for attempt in range(1, 2):
+        if response.result != ReadResult.BLOCKED:
+            break
+        if not any(
+            error.code
+            in {ErrorCode.CHALLENGE_REQUIRED, ErrorCode.AUTH_REQUIRED}
+            and error.action_required
+            for error in response.errors
+        ):
+            break
+        try:
+            if _remaining_work_seconds(request) < 5:
+                break
+        except MediaBudgetExceeded:
+            break
+        time.sleep(_CHALLENGE_RETRY_DELAY_SECONDS)
+        retried = _read_public_page_once(request)
+        response = retried.model_copy(update={
+            "errors": [
+                error.model_copy(update={
+                    "retryable": True,
+                    "details": {
+                        **(error.details or {}),
+                        "internal_retry_attempts": attempt,
+                    },
+                })
+                for error in retried.errors
+            ],
+        })
+    return response
+
+
+@_serialize_read_request
+def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
     dns_cache: dict[str, bool] = {}
     browser_snapshot = None
@@ -6696,7 +6869,11 @@ def _blocked(
             ReadError(
                 code=code,
                 message=message,
-                retryable=code == ErrorCode.NETWORK_ERROR,
+                retryable=code in {
+                    ErrorCode.NETWORK_ERROR,
+                    ErrorCode.CHALLENGE_REQUIRED,
+                    ErrorCode.AUTH_REQUIRED,
+                },
                 action_required=action_required,
                 details=payload,
             )

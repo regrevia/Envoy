@@ -21,7 +21,14 @@ from . import browser as browser_runtime
 from . import cache as cache_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_status, render_hook_status
-from .media import MediaCapabilityMissing, media_runtime_status, prepare_asr_model
+from .cookies import cookies_status
+from .media import (
+    MediaCapabilityMissing,
+    cached_asr_models,
+    media_runtime_status,
+    prepare_asr_model,
+    selected_asr_model,
+)
 from .ocr import (
     DEFAULT_OCR_BACKEND,
     OCR_PROFILES,
@@ -137,6 +144,8 @@ def _parser() -> argparse.ArgumentParser:
             "large-v3", "large-v3-turbo",
         ],
     )
+    asr_status = asr_commands.add_parser("status", help="show which local Whisper model reads use")
+    asr_status.add_argument("--json", action="store_true", help="print machine-readable output")
     asr_install = asr_commands.add_parser(
         "install",
         help="install Whisper and its large dependencies using the fastest reachable package index",
@@ -400,7 +409,11 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "capabilities": capability_catalog(),
             "runtime": runtime,
         }
-        print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else "Envoy Skill ready")
+        print(
+            json.dumps(result, ensure_ascii=False, indent=2)
+            if args.json
+            else _doctor_text(runtime)
+        )
         if args.verify_asr and runtime["asr_operational"] != "verified":
             return 2
         return 0
@@ -474,6 +487,29 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         return run_prompt_hook(args.host, payload, language=args.language)
     if args.command == "asr":
         try:
+            if args.asr_command == "status":
+                runtime = media_runtime_status()
+                model = selected_asr_model()
+                cached = cached_asr_models()
+                payload = {
+                    "model": model,
+                    "cached": cached,
+                    "engine": runtime.get("asr_engine"),
+                    "ready": bool(runtime.get("asr_installed") and runtime.get("asr_model_available")),
+                    "next_step": runtime.get("asr_next_step"),
+                }
+                if args.json:
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                else:
+                    lines = [
+                        f"model      {model}",
+                        f"engine     {payload['engine'] or 'missing: run envoy asr install'}",
+                        f"cached     {', '.join(cached) or 'none'}",
+                    ]
+                    if not payload["ready"] and payload["next_step"]:
+                        lines.append(f"next       {payload['next_step']}")
+                    print("\n".join(lines))
+                return 0 if payload["ready"] else 2
             if args.asr_command == "install":
                 install = install_media_dependencies(model=args.model)
                 result = {
@@ -565,3 +601,37 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
 
 def entrypoint() -> None:
     raise SystemExit(main())
+
+
+def _doctor_text(runtime: dict) -> str:
+    lines = ["Envoy Skill ready"]
+    if runtime.get("asr_installed"):
+        state = (
+            "verified"
+            if runtime.get("asr_model_verified")
+            else "on disk, unverified"
+            if runtime.get("asr_model_file_present")
+            else "missing: run envoy asr setup"
+        )
+        lines.append(f"whisper    {runtime.get('asr_model')} ({state})")
+    else:
+        lines.append("whisper    missing: run envoy asr install")
+    media_tools = [
+        name for name in ("ffmpeg", "ffprobe") if runtime.get(name)
+    ]
+    missing_tools = [name for name in ("ffmpeg", "ffprobe") if not runtime.get(name)]
+    lines.append(
+        f"media      {', '.join(media_tools) or 'none'}"
+        + (f"; missing {', '.join(missing_tools)}" if missing_tools else "")
+    )
+    browser = runtime.get("browser") or {}
+    lines.append(
+        f"browser    {'ready' if browser.get('ready') else 'missing: run envoy browser setup'}"
+    )
+    imported = cookies_status().get("imported") or 0
+    lines.append(
+        f"cookies    {imported} imported"
+        if imported
+        else "cookies    none imported; envoy auth import --from chrome --url <link>"
+    )
+    return "\n".join(lines)

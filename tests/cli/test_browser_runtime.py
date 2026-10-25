@@ -1016,9 +1016,15 @@ def test_browser_video_evidence_groups_mirror_sources_of_one_file(monkeypatch, t
     monkeypatch.setattr(reader, "_probe_page_media", lambda url, _cache: identities.get(url))
     monkeypatch.setattr(reader, "download_video_for_frames", fake_download)
     monkeypatch.setattr(reader, "media_runtime_status", lambda: {
-        "asr_installed": False,
-        "asr_model_available": False,
+        "asr_installed": True,
+        "asr_model_available": True,
         "asr_model": "base",
+    })
+    monkeypatch.setattr(reader, "transcribe_audio_file", lambda *_args, **_kwargs: {
+        "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+        "language": "en",
+        "model": "base",
+        "status": "ok",
     })
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
 
@@ -1068,9 +1074,15 @@ def test_browser_video_evidence_reads_the_page_source_past_mse_and_ui_assets(mon
     monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(reader, "download_video_for_frames", fake_download)
     monkeypatch.setattr(reader, "media_runtime_status", lambda: {
-        "asr_installed": False,
-        "asr_model_available": False,
+        "asr_installed": True,
+        "asr_model_available": True,
         "asr_model": "base",
+    })
+    monkeypatch.setattr(reader, "transcribe_audio_file", lambda *_args, **_kwargs: {
+        "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+        "language": "en",
+        "model": "base",
+        "status": "ok",
     })
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
 
@@ -1091,7 +1103,7 @@ def test_browser_video_evidence_reads_the_page_source_past_mse_and_ui_assets(mon
 
     assert downloaded == [signed_url]
     video = response.coverage.modalities["video"]
-    assert video.details["transcript_source"] == "unavailable"
+    assert video.details["transcript_source"] == "asr"
     assert "rejected_media_candidates" not in video.details
     serialized = response.model_dump_json()
     assert signed_url not in serialized
@@ -1339,15 +1351,10 @@ def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
         execution_state=ExecutionState.COMPLETED,
         result=ReadResult.PARTIAL,
     )
-    video_path = tmp_path / "download.mp4"
-    video_path.write_bytes(b"video")
     monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(reader, "download_video_for_frames", lambda *_args, **_kwargs: {
-        "path": str(video_path),
-        "duration": 30,
-        "downloaded_bytes": 5,
-        "elapsed_ms": 10,
-    })
+    monkeypatch.setattr(reader, "download_video_for_frames", lambda *_args, **_kwargs: pytest.fail(
+        "media nothing can consume must not be downloaded"
+    ))
     monkeypatch.setattr(reader, "media_runtime_status", lambda: {
         "asr_installed": False,
         "asr_model_available": False,
@@ -1356,6 +1363,7 @@ def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
     monkeypatch.setattr(reader, "extract_video_frames", lambda *_args, **_kwargs: pytest.fail(
         "frames must not be delivered when the host has not declared image capability"
     ))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
 
     response = reader._attach_browser_video_evidence(
         request,
@@ -1366,10 +1374,14 @@ def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
         bound_media_urls=[media_url],
     )
 
+    details = response.coverage.modalities["video"].details
     assert response.result == ReadResult.PARTIAL
     assert response.coverage.modalities["video"].extraction == "partial"
     assert "ASR is unavailable" in " ".join(response.coverage.modalities["video"].unresolved)
-    assert "host did not declare" in " ".join(response.coverage.modalities["video"].unresolved)
+    assert details["media_fetched"] is False
+    assert details["media_fetch_skipped"] == "local_asr_unavailable"
+    assert details["transcript_source"] == "unavailable"
+
 
 
 def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
@@ -1427,9 +1439,15 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
 
     monkeypatch.setattr(reader, "download_video_for_frames", download)
     monkeypatch.setattr(reader, "media_runtime_status", lambda: {
-        "asr_installed": False,
-        "asr_model_available": False,
+        "asr_installed": True,
+        "asr_model_available": True,
         "asr_model": "base",
+    })
+    monkeypatch.setattr(reader, "transcribe_audio_file", lambda *_args, **_kwargs: {
+        "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+        "language": "en",
+        "model": "base",
+        "status": "ok",
     })
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
 

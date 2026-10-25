@@ -961,6 +961,8 @@ def test_runtime_status_reports_audio_and_local_asr_capability(monkeypatch):
         "asr_model_verified": None,
         "asr_operational": "not_checked",
         "asr_next_step": "run envoy doctor --verify-asr",
+        "asr_models_cached": ["tiny"],
+        "asr_model_from_cache": True,
     }
 
 
