@@ -59,3 +59,16 @@
 3. **工具遥测**：从每臂隔离 `CLAUDE_CONFIG_DIR` 的会话 transcript 按轮次 prompt 指纹切分，统计 `tool_calls`、envoy 工具调用数、重复目标数、首次证据毫秒（`ab_telemetry.py`）。
 
 这些口径在记录性运行开始后写入，故不作为预注册假设；预注册部分（包数、轮数、上限、两臂定义、门禁）未改动。事实正确性另有 host agent 抽检，抽检结论单独记录，不与上述自动指标混算。
+
+## 运行事故记录（2026-10-25 13:05 前后，如实披露）
+
+记录性运行开始后，本机宿主发生重启，随之被带走的还有隔离网关进程（`127.0.0.1:14050`）。表现是 `curl /health/liveliness` 返回 `000`（连接被拒），随后正在跑的 CLI 轮次在 ~176–186 秒内以 `exit=1` 退出、stderr 为空。这批行总计 26 条（envoy 13 / baseline 13），**不是模型结果**，属于基础设施损失。
+
+处置：
+
+1. 网关重启并加装 launchd 守护（`~/Library/LaunchAgents/local.envoy-ledger.watchdog.plist`，30 秒探活、失活即拉起），避免二次发生；重启后 `/health/liveliness` 复测 200。
+2. `run_ab.py --resume` 只把 `exit_code ∈ {0, 124}` 的轮次视为终态；`exit=1` 的键会被重新执行，不因“已记录”而被跳过。
+3. `ab_report.py` 按 `(package_id, arm, role)` 去重，取 `0 > 124 > 其它` 的最佳一次，并在 stderr 打印被替换的尝试数；报告同时保留 `failed_requests_excluded` 计数。
+4. 账本行一律保留原始记录，不删不改：26 条故障行留在 `envoy_request_ledger` 与导出文件里，可被任何第三方复查其时间戳与 `exit` 分布。
+
+判定：这些故障行不进入最终统计，替换它们的重跑结果与其共用同一 `turn_correlation_id`，因此每轮的 token、salt、`server_request_id` 仍可逐条对上账本。

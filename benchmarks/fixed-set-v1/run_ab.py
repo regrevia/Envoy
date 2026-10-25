@@ -46,7 +46,11 @@ def salt_digest(salt: str) -> str:
 
 def load_gateway_token() -> str:
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
-    env = (json.loads(settings.read_text(encoding="utf-8")).get("env") or {}) if settings.exists() else {}
+    env = (
+        (json.loads(settings.read_text(encoding="utf-8")).get("env") or {})
+        if settings.exists()
+        else {}
+    )
     token = env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY") or ""
     if not token:
         raise SystemExit("no gateway token available in the local Claude settings")
@@ -122,9 +126,17 @@ def child_env(profile: Path, token: str, gateway: str, *, with_envoy: bool) -> d
     return env
 
 
-def prepare_profile(root: Path, package_id: str, arm: str, *, token: str, gateway: str) -> Path:
+def prepare_profile(
+    root: Path, package_id: str, arm: str, *, token: str, gateway: str, keep: bool = False
+) -> Path:
+    """Create an isolated Claude Code profile for one package and one arm.
+
+    ``keep=True`` reuses an existing profile in place. That is required for a
+    resumed package: wiping the profile would delete the transcript the next
+    ``--resume`` needs and the turn would silently start a fresh session.
+    """
     profile = root / "profiles" / f"{package_id}" / arm
-    if profile.exists():
+    if profile.exists() and not keep:
         shutil.rmtree(profile)
     for name in ("home", "cache", "config", "tmp", "workdir", "claude-config"):
         (profile / name).mkdir(parents=True, exist_ok=True)
@@ -133,7 +145,12 @@ def prepare_profile(root: Path, package_id: str, arm: str, *, token: str, gatewa
         (profile / "home" / ".envoy").mkdir(parents=True, exist_ok=True)
         shutil.copy2(envoy_home / "asr.json", profile / "home" / ".envoy" / "asr.json")
     write_settings(profile, gateway, with_envoy=(arm == "envoy"))
-    if arm == "envoy":
+    installed = arm == "envoy" and any(
+        "envoy@envoy" in path.read_text(encoding="utf-8", errors="ignore")
+        for path in (profile / "claude-config").rglob("*")
+        if path.is_file() and path.stat().st_size < 2_000_000
+    )
+    if arm == "envoy" and not installed:
         install_envoy(profile, token, gateway)
     return profile
 
@@ -154,16 +171,19 @@ def verify_isolation(profile: Path, arm: str) -> None:
         if (profile / "home" / ".envoy").exists():
             raise SystemExit("arm isolation broken: baseline profile has an envoy home")
     else:
-        if "envoy@envoy" not in text and not any("envoy" in str(path).lower() for path in config.rglob("*")):
-            raise SystemExit(f"arm isolation broken: envoy profile is missing the plugin in {profile}")
+        if "envoy@envoy" not in text and not any(
+            "envoy" in str(path).lower() for path in config.rglob("*")
+        ):
+            raise SystemExit(
+                f"arm isolation broken: envoy profile is missing the plugin in {profile}"
+            )
 
 
 def turn_prompt(draft: dict, role: str) -> str:
     urls = [revision["url"] for revision in draft["source_revisions"].values()]
     text = next(turn["text"] for turn in draft["turns"] if turn["turn_id"] == role)
-    return (
-        f"{text}\n\nDeliverable: {draft['deliverable']}\n\nSources:\n"
-        + "\n".join(f"- {url}" for url in urls)
+    return f"{text}\n\nDeliverable: {draft['deliverable']}\n\nSources:\n" + "\n".join(
+        f"- {url}" for url in urls
     )
 
 
@@ -178,6 +198,7 @@ def run_turn(
     model: str,
     timeout: int,
     metadata: dict,
+    session_uuid: str | None = None,
 ) -> dict:
     salt = f"{metadata['turn_correlation_id']}-{uuid.uuid4()}"
     env = child_env(profile, token, gateway, with_envoy=with_envoy)
@@ -195,7 +216,7 @@ def run_turn(
             },
         }
     )
-    session_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, metadata["session_id"]))
+    session_uuid = session_uuid or str(uuid.uuid5(uuid.NAMESPACE_URL, metadata["session_id"]))
     command = [
         "claude",
         "-p",
@@ -275,6 +296,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--limit", type=int, default=0, help="run at most N packages (smoke test)")
     parser.add_argument("--package", action="append", default=[], help="only these package ids")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip turns already present in <out>/run-log.jsonl (same run id)",
+    )
     args = parser.parse_args(argv)
 
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
@@ -291,6 +317,29 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("AB_GATEWAY_TOKEN") or load_gateway_token()
     root = args.out
     root.mkdir(parents=True, exist_ok=True)
+    # Resume: a turn already recorded for this run is never executed twice, so a
+    # shard that was killed mid-package continues where it stopped instead of
+    # appending duplicate rows for the same (package, arm, role).
+    done: set[tuple[str, str, str]] = set()
+    attempts: dict[tuple[str, str, str], int] = {}
+    session_for: dict[tuple[str, str], str] = {}
+    if args.resume and (root / "run-log.jsonl").is_file():
+        for line in (root / "run-log.jsonl").read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            key = (row["package_id"], row["arm"], row["role"])
+            attempts[key] = attempts.get(key, 0) + 1
+            # A turn is final only when the CLI finished (0) or hit the wall-clock
+            # cap (124, recorded as blocked). Any other exit code is an
+            # infrastructure failure - a dead gateway returns 1 in ~3 minutes,
+            # and a session id left behind by the interrupted attempt makes the
+            # CLI answer "Session ID ... is already in use" in 0.4 s - and that
+            # key must be attempted again instead of counted.
+            if int(row.get("exit_code") or 0) in {0, 124}:
+                done.add(key)
+                if row.get("session_uuid"):
+                    session_for[(row["package_id"], row["arm"])] = row["session_uuid"]
     answers = (root / "answers.jsonl").open("a", encoding="utf-8")
     runlog = (root / "run-log.jsonl").open("a", encoding="utf-8")
 
@@ -298,10 +347,37 @@ def main(argv: list[str] | None = None) -> int:
         draft = drafts[item["package_id"]]
         for arm in item["arms"]:
             with_envoy = arm == "envoy"
-            profile = prepare_profile(root, item["package_id"], arm, token=token, gateway=args.gateway)
+            profile = prepare_profile(
+                root,
+                item["package_id"],
+                arm,
+                token=token,
+                gateway=args.gateway,
+                keep=args.resume,
+            )
             verify_isolation(profile, arm)
             session_id = item["session_ids"][arm]
             for role in TURN_ROLES:
+                if (item["package_id"], arm, role) in done:
+                    print(f"{item['package_id']}/{arm}/{role}: already recorded, skipped")
+                    continue
+                base_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, session_id))
+                retried = attempts.get((item["package_id"], arm, "initial"), 0)
+                if role == "initial":
+                    # Claude Code refuses a session id that already exists in the
+                    # profile ("Session ID ... is already in use"), and it tracks
+                    # ids across `projects/`, `sessions/` and `session-env/`, so
+                    # deleting a transcript is not enough. A retry therefore gets
+                    # its own derived id, recorded in the run log.
+                    session_uuid = (
+                        base_uuid
+                        if retried == 0
+                        else str(
+                            uuid.uuid5(uuid.NAMESPACE_URL, f"{session_id}#attempt{retried + 1}")
+                        )
+                    )
+                else:
+                    session_uuid = session_for.get((item["package_id"], arm), base_uuid)
                 metadata = {
                     "run_id": run_id,
                     "package_id": item["package_id"],
@@ -319,7 +395,10 @@ def main(argv: list[str] | None = None) -> int:
                     model=args.model,
                     timeout=args.timeout,
                     metadata=metadata,
+                    session_uuid=session_uuid,
                 )
+                if role == "initial":
+                    session_for[(item["package_id"], arm)] = session_uuid
                 answers.write(
                     json.dumps(
                         {
