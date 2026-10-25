@@ -61,18 +61,15 @@
 
 ## 评测
 
-同一条链接、同一个模型，只差装不装 Envoy。20 个来源 × 3 轮提问，跑完 92 轮：
+同一条链接、同一个模型，只差装不装 Envoy。20 个来源 × 3 轮提问，已判读 95 轮：
 
-| 指标 | 不装 Envoy | 装 Envoy |
+| 这一轮的结果 | 不装 Envoy | 装 Envoy |
 | --- | ---: | ---: |
-| 回答里给出原始链接 | 24% | 42% |
-| 整轮没读到任何来源 | 70% | 53% |
-| 空回答 | 4% | 0% |
-| 回答长度中位 | 3,978 字 | 6,996 字 |
-| 首次读到内容（中位） | 90 秒 | 47 秒 |
-| 限时内没跑完 | 66% | 36% |
+| 直接给出成品 | 23% | 58% |
+| 没能自己拿到内容（要你登录、扫码、授权，或者说读不到） | 7% | 5% |
+| 超时没跑完 | 70% | 37% |
 
-时间上限 15 / 40 分钟，超时轮不算失败；样本 92/120 轮。见[评测方法](benchmarks/README.md)、[完整数据](benchmarks/fixed-set-v1/README.md)。
+时间上限 15 / 40 分钟，超时轮不算失败；样本 95/120 轮。见[评测方法](benchmarks/README.md)、[完整数据](benchmarks/fixed-set-v1/README.md)。
 
 ## 文档
 
@@ -142,16 +139,13 @@ No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement f
 
 ### Evaluation
 
-Same link, same model, the only difference is whether Envoy is installed. 20 sources × 3 questions, 92 turns finished:
+Same link, same model, the only difference is whether Envoy is installed. 20 sources × 3 questions, 95 turns scored:
 
-| Metric | Without Envoy | With Envoy |
+| How the turn ended | Without Envoy | With Envoy |
 | --- | ---: | ---: |
-| Answer quotes the source link | 24% | 42% |
-| Turn never reaches a source | 70% | 53% |
-| Empty answer | 4% | 0% |
-| Answer length, median | 3,978 chars | 6,996 chars |
-| First content reached, median | 90 s | 47 s |
-| Not finished in time | 66% | 36% |
+| Hands over the finished artifact | 23% | 58% |
+| Never gets the content (asks you to log in, scan, authorize, or says it cannot read it) | 7% | 5% |
+| Cut off at the time limit | 70% | 37% |
 
 Time limits are 15 and 40 minutes, and a timed-out turn is not a failure. Time limits are 15 minutes and 40 minutes respectively, and a timed-out turn is not scored as a failure. Sample is 92 of 120 turns; read every rate against that sample. See the [evaluation method](benchmarks/README.md) and the [full data](benchmarks/fixed-set-v1/README.md).
 
