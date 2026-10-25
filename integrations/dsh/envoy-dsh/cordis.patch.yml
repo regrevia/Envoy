@@ -4,10 +4,15 @@
 # flag, so the `core` default applies and ordinary sessions do not pay for
 # local-video, collection, replay, or diagnostics schemas; export
 # `ENVOY_MCP_TOOLSET=full` before Harness starts when those tools are needed.
-# The shell launcher supplies the common uv/Homebrew PATH entries
-# because the Harness GUI is not started from a login shell and may not inherit
-# the terminal PATH. Users who installed Envoy elsewhere should replace `envoy`
-# in the last argument with an absolute path.
+#
+# The launcher resolves the runtime in this order: `ENVOY_BIN`, `envoy` on
+# PATH, then a private install under `~/.local/share/envoy-dsh/runtime` that it
+# provisions from the GitHub release wheel on first use. The Harness GUI does
+# not inherit a login-shell PATH, so the launcher supplies the usual uv and
+# Homebrew entries before resolving. A machine with neither `envoy` nor
+# uv/python3 gets one actionable line on stderr and a failed mount instead of a
+# bridge that dies on every call. Set `ENVOY_DSH_VERSION` to provision a version
+# other than the pinned default.
 #
 # The second row registers the DeepSeek Harness adaptation of the Envoy Agent
 # Skill. It depends only on the public `ctx.skills` service.
@@ -21,8 +26,22 @@
         args:
           - -c
           - >-
-            PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH";
-            export PATH; exec envoy mcp
+            PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH;
+            if [ -n "${ENVOY_BIN:-}" ]; then exec "$ENVOY_BIN" mcp; fi;
+            if command -v envoy >/dev/null 2>&1; then exec envoy mcp; fi;
+            RT="$HOME/.local/share/envoy-dsh/runtime"; BIN="$RT/bin/envoy";
+            if [ ! -x "$BIN" ]; then
+            V="${ENVOY_DSH_VERSION:-0.1.8}"; URL="https://github.com/regrevia/Envoy/releases/download/v$V/envoy_cli-$V-py3-none-any.whl";
+            if command -v uv >/dev/null 2>&1; then
+            uv venv "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot create $RT" >&2; exit 1; };
+            uv pip install --quiet --python "$RT/bin/python" "$URL" || { echo "envoy-dsh: failed to install $URL" >&2; exit 1; };
+            elif command -v python3 >/dev/null 2>&1; then
+            python3 -m venv "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot create $RT" >&2; exit 1; };
+            "$RT/bin/python" -m pip install --quiet --upgrade "$URL" || { echo "envoy-dsh: failed to install $URL" >&2; exit 1; };
+            else
+            echo "envoy-dsh: no Envoy runtime and no uv/python3 to install one; install uv from https://docs.astral.sh/uv/ then restart Harness" >&2; exit 1;
+            fi; fi;
+            exec "$BIN" mcp
         toolCallTimeoutMs: 300000
         failOnStartupError: true
 
