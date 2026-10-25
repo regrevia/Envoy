@@ -592,3 +592,29 @@ def test_missing_note_page_blocks_with_source_not_found(monkeypatch, tmp_path):
     assert response.result.value == "blocked"
     assert response.errors[0].code.value == "source_unavailable"
     assert response.errors[0].details.get("diagnosis") == "source_not_found"
+
+
+def test_short_links_and_chinese_content_sites_are_classified():
+    """Share links and article hosts must not fall through to bare generic."""
+
+    from envoy_cli.platforms import classify_public_url, is_platform_page
+
+    assert classify_public_url("https://b23.tv/av170001") == "bilibili_share"
+    assert classify_public_url("https://bili2233.cn/BV1GJ411x7h7") == "bilibili_share"
+    assert classify_public_url("https://m.bilibili.com/video/BV1GJ411x7h7") == "video_page"
+    assert (
+        classify_public_url("https://www.zhihu.com/question/19550225/answer/123456")
+        == "article_page"
+    )
+    assert classify_public_url("https://zhuanlan.zhihu.com/p/123456") == "article_page"
+    assert classify_public_url("https://www.zhihu.com/question/19550225") == "platform_page"
+    assert (
+        classify_public_url("https://mp.weixin.qq.com/s/AbCdEfGhIjKlMn")
+        == "article_page"
+    )
+    for url in (
+        "https://b23.tv/av170001",
+        "https://www.zhihu.com/question/19550225/answer/123456",
+        "https://mp.weixin.qq.com/s/AbCdEfGhIjKlMn",
+    ):
+        assert is_platform_page(url) is True

@@ -1378,6 +1378,16 @@ def _attach_browser_video_evidence(
                     },
                 )
 
+            confidence, speech_seconds, speech_ratio = _transcript_confidence(
+                transcript_segments, duration
+            )
+            if confidence == "low":
+                unresolved.append(
+                    "The audio is mostly music or noise: "
+                    f"{len(transcript_segments)} short speech segment(s) cover "
+                    f"{speech_ratio:.1%} of this {float(duration or 0):.0f}s clip, "
+                    "so the transcript may be unreliable"
+                )
             video_coverage = video_coverage.model_copy(update={
                 "discovered": 1,
                 "extracted": 1 if transcript_segments or frame_enabled else 0,
@@ -1396,6 +1406,9 @@ def _attach_browser_video_evidence(
                     "asr_duration_ms": asr_elapsed_ms,
                     "page_chapter_count": len(chapter_blocks),
                     "transcript_segment_count": len(transcript_segments),
+                    "speech_seconds": round(speech_seconds, 3),
+                    "speech_coverage": round(speech_ratio, 4),
+                    "transcript_confidence": confidence,
                     "frame_inspection": "requested" if frame_enabled else "host_capability_missing",
                 },
             })
@@ -4598,6 +4611,13 @@ def _video_subtitle_response(
     source_unresolved = [
         "Video frames were not inspected; this material contains transcript evidence only"
     ]
+    speech_confidence = "normal"
+    speech_seconds = 0.0
+    speech_ratio = 0.0
+    if is_asr:
+        speech_confidence, speech_seconds, speech_ratio = _transcript_confidence(
+            spans, extracted.get("duration")
+        )
     if requested_start is not None and requested_end is not None:
         source_unresolved.append(
             f"Transcript coverage is limited to the requested range "
@@ -4683,6 +4703,13 @@ def _video_subtitle_response(
         video_unresolved.append(
             "No transcript cues intersect the requested video time range"
         )
+    if is_asr and speech_confidence == "low":
+        video_unresolved.append(
+            "The audio is mostly music or noise: "
+            f"{len(spans)} short speech segment(s) cover {speech_ratio:.1%} of this "
+            f"{float(extracted.get('duration') or 0):.0f}s clip, so the transcript "
+            "may be unreliable"
+        )
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
@@ -4740,6 +4767,9 @@ def _video_subtitle_response(
                         "asr_model": extracted.get("model") if is_asr else None,
                         "transcription_status": extracted.get("transcription_status") if is_asr else None,
                         "processed_until_seconds": extracted.get("processed_until_seconds") if is_asr else None,
+                        "speech_seconds": round(speech_seconds, 3),
+                        "speech_coverage": round(speech_ratio, 4),
+                        "transcript_confidence": speech_confidence,
                     },
                 ),
             },
@@ -6549,6 +6579,39 @@ def _login_user_action(source_url: str, kind: str = "login_or_verification") -> 
             },
         ],
     }
+
+
+def _transcript_confidence(
+    segments: list[dict],
+    duration_seconds: float | None,
+) -> tuple[str, float, float]:
+    """Judge whether a transcript covers enough of the clip to be quotable.
+
+    Whisper will emit a stray line for a music track, and presenting that as the
+    transcript of an official music video is worse than saying the audio is
+    music. Coverage is the only signal available consistently across models:
+    real speech fills a usable share of a clip, a hallucinated line does not.
+    """
+
+    speech_seconds = 0.0
+    for segment in segments or []:
+        try:
+            start = float(segment.get("start", segment.get("start_seconds")))
+            end = float(segment.get("end", segment.get("end_seconds")))
+        except (TypeError, ValueError):
+            continue
+        if end > start:
+            speech_seconds += end - start
+    try:
+        duration = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 30:
+        return "normal", speech_seconds, speech_seconds / duration if duration else 0.0
+    ratio = speech_seconds / duration
+    if ratio < 0.02 or (len(segments) <= 2 and speech_seconds < 8):
+        return "low", speech_seconds, ratio
+    return "normal", speech_seconds, ratio
 
 
 def _no_speech_partial(

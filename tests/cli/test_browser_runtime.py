@@ -1787,3 +1787,25 @@ def test_a_silent_video_without_a_known_duration_still_says_what_is_missing():
     assert response.result == ReadResult.PARTIAL
     assert response.blocks[0].content.text == "Video source"
     assert "duration_seconds" not in response.coverage.modalities["video"].details
+
+
+def test_a_music_track_is_flagged_rather_than_quoted_as_speech():
+    """A stray whisper line must not pass as the transcript of a music video."""
+
+    confidence, seconds, ratio = reader._transcript_confidence(
+        [{"start": 115.0, "end": 117.5}], 212.393
+    )
+    assert confidence == "low"
+    assert seconds == 2.5
+    assert ratio < 0.02
+
+    confidence, _, _ = reader._transcript_confidence(
+        [{"start": 1.0, "end": 40.0}, {"start": 40.0, "end": 80.0}], 212.393
+    )
+    assert confidence == "normal"
+
+    # A short clip that is genuinely mostly speech must not be penalised.
+    confidence, _, _ = reader._transcript_confidence(
+        [{"start": 0.0, "end": 6.0}], 8.0
+    )
+    assert confidence == "normal"
