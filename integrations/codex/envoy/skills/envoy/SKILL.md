@@ -370,7 +370,11 @@ Whisper ASR if the optional runtime and model are prepared. The transcript is
 timestamped ASR evidence, distinct from site chapter summaries, and does not
 imply full visual inspection. Long ASR jobs report covered time ranges and may
 return partial coverage. Retained transcripts can be searched or expanded
-without downloading the video again.
+without downloading the video again. A transcript also carries `speech_coverage`
+and `transcript_confidence`; when confidence is `low` the audio is mostly music
+or noise and the lines may be hallucinated, so say that rather than quoting them
+as speech. A source that downloads but has no detectable speech comes back
+`partial` with a `no_speech` detail, not as a failed read.
 
 For a video request, inspect all returned timestamped page-chapter, subtitle,
 ASR, and frame blocks together. Preserve their source time locators and origin;
