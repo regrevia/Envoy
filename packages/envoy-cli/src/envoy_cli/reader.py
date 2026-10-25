@@ -5588,6 +5588,12 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             f"{browser_error or 'Envoy could not read the page in its isolated browser.'}"
                         ),
                         action_required=True,
+                        details={
+                            "needs_user_action": _login_user_action(
+                                source_url,
+                                kind="cookies_required",
+                            )
+                        },
                     )
             if browser_snapshot is None:
                 try:
@@ -6488,23 +6494,42 @@ def _login_user_action(source_url: str, kind: str = "login_or_verification") -> 
 
     Envoy cannot sign in on the user's behalf, so the useful output is not
     another error string: it is the two legitimate ways to supply a session,
-    each as a runnable command the model can offer.
+    each as a runnable command the model can offer. The import command carries
+    the offending host as its scope, so granting access to this site never
+    means handing over every cookie in the browser.
     """
+
+    host = urlparse(str(source_url or "")).hostname or ""
+    domain = host[4:] if host.startswith("www.") else host
+    import_command = "envoy auth import --from chrome"
+    if domain:
+        import_command = f"{import_command} --domain {domain}"
+    question = (
+        "This page needs a signed-in session or a verification step before "
+        "its player exposes the real source. Import cookies from a local "
+        "browser, or sign in once in a visible window?"
+    )
+    if kind == "cookies_required":
+        question = (
+            f"{host or 'This site'} asked for fresh cookies before serving this "
+            "source, and a signed-in account is not necessarily what it wants. "
+            "Copy the cookies of that browser for this site, or open one "
+            "visible window and let the site set them itself?"
+        )
 
     return {
         "kind": kind,
-        "host": urlparse(str(source_url or "")).hostname or "",
-        "question": (
-            "This page needs a signed-in session or a verification step before "
-            "its player exposes the real source. Import cookies from a local "
-            "browser, or sign in once in a visible window?"
-        ),
+        "host": host,
+        "question": question,
         "options": [
             {
                 "action": "import_cookies",
                 "sources": ["chrome", "edge", "safari"],
-                "command": "envoy auth import --from chrome",
-                "effect": "Copies that browser's cookies into Envoy's isolated profile",
+                "command": import_command,
+                "effect": (
+                    "Copies that browser's cookies for this site into Envoy's "
+                    "isolated profile"
+                ),
             },
             {
                 "action": "visible_login",
