@@ -15,6 +15,18 @@ _XHS_HOSTS = {
     "www.xhslink.cn",
 }
 _XHS_NOTE_RE = re.compile(r"^/(?:explore|discovery/item)/[^/?#]+", re.IGNORECASE)
+_BILIBILI_HOSTS = {"bilibili.com", "www.bilibili.com", "m.bilibili.com"}
+_BILIBILI_SHARE_HOSTS = {"b23.tv", "www.b23.tv", "bili2233.cn", "www.bili2233.cn"}
+_ZHIHU_HOSTS = {
+    "zhihu.com",
+    "www.zhihu.com",
+    "zhuanlan.zhihu.com",
+    "www.zhuanlan.zhihu.com",
+}
+_ZHIHU_ARTICLE_RE = re.compile(
+    r"^/(?:question/\d+/answer/\d+|p/\d+)", re.IGNORECASE
+)
+_WECHAT_ARTICLE_HOSTS = {"mp.weixin.qq.com"}
 
 
 def classify_public_url(value: str) -> str:
@@ -32,10 +44,18 @@ def classify_public_url(value: str) -> str:
         if path in {"/watch", "/live"} or re.match(r"^/(?:shorts|embed)/[^/]+", path):
             return "video_page"
         return "platform_page"
-    if host in {"bilibili.com", "www.bilibili.com"}:
+    if host in _BILIBILI_SHARE_HOSTS:
+        return "bilibili_share"
+    if host in _BILIBILI_HOSTS:
         if re.match(r"^/(?:video|bangumi/play)/", path):
             return "video_page"
         return "platform_page"
+    if host in _ZHIHU_HOSTS:
+        if _ZHIHU_ARTICLE_RE.match(parsed.path):
+            return "article_page"
+        return "platform_page"
+    if host in _WECHAT_ARTICLE_HOSTS:
+        return "article_page"
     if host == "vimeo.com" and re.fullmatch(r"/\d+/?", path):
         return "video_page"
     if host in {"dailymotion.com", "www.dailymotion.com"}:
@@ -59,6 +79,8 @@ def is_platform_page(value: str) -> bool:
     return classify_public_url(value) in {
         "video_page",
         "platform_page",
+        "article_page",
+        "bilibili_share",
         "xiaohongshu_note",
         "xiaohongshu_share",
     }

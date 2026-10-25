@@ -41,6 +41,14 @@
   `page_player_bound: true`、时长，并在 `coverage.modalities.video.details.no_speech`
   与 `unresolved` 里写明「音轨无可识别语音，需要画面或换源」，模型据此告诉用户，
   而不是把可读的来源报成读取失败。
+- 平台识别补齐国内内容站：B 站短链（`b23.tv`、`bili2233.cn`）、移动站
+  `m.bilibili.com`、知乎问答/专栏（`article_page`）、微信公众号文章
+  （`mp.weixin.qq.com`）不再落进 generic 分支；短链后续按跳转后的真实视频页处理。
+- 转写质量可核验：ASR 结果新增 `speech_seconds`、`speech_coverage`、
+  `transcript_confidence`。当人声占比过低（例如纯音乐），`unresolved` 会说明
+  「音频主要是音乐或噪声，转写可能不可靠」。B 站实测：212 秒 MV 里 whisper
+  只吐出一句 2.5 秒的幻觉台词（占比 1.2%），现在会被标成 low，而不会被当成
+  全文转写直接交付。
 
 - 新增 DeepSeek Harness 插件 `integrations/dsh/envoy-dsh`：在插件管理器中一次安装即可挂载
   `envoy mcp`（默认 `core`）、注册 Envoy Skill，并通过 `agent/pre-step` 实现链接优先路由；
@@ -136,6 +144,16 @@
   line saying the audio carries no detectable speech and frames or another
   source would be needed — the model reports that instead of calling a readable
   source a failed read.
+- Chinese content sites are classified instead of falling through to generic:
+  Bilibili share links (`b23.tv`, `bili2233.cn`), the mobile host
+  `m.bilibili.com`, Zhihu answers and columns (`article_page`), and WeChat
+  official-account articles (`mp.weixin.qq.com`). Share links are followed, then
+  handled as the video page they resolve to.
+- Transcription quality is now checkable: ASR responses carry
+  `speech_seconds`, `speech_coverage`, and `transcript_confidence`, and an
+  `unresolved` line explains a low value. On a live 212 s Bilibili music video
+  whisper emitted a single 2.5 s hallucinated line (1.2% of the clip); that is
+  now marked low instead of being delivered as the transcript.
 
 - Route media downloads (yt-dlp) through the same outbound policy as page reads
   and Chromium: connect directly by default and fall back to a proxy only after
