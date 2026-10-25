@@ -5495,7 +5495,12 @@ def _read_video_media_url(request: ReadRequest, media_source: dict) -> ReadRespo
                 [str(exc)],
             )
             return _attach_video_frames(request, media_url, frame_base)
-        return _blocked(request, ErrorCode.EMPTY_CONTENT, str(exc))
+        return _no_speech_partial(
+            request,
+            media_url,
+            str(exc),
+            title=str(media_source.get("title") or ""),
+        )
     except MediaCapabilityMissing as exc:
         if request.scope.include_visual:
             frame_base = _video_frame_base_response(
@@ -5615,7 +5620,13 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                             [str(exc)],
                         )
                         return _attach_video_frames(request, source_url, frame_base)
-                    return _blocked(request, ErrorCode.EMPTY_CONTENT, str(exc))
+                    return _no_speech_partial(
+                        request,
+                        source_url,
+                        str(exc),
+                        title=str(subtitle_result.get("title") or ""),
+                        duration=subtitle_result.get("duration"),
+                    )
                 except MediaCapabilityMissing as exc:
                     if request.scope.include_visual:
                         frame_base = _video_frame_base_response(
@@ -6538,6 +6549,69 @@ def _login_user_action(source_url: str, kind: str = "login_or_verification") -> 
             },
         ],
     }
+
+
+def _no_speech_partial(
+    request: ReadRequest,
+    source_url: str,
+    message: str,
+    *,
+    title: str = "",
+    duration: float | None = None,
+) -> ReadResponse:
+    """A reached video whose audio holds no speech is a gap, not a failure.
+
+    The download and the speech pass both succeeded; refusing the whole read
+    would hide that the source was reached and hand the model an empty answer
+    for a music clip or a silent post. Return what is known, name the gap, and
+    let the caller decide whether frames or another source are worth asking for.
+    """
+
+    host = urlparse(str(source_url or "")).hostname or ""
+    heading = (title or request.source.label or "").strip() or "Video source"
+    try:
+        duration_seconds = float(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration_seconds = None
+    details: dict = {"page_player_bound": True, "host": host}
+    unresolved = [message]
+    if duration_seconds:
+        details["duration_seconds"] = duration_seconds
+        unresolved.append(
+            f"The audio track of this {duration_seconds:.0f}s video holds no detectable speech"
+        )
+    else:
+        unresolved.append("The audio track holds no detectable speech")
+    unresolved.append("Frames or a different source would be needed to cover the visual content")
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL,
+        blocks=[MaterialBlock(
+            id="blk-title",
+            kind=MaterialKind.HEADING,
+            content=TextContent(type="text", text=heading),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=WebLocator(
+                type="web",
+                source_url=str(source_url),
+                block_id="blk-title",
+                quote=heading[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
+            order=0,
+        )],
+        coverage=Coverage(modalities={
+            "video": CoverageItem(
+                discovered=1,
+                extracted=1,
+                returned=1,
+                extraction="partial",
+                unresolved=unresolved,
+                details={**details, "no_speech": True},
+            )
+        }),
+    )
 
 
 def _blocked(

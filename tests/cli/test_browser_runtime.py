@@ -1741,3 +1741,49 @@ def test_a_fresh_cookie_demand_asks_for_a_scoped_import():
         "import_cookies",
         "visible_login",
     ]
+
+
+def test_a_silent_video_keeps_its_source_and_names_the_gap():
+    """Reaching a music clip must not become an empty answer; it is a partial read."""
+
+    request = ReadRequest.model_validate({
+        "request_id": "no-speech",
+        "source": {"url": "https://www.bilibili.com/video/BV1xx411c7mD", "kind": "video"},
+    })
+    response = reader._no_speech_partial(
+        request,
+        "https://www.bilibili.com/video/BV1xx411c7mD",
+        "Local ASR found no speech segments",
+        title="沉默的风景",
+        duration="183.4",
+    )
+
+    assert response.result == ReadResult.PARTIAL
+    assert response.execution_state == ExecutionState.COMPLETED
+    assert response.errors == []
+    assert response.blocks[0].content.text == "沉默的风景"
+    video = response.coverage.modalities["video"]
+    assert video.extraction == "partial"
+    assert video.details["no_speech"] is True
+    assert video.details["duration_seconds"] == 183.4
+    assert video.details["page_player_bound"] is True
+    unresolved = " ".join(video.unresolved)
+    assert "no detectable speech" in unresolved
+    assert "183s" in unresolved
+
+
+def test_a_silent_video_without_a_known_duration_still_says_what_is_missing():
+    request = ReadRequest.model_validate({
+        "request_id": "no-speech-noduration",
+        "source": {"url": "https://www.douyin.com/video/1", "kind": "video"},
+    })
+    response = reader._no_speech_partial(
+        request,
+        "https://www.douyin.com/video/1",
+        "Local ASR found no speech segments",
+        duration="unknown",
+    )
+
+    assert response.result == ReadResult.PARTIAL
+    assert response.blocks[0].content.text == "Video source"
+    assert "duration_seconds" not in response.coverage.modalities["video"].details
