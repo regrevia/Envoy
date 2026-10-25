@@ -12,11 +12,12 @@ touched, because removing it forces a fresh Chromium download.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import time
 from pathlib import Path
+
+from . import storage
 
 MATERIAL_DIR = "materials"
 FRAMES_PREFIX = "frames-"
@@ -27,10 +28,7 @@ _MATERIAL_ID = re.compile(r"mat-[a-f0-9]{24}")
 
 
 def data_root() -> Path:
-    configured = os.getenv("ENVOY_LOCAL_DATA_DIR", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return Path.home() / ".envoy" / MATERIAL_DIR
+    return storage.resolve_material_root()
 
 
 def envoy_home() -> Path:

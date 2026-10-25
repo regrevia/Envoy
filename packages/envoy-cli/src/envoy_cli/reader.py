@@ -29,6 +29,7 @@ from .platforms import (
     extract_xhs_note_images,
     is_platform_page,
 )
+from . import storage
 from .media import (
     MediaBudgetExceeded,
     MediaCapabilityMissing,
@@ -40,6 +41,7 @@ from .media import (
     download_video_for_frames,
     extract_video_frames,
     interprocess_file_lock,
+    optional_interprocess_lock,
     media_runtime_status,
     probe_media_duration,
     transcribe_audio_file,
@@ -1640,16 +1642,7 @@ def _prune_browser_media(media_dir: Path, keep_prefix: str) -> None:
 
 
 def _material_root() -> Path:
-    configured = os.getenv("ENVOY_LOCAL_DATA_DIR", "").strip()
-    if configured:
-        root = Path(configured).expanduser()
-    else:
-        root = Path.home() / ".envoy" / "materials"
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        root.chmod(0o700)
-    except OSError:
-        pass
+    root = storage.resolve_material_root()
     now = time.time()
     expiry_paths = sorted(
         root.glob("mat-*.expires"),
@@ -1924,6 +1917,40 @@ def _serialize_material_id_first(function):
     return wrapped
 
 
+def _annotate_unserialized_read(response: ReadResponse) -> ReadResponse:
+    """Record that the read ran without its cross-process lock.
+
+    The lock is an optimization against concurrent duplicate reads; the state
+    directory being unwritable is a host fact worth surfacing, not a reason to
+    withhold the evidence that was already gathered.
+    """
+
+    report = storage.fallback_report()
+    note = (
+        "Envoy could not write its state directory in this host, so this read ran "
+        "without process serialization and its material may not persist"
+    )
+    detail: dict = {"state_lock": "skipped"}
+    if report:
+        detail["state_root_fallback"] = report
+    modalities = dict(response.coverage.modalities)
+    for name, item in modalities.items():
+        if not isinstance(item, CoverageItem):
+            continue
+        modalities[name] = item.model_copy(update={
+            "unresolved": list(dict.fromkeys([*item.unresolved, note])),
+            "details": {**item.details, **detail},
+        })
+    errors = [
+        error.model_copy(update={"details": {**(error.details or {}), **detail}})
+        for error in response.errors
+    ]
+    return response.model_copy(update={
+        "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+        "errors": errors,
+    })
+
+
 def _serialize_read_request(function):
     @wraps(function)
     def wrapped(request, *args, **kwargs):
@@ -1945,98 +1972,107 @@ def _serialize_read_request(function):
             finally:
                 _READ_WORK_DEADLINE.reset(token)
 
+        def run_locked():
+            if not request.idempotency_key:
+                return execute()
+            from .operations import OperationConflict, run_idempotent
+
+            fingerprint_payload = request.model_dump(
+                mode="json",
+                exclude={"request_id", "session_id", "idempotency_key"},
+            )
+            fingerprint = hashlib.sha256(json.dumps(
+                fingerprint_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()).hexdigest()
+
+            def execute_payload():
+                response = execute()
+                payload = response.model_dump(mode="json")
+                persist_operation_response(
+                    response.material_id,
+                    payload,
+                    metadata={
+                        "source_url": _redact_url(request.source.url),
+                        "session_id": request.session_id,
+                        "request_id": request.request_id,
+                    },
+                )
+                return payload
+
+            try:
+                payload = run_idempotent(
+                    request.idempotency_key,
+                    fingerprint=fingerprint,
+                    execute=execute_payload,
+                    should_cache=_read_operation_result_is_cacheable,
+                    recover=lambda record: recover_operation_response(
+                        request,
+                        request.source.url,
+                        original_request_id=str(
+                            (record.get("recovery_metadata") or {}).get("request_id") or ""
+                        ),
+                    ),
+                    recovery_metadata={
+                        "source_url": _redact_url(request.source.url),
+                        "session_id": request.session_id,
+                        "request_id": request.request_id,
+                    },
+                    ttl_seconds=min(
+                        request.retention.derived_ttl_seconds,
+                        MATERIAL_TTL_SECONDS,
+                    ),
+                )
+                response = ReadResponse.model_validate(payload)
+                if response.material_id and response.source_revision:
+                    cached_material = _load_matching_material(
+                        response.material_id,
+                        response.source_revision,
+                        response.session_id,
+                    )
+                    if cached_material is None:
+                        raise OperationConflict(
+                            "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
+                        )
+                for resource in response.resources:
+                    target = resource.delivery.path
+                    if target and not Path(target).is_file():
+                        raise OperationConflict(
+                            "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
+                        )
+                return _rebind_cached_response_session(
+                    response,
+                    request.session_id,
+                    request.request_id,
+                )
+            except OperationConflict as exc:
+                code = (
+                    ErrorCode.EXPIRED_RESOURCE
+                    if "expired" in str(exc).lower() or "evicted" in str(exc).lower()
+                    else ErrorCode.INVALID_REQUEST
+                )
+                return _blocked(request, code, str(exc))
+
+        lock_held = False
         try:
-            with interprocess_file_lock(
+            with optional_interprocess_lock(
                 root / f".read-{lock_id[:2]}.lock",
                 max_wait_seconds=request.budget.max_work_seconds,
                 busy_message="This source is already being read in the current session",
-            ):
-                if not request.idempotency_key:
-                    return execute()
-                from .operations import OperationConflict, run_idempotent
-
-                fingerprint_payload = request.model_dump(
-                    mode="json",
-                    exclude={"request_id", "session_id", "idempotency_key"},
-                )
-                fingerprint = hashlib.sha256(json.dumps(
-                    fingerprint_payload,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()).hexdigest()
-
-                def execute_payload():
-                    response = execute()
-                    payload = response.model_dump(mode="json")
-                    persist_operation_response(
-                        response.material_id,
-                        payload,
-                        metadata={
-                            "source_url": _redact_url(request.source.url),
-                            "session_id": request.session_id,
-                            "request_id": request.request_id,
-                        },
-                    )
-                    return payload
-
-                try:
-                    payload = run_idempotent(
-                        request.idempotency_key,
-                        fingerprint=fingerprint,
-                        execute=execute_payload,
-                        should_cache=_read_operation_result_is_cacheable,
-                        recover=lambda record: recover_operation_response(
-                            request,
-                            request.source.url,
-                            original_request_id=str(
-                                (record.get("recovery_metadata") or {}).get("request_id") or ""
-                            ),
-                        ),
-                        recovery_metadata={
-                            "source_url": _redact_url(request.source.url),
-                            "session_id": request.session_id,
-                            "request_id": request.request_id,
-                        },
-                        ttl_seconds=min(
-                            request.retention.derived_ttl_seconds,
-                            MATERIAL_TTL_SECONDS,
-                        ),
-                    )
-                    response = ReadResponse.model_validate(payload)
-                    if response.material_id and response.source_revision:
-                        cached_material = _load_matching_material(
-                            response.material_id,
-                            response.source_revision,
-                            response.session_id,
-                        )
-                        if cached_material is None:
-                            raise OperationConflict(
-                                "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
-                            )
-                    for resource in response.resources:
-                        target = resource.delivery.path
-                        if target and not Path(target).is_file():
-                            raise OperationConflict(
-                                "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
-                            )
-                    return _rebind_cached_response_session(
-                        response,
-                        request.session_id,
-                        request.request_id,
-                    )
-                except OperationConflict as exc:
-                    code = (
-                        ErrorCode.EXPIRED_RESOURCE
-                        if "expired" in str(exc).lower() or "evicted" in str(exc).lower()
-                        else ErrorCode.INVALID_REQUEST
-                    )
-                    return _blocked(request, code, str(exc))
+            ) as locked:
+                lock_held = locked
+                response = run_locked()
         except TimeoutError:
             return _blocked(
                 request,
                 ErrorCode.BUDGET_EXCEEDED,
                 "Timed out waiting for another read of this source in the same session",
             )
+
+        if not lock_held:
+            return _annotate_unserialized_read(response)
+        return response
 
     return wrapped
 

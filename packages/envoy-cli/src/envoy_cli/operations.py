@@ -9,6 +9,7 @@ import tempfile
 import time
 from typing import Callable, TypeVar
 
+from . import storage
 from .media import interprocess_file_lock
 
 
@@ -20,14 +21,7 @@ class OperationConflict(ValueError):
 
 
 def _root() -> Path:
-    configured = os.getenv("ENVOY_LOCAL_DATA_DIR", "").strip()
-    root = Path(configured).expanduser() if configured else Path.home() / ".envoy" / "materials"
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        root.chmod(0o700)
-    except OSError:
-        pass
-    return root
+    return storage.resolve_material_root()
 
 
 def _write(path: Path, record: dict) -> None:

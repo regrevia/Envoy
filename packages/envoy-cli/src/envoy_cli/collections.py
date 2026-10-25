@@ -13,6 +13,7 @@ import uuid
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
+from . import storage
 from .media import interprocess_file_lock
 from .netpolicy import proxy_plan
 
@@ -124,14 +125,7 @@ class CollectionBudget:
 
 
 def _collection_root() -> Path:
-    configured = os.getenv("ENVOY_LOCAL_DATA_DIR", "").strip()
-    root = Path(configured).expanduser() if configured else Path.home() / ".envoy" / "materials"
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        root.chmod(0o700)
-    except OSError:
-        pass
-    return root
+    return storage.resolve_material_root()
 
 
 def _safe_identity(value: str, name: str) -> str:

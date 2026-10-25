@@ -24,6 +24,7 @@ from envoy_core.schemas.read_v1 import (
 
 from . import __version__
 from .browser import browser_runtime_status
+from . import storage as state_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .capabilities import capability_catalog
 from .collections import (
@@ -480,7 +481,110 @@ def _result(request_id: Any, payload: dict, modern: bool, cacheable: bool = Fals
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _tool_content_text(payload: dict, modern: bool) -> str:
+def _state_not_writable_payload(request_id: str, message: str) -> dict:
+    return {
+        "protocol_version": "envoy.read/1",
+        "request_id": request_id,
+        "execution_state": "completed",
+        "result": "blocked",
+        "errors": [{
+            "code": "state_not_writable",
+            "message": message,
+            "retryable": False,
+            "action_required": True,
+            "details": {
+                "needs_user_action": {
+                    "kind": "state_not_writable",
+                    "question": "Envoy cannot write its state directory in this host.",
+                    "options": [{
+                        "kind": "set_writable_state_dir",
+                        "effect": "Keep retained material in a writable directory",
+                        "command": (
+                            "env ENVOY_LOCAL_DATA_DIR="
+                            f"{state_storage.fallback_root()} envoy mcp"
+                        ),
+                    }],
+                },
+            },
+        }],
+    }
+
+
+def _payload_unresolved(payload: dict, limit: int = 2) -> list[str]:
+    notes: list[str] = []
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    for item in modalities.values():
+        if not isinstance(item, dict):
+            continue
+        for note in item.get("unresolved") or []:
+            text = str(note).strip()
+            if text and text not in notes:
+                notes.append(text)
+    # Cosmetic exclusions ("3 decorative images were skipped") are not blockers;
+    # a real gap must not be pushed out of the visible line by one of them.
+    substantive = [note for note in notes if "excluded" not in note.lower()]
+    cosmetic = [note for note in notes if "excluded" in note.lower()]
+    return (substantive + cosmetic)[:limit]
+
+
+def _payload_needs_user_action(payload: dict) -> dict | None:
+    def from_details(details) -> dict | None:
+        action = details.get("needs_user_action") if isinstance(details, dict) else None
+        return action if isinstance(action, dict) else None
+
+    for error in payload.get("errors") or []:
+        if isinstance(error, dict):
+            action = from_details(error.get("details"))
+            if action:
+                return action
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    for item in modalities.values():
+        if isinstance(item, dict):
+            action = from_details(item.get("details"))
+            if action:
+                return action
+    return None
+
+
+def _action_text(action: dict) -> str:
+    parts: list[str] = []
+    question = str(action.get("question") or "").strip()
+    if question:
+        parts.append(question)
+    options = [item for item in (action.get("options") or []) if isinstance(item, dict)]
+    for option in options[:2]:
+        kind = str(option.get("kind") or "").strip()
+        effect = str(option.get("effect") or "").strip()
+        command = str(option.get("command") or "").strip()
+        label = ": ".join(part for part in (kind, effect) if part)
+        if command:
+            label = f"{label} -> {command}" if label else command
+        if label:
+            parts.append(label)
+    return " ".join(parts)
+
+
+def _evidence_text(payload: dict, request) -> str:
+    include_visual = bool(getattr(getattr(request, "scope", None), "include_visual", False))
+    resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    # A text article read with include_visual needs no frame warning; only a source
+    # that claimed a visual modality and delivered nothing does.
+    visual_source = any(
+        name in modalities for name in ("video", "image", "visual")
+    )
+    if include_visual and visual_source and not resources:
+        return (
+            " No frames or images were delivered; do not describe on-screen visuals "
+            "or shot rhythm as if they were observed."
+        )
+    return ""
+
+
+def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
     if payload.get("tool") == "envoy":
         return "Envoy doctor ready."
     if payload.get("tool") == "envoy_discover":
@@ -511,15 +615,22 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
         first = errors[0] if errors and isinstance(errors[0], dict) else {}
         code = first.get("code", "unknown")
         message = str(first.get("message") or "").strip()
+        action = _payload_needs_user_action(payload)
+        action_note = f" Requires user action: {_action_text(action)}." if action else ""
+        unresolved = _payload_unresolved(payload)
+        gap_note = f" Unresolved: {'; '.join(unresolved)}." if unresolved else ""
         if handle:
             return (
-                f"Envoy read blocked ({code}): {message or 'no detail'}.{handle} "
+                f"Envoy read blocked ({code}): {message or 'no detail'}.{action_note}{gap_note} "
                 "Re-read is blocked; call envoy_replay with that material_id (or "
                 "envoy_expand for more of it) instead of reading the URL again."
             )
         if message:
-            return f"Envoy read blocked ({code}): {message}"
-        return f"Envoy read blocked ({code}). See structuredContent.errors for details."
+            return f"Envoy read blocked ({code}): {message}{action_note}{gap_note}"
+        return (
+            f"Envoy read blocked ({code}).{action_note}{gap_note} "
+            "See structuredContent.errors for details."
+        )
     if result == "needs_host":
         needs = payload.get("needs") if isinstance(payload.get("needs"), list) else []
         action_types = {
@@ -553,9 +664,15 @@ def _tool_content_text(payload: dict, modern: bool) -> str:
         if handle
         else ""
     )
+    action = _payload_needs_user_action(payload)
+    action_note = f" Requires user action: {_action_text(action)}." if action else ""
+    unresolved = _payload_unresolved(payload)
+    gap_note = f" Unresolved: {'; '.join(unresolved)}." if unresolved else ""
+    evidence_note = _evidence_text(payload, request)
     return (
         f"Envoy read {result}: {text_chars} text characters, "
-        f"{len(blocks)} blocks, {len(resources)} resources.{origin}{handle}{next_step}"
+        f"{len(blocks)} blocks, {len(resources)} resources.{origin}{action_note}{gap_note}"
+        f"{evidence_note}{handle}{next_step}"
     )
 
 
@@ -1143,6 +1260,21 @@ def handle_message(
                     **({"details": exc.details} if exc.details else {}),
                 }],
             }
+    except (state_storage.StateUnavailable, OSError) as exc:
+        if isinstance(exc, OSError) and exc.errno not in state_storage.UNUSABLE_ERRNOS:
+            _LOGGER.exception("Unexpected Envoy MCP tool failure: %s", name)
+            return _error(
+                request_id,
+                -32603,
+                "Internal error while handling MCP tool call",
+            )
+        payload = _state_not_writable_payload(
+            arguments.get("request_id", "mcp"),
+            str(exc) if isinstance(exc, state_storage.StateUnavailable) else (
+                f"Envoy cannot write {exc.filename or state_storage.preferred_root()}: "
+                f"{exc.strerror or exc}. Point ENVOY_LOCAL_DATA_DIR at a writable directory."
+            ),
+        )
     except (TypeError, ValueError, CollectionRevisionConflict) as exc:
         return _error(request_id, -32602, str(exc))
     except Exception:
@@ -1155,7 +1287,7 @@ def handle_message(
     return _result(request_id, {
         "content": [{
             "type": "text",
-            "text": _tool_content_text(payload, modern_request),
+            "text": _tool_content_text(payload, modern_request, locals().get("request")),
         }],
         "structuredContent": payload,
         "isError": payload.get("result") == "blocked",

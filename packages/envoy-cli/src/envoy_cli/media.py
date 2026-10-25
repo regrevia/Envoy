@@ -20,7 +20,7 @@ import urllib.request
 from contextlib import contextmanager, redirect_stdout
 from multiprocessing.connection import wait as wait_for_connections
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlsplit, urlunsplit
 
 from .netpolicy import proxy_plan
@@ -383,6 +383,51 @@ def guard_yt_dlp_client(ydl) -> None:
         return original_urlopen(request)
 
     ydl.urlopen = guarded_urlopen
+
+
+# A state directory can be present but unwritable: a sandboxed host, a
+# read-only container, a CI job that mounts $HOME read-only. Losing the lock is
+# survivable (two reads then run concurrently), losing the read is not, so the
+# wrappers below downgrade an unwritable lock path to "ran unlocked" instead of
+# failing the request with an errno the caller cannot act on.
+_UNWRITABLE_LOCK_ERRNOS = frozenset({
+    errno.EACCES,
+    errno.EPERM,
+    errno.EROFS,
+    errno.ENOTDIR,
+    errno.ENOSPC,
+    errno.EDQUOT,
+})
+
+
+@contextmanager
+def optional_interprocess_lock(
+    lock_path: str | Path,
+    *,
+    max_wait_seconds: float,
+    busy_message: str,
+) -> Iterator[bool]:
+    """Yield whether the lock was acquired; an unwritable path yields ``False``."""
+
+    manager = interprocess_file_lock(
+        lock_path,
+        max_wait_seconds=max_wait_seconds,
+        busy_message=busy_message,
+    )
+    try:
+        manager.__enter__()
+    except OSError as exc:
+        if exc.errno not in _UNWRITABLE_LOCK_ERRNOS:
+            raise
+        yield False
+        return
+    try:
+        yield True
+    except BaseException:
+        manager.__exit__(*sys.exc_info())
+        raise
+    else:
+        manager.__exit__(None, None, None)
 
 
 @contextmanager
