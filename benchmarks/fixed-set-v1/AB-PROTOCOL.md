@@ -17,7 +17,7 @@
 
 - 两臂同一网关、同一模型（`anthropic/DeepSeek-V4.1-Flash`）、同一提示词、同一超时上限。
 - 包内两臂使用互不相同的临时目录与 `session_id`；包与包之间不复用会话。
-- 首次臂顺序由计划给定（`first_arm`），A/B 首发各 10 包，交织执行。
+- 首次臂顺序由计划给定（`first_arm`），A/B 首发各 10 包，交织执行。（这是预注册意图；实际执行与修复见文末「变更」第 6 条，已执行数据不是交织执行。）
 
 ## 3. 轮次口径（本次预注册的关键参数）
 
@@ -72,3 +72,21 @@
 4. 账本行一律保留原始记录，不删不改：26 条故障行留在 `envoy_request_ledger` 与导出文件里，可被任何第三方复查其时间戳与 `exit` 分布。
 
 判定：这些故障行不进入最终统计，替换它们的重跑结果与其共用同一 `turn_correlation_id`，因此每轮的 token、salt、`server_request_id` 仍可逐条对上账本。
+
+## 变更（复核 2026-10-26，事后口径，如实记录）
+
+以下是记录性运行开始之后发现并修改的口径问题。按本文开头约定，不静默重算，逐条记录时间、原因与对既有结果的影响。
+
+1. **分类器改名与语义收窄（2026-10-26）。** 原 `delivered` 只表示「没超时、没报错、答案不短、没说读不到」，不验证事实正确性，也不验证引用是否落位；README 曾把它写成「直接给出成品」，超出分类器能力，已撤回。现更名为 `suspect_complete`，并新增 `verified`：只统计人工评审文件把 `answer_correct`（baseline 用 `baseline_answer_correct`）判为 `true` 的轮次，评审未填时为 0。当前两臂 `verified` 均为 0。`ab_report.py` 的 `completed/blocked` 也已标注为进程口径（是否在上限内退出），不是质量结论，且不进入门禁。
+
+2. **登录/授权识别的漏判（2026-10-26）。** 原正则要求「请登录」「需要登录」等连续出现，「请先登录」这类会漏判、落入 `suspect_complete`。现补 `请(?:你)?(?:先)?(?:登录|扫码|授权)`、`需要(?:你)?(?:登录|扫码|授权|人工)` 等写法。影响：更多轮计入 `needs_action`、更少轮计入 `suspect_complete`；该改动是分类修正，不是调阈值。
+
+3. **引用归属从 host 收窄到文章级（2026-10-26）。** 原规则只要答案出现来源 host（如 `mp.weixin.qq.com`）就算该来源被引用。同一公众号多篇文章共用 host，会互相计分；抖音同一 host 下所有视频也会互相计分。现改为：URL 规范化为文章级后比较——`http`/`https`、`www.`、尾斜杠、追踪参数（`utm_*`、`spm*`、`from`、`scene`、`fbclid` 等）归一，微信文章按 `__biz + mid + idx + sn` 作为身份，B 站保留 BV 号（大小写不敏感）；只有 host、没有文章标识的提及记入诊断字段 `legacy_host_mentions`，不再计分。复核旧 `grade.jsonl` 中 30 行答案文本逐字节相同的记录：旧 host 规则命中 12 处 → 文章级命中 8 处；两行不再命中（`douyin-03` baseline initial 只引 `iesdouyin.com/share/video/` 分享入口，`douyin-05` envoy followup-1 只引 `aweme/detail/?aweme_id=` 接口地址，两者都没有具体视频 id，旧规则却各给两个来源计分）。合并数据集上 envoy 60 轮里 host 提及 25 处、文章级命中 6 处，说明按 host 计分确实会系统性高估引用率。
+
+4. **facts 命中仍是词覆盖。** 60% 去停用词覆盖匹配不做正确性判断，本轮不改口径，但 README 与 `ab_grade.py` 文档已写明：facts 命中只是可复核的线索，不是正确答案数。
+
+5. **两臂时间上限实际不同（2026-10-25 已发生，2026-10-26 复核确认）。** §3 预注册为两臂同为 900 秒；实际 baseline 使用 900 秒（`/tmp/AB3/run-meta.json` 的 `cap_seconds: 900`，60 轮中 41 轮 exit 124 撞上限），envoy 的完整 60 轮重跑使用 2400 秒（`/tmp/AB6/plan-s*/run-log.jsonl` 每行 `turn_timeout_seconds: 2400`，0 轮撞上限）。这是对预注册的偏离；两臂完成率与耗时不可直接相减，任何跨臂差值都必须同时给出该偏差。另需注意记录并不完整：AB3 的 run-log 共 189 条 attempt，其中 61 条 baseline、67 条 envoy 没有逐行 `turn_timeout_seconds`，12 条 baseline 与 49 条 envoy 分别记为 900 与 2400 秒；因此只能表述为「计划 900 秒 / envoy 实际按 2400 秒重跑」，不能声称每一轮都能从单行记录追溯上限。详见 `docs/acceptance/envoy-read-failure-2026-10-25.md` 的复核记录。
+
+6. **计划顺序与运行器不一致（2026-10-26 修复）。** `plan.json` 里 10 个包的 `first_arm` 与 `arms[0]` 相反，而运行器原先只按 `arms` 数组位置循环，声明的交织首发并未生效。现 `run_ab.py` 用 `ordered_arms()` 按 `first_arm` 决定臂顺序（单臂分片计划保持原样），新增 `--check-plan`（校验并打印 `order_problems`）与 `--strict-plan`，每条运行记录写入 `arm_position`；`plan.json` 的 10 处 `arms` 已改为与 `first_arm` 一致，`--check-plan` 结果为 0 个问题。已执行的记录性运行使用单臂分片计划（`/tmp/split/plan-s*-{arm}.json`），不受此修复影响；但也说明已执行数据中「包内随机首发」并未实现，`benchmarks/README.md` 里 randomized per-package order 的说法对这批数据不成立（该文件不在本次写入范围，未改）。
+
+7. **首页数字撤回（2026-10-26）。** README 原表（直接给出成品 23%/58%、读不到 7%/5%、超时 70%/37%、样本 95/120）无法从归档数据复现：归档 `summary.json` 是 92 轮、completed 19/56 与 23/36；按本口径重算为 baseline `suspect_complete` 13/60、envoy 55/60，且两臂上限不同。README 已改为「探索性观察」，说明分类方法、上限差异、`verified=0` 以及还缺什么才能作为结论。

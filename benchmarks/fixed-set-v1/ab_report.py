@@ -77,6 +77,19 @@ def turn_key(row: dict) -> tuple[str, str, str]:
     return (row["package_id"], row["arm"], row["turn_correlation_id"])
 
 
+def paired_input_sentence(summary: dict) -> str:
+    """Ledger comparison for completed pairs: a multiplier, never a saving percentage."""
+    tokens = summary.get("paired_input_tokens") or {}
+    count = summary.get("paired_completed", 0)
+    ratio = summary.get("paired_input_ratio")
+    if ratio is None or not tokens.get("baseline"):
+        return f"配对（两臂都 completed 共 {count} 轮）：样本不足，不计倍数。"
+    return (
+        f"配对（两臂都 completed 共 {count} 轮）：envoy 账本 input 合计 "
+        f"{tokens['envoy']} / baseline {tokens['baseline']} = {ratio:.1f} 倍（envoy 更贵）。"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ledger", required=True)
@@ -98,6 +111,16 @@ def main() -> int:
         for row in load_runlog([Path(path)]):
             grades[turn_key(row)] = row
     runlog = _dedupe_attempts(load_runlog([Path(p) for p in args.runlog]))
+
+    # The plan caps and the caps actually used can differ (one arm was rerun at
+    # a larger cap). Report what the records say; only fall back to the plan
+    # constants for arms whose run-log predates turn_timeout_seconds.
+    observed_caps: dict[str, list[int]] = {}
+    for row in runlog:
+        cap = row.get("turn_timeout_seconds")
+        if cap is not None:
+            observed_caps.setdefault(row["arm"], set()).add(int(cap))
+    observed_caps = {arm: sorted(caps) for arm, caps in observed_caps.items()}
 
     requests: dict[tuple[str, str, str], dict] = {}
     for row in ledger:
@@ -172,6 +195,9 @@ def main() -> int:
                 "first_evidence_ms": telemetry.get(key, {}).get("first_evidence_ms"),
                 "facts_total": grades.get(key, {}).get("facts_total"),
                 "facts_hit": grades.get(key, {}).get("facts_hit"),
+                "citation_hits": grades.get(key, {}).get("citation_hits"),
+                "legacy_host_mentions": grades.get(key, {}).get("legacy_host_mentions"),
+                "answer_source": grades.get(key, {}).get("answer_source"),
                 "attributed_sources": grades.get(key, {}).get("attributed_sources"),
                 "sources_total": grades.get(key, {}).get("sources_total"),
                 "answer_chars": grades.get(key, {}).get("answer_chars"),
@@ -185,6 +211,7 @@ def main() -> int:
     summary: dict = {
         "run_id": args.run_id or (runlog[0].get("run_id") if runlog else None),
         "turn_count": len(turns),
+        "observed_caps": observed_caps,
         "turn_outcomes": {
             arm: {
                 "turns": len(items),
@@ -197,6 +224,20 @@ def main() -> int:
         "arms": {},
         "paired": [],
         "turns": turns,
+        # completed/blocked is a process fact (did the CLI exit within the wall
+        # cap), not a quality verdict. Keep it out of the gate and say so, so
+        # nobody reads "completed" as "the answer was right".
+        "outcomes_scope": (
+            "completed/blocked 只表示进程是否在墙钟上限内退出（blocked = exit 124），"
+            "不代表答案正确或任务完成。"
+        ),
+        "quality_verified": {
+            "turns": 0,
+            "method": (
+                "只有人工 review 的 answer_correct=true 才计为 verified；"
+                "本报告不读 review 文件，所以这里是 0，不代表所有轮次质量不合格。"
+            ),
+        },
     }
 
     for arm, items in by_arm.items():
@@ -221,6 +262,14 @@ def main() -> int:
             "repeated_targets_total": sum(t["repeated_targets"] or 0 for t in items),
             "facts_hit_total": sum(t["facts_hit"] or 0 for t in items),
             "facts_total": sum(t["facts_total"] or 0 for t in items),
+            "citation_hits_total": sum(len(t["citation_hits"] or []) for t in items),
+            "legacy_host_mentions_total": sum(
+                len(t["legacy_host_mentions"] or []) for t in items
+            ),
+            "answer_sources": {
+                source: sum(1 for t in items if (t["answer_source"] or "terminal") == source)
+                for source in sorted({t["answer_source"] or "terminal" for t in items})
+            },
             "attributed_sources_total": sum(
                 len(t["attributed_sources"] or []) for t in items
             ),
@@ -271,13 +320,33 @@ def main() -> int:
         envoy_total = sum(p["envoy_input_tokens"] for p in completed_pairs)
         summary["paired_input_tokens"] = {"baseline": base_total, "envoy": envoy_total}
         if base_total:
-            summary["paired_input_reduction"] = round(1 - envoy_total / base_total, 4)
+            summary["paired_input_ratio"] = round(envoy_total / base_total, 2)
 
     Path(args.out).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if args.markdown:
-        lines = ["# A/B 结果（服务端账本口径）", "", f"轮次：{summary['turn_count']}；每轮上限：baseline {CAP_SECONDS}s，envoy {ENVOY_CAP_SECONDS}s。", ""]
-        lines.append("| 臂 | 轮次 | completed | blocked | 账本 input tokens | 中位 input | 账本 output | 墙钟合计 s |")
+        cap_parts = []
+        for arm in summary["turn_outcomes"]:
+            if arm == "baseline":
+                cap_parts.append(f"baseline {CAP_SECONDS}s（计划值）")
+            elif arm == "envoy":
+                if arm in summary["observed_caps"]:
+                    caps_text = ", ".join(str(c) for c in summary["observed_caps"][arm])
+                    cap_parts.append(f"envoy {caps_text}s（run-log 记录）")
+                else:
+                    cap_parts.append(f"envoy {ENVOY_CAP_SECONDS}s（计划值）")
+            else:
+                cap_parts.append(f"{arm} {summary['observed_caps'].get(arm, 'unknown')}s")
+        lines = [
+            "# A/B 结果（服务端账本口径）",
+            "",
+            f"轮次：{summary['turn_count']}；每轮上限：" + "；".join(cap_parts) + "。",
+            "",
+        ]
+        lines.append("口径：completed 指进程在上限内退出，blocked 指撞到墙钟上限；两者都不代表答案正确。")
+        lines.append("verified = 0：本报告不含人工 review，没有轮次能算作质量已验证。")
+        lines.append("")
+        lines.append("| 臂 | 轮次 | completed（进程退出，非质量） | blocked（超时） | 账本 input tokens | 中位 input | 账本 output | 墙钟合计 s |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for arm, stats in summary["arms"].items():
             lines.append(
@@ -287,29 +356,43 @@ def main() -> int:
             )
         lines.append("")
         lines.append("")
-        lines.append("| 臂 | 工具调用合计 | 工具调用中位 | 首次证据中位 ms | 重复抓取 | facts 命中/总数 | 归属来源命中 | 答案中位字符 |")
-        lines.append("|---|---|---|---|---|---|---|---|")
+        lines.append(
+            "| 臂 | 工具调用合计 | 工具调用中位 | 首次证据中位 ms | 重复抓取 | "
+            "facts 命中/总数（阈值 0.6） | 文章级引用命中 | host 级归属（诊断） | 答案中位字符 |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|---|")
         for arm, stats in summary["arms"].items():
             lines.append(
                 f"| {arm} | {stats['tool_calls_total']} | {stats['tool_calls_median']} | "
                 f"{stats['first_evidence_median_ms']} | {stats['repeated_targets_total']} | "
                 f"{stats['facts_hit_total']}/{stats['facts_total']} | "
-                f"{stats['attributed_sources_total']} | {stats['answer_chars_median']} |"
+                f"{stats['citation_hits_total']} | {stats['legacy_host_mentions_total']} | "
+                f"{stats['answer_chars_median']} |"
             )
         lines.append("")
+        lines.append(
+            "facts 阈值＝每条 claim 的英文特征词（≥4 字母、去停用词）覆盖率 ≥0.6；"
+            "facts 总数 516＝20 包事实×3 轮重复计数，不是 516 条唯一事实。"
+        )
+        lines.append(
+            "文章级引用命中＝答案里出现与声明来源同一文章的规范化 URL（host+path+文章参数）；"
+            "host 级归属只是诊断，不当作引用。"
+        )
+        lines.append(
+            "评级默认只用终端 answers.jsonl；transcript 回收文本不进入两臂对比（见 grade 的 answer_source）。"
+        )
+        lines.append("")
         lines.append(f"门禁：{json.dumps(gate, ensure_ascii=False)}")
-        if "paired_input_reduction" in summary:
-            lines.append(
-                f"配对（均 completed，{summary['paired_completed']} 轮）：baseline {summary['paired_input_tokens']['baseline']} → "
-                f"envoy {summary['paired_input_tokens']['envoy']}，变化 {summary['paired_input_reduction'] * 100:.1f}%。"
-            )
-        else:
-            lines.append("未产出节省比例：配对 completed 轮次不足或门禁未通过。")
+        lines.append(paired_input_sentence(summary))
+        lines.append(
+            f"口径：上句是两臂都 completed 的轮次按账本 input 合计相比（{summary['paired_completed']} 对）；"
+            "four-questions.md 里两臂账本均非零的配对看的是每对相对变化的中位数，两个口径不同，不互相印证。"
+        )
         Path(args.markdown).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print(json.dumps({k: summary[k] for k in ("turn_count", "turn_outcomes", "gate", "paired_completed")}, ensure_ascii=False))
-    if "paired_input_reduction" in summary:
-        print("paired_input_reduction", summary["paired_input_reduction"])
+    if "paired_input_ratio" in summary:
+        print("paired_input_ratio", summary["paired_input_ratio"])
     return 0
 
 

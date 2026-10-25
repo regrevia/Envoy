@@ -1,0 +1,10 @@
+{
+  "schema": "envoy.release-manifest/1",
+  "version": "0.1.8",
+  "min_runtime": "0.1.8",
+  "protocols": {
+    "read": "envoy.read/1",
+    "observe": "envoy.observe/1"
+  },
+  "source_repository": "https://github.com/regrevia/Envoy"
+}

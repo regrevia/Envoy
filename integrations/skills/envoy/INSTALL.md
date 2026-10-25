@@ -1,6 +1,6 @@
 # 安装 Envoy
 
-Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.6`；`dev` 分支上的下一个开发版为 `0.1.8`，发行说明以 `CHANGELOG.md` 为准。
+Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前正式发行版为 `v0.1.8`；`dev` 分支上的下一个开发版为 `0.1.8`，发行说明以 `CHANGELOG.md` 为准。
 
 ## 1. 安装 Skill
 
@@ -10,21 +10,21 @@ npx skills add regrevia/Envoy --skill envoy --global --yes
 
 ## 2. 安装本地 runtime
 
-从 GitHub Release 下载与版本匹配的 wheel 和校验文件。以下以 `v0.1.6` 为例：
+从 GitHub Release 下载与版本匹配的 wheel 和校验文件。以下以 `v0.1.8` 为例：
 
 ```bash
-gh release download v0.1.6 --repo regrevia/Envoy --dir envoy-v0.1.6
-cd envoy-v0.1.6
+gh release download v0.1.8 --repo regrevia/Envoy --dir envoy-v0.1.8
+cd envoy-v0.1.8
 # macOS/Linux
 shasum -a 256 -c SHA256SUMS
 # Windows PowerShell: 使用 Get-FileHash 对照 SHA256SUMS
-uv tool install --python 3.11 ./envoy_cli-0.1.6-py3-none-any.whl
+uv tool install --python 3.11 ./envoy_cli-0.1.8-py3-none-any.whl
 envoy browser setup
 envoy doctor --json
 ```
 
 需要预先安装 GitHub CLI 和 `uv`。没有 `gh` 时，可从
-[GitHub Releases](https://github.com/regrevia/Envoy/releases/tag/v0.1.6)
+[GitHub Releases](https://github.com/regrevia/Envoy/releases/tag/v0.1.8)
 下载相同文件并核对 `SHA256SUMS`。Python 3.10+ 可用，推荐 Python 3.11。
 只安装 Skill 不包含 runtime，也不会自动修改宿主配置。
 
@@ -55,7 +55,8 @@ DeepSeek Harness Desktop 用户可在插件管理器中安装本仓库的 [Envoy
 Claude Code 插件直接提供 MCP 桥接和 `UserPromptSubmit` 链接优先 hook。
 Codex 0.156 起不再加载插件自带的生命周期 hook，因此 Codex 插件只负责 MCP，
 hook 需再执行一次 `envoy hook install --host codex` 写入用户级
-`~/.codex/hooks.json`。两者都会先尝试 `envoy_read`，只在 Envoy 返回
+`~/.codex/hooks.json`（该子命令自 `0.1.7` 起提供，`0.1.6` 没有；本页步骤安装的
+`0.1.8` 已包含）。两者都会先尝试 `envoy_read`，只在 Envoy 返回
 `blocked` / `challenge_required`、需要登录/验证码或工具不可用时才回退到宿主
 自带抓取。
 
@@ -125,7 +126,7 @@ printf '%s' '{"protocol_version":"envoy.observe/1","request_id":"observe-frame-1
 （`full` 工具集下也可调用 `envoy_read_local_video`），但不能假定本地文件与
 链接内容相同。
 
-浏览器默认 headless。只有页面需要正常登录或用户验证时，才会打开隔离浏览器请用户接管。Envoy 不读取个人浏览器 Cookie，也不绕过 CAPTCHA、登录或反爬限制。仅使用用户配置或明确认可的可信代理，不搜索或使用公共代理。
+浏览器默认 headless，读取过程中不会弹出任何窗口。页面需要登录或验证时，`envoy_read` 返回 `challenge_required` / `auth_required` 并附 `needs_user_action`，由人类按提示完成一次登录或验证；读到页面要求登录但终端里没有出现窗口属于预期行为，不是故障。可见浏览器只属于人类自己的交互式终端：需要 stdin 和 stdout 同时是 TTY 且显式设置 `ENVOY_VISIBLE_BROWSER=1`，agent 与 MCP 宿主环境下运行时一律拒绝，agent 不得设置该变量。Envoy 不读取个人浏览器 Cookie，也不绕过 CAPTCHA、登录或反爬限制。仅使用用户配置或明确认可的可信代理，不搜索或使用公共代理。
 
 更新时从 Release 获取新 wheel，再运行 `uv tool install --force <wheel-path>`。Whisper/ASR 是可选依赖，更新时需按指南保留已配置的 ASR engine。
 
@@ -146,21 +147,21 @@ npx skills add regrevia/Envoy --skill envoy --global --yes
 
 ## 2. Install the runtime
 
-Download the matching wheel and checksums from GitHub Release **v0.1.6**.
+Download the matching wheel and checksums from GitHub Release **v0.1.8**.
 With the GitHub CLI and `uv` already installed:
 
 ```bash
-gh release download v0.1.6 --repo regrevia/Envoy --dir envoy-v0.1.6
-cd envoy-v0.1.6
+gh release download v0.1.8 --repo regrevia/Envoy --dir envoy-v0.1.8
+cd envoy-v0.1.8
 # macOS/Linux; on Windows compare Get-FileHash output with SHA256SUMS.
 shasum -a 256 -c SHA256SUMS
-uv tool install --python 3.11 ./envoy_cli-0.1.6-py3-none-any.whl
+uv tool install --python 3.11 ./envoy_cli-0.1.8-py3-none-any.whl
 envoy browser setup
 envoy doctor --json
 ```
 
 Without `gh`, download the same assets from
-https://github.com/regrevia/Envoy/releases/tag/v0.1.6 and verify `SHA256SUMS`
+https://github.com/regrevia/Envoy/releases/tag/v0.1.8 and verify `SHA256SUMS`
 before installation. Python 3.10+ is required; Python 3.11 is recommended.
 The Skill alone is not a complete runtime installation.
 
@@ -201,7 +202,8 @@ requires the runtime above.
 The Claude Code plugin ships both the MCP bridge and a `UserPromptSubmit`
 link-first hook. Codex 0.156 no longer loads plugin-supplied lifecycle hooks, so
 its plugin only mounts MCP; run `envoy hook install --host codex` once to merge
-the hook into the user-level `~/.codex/hooks.json`. The hook asks the model to
+the hook into the user-level `~/.codex/hooks.json`. That subcommand exists from
+0.1.7 on; the older instructions installed 0.1.6, which cannot run it. The hook asks the model to
 try `envoy_read` first and fall back to native fetching only on `blocked` /
 `challenge_required`, sign-in or CAPTCHA, or an unavailable Envoy tool.
 
@@ -309,17 +311,22 @@ CAPTCHA, or anti-bot challenges. Direct media may still be rejected by its host
 or access policy. Every outbound path — HTTP read, Chromium, and yt-dlp media
 download — connects **directly first**; a system or environment proxy is only an
 automatic fallback after a direct attempt fails, so a proxy never silently
-Reading runs headlessly by default and never opens a window: a page that still
-requires a login or verification action is reported as `challenge_required`.
-Export `ENVOY_VISIBLE_BROWSER=1` to allow Envoy's interactive fallback, which
-shows its isolated browser so you can complete that action once.
-
 changes what a source returns. Set `ENVOY_BROWSER_PROXY` to an unauthenticated
 proxy URL to pin that proxy, or to `none`/`off` to forbid proxying entirely.
 Proxy credentials are not passed in browser command-line arguments.
+
 Only use configured or user-approved trusted proxies. Never search for or use
 public proxy lists. A 404 alone does not establish deletion, region blocking,
 or a proxy problem: ask whether the user can open the link, then diagnose.
+
+Reading runs headlessly by default and never opens a window: a page that still
+requires a login or verification action is reported as `challenge_required` /
+`auth_required` with a `needs_user_action` block, and the human completes that
+action once. A login prompt with no window on screen is expected, not a fault.
+Visible mode belongs to a human at their own interactive terminal: both stdin
+and stdout must be a TTY and `ENVOY_VISIBLE_BROWSER=1` must be set explicitly;
+the runtime refuses it under an agent or MCP host, and an agent must never set
+that variable.
 
 ## Scope and license
 

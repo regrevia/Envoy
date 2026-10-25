@@ -1427,7 +1427,12 @@ def test_envoy_read_leaves_public_urls_on_the_public_reader(monkeypatch, capsys)
     monkeypatch.setattr(
         reader,
         "_fetch_html",
-        lambda _url, _max_bytes, _cache=None: ("https://example.org/", "<html><body><p>Hello there.</p></body></html>"),
+        # Readable body on purpose: the public reader keeps pages of 20+ characters
+        # on the plain HTTP path, so this test does not depend on a browser install.
+        lambda _url, _max_bytes, _cache=None: (
+            "https://example.org/",
+            "<html><body><p>Hello there. This page keeps a readable paragraph.</p></body></html>",
+        ),
     )
     monkeypatch.setattr(
         mcp,

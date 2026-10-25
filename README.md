@@ -61,15 +61,15 @@
 
 ## 评测
 
-同一条链接、同一个模型，只差装不装 Envoy。20 个来源 × 3 轮提问，已判读 95 轮：
+同一条链接、同一个模型，只差装不装 Envoy；20 个任务包 × 3 轮提问（每臂 60 轮，共 120 轮），题目与来源冻结在 `benchmarks/fixed-set-v1`。下面是**探索性观察**，还不足以当作结论。
 
-| 这一轮的结果 | 不装 Envoy | 装 Envoy |
-| --- | ---: | ---: |
-| 直接给出成品 | 23% | 58% |
-| 没能自己拿到内容（要你登录、扫码、授权，或者说读不到） | 7% | 5% |
-| 超时没跑完 | 70% | 37% |
+**怎么判的。** 每轮先按答案文本归类：`timed_out`（撞墙钟上限）、`no_output`、`infra_failed`、`needs_action`、`cannot_see`（要登录/扫码/授权，或说读不到）、`suspect_complete`（进程正常结束、答案不短、没说读不到——**只是疑似完成，不验证事实是否正确、引用是否落位**）。`verified` 只统计人工评审把 `answer_correct` 判为 true 的轮次；本轮 **verified = 0**，评审表未填。facts 命中是 60% 词覆盖匹配，引用命中要求 URL 规范化到文章级（同一公众号的不同文章不再互相计分），两者都不是正确性判定。
 
-时间上限 15 / 40 分钟，超时轮不算失败；样本 95/120 轮。见[评测方法](benchmarks/README.md)、[完整数据](benchmarks/fixed-set-v1/README.md)。
+**本轮可复算的观察。** baseline 60 轮：`suspect_complete` 13、`timed_out` 41、`cannot_see` 5、`needs_action` 1。envoy 60 轮：`suspect_complete` 55、`timed_out` 0、`cannot_see` 4、`needs_action` 1。两个 `verified` 都是 0。facts 词覆盖也偏向 envoy（claim 覆盖 9.1% vs 38.2%，至少命中一条 facts 的轮次 14/60 vs 49/60），但同样受下面这条限制影响，只能算线索。
+
+**不能这么读。** 两臂时间上限不同：baseline 900 秒（`/tmp/AB3/run-meta.json` 的 `cap_seconds`；60 轮里 41 轮撞上限），envoy 2400 秒（`/tmp/AB6` 各轮 `turn_timeout_seconds`；0 轮撞上限）。完成率差距被上限差异放大，不能读成工具能力差；`suspect_complete` 也不能读成“答案正确”。要变成结论还缺：同预算比较（两臂同上限重跑）、可复核的真实任务判定（不是关键词分类）、能与来源快照对上的产物，以及两臂完整的 60/60 轮账本。旧版首页给出的完成率与样本数字来自更早的部分运行，本轮无法复现，已撤回。
+
+见[评测方法](benchmarks/README.md)、[口径与偏差](benchmarks/fixed-set-v1/AB-PROTOCOL.md)与[复核记录](docs/acceptance/envoy-read-failure-2026-10-25.md)。
 
 ## 文档
 
@@ -139,15 +139,15 @@ No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement f
 
 ### Evaluation
 
-Same link, same model, the only difference is whether Envoy is installed. 20 sources × 3 questions, 95 turns scored:
+Same link, same model, the only difference is whether Envoy is installed; 20 task packages × 3 questions per arm (60 turns each, 120 total) on a frozen package (`benchmarks/fixed-set-v1`). What follows is an **exploratory observation**, not yet a conclusion.
 
-| How the turn ended | Without Envoy | With Envoy |
-| --- | ---: | ---: |
-| Hands over the finished artifact | 23% | 58% |
-| Never gets the content (asks you to log in, scan, authorize, or says it cannot read it) | 7% | 5% |
-| Cut off at the time limit | 70% | 37% |
+**How turns are scored.** Each turn is classified from its answer text: `timed_out` (hit the wall-clock cap), `no_output`, `infra_failed`, `needs_action`, `cannot_see` (asks for login/scan/authorization, or says it cannot read), `suspect_complete` (process exited normally, answer is not short, no refusal — **suspected only, with no check of factual correctness or citation placement**). `verified` counts only turns a human review marked `answer_correct = true`; **verified = 0** here because the review file is still empty. Fact hits are a 60% token-overlap match, and citation hits require an article-level canonical URL (two posts from the same WeChat account no longer credit each other); neither is a correctness verdict.
 
-Time limits are 15 and 40 minutes, and a timed-out turn is not a failure. Time limits are 15 minutes and 40 minutes respectively, and a timed-out turn is not scored as a failure. Sample is 92 of 120 turns; read every rate against that sample. See the [evaluation method](benchmarks/README.md) and the [full data](benchmarks/fixed-set-v1/README.md).
+**What can be recomputed now.** baseline, 60 turns: `suspect_complete` 13, `timed_out` 41, `cannot_see` 5, `needs_action` 1. envoy, 60 turns: `suspect_complete` 55, `timed_out` 0, `cannot_see` 4, `needs_action` 1. `verified` is 0 for both. Fact-word coverage also leans envoy (claim coverage 9.1% vs 38.2%; turns with at least one fact 14/60 vs 49/60), but it is subject to the limit below, so treat it as a signal only.
+
+**What it cannot be read as.** The two arms ran under different caps: baseline 900 s (`cap_seconds` in `/tmp/AB3/run-meta.json`; 41 of 60 turns hit it) and envoy 2400 s (`turn_timeout_seconds` in `/tmp/AB6`; 0 of 60 hit it). The completion gap is inflated by that difference and is not a capability comparison; `suspect_complete` is not "correct". Turning this into a conclusion needs a same-budget run (both arms at one cap), a real task-level verdict that can be reviewed (not keyword rules), artifacts that can be checked against the source snapshots, and a full 60/60-turn ledger per arm. The earlier front-page completion rates and sample counts came from an earlier partial run, cannot be reproduced from the archived data here, and have been withdrawn.
+
+See the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md), and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
 
 ### Documentation
 

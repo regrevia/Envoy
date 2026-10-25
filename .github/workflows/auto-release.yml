@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: auto-release-main
@@ -86,6 +87,39 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"release=true\ntag={tag}\n")
           PY
+      - name: 等待同一 SHA 的 CI 成功 / Require green CI on this SHA
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TIMEOUT_SECONDS: "2400"
+          POLL_SECONDS: "20"
+        run: |
+          deadline=$((SECONDS + TIMEOUT_SECONDS))
+          while :; do
+            state=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" --jq '
+              [.workflow_runs[] | select(.path == ".github/workflows/ci.yml")]
+              | if any(.[]; .conclusion == "success") then "success"
+                elif any(.[]; .status == "completed" and .conclusion != "success") then "failed"
+                elif length > 0 then "pending"
+                else "missing" end')
+            case "$state" in
+              success)
+                echo "同一 SHA 的 CI 已通过 / CI passed on $SHA"
+                exit 0
+                ;;
+              failed)
+                echo "同一 SHA 的 CI 未通过，拒绝打标签 / CI failed on $SHA; refusing to tag" >&2
+                exit 1
+                ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "等待 CI 超时（$state）/ Timed out waiting for CI on $SHA ($state)" >&2
+              exit 1
+            fi
+            sleep "$POLL_SECONDS"
+          done
       - name: 推送发行标签 / Push release tag
         if: steps.version.outputs.release == 'true'
         env:
@@ -93,11 +127,7 @@ jobs:
         run: |
           git tag "$RELEASE_TAG" "$GITHUB_SHA"
           git push origin "$RELEASE_TAG"
-  publish-release:
-    needs: tag-version
-    if: needs.tag-version.outputs.release == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/release.yml
-    with:
-      release_tag: ${{ needs.tag-version.outputs.tag }}
+  # The tag pushed above triggers release.yml through its `push: tags: v*`
+  # trigger. Calling release.yml from here as well published every release
+  # twice: the second `gh release create --verify-tag` exited non-zero after the
+  # assets already existed. One tag push, one publisher.

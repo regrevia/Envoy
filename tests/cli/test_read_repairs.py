@@ -229,3 +229,15 @@ def test_chapter_span_marks_a_short_list_incomplete():
     assert span == (0.0, 60.0)
     assert incomplete is True
     assert reader._chapter_span_state([], 690.0) == (None, False)
+
+
+def test_login_user_action_is_a_human_action_without_a_runnable_command():
+    action = reader._login_user_action("https://www.douyin.com/video/123")
+
+    assert action["requires_human"] is True
+    for option in action["options"]:
+        assert option["requires_human"] is True
+        assert "command" not in option
+    serialized = json.dumps(action, ensure_ascii=False)
+    assert "ENVOY_VISIBLE_BROWSER=" not in serialized
+    assert "--request-json" not in serialized

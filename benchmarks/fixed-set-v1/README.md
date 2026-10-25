@@ -87,9 +87,12 @@ the frozen manifest, the manifest wins.
   supports. Numeric or regulatory claims that are not quoted from a package
   source must be marked `claim_basis: external_fact` and carry a corroboration
   URL and quote; the validator rejects the weaker shape.
-- A and B run once per package with randomized order from
-  `paired_experiment_plan.py --confirmatory-fixed`. Each arm has an isolated
-  Claude Code profile and material cache; turns remain in the same arm session.
+- The executed fixed-set batch runs each arm as a single-arm shard of 60 turns
+  (no per-package interleaving). The declared `first_arm` order is honored by
+  `run_ab.py` only after the 2026-10-26 fix, and that fix is not retroactive:
+  existing results keep the order they actually ran with. Each arm has an
+  isolated Claude Code profile and material cache; turns remain in the same arm
+  session.
 - B is built from one pinned `main` commit and records its wheel SHA-256,
   source revision, Skill hash, MCP tool catalog, and runtime capability report.
   This first batch is not the `v0.1.6` Release evaluation.
@@ -212,6 +215,18 @@ and access outcome. Resolve disagreements before unblinding. Report completion
 and usage intention-to-treat, plus conditional successful-pair metrics.
 Token or latency improvements never compensate for lower evidence quality.
 
+The current automatic pass is weaker than that rubric, and the tooling says so.
+`outcome_classes.py` classifies each turn from its answer text only:
+`suspect_complete` means the process exited, the answer is not short, and it
+does not refuse or ask for login — it does **not** verify facts or citations.
+`verified` counts only turns a filled review file marks `answer_correct: true`
+(baseline uses `baseline_answer_correct`), so an unfilled review yields zero
+verified turns however many turns look complete. `ab_grade.py` fact hits are a
+60% token-overlap rule, not a correctness check. Citation hits require a
+canonical article URL; a bare host mention is recorded separately in
+`legacy_host_mentions` and does not score, so two posts from one WeChat account
+no longer credit each other. Treat all of this as triage for the blind review.
+
 ## Routing Decision (On-Demand Use)
 
 Envoy is only worth its cost when the task needs a link's content and a plain
@@ -258,7 +273,9 @@ a disclosed `blocked`, not a reconstructed note.
    requests run). Both are marked rehearsal-only and prove the pipeline, not
    the product claim.
 3. Confirm the pinned B build and the server-reported model/gateway policy.
-4. Create the randomized plan with cache status `per_request_salt`; the
+4. Create the plan with the declared `first_arm` order and cache status
+   `per_request_salt` (only the fixed runner honors that order, and only for
+   runs started after the fix); the
    completed server-ledger validator promotes it to
    `verified_per_request_salt` only if all request evidence passes.
 5. Run a separate 2-package instrumentation rehearsal; discard its outputs and

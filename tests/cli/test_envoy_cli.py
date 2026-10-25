@@ -1185,10 +1185,15 @@ def test_challenge_page_is_not_reported_as_ready(monkeypatch):
         "<p>Checking your browser before accessing the site.</p>"
         "<p>" + ("Please wait. " * 20) + "</p></body></html>",
     ))
+    from envoy_cli import browser
+
     monkeypatch.setattr(
         reader,
         "_read_with_isolated_browser",
-        lambda *_args, **_kwargs: (None, "BrowserChallengeRequired"),
+        lambda *_args, **_kwargs: (
+            None,
+            browser.BrowserChallengeRequired("login or verification required"),
+        ),
     )
 
     response = reader.read_public_page(ReadRequest.model_validate({

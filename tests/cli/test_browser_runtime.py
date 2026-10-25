@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import sys
@@ -449,7 +450,11 @@ def test_login_overlay_appearing_during_lazy_load_is_closed_before_capture(tmp_p
     assert requests == []
 
 
-def test_access_challenge_escalates_to_visible_profile_and_resumes(tmp_path):
+
+def test_access_challenge_escalates_to_visible_profile_and_resumes(tmp_path, monkeypatch):
+    # The terminal gate itself is covered by test_visible_browser_guard.py; this
+    # test is about what the escalation does once a human has opted in.
+    monkeypatch.setattr(browser, "_visible_browser_allowed", lambda override: True)
     chromium = FakeChromium("安全验证，请完成登录后继续。")
     requests = []
 
@@ -473,7 +478,8 @@ def test_access_challenge_escalates_to_visible_profile_and_resumes(tmp_path):
     )
 
 
-def test_unresolved_challenge_fails_closed_after_visible_browser_timeout(tmp_path):
+def test_unresolved_challenge_fails_closed_after_visible_browser_timeout(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_visible_browser_allowed", lambda override: True)
     chromium = FakeChromium("安全验证，请完成登录后继续。")
     chromium.visible_text = None
 
@@ -1710,8 +1716,11 @@ def test_browser_video_evidence_refuses_a_cover_preview_as_the_post(monkeypatch)
     assert action["host"] == "www.douyin.com"
     assert [option["action"] for option in action["options"]] == [
         "import_cookies",
-        "visible_login",
+        "human_sign_in",
     ]
+    assert action["requires_human"] is True
+    assert all(option["requires_human"] is True for option in action["options"])
+    assert all("command" not in option for option in action["options"])
     assert "player bound no downloadable source" in " ".join(video.unresolved)
 
 
@@ -1729,12 +1738,14 @@ def test_blocked_challenge_carries_the_session_choices():
         action_required=True,
     )
     details = blocked.errors[0].details
-    assert details["needs_user_action"]["host"] == "www.douyin.com"
-    commands = [option["command"] for option in details["needs_user_action"]["options"]]
-    assert any(
-        command.startswith("envoy auth import --from chrome") for command in commands
-    )
-    assert any("--domain douyin.com" in command for command in commands)
+    action = details["needs_user_action"]
+    assert action["host"] == "www.douyin.com"
+    assert action["requires_human"] is True
+    assert all(option["requires_human"] is True for option in action["options"])
+    assert all("command" not in option for option in action["options"])
+    serialized = json.dumps(details, ensure_ascii=False)
+    assert "ENVOY_VISIBLE_BROWSER=" not in serialized
+    assert "--request-json" not in serialized
 
     plain = reader._blocked(request, ErrorCode.BUDGET_EXCEEDED, "too large")
     assert "needs_user_action" not in plain.errors[0].details
@@ -1751,13 +1762,12 @@ def test_a_fresh_cookie_demand_asks_for_a_scoped_import():
     assert action["kind"] == "cookies_required"
     assert action["host"] == "www.douyin.com"
     import_option = action["options"][0]
-    assert import_option["command"] == (
-        "envoy auth import --from chrome --domain douyin.com"
-    )
+    assert import_option["requires_human"] is True
+    assert "command" not in import_option
     assert "not necessarily what it wants" in action["question"]
     assert [option["action"] for option in action["options"]] == [
         "import_cookies",
-        "visible_login",
+        "human_sign_in",
     ]
 
 

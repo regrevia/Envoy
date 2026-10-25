@@ -113,6 +113,10 @@ def child_env(profile: Path, token: str, gateway: str, *, with_envoy: bool) -> d
         "ANTHROPIC_MODEL": "anthropic/DeepSeek-V4.1-Flash",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "DISABLE_TELEMETRY": "1",
+        # 基准永不允许前台窗口：继承的 ENVOY_VISIBLE_BROWSER 可能是 1，
+        # 会让被测 agent 在用户屏幕上弹浏览器或被登录提示卡住。需要登录的
+        # 页面应记为 needs_action，而不是弹窗等待。
+        "ENVOY_VISIBLE_BROWSER": "0",
     }
     if with_envoy:
         env["ENVOY_MCP_TOOLSET"] = "full"
@@ -367,6 +371,39 @@ def run_turn(
     }
 
 
+def ordered_arms(item: dict) -> list[str]:
+    """Arms in the order the plan says they must run.
+
+    ``first_arm`` is the declaration; the ``arms`` array is only the membership
+    set. The committed plan.json lists baseline first in all 20 packages while
+    ``first_arm`` is 10/10, so reading ``arms`` positionally silently ran one
+    fixed order and made the declared interleaving untrue. Arm-only filtered
+    plans (single arm in ``arms``) are accepted as-is.
+    """
+    arms = list(item.get("arms") or [])
+    first = item.get("first_arm")
+    if not first or first not in arms:
+        return arms
+    return [first] + [arm for arm in arms if arm != first]
+
+
+def plan_order_problems(packages: list[dict]) -> list[str]:
+    """Declaration problems that make the executed order differ from the plan."""
+    problems: list[str] = []
+    for item in packages:
+        arms = list(item.get("arms") or [])
+        first = item.get("first_arm")
+        if len(arms) < 2:
+            continue
+        if not first:
+            problems.append(f"{item.get('package_id')}: multi-arm package without first_arm")
+        elif first not in arms:
+            problems.append(f"{item.get('package_id')}: first_arm {first!r} not in arms {arms!r}")
+        elif arms[0] != first:
+            problems.append(f"{item.get('package_id')}: arms[0]={arms[0]!r} but first_arm={first!r}")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--plan", type=Path, required=True)
@@ -404,11 +441,34 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip turns already present in <out>/run-log.jsonl (same run id)",
     )
+    parser.add_argument(
+        "--check-plan",
+        action="store_true",
+        help="validate arm order against first_arm and exit without running",
+    )
+    parser.add_argument(
+        "--strict-plan",
+        action="store_true",
+        help="refuse to run when arms[0] disagrees with first_arm instead of reordering",
+    )
     args = parser.parse_args(argv)
 
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
     run_id = plan["run_id"]
     packages = plan["packages"]
+    order_problems = plan_order_problems(packages)
+    if args.check_plan:
+        for problem in order_problems:
+            print(problem)
+        print(json.dumps({"packages": len(packages), "order_problems": len(order_problems)}))
+        return 1 if order_problems else 0
+    if order_problems and args.strict_plan:
+        raise SystemExit(
+            "plan declares an arm order that its arms array contradicts:\n  "
+            + "\n  ".join(order_problems)
+        )
+    for problem in order_problems:
+        print(f"plan order: {problem} (running first_arm order)", flush=True)
     if args.package:
         packages = [item for item in packages if item["package_id"] in set(args.package)]
     if args.limit:
@@ -457,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for item in packages:
         draft = drafts[item["package_id"]]
-        for arm in item["arms"]:
+        for arm_position, arm in enumerate(ordered_arms(item), start=1):
             with_envoy = arm == "envoy"
             profile = prepare_profile(
                 root,
@@ -492,6 +552,9 @@ def main(argv: list[str] | None = None) -> int:
                     "run_id": run_id,
                     "package_id": item["package_id"],
                     "arm": arm,
+                    # 1-based position in which this arm was actually executed,
+                    # so a reader does not have to trust the plan's ordering.
+                    "arm_position": arm_position,
                     "session_id": session_id,
                     "turn_correlation_id": item["turn_correlation_ids"][arm][role],
                 }

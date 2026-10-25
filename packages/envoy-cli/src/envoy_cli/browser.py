@@ -508,16 +508,26 @@ def _load_visible_content(page) -> tuple[str, str]:
 
 
 def _visible_browser_allowed(override: bool | None) -> bool:
-    """Visible browser mode is opt-in: silent headless reading is the default."""
+    """Visible browser mode is opt-in, and only for the local user's terminal.
 
-    if override is not None:
-        return bool(override)
-    return os.environ.get("ENVOY_VISIBLE_BROWSER", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    Envoy normally runs behind an MCP host whose stdio is a pipe. Launching a
+    visible window there raises a login prompt on a screen nobody is watching
+    and hands the model a foreground action it must not take on its own, so
+    the opt-in only takes effect when a human is at an interactive terminal.
+    """
+
+    enabled = (
+        bool(override)
+        if override is not None
+        else os.environ.get("ENVOY_VISIBLE_BROWSER", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if not enabled:
+        return False
+    try:
+        return bool(sys.stdin.isatty() and sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        return False
 
 
 def _is_http_media_url(value: str) -> bool:
@@ -756,8 +766,9 @@ def read_page(
         if not _visible_browser_allowed(allow_visible):
             raise BrowserChallengeRequired(
                 "The page blocks isolated headless reading with login or "
-                "security verification; Envoy does not open a window unless "
-                "visible browser mode is enabled"
+                "security verification; Envoy does not open a window from a "
+                "non-interactive session. Run the read yourself in a terminal "
+                "with visible browser mode enabled, or import cookies."
             )
 
         context = launch(headless=False, proxy_server=challenge_proxy)

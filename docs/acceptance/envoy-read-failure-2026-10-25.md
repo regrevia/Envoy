@@ -133,3 +133,40 @@
 
 边界未变：抖音的登录/验证墙仍在，Envoy 不绕验证、不伪造覆盖；能取到的前提是
 用户给出可用的公开片源或授权 cookie。第 7 节列的两条仍开放。
+
+## 9. 复核（2026-10-26）：评测口径与首页数字
+
+用户要求核实首页评测数字与分类口径。逐条复核结果：
+
+1. **两臂上限不同已确认。** §7 记录的偏离在归档里成立：baseline 60 轮按计划 900 秒
+   （`/tmp/AB3/run-meta.json` 的 `cap_seconds: 900`），其中 41 轮 exit 124 撞上限；
+   envoy 60 轮按 2400 秒（`/tmp/AB6/plan-s*/run-log.jsonl` 每行
+   `turn_timeout_seconds: 2400`），0 轮撞上限。完成率差距混合了工具与时间两个
+   变量，不能当作能力差。逐轮记录并不完整：AB3 的 run-log 里 61 条 baseline、
+   67 条 envoy attempt 没有逐行 `turn_timeout_seconds`，另有 12 条 baseline 与
+   49 条 envoy 分别记为 900 / 2400 秒，所以只能按「计划 900 秒、envoy 实际按
+   2400 秒重跑」表述。
+2. **分类器不验证质量。** `delivered` 已更名为 `suspect_complete`（文本规则：
+   未超时、未报错、答案不短、未说读不到），新增 `verified` 只认人工评审
+   `answer_correct: true`；当前评审未填，两臂 `verified = 0`。按新口径重算：
+   baseline `suspect_complete` 13/60、`timed_out` 41/60；envoy 55/60、0/60。
+   归档 `summary.json` 是 92 轮（completed 19/56、23/36），首页原表
+   23%/58%、70%/37%、95/120 均无法从归档复现，已从 README 撤回。
+3. **来源计分过宽已修正。** 旧规则按 host 命中计分，同一公众号/同一平台多个
+   来源互相计分；现要求文章级 canonical URL 相等，host-only 提及只进
+   `legacy_host_mentions` 诊断字段。对旧 `grade.jsonl` 中 30 行答案文本逐字节
+   相同的记录：旧规则 12 处命中 → 文章级 8 处，其中 2 行只引用分享入口
+   （`iesdouyin.com/share/video/`）或接口地址（`aweme/detail/?aweme_id=`），
+   没有具体文章/视频 id，旧规则却各给两个来源计分。合并数据上 envoy 的 host
+   提及 25 处、文章级命中 6 处，高估是系统性的。facts 命中仍是 60% 词覆盖，
+   不是正确性。
+4. **计划顺序矛盾已修复。** `plan.json` 有 10 个包的 `first_arm` 与 `arms[0]`
+   相反，而 `run_ab.py` 原先只按 `arms` 位置循环，声明的交织首发没有生效。
+   现在按 `first_arm` 排序（`ordered_arms`），提供 `--check-plan` /
+   `--strict-plan` 并在记录里写 `arm_position`，`plan.json` 已对齐
+   （`order_problems: 0`）。已执行运行用的是单臂分片计划
+   （`/tmp/split/plan-s*-{arm}.json`），其结果不受影响，但该批数据同样没有
+   实现包内随机首发。
+
+口径变更与对既有结果的影响逐条记在
+`benchmarks/fixed-set-v1/AB-PROTOCOL.md` 的「变更（复核 2026-10-26）」。
