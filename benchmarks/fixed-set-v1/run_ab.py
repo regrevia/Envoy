@@ -460,7 +460,6 @@ def main(argv: list[str] | None = None) -> int:
                 if (item["package_id"], arm, role) in done:
                     print(f"{item['package_id']}/{arm}/{role}: already recorded, skipped")
                     continue
-                base_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, session_id))
                 if role == "initial":
                     # Claude Code refuses a session id that already exists in the
                     # profile ("Session ID ... is already in use") and it tracks

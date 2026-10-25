@@ -4,6 +4,17 @@
 
 ### 中文
 
+- 状态目录不可写（宿主沙箱、只读容器、CI 只挂只读 `$HOME`）不再让整次读取失败：
+  物料根按「显式配置 → `~/.envoy` → 系统临时目录」依次探测可写落点；跨进程读锁
+  拿不到时退化为不串行执行，并在 `coverage.modalities[*].details.state_lock` 标注
+  `skipped` 与回退原因，已经取到的证据照常返回。
+- 状态目录相关失败在 CLI 与 MCP 都改为可执行的说明：新增
+  `state_not_writable`（含 `ENVOY_LOCAL_DATA_DIR=<可写目录>` 的修复命令），不再只回
+  `invalid_request` 或让 MCP 客户端只能看到 `[object Object]`。
+- `envoy_read` 的可见文本补齐行动信息：`partial` 时直接列出 `unresolved` 与
+  `needs_user_action`（要转述的问题和两条带站点范围的命令），并让真实缺口排在
+  装饰性排除项之前；请求了 `include_visual` 而该来源没有交付任何帧/图时，明确写
+  「未交付画面，不要描述画面与镜头节奏」，避免模型拿封面、评论区或壳层文字补想象。
 - 隔离浏览器改为**默认全程静默**：登录浮层先被关闭再判定页面状态，浮层自身文案
   （如「验证码登录」）不再被误判成安全验证；确实需要人工验证时返回
   `challenge_required`，不再自动弹窗。只有显式设置 `ENVOY_VISIBLE_BROWSER=1`
@@ -122,6 +133,21 @@
 
 ### English
 
+- An unwritable state directory (host sandbox, read-only container, CI mounting
+  `$HOME` read-only) no longer fails the read: the material root probes the
+  configured path, then `~/.envoy`, then the system temp directory; an
+  unavailable cross-process lock degrades to an unserialized read and says so
+  in `coverage.modalities[*].details.state_lock`, while the evidence already
+  gathered is still returned.
+- State-directory failures now name the fix in both the CLI and MCP:
+  `state_not_writable` with an `ENVOY_LOCAL_DATA_DIR=<writable dir>` command,
+  instead of `invalid_request` or an MCP client seeing `[object Object]`.
+- The visible `envoy_read` text carries the action on a `partial` result: the
+  `unresolved` reasons and `needs_user_action` question plus its scoped commands,
+  with real gaps ahead of cosmetic exclusions. When `include_visual` was
+  requested and the source delivered no frames or images, the text says so
+  explicitly, so a cover still or a comment section is not rewritten into an
+  observed visual style.
 - Reading in the isolated browser is now **silent by default**: a dismissible
   login dialog is cleared before the page state is judged, so the dialog's own
   wording (for example a `验证码登录` tab) is no longer mistaken for a captcha.

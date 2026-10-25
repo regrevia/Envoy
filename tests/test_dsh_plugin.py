@@ -67,8 +67,11 @@ const mod = await import(pathToFileURL(process.argv[2]).href)
 def test_manifest_declares_bundle_and_display_resources():
     package = _load_json(PACKAGE_DIR / "package.json")
     assert package["name"] == "envoy-dsh"
-    assert package["private"] is True
+    # Publishable to npm: a bundle that can be installed from the marketplace
+    # must not carry `private: true`.
+    assert package.get("private") is not True
     assert package["type"] == "module"
+    assert package["repository"]["url"].endswith(".git")
     assert package["dsh"]["bundle"]["patch"] == "./cordis.patch.yml"
     assert package["exports"]["."] == "./index.js"
     assert package["exports"]["./locale/*.json"] == "./locale/*.json"

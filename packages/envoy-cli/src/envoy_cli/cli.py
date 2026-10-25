@@ -19,6 +19,7 @@ from envoy_core.schemas.read_v1 import (
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from . import cache as cache_storage
+from . import storage as state_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_status, render_hook_status
 from .cookies import cookies_status
@@ -594,7 +595,37 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             }],
         }, ensure_ascii=False))
         return 2
-    except (OSError, ValueError) as exc:
+    except state_storage.StateUnavailable as exc:
+        print(json.dumps({
+            "error": "state_not_writable",
+            "message": str(exc),
+            "action_required": True,
+            "actions": [{
+                "kind": "set_writable_state_dir",
+                "command": f"ENVOY_LOCAL_DATA_DIR={state_storage.fallback_root()} envoy read --request-json <file>",
+                "effect": "Keeps retained material in a writable directory instead of failing the read",
+            }],
+        }, ensure_ascii=False))
+        return 2
+    except OSError as exc:
+        if exc.errno in state_storage.UNUSABLE_ERRNOS:
+            print(json.dumps({
+                "error": "state_not_writable",
+                "message": (
+                    f"Envoy cannot write {exc.filename or state_storage.preferred_root()}: {exc.strerror or exc}. "
+                    "Point ENVOY_LOCAL_DATA_DIR at a writable directory, or allow writes to the default location."
+                ),
+                "action_required": True,
+                "actions": [{
+                    "kind": "set_writable_state_dir",
+                    "command": f"ENVOY_LOCAL_DATA_DIR={state_storage.fallback_root()} envoy read --request-json <file>",
+                    "effect": "Keeps retained material in a writable directory instead of failing the read",
+                }],
+            }, ensure_ascii=False))
+            return 2
+        print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+        return 1
+    except ValueError as exc:
         print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
         return 1
 
