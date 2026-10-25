@@ -1,7 +1,6 @@
 {
   "name": "envoy-dsh",
   "version": "0.1.8",
-  "private": true,
   "description": "DeepSeek Harness bundle for Envoy: multimodal link in, AI-ready material out - Markdown, wiki, knowledge base. The same Envoy skill also ships for Codex and Claude Code.",
   "type": "module",
   "license": "Apache-2.0",
@@ -23,11 +22,29 @@
     "NOTICE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.1.5"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "envoy",
+    "mcp",
+    "multimodal",
+    "markdown"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/regrevia/Envoy.git",
+    "directory": "integrations/dsh/envoy-dsh"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }
