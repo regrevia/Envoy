@@ -52,8 +52,14 @@ def load_gateway_token() -> str:
         else {}
     )
     token = env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY") or ""
-    if not token:
-        raise SystemExit("no gateway token available in the local Claude settings")
+    # A Claude Code login leaves an OAuth JWT here, and a JWT-shaped token is
+    # rejected by the run gateway with a 401 minutes into the first turn. Fail
+    # before spending that wall clock: the key belongs in AB_GATEWAY_TOKEN.
+    if not token.startswith("sk-"):
+        raise SystemExit(
+            "no gateway key in ~/.claude/settings.json (found an OAuth token); "
+            "export AB_GATEWAY_TOKEN=sk-... before running"
+        )
     return token
 
 
