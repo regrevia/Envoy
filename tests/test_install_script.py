@@ -114,6 +114,14 @@ def test_skill_target_unpacks_the_release_zip(tmp_path):
     assert (tmp_path / "skill" / "SKILL.md").is_file()
 
 
+def test_dev_install_script_is_valid_posix_sh():
+    script = SCRIPT.parents[1] / "scripts" / "dev_install.sh"
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+    result = subprocess.run(["sh", "-n", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_unknown_host_prints_usage(tmp_path):
     _, env = _stubs(tmp_path)
     result = _run(["nope"], env)

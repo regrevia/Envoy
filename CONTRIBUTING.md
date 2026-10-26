@@ -18,6 +18,22 @@ Users should use `main`. Contributors should branch from `dev` or work directly 
 
 The `main` branch must remain runnable by a new user with the documented Docker or Windows startup instructions.
 
+## Working On The CLI Or Skills
+
+One command from a fresh checkout, no extra steps:
+
+```bash
+scripts/dev_install.sh
+```
+
+It creates `.venv` with Python 3.11 through `uv`, then installs `packages/envoy-core`
+and `packages/envoy-cli` as editable packages. Installing the CLI alone fails:
+it imports `envoy-core`, which is not on PyPI, and the CLI needs Python >= 3.10
+(the macOS system `python3` is 3.9). `ENVOY_DEV_PYTHON` and `ENVOY_DEV_VENV`
+override the interpreter and target directory.
+
+`scripts/dev_test.sh` runs the lint, generated-artifact, and green-test baseline.
+
 ## Local Checks
 
 ```bash

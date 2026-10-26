@@ -59,6 +59,7 @@ jobs:
           python scripts/build_envoy_cli_wheel.py --output-dir dist --channel release
           python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --version "${RELEASE_TAG#v}" --json
           python scripts/check_release_manifest.py --emit dist/release-manifest.json
+          cp integrations/install.sh dist/install.sh
           python - <<'PY'
           import hashlib
           from pathlib import Path
