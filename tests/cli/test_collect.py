@@ -273,3 +273,49 @@ def test_lost_artifacts_are_rebuilt_from_the_material_store(tmp_path, monkeypatc
     assert out.is_file() and out.stat().st_size > 0
     assert "离线重建正文" in out.read_text(encoding="utf-8")
     assert second["excerpts_filled"] >= 1
+
+
+def test_one_site_pause_stops_the_rest_of_that_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("ENVOY_AUTH_DIR", str(tmp_path / "auth"))
+    monkeypatch.setattr(
+        collect_module.checkpoint, "discover_profile", _fake_discovery("douyin")
+    )
+
+    from envoy_core.schemas import ErrorCode, ReadRequest
+
+    from envoy_cli import reader
+
+    calls = []
+
+    def read(request):
+        calls.append(request.source.url)
+        if len(calls) == 1:
+            return reader._blocked(
+                ReadRequest(request_id="r1", source={"url": request.source.url}),
+                ErrorCode.AUTH_REQUIRED,
+                "This page needs a signed-in session",
+                action_required=True,
+            )
+        return _Response()
+
+    monkeypatch.setattr(collect_module, "read_public_page", read)
+    out = tmp_path / "notes.md"
+    first = collect_module.collect(PROFILE, out, limit=5)
+
+    assert first["read_now"] == 1, "the second post must not re-hit the same wall"
+    assert first["auth_pause"]["action_id"].startswith("auth-")
+    assert len(first["auth_pause"]["candidates"]) == 2
+    blocked = [item for item in first["pending"] if item["state"] == "blocked"]
+    assert len(blocked) == 2
+    assert any("auth_pause" in str(item["reason"]) for item in blocked)
+
+    second = collect_module.collect(PROFILE, out, limit=5)
+
+    assert second["read_now"] == 0, "a paused batch must not retry by itself"
+
+    third = collect_module.collect(PROFILE, out, limit=5, retry_reason="auth")
+
+    assert len(calls) == 3
+    assert third["read_now"] == 2
+    assert third["completed"] == 2

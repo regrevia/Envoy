@@ -7287,7 +7287,27 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         )
 
 
-def _login_user_action(source_url: str, kind: str = "login_or_verification") -> dict:
+def _persisted_auth_action(source_url: str, purpose: str) -> dict:
+    """Remember the pause so a later run can find it again."""
+
+    try:
+        from . import authflow
+
+        return authflow.create_auth_action(
+            str(source_url or ""),
+            purpose=purpose,
+            reason=f"{urlparse(str(source_url or '')).hostname or ''} needs a signed-in session",
+        )
+    except (OSError, ValueError):
+        return {}
+
+
+def _login_user_action(
+    source_url: str,
+    kind: str = "login_or_verification",
+    *,
+    purpose: str = "read_source",
+) -> dict:
     """The choices to hand a human when a page needs their identity.
 
     Envoy never opens a foreground window on its own: a model that copied a
@@ -7311,7 +7331,8 @@ def _login_user_action(source_url: str, kind: str = "login_or_verification") -> 
             "them itself."
         )
 
-    return {
+    action = _persisted_auth_action(source_url, purpose)
+    payload = {
         "kind": kind,
         "host": host,
         "question": question,
@@ -7347,6 +7368,14 @@ def _login_user_action(source_url: str, kind: str = "login_or_verification") -> 
             },
         ],
     }
+    if action.get("action_id"):
+        action_id = str(action["action_id"])
+        payload["action_id"] = action_id
+        payload["resume_token"] = action.get("resume_token")
+        payload["status"] = action.get("status")
+        payload["open_command"] = f"envoy auth open --action-id {action_id}"
+        payload["verify_command"] = f"envoy auth verify --action-id {action_id}"
+    return payload
 
 
 def _transcript_confidence(
@@ -7453,8 +7482,20 @@ def _blocked(
     details: dict | None = None,
 ) -> ReadResponse:
     payload = dict(details or {})
+    needs: list[Need] = []
     if action_required and code in {ErrorCode.CHALLENGE_REQUIRED, ErrorCode.AUTH_REQUIRED}:
-        payload.setdefault("needs_user_action", _login_user_action(str(request.source.url)))
+        action = _login_user_action(str(request.source.url))
+        payload.setdefault("needs_user_action", action)
+        if action.get("action_id"):
+            needs.append(
+                Need(
+                    action_id=str(action["action_id"]),
+                    type="authenticate",
+                    purpose="read_source",
+                    reason=message,
+                    resume_token=action.get("resume_token"),
+                )
+            )
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
@@ -7473,4 +7514,5 @@ def _blocked(
                 details=payload,
             )
         ],
+        needs=needs,
     )

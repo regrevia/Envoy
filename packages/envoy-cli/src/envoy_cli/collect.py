@@ -11,6 +11,7 @@ invents a summary, a timestamp, or a quote.
 from __future__ import annotations
 
 import hashlib
+from urllib.parse import urlparse
 import json
 import os
 from datetime import datetime, timezone
@@ -107,6 +108,46 @@ def _reason(response) -> str:
     message = str(data.get("message") or "").strip()
     code = str(data.get("code") or "").strip()
     return f"{code}: {message}" if message else code
+
+
+def _host_of(url: str) -> str:
+    return (urlparse(str(url or "")).hostname or "").lower()
+
+
+def _should_retry(
+    state: str,
+    reason: str,
+    retry_blocked: bool,
+    retry_reason: str | None,
+) -> bool:
+    if state not in _UNFINISHED_STATES:
+        return True
+    wanted = str(retry_reason or "").strip().lower()
+    if wanted:
+        return wanted in str(reason or "").lower()
+    return retry_blocked
+
+
+def _auth_pause_of(response, candidate: str, source_url: str) -> dict | None:
+    """One site needs a person once, not once per post."""
+
+    if not getattr(response, "errors", None):
+        return None
+    error = response.errors[0].model_dump(mode="json")
+    code = str(error.get("code") or "")
+    if code not in {"auth_required", "challenge_required"}:
+        return None
+    details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    action = details.get("needs_user_action")
+    action = action if isinstance(action, dict) else {}
+    return {
+        "host": _host_of(source_url),
+        "reason": code,
+        "action_id": action.get("action_id"),
+        "resume_token": action.get("resume_token"),
+        "open_command": action.get("open_command"),
+        "candidates": [candidate],
+    }
 
 
 def _open_collection(
@@ -362,6 +403,7 @@ def collect(
     run_id: str | None = None,
     max_work_seconds: int = 120,
     retry_blocked: bool = False,
+    retry_reason: str | None = None,
     budget=None,
 ) -> dict:
     """Enumerate a profile, read the selected posts, and write the pack."""
@@ -410,6 +452,7 @@ def collect(
     )
     read_now = 0
     skipped = 0
+    auth_pause: dict | None = None
     for candidate in selected:
         item = candidates.get(candidate) or {}
         record = sources.get(candidate) or {}
@@ -417,7 +460,25 @@ def collect(
         if state == "completed" and (record.get("excerpt") or record.get("material_id")):
             skipped += 1
             continue
-        if state in _UNFINISHED_STATES and not retry_blocked:
+        if state in _UNFINISHED_STATES and not _should_retry(
+            state, str(record.get("reason") or ""), retry_blocked, retry_reason
+        ):
+            skipped += 1
+            continue
+        if (
+            auth_pause
+            and _host_of(item.get("source_url")) == auth_pause["host"]
+            and str(retry_reason or "").lower() not in {"auth", "challenge", "auth_required", "challenge_required"}
+        ):
+            manifest = _set_state(manifest, candidate, "blocked")
+            sources[candidate] = {
+                **record,
+                "title": record.get("title") or item.get("title") or "",
+                "url": item.get("source_url"),
+                "state": "blocked",
+                "reason": f"auth_pause: waiting for {auth_pause.get('action_id') or auth_pause['host']}",
+            }
+            auth_pause["candidates"].append(candidate)
             skipped += 1
             continue
         manifest = _set_state(manifest, candidate, "processing")
@@ -447,6 +508,9 @@ def collect(
             final_state = "completed"
         elif result == "blocked":
             final_state = "blocked"
+            pause = _auth_pause_of(response, candidate, str(item.get("source_url") or ""))
+            if pause:
+                auth_pause = pause
         elif result in {"partial", "needs_host"}:
             final_state = "partial"
         else:
@@ -498,5 +562,6 @@ def collect(
         "read_now": read_now,
         "skipped": skipped,
         "pending": pending,
+        "auth_pause": auth_pause,
         "manifest_revision": manifest["manifest_revision"],
     }

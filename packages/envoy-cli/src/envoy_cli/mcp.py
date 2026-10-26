@@ -633,6 +633,13 @@ def _action_text(action: dict) -> str:
             label = f"{label} -> {command}" if label else command
         if label:
             parts.append(label)
+    action_id = str(action.get("action_id") or "").strip()
+    if action_id:
+        parts.append(
+            f"Pause id {action_id}, resumable: the user runs "
+            f"`envoy auth open --action-id {action_id}` once in their terminal; "
+            f"`envoy auth verify --action-id {action_id}` re-checks without a window."
+        )
     return " ".join(parts)
 
 
