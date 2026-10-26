@@ -1698,7 +1698,7 @@ def _attach_browser_video_evidence(
                 downloaded = download_video_for_frames(
                     selected_url,
                     temporary_dir,
-                    max_download_bytes=request.budget.max_download_bytes,
+                    max_download_bytes=download_budget,
                     max_work_seconds=_remaining_work_seconds(request),
                 )
                 media_reused = False
