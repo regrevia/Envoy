@@ -1305,9 +1305,12 @@ def test_mcp_bridge_reuses_one_session_identity_per_process():
     )
     assert explicit["session_id"] == "mine"
 
-    # Replay is defined by the difference between two sessions; never invented.
+    # Replay targets a fresh session. The host session id is not the id Envoy
+    # minted for the retained material, so replay uses the bridge process's own
+    # id and the source session comes from the retained record.
     replay = mcp._server_arguments("envoy_replay", {"material_id": "mat-x", "source_revision": "r"})
-    assert replay.get("session_id") is None
+    assert replay["session_id"].startswith("mcp-")
+    assert "source_session_id" not in replay
 
 
 class _LocalReadStub:

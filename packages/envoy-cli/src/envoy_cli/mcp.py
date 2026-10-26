@@ -388,15 +388,18 @@ TOOLS = [
             "fields to send, so re-read with them instead of opening the page in a "
             "separate browser view. retention {raw_media:'persistent'} keeps the "
             "source file for later frame extraction. The returned text carries "
-            "`material_id` and `source_revision`: keep them, because the full blocks "
-            "and resource descriptors live only in structuredContent, which some "
-            "hosts do not forward. Once a source has been read, continue with "
+            "`material_id`, `source_revision`, the block text, and the resource ids: "
+            "keep them. Both the content text and structuredContent carry the same "
+            "payload, because hosts disagree about which one reaches the model (DSH "
+            "reads only content text; Codex CLI and Claude Code read only "
+            "structuredContent), so neither field is a receipt-only view. Once a "
+            "source has been read, continue with "
             "envoy_search or envoy_expand on that material_id instead of reading "
             "the URL again; a repeated read can hit an auth wall or challenge, and "
             "Envoy then serves the material it already retained rather than "
-            "re-fetching. Resource descriptors are Envoy artifacts delivered in "
-            "structuredContent; this server exposes no MCP resources capability, so "
-            "listing MCP resources is always empty by design. budget is accepted "
+            "re-fetching. Resource descriptors are Envoy artifacts delivered in that "
+            "payload; this server exposes no MCP resources capability, so listing MCP "
+            "resources is always empty by design. budget is accepted "
             "but not declared: {max_work_seconds, max_download_bytes, "
             "max_response_chars}; refresh true re-reads instead of replaying "
             "retained material."
@@ -706,79 +709,311 @@ def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
         )
     if not modern:
         return json.dumps(payload, ensure_ascii=False)
+    tool = str(payload.get("tool") or "envoy_read")
+    if tool == "envoy_discover":
+        return _discover_content_text(payload)
+    if tool == "envoy_collection_checkpoint":
+        return _collection_content_text(payload)
+    return _material_content_text(payload, tool, request)
+
+
+def _content_char_budget(request) -> int:
+    """Return the character budget this tool call's own content may use.
+
+    Modern hosts may drop ``structuredContent`` entirely, so the ``content``
+    text has to carry the evidence. The budget keeps that text from growing
+    past what the caller asked for.
+    """
+    for attr in ("max_chars", "max_response_chars"):
+        value = getattr(request, attr, None)
+        if isinstance(value, int) and value > 0:
+            return max(1_200, min(value, 12_000))
+    return 8_000
+
+
+def _block_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, dict):
+        return str(content.get("text") or "")
+    return ""
+
+
+def _locator_note(block: dict) -> str:
+    locator = block.get("locator")
+    if not isinstance(locator, dict):
+        return ""
+    start = locator.get("start_seconds")
+    end = locator.get("end_seconds")
+    if start is not None and end is not None:
+        return f" t={float(start):.1f}-{float(end):.1f}s"
+    page = locator.get("page_number")
+    if page is not None:
+        return f" p.{page}"
+    url = str(locator.get("source_url") or "")
+    block_id = str(locator.get("block_id") or "")
+    if url:
+        return f" {url[:70]}#{block_id}" if block_id else f" {url[:70]}"
+    return ""
+
+
+def _block_line(index: int, total: int, block: dict) -> str:
+    block_id = str(block.get("id") or "")
+    kind = str(block.get("kind") or "block")
+    return f"[{index}/{total}] {block_id} · {kind}{_locator_note(block)}"
+
+
+def _fit_content(lines: list[str], budget: int) -> list[str]:
+    out: list[str] = []
+    used = 0
+    for line in lines:
+        size = len(line) + 1
+        if used + size > budget:
+            if not out:
+                out.append(line[:budget] + "…")
+            out.append(f"… content truncated at {budget} characters")
+            return out
+        out.append(line)
+        used += size
+    return out
+
+
+def _material_header(payload: dict, tool: str) -> str:
     result = str(payload.get("result") or "unknown")
-    blocks = payload.get("blocks") if isinstance(payload.get("blocks"), list) else []
-    resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
-    text_chars = sum(
-        len(str(block.get("content", {}).get("text") or ""))
-        for block in blocks
-        if isinstance(block, dict) and isinstance(block.get("content"), dict)
-    )
-    handle = _material_handle(payload)
-    if result == "blocked":
-        errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
-        first = errors[0] if errors and isinstance(errors[0], dict) else {}
-        code = first.get("code", "unknown")
-        message = str(first.get("message") or "").strip()
-        action = _payload_needs_user_action(payload)
-        action_note = f" Requires user action: {_action_text(action)}." if action else ""
-        unresolved = _payload_unresolved(payload)
-        gap_note = f" Unresolved: {'; '.join(unresolved)}." if unresolved else ""
-        if handle:
-            return (
-                f"Envoy read blocked ({code}): {message or 'no detail'}.{action_note}{gap_note} "
-                "Re-read is blocked; call envoy_replay with that material_id (or "
-                "envoy_expand for more of it) instead of reading the URL again."
-            )
-        if message:
-            return f"Envoy read blocked ({code}): {message}{action_note}{gap_note}"
-        return (
-            f"Envoy read blocked ({code}).{action_note}{gap_note} "
-            "See structuredContent.errors for details."
+    parts = [f"Envoy {tool.removeprefix('envoy_')} {result}"]
+    if payload.get("material_id"):
+        parts.append(f"material_id={payload['material_id']}")
+    revision = str(payload.get("source_revision") or "")
+    if revision:
+        parts.append(f"source_revision={revision[:12]}")
+    if payload.get("session_id"):
+        parts.append(f"session_id={payload['session_id']}")
+    return " · ".join(parts)
+
+
+def _needs_lines(
+    needs: list[dict],
+    resources: list[dict],
+    material_id: str,
+    session_id: str,
+) -> list[str]:
+    action_types = {str(item.get("type")) for item in needs if item.get("type")}
+    lines = [""]
+    if "inspect_video" in action_types:
+        lines.append(
+            "inspect the delivered video with native video input; this is a handoff, "
+            "not a terminal state"
         )
-    if result == "needs_host":
-        needs = payload.get("needs") if isinstance(payload.get("needs"), list) else []
-        action_types = {
-            str(item.get("type"))
-            for item in needs
-            if isinstance(item, dict) and item.get("type")
-        }
-        if "inspect_video" in action_types:
-            return "Envoy read needs_host: inspect the delivered video with native video input; see structuredContent.needs and resources."
-        if "inspect_visual" in action_types:
-            return (
-                "Envoy read needs_host is a handoff, not a terminal state: inspect "
-                "each listed resource before its lease expires, then call "
-                "envoy_observe once per inspected resource with its matching "
-                "material_id, resource_id, source_block_id, and original session_id. "
-                "source URL may be omitted when the material is retained because "
-                "Envoy derives it from the resource binding. Continue "
-                "answering from the returned observations and "
-                "ASR/chapter evidence; do not repeat envoy_read just to clear the "
-                "original needs_host status. Report uninspected frames and do not "
-                "imply full-video coverage."
+    if "inspect_visual" in action_types or "inspect_video" not in action_types:
+        lines.append(
+            "inspect each listed resource before its lease expires; this is a handoff, "
+            "not a terminal state"
+        )
+    lines.append(
+        "call envoy_observe once per inspected resource with its matching material_id, "
+        "resource_id, source_block_id and original session_id"
+    )
+    resource_ids: list[str] = []
+    source_block_ids: list[str] = []
+    for need in needs[:6]:
+        kind = str(need.get("type") or "host_action")
+        purpose = str(need.get("purpose") or "")
+        reason = str(need.get("reason") or "")
+        lines.append(f"- need {kind}" + (f" · {purpose}" if purpose else ""))
+        if reason:
+            lines.append(f"  why: {reason}")
+        for resource_id in need.get("resource_ids") or []:
+            if str(resource_id) not in resource_ids:
+                resource_ids.append(str(resource_id))
+        for block_id in need.get("source_block_ids") or []:
+            if str(block_id) not in source_block_ids:
+                source_block_ids.append(str(block_id))
+    for resource in resources[:8]:
+        note = f"- resource {resource.get('resource_id')} · {resource.get('mime_type')}"
+        if resource.get("expires_at"):
+            note += f" · expires {resource.get('expires_at')}"
+        lines.append(note)
+    if not resources:
+        for resource_id in resource_ids[:8]:
+            lines.append(f"- resource {resource_id}")
+    if resource_ids:
+        lines.append("")
+        for index, resource_id in enumerate(resource_ids[:8]):
+            block_id = source_block_ids[index] if index < len(source_block_ids) else ""
+            lines.append(
+                f'envoy_observe material_id={material_id} resource_id={resource_id} '
+                f'source_block_id={block_id} session_id={session_id} '
+                'observation="<what you saw>"'
             )
-        return "Envoy read needs_host: perform the requested host action in structuredContent.needs."
-    origin = (
-        " Served from the material retained in this session; the source was not re-fetched."
-        if payload.get("served_from_retained_material")
-        else ""
+    lines.append(
+        "source URL may be omitted when the material is retained because Envoy derives "
+        "and verifies it from the delivered resource"
     )
-    next_step = (
-        " Continue with envoy_search or envoy_expand on that material_id; do not re-read the URL."
-        if handle
-        else ""
+    lines.append(
+        "then answer from those observations; do not repeat envoy_read merely to clear "
+        "the original needs_host status"
     )
+    lines.append("report uninspected frames and do not imply full-video coverage")
+    return lines
+
+
+def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: int) -> list[str]:
+    lines: list[str] = []
+    for error in errors[:2]:
+        lines.append(f"error {error.get('code')}: {error.get('message')}")
+        details = error.get("details")
+        if isinstance(details, dict):
+            ranges = details.get("delivered_ranges")
+            if isinstance(ranges, list) and ranges:
+                rendered = ", ".join(f"{item[0]}-{item[1]}" for item in ranges[:8] if len(item) == 2)
+                lines.append(f"delivered ranges: {rendered}")
+            if details.get("text_length"):
+                lines.append(f"material length: {details['text_length']} chars")
     action = _payload_needs_user_action(payload)
-    action_note = f" Requires user action: {_action_text(action)}." if action else ""
-    unresolved = _payload_unresolved(payload)
-    gap_note = f" Unresolved: {'; '.join(unresolved)}." if unresolved else ""
-    evidence_note = _evidence_text(payload, request)
-    return (
-        f"Envoy read {result}: {text_chars} text characters, "
-        f"{len(blocks)} blocks, {len(resources)} resources.{origin}{action_note}{gap_note}"
-        f"{evidence_note}{handle}{next_step}"
-    )
+    if action:
+        lines.append(f"Requires user action: {_action_text(action)}")
+    for note in _payload_unresolved(payload)[:4]:
+        lines.append(f"unresolved: {note}")
+    if material_id:
+        offset = "<chars already delivered>"
+        for error in errors[:1]:
+            details = error.get("details")
+            if isinstance(details, dict):
+                delivered = details.get("delivered_ranges")
+                if isinstance(delivered, list) and delivered:
+                    last = delivered[-1]
+                    if isinstance(last, list) and len(last) == 2:
+                        offset = str(last[1])
+        lines.append("")
+        lines.append(
+            f"next: envoy_expand material_id={material_id} offset={offset} "
+            f"max_chars={budget}"
+        )
+        lines.append(
+            "re-reading the URL is blocked; call envoy_replay with this material_id "
+            "in a new session, or envoy_expand for more of the retained material"
+        )
+    return lines
+
+
+def _empty_lines(payload: dict) -> list[str]:
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    text = modalities.get("text") if isinstance(modalities.get("text"), dict) else {}
+    details = text.get("details") if isinstance(text.get("details"), dict) else {}
+    if "matches_found" in details:
+        found = int(details.get("matches_found") or 0)
+        if not found:
+            lines = ["0 hits: none of the query terms occur in this material"]
+            terms = details.get("query_terms")
+            if isinstance(terms, list) and terms:
+                lines.append("query terms: " + ", ".join(str(term) for term in terms))
+            lines.append(
+                "next: envoy_search with different terms, or envoy_expand for a raw range"
+            )
+            return lines
+        lines = [
+            f"0 new hits; {found} lexical match(es) in this material, "
+            f"{details.get('already_returned_matches', 0)} already delivered earlier",
+        ]
+        terms = details.get("query_terms")
+        if isinstance(terms, list) and terms:
+            lines.append("query terms: " + ", ".join(str(term) for term in terms))
+        lines.append("next: envoy_search with different query terms, or envoy_expand for a raw range")
+        return lines
+    return ["no content returned for this request"]
+
+
+def _material_content_text(payload: dict, tool: str, request=None) -> str:
+    result = str(payload.get("result") or "unknown")
+    blocks = [block for block in payload.get("blocks") or [] if isinstance(block, dict)]
+    resources = [item for item in payload.get("resources") or [] if isinstance(item, dict)]
+    needs = [item for item in payload.get("needs") or [] if isinstance(item, dict)]
+    errors = [item for item in payload.get("errors") or [] if isinstance(item, dict)]
+    material_id = str(payload.get("material_id") or "")
+    session_id = str(payload.get("session_id") or "")
+    budget = _content_char_budget(request)
+
+    head = _material_header(payload, tool)
+    if not needs and result != "blocked":
+        text_chars = sum(len(_block_text(block)) for block in blocks)
+        head += f" · {len(blocks)} blocks / {text_chars} chars"
+        if resources:
+            head += f" / {len(resources)} resources"
+    lines = [head]
+
+    if needs:
+        lines.extend(_needs_lines(needs, resources, material_id, session_id))
+        return "\n".join(_fit_content(lines, budget))
+
+    if result == "blocked":
+        lines.extend(_blocked_lines(payload, errors, material_id, budget))
+        return "\n".join(_fit_content(lines, budget))
+
+    if result == "empty":
+        lines.extend(_empty_lines(payload))
+
+    for index, block in enumerate(blocks, 1):
+        lines.append("")
+        lines.append(_block_line(index, len(blocks), block))
+        text = _block_text(block)
+        lines.append(text if text else "(no text)")
+
+    tail: list[str] = []
+    for note in _payload_unresolved(payload)[:4]:
+        tail.append(f"Unresolved: {note}")
+    visual_note = _evidence_text(payload, request).strip()
+    if visual_note:
+        tail.append(visual_note)
+    if payload.get("served_from_retained_material"):
+        tail.append("served from retained material; source not re-fetched")
+    action = _payload_needs_user_action(payload)
+    if action:
+        tail.append(f"Requires user action: {_action_text(action)}")
+    if resources:
+        ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
+        tail.append(f"resources: {ids}")
+    if material_id:
+        delivered = sum(len(_block_text(block)) for block in blocks)
+        tail.append(
+            f"next: envoy_expand material_id={material_id} offset={delivered} "
+            f"max_chars={budget} (or envoy_search material_id=… query=…); "
+            "do not re-read the URL"
+        )
+    if tail:
+        lines.append("")
+        lines.extend(tail)
+    return "\n".join(_fit_content(lines, budget))
+
+
+def _discover_content_text(payload: dict) -> str:
+    candidates = [item for item in payload.get("candidates") or [] if isinstance(item, dict)]
+    lines = [
+        f"Envoy discover: {len(candidates)} candidate(s); has_more={payload.get('has_more', 'unknown')}",
+        "Titles and metadata are selection hints only; read a URL for evidence.",
+    ]
+    for item in candidates[:20]:
+        title = item.get("title") or "(untitled)"
+        url = item.get("url") or item.get("source_url") or ""
+        lines.append(f"- {title} — {url}")
+    return "\n".join(lines)
+
+
+def _collection_content_text(payload: dict) -> str:
+    runs = [item for item in payload.get("runs") or [] if isinstance(item, dict)]
+    action = str(payload.get("action") or "updated")
+    lines = [f"Envoy collection checkpoint {action} · {len(runs)} run(s)"]
+    for run in runs[:20]:
+        parts = [
+            str(run.get("collection_id") or "?"),
+            str(run.get("platform") or "?"),
+            f"{run.get('completed', 0)}/{run.get('selected', 0)} done",
+        ]
+        if run.get("needs_login"):
+            parts.append("needs login")
+        if run.get("failed"):
+            parts.append(f"{run.get('failed')} failed")
+        lines.append("- " + " · ".join(parts))
+    return "\n".join(lines)
 
 
 def _read_payload(response, compact: bool) -> dict:
@@ -1167,6 +1402,18 @@ def _server_arguments(name: str, arguments: dict) -> dict:
         if "session_id" in fields and name != "envoy_replay":
             if prepared.get("session_id") is None:
                 prepared["session_id"] = _PROCESS_SESSION_ID
+        if name == "envoy_replay":
+            # Replay targets a fresh session. The host session id the model holds
+            # is not the id Envoy minted for the old material, so a model-supplied
+            # value there is unusable: default to this bridge process and let the
+            # reader derive the source session from the retained material.
+            if not prepared.get("session_id"):
+                prepared["session_id"] = _PROCESS_SESSION_ID
+            # An omitted source session means "the retained material's own
+            # session"; the reader derives it. An explicit value is still
+            # validated so a wrong guess fails loudly with a next action.
+            if not prepared.get("source_session_id"):
+                prepared.pop("source_session_id", None)
     if name in {"envoy_read", "envoy_read_local_video"}:
         flattened = {key: prepared.pop(key) for key in _RANGE_FIELDS if key in prepared}
         scope = prepared.get("scope")

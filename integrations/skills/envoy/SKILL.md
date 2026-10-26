@@ -557,10 +557,10 @@ and makes no network request. Pass `refresh: true` only for a deliberate new
 read. A refresh that runs into sign-in, a challenge, or a source error falls
 back to the retained material with a `refetch_error` notice instead of
 returning `blocked`. Every read result text carries `material_id` and
-`source_revision` even when the host drops `structuredContent`, so continue
+`source_revision` so continue
 with `envoy_search` / `envoy_expand` rather than reading the URL again. This
 server declares no MCP resources capability, so listing MCP resources is empty
-by design; material descriptors only travel in `structuredContent`.
+by design; both `content` and `structuredContent` carry the block text, search hits, and resource ids, because hosts disagree about which one reaches the model (DSH reads only `content`, Codex CLI and Claude Code read only `structuredContent`), so neither field is a receipt-only view.
 
 When a new host session has a retained `material_id` and `source_revision`, use
 `envoy replay --request-json -` (or `envoy_replay` when the active toolset

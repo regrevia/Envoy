@@ -2607,9 +2607,18 @@ def replay_material(request: MaterialReplayRequest) -> ReadResponse:
         raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
     if str(stored.get("source_revision") or "") != request.source_revision:
         raise PublicPageError("Material source revision does not match", ErrorCode.INVALID_REQUEST)
-    if stored.get("session_id") != request.source_session_id:
-        raise PublicPageError("Material source session does not match", ErrorCode.INVALID_REQUEST)
-    if request.session_id == request.source_session_id:
+    stored_session = str(stored.get("session_id") or "")
+    # A model only holds its own host session id, never the id Envoy minted for
+    # the old material, so an omitted source_session_id means "the material's
+    # own session" rather than a mismatch.
+    expected_source = request.source_session_id or stored_session
+    if stored_session != expected_source:
+        raise PublicPageError(
+            "Material source session does not match",
+            ErrorCode.INVALID_REQUEST,
+            details={"next_action": "omit source_session_id so Envoy uses the retained material's session"},
+        )
+    if request.session_id == expected_source:
         raise PublicPageError(
             "Replay requires a new session_id distinct from source_session_id",
             ErrorCode.INVALID_REQUEST,
@@ -3221,12 +3230,28 @@ def _expand_blocked(
     stored: dict | None = None,
 ) -> ReadResponse:
     source_unresolved = _source_coverage_unresolved(stored or {})
+    material = stored or {}
+    text_length = len(str(material.get("text") or ""))
+    state = material.get("budget_state")
+    details = {
+        "text_length": text_length,
+        "delivered_ranges": _material_returned_ranges(
+            state if isinstance(state, dict) else {},
+            text_length,
+        ),
+    }
     return ReadResponse(
         request_id=request.request_id,
         material_id=request.material_id,
         execution_state=ExecutionState.COMPLETED,
         result=ReadResult.BLOCKED,
-        errors=[ReadError(code=ErrorCode.BUDGET_EXCEEDED, message=message)],
+        errors=[
+            ReadError(
+                code=ErrorCode.BUDGET_EXCEEDED,
+                message=message,
+                details=details,
+            )
+        ],
         coverage=Coverage(unresolved=source_unresolved),
     )
 
@@ -3273,19 +3298,36 @@ def _material_budget_state(stored: dict, request: ExpandRequest) -> dict:
     }
 
 
-def _material_returned_ranges(state: dict, text_length: int) -> list[list[int]]:
+def _valid_range_pairs(values, text_length: int) -> list[list[int]]:
     ranges = []
-    for field in ("returned_ranges", "search_returned_ranges"):
-        for item in state.get(field) or []:
-            if not isinstance(item, list) or len(item) != 2:
-                continue
-            try:
-                start, end = int(item[0]), int(item[1])
-            except (TypeError, ValueError):
-                continue
-            if 0 <= start < end <= text_length:
-                ranges.append([start, end])
-    return _merge_ranges(ranges)
+    for item in values or []:
+        if not isinstance(item, list) or len(item) != 2:
+            continue
+        try:
+            start, end = int(item[0]), int(item[1])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= start < end <= text_length:
+            ranges.append([start, end])
+    return ranges
+
+
+def _material_returned_ranges(state: dict, text_length: int) -> list[list[int]]:
+    """Ranges a read or expand actually delivered.
+
+    Search hits are tracked separately: a search only ships a short window
+    around each hit, so treating it as full delivery would block a later
+    expand of the same region.
+    """
+    return _merge_ranges(_valid_range_pairs(state.get("returned_ranges"), text_length))
+
+
+def _material_delivered_ranges(state: dict, text_length: int) -> list[list[int]]:
+    """Everything already sent for this material, read text and search hits alike."""
+    return _merge_ranges(
+        _material_returned_ranges(state, text_length)
+        + _valid_range_pairs(state.get("search_returned_ranges"), text_length)
+    )
 
 
 def _record_material_range(stored: dict, state: dict, start: int, end: int, content: str) -> None:
@@ -3555,7 +3597,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
     total_text = str(stored.get("text") or "")
     source_unresolved = _source_coverage_unresolved(stored)
     state = stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {}
-    returned_ranges = _material_returned_ranges(state, len(total_text))
+    returned_ranges = _material_delivered_ranges(state, len(total_text))
     terms = _material_search_terms(request.query)
     candidates = []
     lexical_matches = 0
@@ -3820,7 +3862,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
     state["returned_chars"] = returned_chars + used_chars
     state["returned_tokens"] = returned_tokens + used_tokens
     search_ranges = returned_ranges.copy()
-    newly_covered_ranges = []
+    newly_covered_ranges: list[list[int]] = []
     for block in blocks:
         uncovered = _unseen_ranges(
             block.order,
@@ -3829,8 +3871,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         )
         newly_covered_ranges.extend(uncovered)
         search_ranges.extend([[start, end] for start, end in uncovered])
-    state["returned_ranges"] = _merge_ranges(search_ranges)
-    state["search_returned_ranges"] = state["returned_ranges"]
+    state["search_returned_ranges"] = _merge_ranges(search_ranges)
     stored["budget_state"] = state
     try:
         _store_material(material_id, stored)
