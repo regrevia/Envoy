@@ -787,6 +787,37 @@ def test_json_error_page_is_reported_as_blocked_not_as_content(monkeypatch):
     )
 
 
+def test_json_error_page_stays_a_challenge_when_the_browser_cannot_start(monkeypatch):
+    source_url = "https://www.zhihu.com/question/19550225"
+    payload = '{"error":{"message":"您当前请求存在异常，暂时限制本次访问。"}}'
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args, **_kwargs: (source_url, f"<html><body><pre>{payload}</pre></body></html>"),
+    )
+    monkeypatch.setattr(
+        reader,
+        "_read_with_isolated_browser",
+        lambda *_args, **_kwargs: (
+            None,
+            browser.BrowserRuntimeUnavailable(
+                "Could not start the headless Envoy browser (Error)"
+            ),
+        ),
+    )
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "json-error-envelope-no-browser",
+        "source": {"url": source_url},
+    }))
+
+    assert response.result is ReadResult.BLOCKED
+    assert response.errors[0].code.value == "challenge_required"
+    assert response.errors[0].action_required is True
+    assert "Could not start the headless Envoy browser" in response.errors[0].message
+
+
 def test_browser_navigation_timeout_is_reported_as_network_error(monkeypatch):
     monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
