@@ -1,0 +1,71 @@
+"""A missing Chromium binary is provisioned on first use.
+
+A runtime installed by the DSH bundle has Playwright but no browser binary.
+Without this, the first page that needs a browser ends in "run envoy browser
+setup" — a shell command a plugin user has no terminal for. The install is
+bounded: one attempt per process, never under pytest, and skippable with
+ENVOY_DISABLE_AUTO_BROWSER_SETUP=1.
+"""
+
+from __future__ import annotations
+
+import sys
+
+from envoy_cli import browser
+
+
+class _FakeResult:
+    returncode = 0
+
+
+def test_installs_when_binary_missing(monkeypatch):
+    calls: list[list[str]] = []
+    state = {"ready": False}
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: state["ready"])
+    def _install(argv, **kw):
+        calls.append(argv)
+        state["ready"] = True
+        return _FakeResult()
+
+    monkeypatch.setattr(browser.subprocess, "run", _install)
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.delenv("ENVOY_DISABLE_AUTO_BROWSER_SETUP", raising=False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    assert browser.ensure_browser_ready() is True
+    assert calls == [[sys.executable, "-m", "playwright", "install", "chromium"]]
+
+
+def test_installs_once_per_process(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: False)
+    monkeypatch.setattr(browser.subprocess, "run", lambda argv, **kw: calls.append(argv) or _FakeResult())
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    browser.ensure_browser_ready()
+    browser.ensure_browser_ready()
+    assert len(calls) == 1
+
+
+def test_disabled_by_env(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: False)
+    monkeypatch.setattr(browser.subprocess, "run", lambda argv, **kw: calls.append(argv) or _FakeResult())
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.setenv("ENVOY_DISABLE_AUTO_BROWSER_SETUP", "1")
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    assert browser.ensure_browser_ready() is False
+    assert calls == []
+
+
+def test_present_binary_is_not_installed(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: True)
+    monkeypatch.setattr(browser.subprocess, "run", lambda argv, **kw: calls.append(argv) or _FakeResult())
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    assert browser.ensure_browser_ready() is True
+    assert calls == []
