@@ -224,7 +224,9 @@ def _run_whisper_transcription(audio_path: str):
     model_name = MEDIA_WHISPER_MODEL
     model = _WHISPER_MODELS.get(model_name)
     if model is None:
-        model = whisper.load_model(model_name)
+        # Model weights are cached under $XDG_CACHE_HOME; the containers point that at the
+        # runtime volume so a recreated container does not re-download ~0.5 GB.
+        model = whisper.load_model(model_name, download_root=os.getenv("WHISPER_DOWNLOAD_ROOT") or None)
         _WHISPER_MODELS[model_name] = model
     result = model.transcribe(
         audio_path,
@@ -237,6 +239,16 @@ def _run_whisper_transcription(audio_path: str):
     return {"status": "success", "text": result.get("text", ""), "segments": result.get("segments", []), "error": None}
 
 
+def _can_fork_worker_process() -> bool:
+    """Whether this process may fork a media worker child.
+
+    Celery prefork pool children are daemonic, and Python refuses to start a
+    child from a daemonic process; media work then runs inline in the task
+    process instead of failing the whole task.
+    """
+    return not multiprocessing.current_process().daemon
+
+
 def _transcribe_audio_worker(audio_path: str, result_queue):
     try:
         result_queue.put(_run_whisper_transcription(audio_path))
@@ -245,6 +257,11 @@ def _transcribe_audio_worker(audio_path: str, result_queue):
 
 
 def transcribe_audio(audio_path: str, should_cancel: Callable[[], bool] | None = None):
+    if not _can_fork_worker_process():
+        try:
+            return _run_whisper_transcription(audio_path)
+        except Exception as exc:
+            return {"status": "failed", "text": "", "segments": [], "error": str(exc)}
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(target=_transcribe_audio_worker, args=(audio_path, result_queue), daemon=True)
     timeout_sec = max(int(MEDIA_TRANSCRIPTION_TIMEOUT_SEC or 1), 1)
@@ -663,6 +680,15 @@ def run_ocr_on_frames(
     should_cancel: Callable[[], bool] | None = None,
     profile: str | None = None,
 ):
+    if not _can_fork_worker_process():
+        try:
+            return _run_ocr_worker_logic(frame_paths, profile=profile)
+        except Exception as exc:
+            return _attach_ocr_diagnostic(_empty_ocr_results(frame_paths), {
+                "status": "failed",
+                "error": _safe_ocr_error(exc),
+                "requested_profile": profile or MEDIA_OCR_PROFILE,
+            })
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(target=_ocr_worker, args=(frame_paths, result_queue, profile), daemon=True)
     timeout_sec = max(int(MEDIA_OCR_TIMEOUT_SEC or 1), 1)

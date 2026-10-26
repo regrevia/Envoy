@@ -1796,7 +1796,10 @@ def video_to_markdown_job(self, payload: dict):
                 "input_config": child_config,
                 "source_path": str(download_info["path"]),
             })
+            # Close the current transaction before re-reading: MySQL's REPEATABLE READ keeps the
+            # snapshot from before preprocess_job.run(), so the child still looks like "running".
             db.expire_all()
+            db.commit()
             child_task = db.query(ProcessingTask).filter(ProcessingTask.id == child_task.id).first()
             if child_task is None or child_task.status not in {"success", "partial_success"}:
                 raise RuntimeError(
