@@ -58,16 +58,17 @@ when the page needs one.
 
 ## Requirements
 
-- DeepSeek Harness Desktop with the Plugin Manager.
-- macOS or Linux. The patch uses `/bin/sh`; Windows users must replace the
-  launcher with a PowerShell or `cmd.exe` equivalent.
+- DeepSeek Harness with the Plugin Manager (`engines.dsh` is `>=0.1.5`).
+- macOS or Linux today. The launcher runs under `/bin/sh`; a Windows launcher
+  is not shipped yet, so Windows is not supported.
 
-Nothing else. The launcher uses an `envoy` already on PATH when there is one,
-and otherwise installs the pinned runtime wheel into
-`~/.local/share/envoy-dsh/runtime` on first use, with `uv` or with
-`python3 -m venv`. The one case it cannot cover is a machine that has neither
-`envoy` nor `uv` nor `python3`: the mount then fails with a single line telling
-the user to install `uv`. Browser profiles, ASR, and OCR stay optional and
+Nothing else. No separate CLI install, no `envoy browser setup`, no Python
+preflight: on first use the bundle provisions the pinned runtime wheel into
+`~/.local/share/envoy-dsh/runtime` with `uv` or `python3 -m venv`, and the
+isolated Chromium is installed the first time a page actually needs a browser.
+An `envoy` already on PATH is used as-is when it is new enough. The one machine
+it cannot cover has neither `envoy` nor `uv` nor `python3`; the mount then fails
+with a single line naming `uv`. Browser profiles, ASR, and OCR stay optional and
 on-demand — see [INSTALL.md](../../skills/envoy/INSTALL.md) when a task needs
 them.
 
@@ -83,16 +84,24 @@ transport, so a login prompt with no window on screen is expected.
 
 ## Install
 
+From the DeepSeek Harness marketplace, one command:
+
 ```text
-Plugin Manager → Install bundle → /absolute/path/to/Envoy/integrations/dsh/envoy-dsh
+dsh plugin --profile web add envoy-dsh
 ```
 
-From a DeepSeek Harness agent session, the equivalent action is
-`plugin_manager` with `action: install_bundle` and that absolute directory as
-`target`. The Plugin Manager performs package linking and patch composition;
-do not edit the profile's `package.json` or `cordis.patch.yml` by hand. The
-runtime download happens on the first `envoy mcp` start, so the first link
-read after installing is slower than the rest.
+Or in the app: Plugin Manager → search `Envoy` → Install, or point it at the
+marketplace entry. The bundle is published as `envoy-dsh` on npm; the package
+declares its own Harness patch, so nothing in the profile is edited by hand.
+
+Developing against a checkout instead: Plugin Manager → Install bundle →
+`/absolute/path/to/Envoy/integrations/dsh/envoy-dsh`, or `plugin_manager` with
+`action: install_bundle` and that directory as `target`.
+
+The first link read is slower than the rest: that is the one-time runtime
+download, plus the Chromium install when the page needs a browser. Set
+`ENVOY_DISABLE_AUTO_BROWSER_SETUP=1` before Harness starts to keep the browser
+install manual (`envoy browser setup`) instead.
 
 ## Which profile did it land in
 

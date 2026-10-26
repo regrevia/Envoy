@@ -361,6 +361,61 @@ def browser_runtime_status() -> dict:
     }
 
 
+_AUTO_BROWSER_SETUP_ATTEMPTED = False
+
+
+def _auto_setup_allowed() -> bool:
+    """Chromium may be installed on demand, once, outside tests.
+
+    A freshly provisioned runtime has the Playwright package but not the
+    browser binary, so the first page that needs a browser would otherwise end
+    in "run envoy browser setup" — a command a plugin user often has no shell
+    for. Installing it here keeps the first click working; the download is
+    skipped under pytest and can be turned off with
+    ENVOY_DISABLE_AUTO_BROWSER_SETUP=1.
+    """
+    if os.environ.get("ENVOY_DISABLE_AUTO_BROWSER_SETUP"):
+        return False
+    return "pytest" not in sys.modules
+
+
+def _chromium_executable_exists() -> bool:
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            return Path(playwright.chromium.executable_path).is_file()
+    except Exception:
+        return False
+
+
+def ensure_browser_ready() -> bool:
+    """Return True when a Chromium binary is present, installing it once if not."""
+    global _AUTO_BROWSER_SETUP_ATTEMPTED
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        return False
+    if _chromium_executable_exists():
+        return True
+    if _AUTO_BROWSER_SETUP_ATTEMPTED or not _auto_setup_allowed():
+        return False
+    _AUTO_BROWSER_SETUP_ATTEMPTED = True
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=False,
+            timeout=900,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except Exception:
+        return False
+    if int(result.returncode) != 0:
+        return False
+    return _chromium_executable_exists()
+
+
 def setup_browser() -> int:
     try:
         import playwright  # noqa: F401
@@ -683,6 +738,7 @@ def read_page(
     if not _is_public_http_url(source_url, dns_cache):
         raise BrowserReadError("Browser reading is limited to public HTTP(S) addresses")
 
+    ensure_browser_ready()
     profile = profile_dir or browser_profile_dir()
     profile.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name != "nt":
