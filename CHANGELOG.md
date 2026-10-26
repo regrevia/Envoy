@@ -1,5 +1,21 @@
 # 更新日志 / Changelog
 
+## 0.1.14 - 2026-10-26
+
+### 中文
+
+- 三个宿主都能一条命令装完：`curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh|claude-code|codex`。脚本先确保 PATH 上有够新的 `envoy`（已装好且够新就直接复用），再装对应插件；Codex 的用户级 hook 也在同一条命令里写完。
+- 插件市场那条命令不再依赖已发布的 npm 版本：发行版同时挂出 `envoy-dsh-<版本>.tgz`，`dsh plugin add` 可直接装这个包，和 npm 发布解耦。
+- 修掉 0.1.13 的安装断点：`min_runtime` 指向的 0.1.13 wheel 从未发行（GitHub 上最新正式发行还是 0.1.9），按文档装的新用户会拿到 404；本版补上发行，并把版本号纳入自动发布检查。
+- 首次读网页缺 Chromium 时自动装（`playwright install chromium`），失败才提示手动 `envoy browser setup`；`ENVOY_DISABLE_AUTO_BROWSER_SETUP=1` 可关掉自动安装。
+
+### English
+
+- One command per host: `curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh|claude-code|codex` provisions a current `envoy` when needed, then registers the plugin; the Codex user-level hook is installed in the same run.
+- The marketplace install no longer waits on npm: each release publishes `envoy-dsh-<version>.tgz`, which `dsh plugin add` accepts directly.
+- Fixes the 0.1.13 install gap: the wheel its `min_runtime` pointed at was never released, so a fresh install hit a 404. This release publishes it.
+- A missing Chromium is installed on first page read (with `ENVOY_DISABLE_AUTO_BROWSER_SETUP=1` as the opt-out) instead of failing the read.
+
 ## 0.1.13 - 2026-10-26
 
 ### 中文
