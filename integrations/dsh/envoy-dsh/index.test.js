@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -113,4 +114,32 @@ test('routableUrls still skips prompts that already mention Envoy tooling', () =
   assert.deepEqual(routableUrls('看看 https://www.bilibili.com/video/BV1x'), [
     'https://www.bilibili.com/video/BV1x',
   ])
+})
+
+test('an unsupported verdict beats a supported one for the same URL', () => {
+  // 抖音直播属于 supported 家族（douyin_hosts），但 /live/ 必须按 unsupported
+  // 处理：宁可走宿主原生抓取，也不误判成「Envoy 能读」。
+  for (const url of [
+    'https://www.douyin.com/live/123456',
+    'https://live.douyin.com/123456',
+  ]) {
+    assert.equal(readSupportVerdict(url), 'unsupported', url)
+    const text = buildRoutingText([url], 'zh')
+    assert.doesNotMatch(text, /以下链接用 envoy_read 读：/, url)
+    assert.match(text, /不要调用 envoy 工具/, url)
+  }
+
+  // 锁住匹配顺序：unsupported 的 host / path_rule 判断必须排在 supported 之前，
+  // 否则将来新增重叠条目时会把不可读链接误标成 supported。
+  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
+  const body = source.slice(
+    source.indexOf('export function readSupportVerdict'),
+    source.indexOf('function linkBlock'),
+  )
+  const unsupportedAt = body.indexOf('unsupported.hosts.includes(host)')
+  const pathRulesAt = body.indexOf('unsupported.path_rules')
+  // lastIndexOf: 'unsupported.hosts.includes(host)' 里含同样子串
+  const supportedAt = body.lastIndexOf('supported.hosts.includes(host)')
+  assert.ok(unsupportedAt >= 0 && pathRulesAt > unsupportedAt)
+  assert.ok(supportedAt > pathRulesAt)
 })

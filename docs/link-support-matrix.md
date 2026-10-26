@@ -36,3 +36,20 @@
 - `unknown`：其余全部，含 YouTube、Vimeo、Dailymotion、小红书（本轮未动，不并入判定）以及未收录站点。Hook 维持原文案：先试 `envoy_read`，失败再回退原生抓取。
 
 降级顺序固定：`unsupported` 直接走宿主原生；`unknown` 先 Envoy 后原生；`supported` 先 Envoy。无论哪档，Envoy 返回 `blocked` / `challenge_required`、明确需要登录或验证码时都回退原生并向用户说明原因。同一轮里既有 supported 又有 unsupported 时，Hook 按档分组注入，不把两类混成一句话。
+
+## DSH 侧按 verdict 分组注入
+
+DeepSeek Harness 插件的 `buildRoutingText()`（`integrations/dsh/envoy-dsh/index.js`）与 `hooks.py` 的 `build_prompt_context(host='dsh')` 同源：同一套 `supported` / `unsupported` / `unknown` 三档、同一段注入文案（`以下链接用 envoy_read 读` / `不要调用 envoy 工具` / `先试 envoy_read`），marker `[envoy-link-routing]` 只出现一次；没有公网链接时不产生任何注入。
+
+规则表不写第二份：`integrations/dsh/envoy-dsh/link-verdicts.json` 是由 `scripts/export_link_verdicts.py` 从 `packages/envoy-cli/src/envoy_cli/platforms.py` 生成的静态文件（host 集合、路径正则、文件后缀，稳定排序），JS 只读它做 host/path 匹配。**改 `platforms.py` 的判定表后必须重新生成并校验**：
+
+```bash
+uv run --python 3.11 --with-editable packages/envoy-core \
+    --with-editable packages/envoy-cli \
+    python scripts/export_link_verdicts.py            # 重新生成
+uv run --python 3.11 --with-editable packages/envoy-core \
+    --with-editable packages/envoy-cli \
+    python scripts/export_link_verdicts.py --check    # CI 用：过期则 exit 1 并打印 diff
+```
+
+CI 的 `dsh-plugin` job 跑 `--check` 与 `node --test integrations/dsh/envoy-dsh/index.test.js`。JS 测试用显式文件而非 `node --test <目录>`：Node ≥22 的目录形式不会发现 `*.test.js`。

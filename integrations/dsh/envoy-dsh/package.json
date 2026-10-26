@@ -5,6 +5,9 @@
   "type": "module",
   "license": "Apache-2.0",
   "main": "./index.js",
+  "scripts": {
+    "test": "node --test index.test.js"
+  },
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",

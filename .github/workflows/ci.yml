@@ -138,6 +138,23 @@ jobs:
           tests/test_repo_consistency.py
           tests/test_video_evidence_eval.py
 
+  dsh-plugin:
+    name: DSH 插件测试 / DSH plugin tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Node >=22 下 `node --test <目录>` 不会发现目录里的 *.test.js（实测只报 1 个 pass），
+      # 必须写成显式文件或带引号的 glob；这里用显式文件，任何 Node 20+ 都成立。
+      - name: 运行 DSH 插件 JS 测试 / Run DSH plugin JS tests
+        run: node --test integrations/dsh/envoy-dsh/index.test.js
+      # link-verdicts.json 是 platforms.py 的生成物，漂移即失败。
+      - name: 校验链接判定 JSON 未过期 / Check exported link verdicts
+        run: python3 scripts/export_link_verdicts.py --check
+
   frontend:
     name: 前端构建 / Frontend build
     runs-on: ubuntu-latest
