@@ -4,6 +4,9 @@ Envoy 的目标是「大部分链接都能读」。这份文档给出可复跑�
 
 ## 测法与判定
 
+测量产物（原始 JSON，可直接 diff）在 `benchmarks/link-coverage/`：基线、修复后、重复一次、以及波动类目的定向复测。
+
+
 - 脚本：`scripts/acceptance/link_coverage.py`，语料内置于脚本（57 条，14 个类别）。
 - 每次读都走生产入口：`envoy read --request-json -`，请求体固定 `budget.max_response_chars=8000`、`retention.derived_ttl_seconds=600`。
 - 判定（`classify()`）：
@@ -17,19 +20,9 @@ Envoy 的目标是「大部分链接都能读」。这份文档给出可复跑�
 - 必须 `--jobs 1`：并发会争抢同一个 Playwright profile，测出来的超时是假的。
 - 测之前不要有后台浏览器在跑（登录扫码 worker、另一个 envoy read 都算）。
 
-```bash
-cd <repo>
-PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
-  python3 scripts/acceptance/link_coverage.py --out /tmp/link-now.json --jobs 1 --timeout 45
-# 与基线对比、并给退出码（可用率 < 0.8 时为 1）：
-PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
-  python3 scripts/acceptance/link_coverage.py --out /tmp/link-now.json --jobs 1 --timeout 45 \
-    --compare /tmp/link-before.json
-```
-
 ## 基线（修复前）
 
-`/tmp/link-before.json`，57 条：可用 **26/57 = 45.6%**，其中
+`benchmarks/link-coverage/baseline-2026-10-26.json`，57 条：可用 **26/57 = 45.6%**，其中
 `readable 10 · partial 16 · blocked 8 · empty 3 · truncated 1 · unreachable 19`。
 
 19 条不可达全部是环境问题（本机到 reddit / medium / bbc / nytimes / reuters / youtube / x / tiktok / vimeo / soundcloud / archive.org / gist / news.ycombinator / guardian / pinterest / mastodon / bsky / docs.google 的 TCP 或 TLS 直接超时），与本轮改动无关。因此同时报两个口径：
@@ -71,7 +64,7 @@ PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
 
 ### 复测本身就暴露的一类缺陷：网络波动
 
-隔一段时间再跑一次全量（`/tmp/link-r2.json`）得到 28/57 = 49.1%，分布是
+隔一段时间再跑一次全量（`benchmarks/link-coverage/repeat-2026-10-26.json`）得到 28/57 = 49.1%，分布是
 `readable 10 · partial 18 · blocked 4 · empty 3 · failed 2 · unreachable 20`。逐条比对后，差的 2 条全部来自网络而不是代码：
 
 - `json-api`：这次 `host_unreachable`，之前两次都读到 6683 字符。
@@ -83,14 +76,11 @@ PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
 
 ```bash
 cd <repo>
-# 1) 基线口径
+# 1) 复测并对比（可用率 < 0.8 时退出码为 1，便于 CI 用）
 PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
-  python3 scripts/acceptance/link_coverage.py --out /tmp/link-before.json --jobs 1 --timeout 45
-# 2) 复测并对比（可用率 < 0.8 时退出码为 1，便于 CI 用）
-PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
-  python3 scripts/acceptance/link_coverage.py --out /tmp/link-after.json --jobs 1 --timeout 45 \
-    --compare /tmp/link-before.json
-# 3) 只看某个类目（快速回归）
+  python3 scripts/acceptance/link_coverage.py --out /tmp/link-now.json --jobs 1 --timeout 45 \
+    --compare benchmarks/link-coverage/baseline-2026-10-26.json
+# 2) 只看某个类目（快速回归）
 PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src \
   python3 scripts/acceptance/link_coverage.py --only api,blog,image --out /tmp/link-sub.json --jobs 1 --timeout 60
 ```
