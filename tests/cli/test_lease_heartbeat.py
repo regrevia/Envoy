@@ -1,6 +1,5 @@
 """A long read must hold its item lease; only a processing item may renew it."""
 
-import json
 import time
 
 import pytest

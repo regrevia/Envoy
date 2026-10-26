@@ -603,7 +603,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                     f"{run['completed']}/{run['selected']} 完成 · "
                     f"{run['blocked']} 待登录 · {run['failed']} 失败 · {run['updated_at']}"
                 )
-            print(f"续跑：envoy collect --url <profile> --out <文件> --retry-reason auth")
+            print("续跑：envoy collect --url <profile> --out <文件> --retry-reason auth")
         return 0
     if args.command == "collect":
         if not args.url or not args.out:

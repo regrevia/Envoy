@@ -4689,10 +4689,6 @@ def _render_feed_text(url: str, text: str) -> str | None:
         root = ET.fromstring(text)
     except ET.ParseError:
         return None
-    namespace = ""
-    if root.tag.startswith("{"):
-        namespace = root.tag[1:].split("}", 1)[0]
-    prefix = f"{{{namespace}}}" if namespace else ""
 
     def _local(tag: str) -> str:
         return tag.rsplit("}", 1)[-1].lower()
