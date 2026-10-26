@@ -114,6 +114,10 @@ CHALLENGE_MARKERS = (
 )
 MAX_FETCH_ATTEMPTS = 3
 MIN_EXPANSION_CHARS = 128
+# Upper bound for the subtitle-discovery leg of a video read. Sites whose
+# extractor negotiates against a signed API can stall for minutes; the page
+# fallback must still get its turn inside the caller's budget.
+_SUBTITLE_PHASE_SECONDS = 45
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
@@ -6528,7 +6532,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             source_url,
             preferred_language=request.video_subtitle_language,
             max_download_bytes=request.budget.max_download_bytes,
-            max_work_seconds=_remaining_work_seconds(request),
+            # Subtitle discovery is the cheap leg of a video read. A site whose
+            # extractor answers slowly (signed APIs, anti-bot handshakes) must
+            # not consume the whole budget before the page fallback runs; the
+            # deep media budget belongs to ASR, which the caller opts into.
+            max_work_seconds=min(_remaining_work_seconds(request), _SUBTITLE_PHASE_SECONDS),
             public_url_validator=lambda url: _is_public_http_url(url, dns_cache),
         )
         if subtitle_result.get("status") == "ready":
