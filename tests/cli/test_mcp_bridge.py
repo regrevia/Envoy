@@ -1576,3 +1576,106 @@ def test_envoy_read_text_always_carries_the_material_handle_and_replay_path():
     assert "auth_required" in blocked
     assert "sign-in required" in blocked
     assert "envoy_replay" in blocked
+
+
+def test_mcp_output_survives_a_cp1252_host_codec(monkeypatch):
+    """A Windows host can pin PYTHONIOENCODING=cp1252; Chinese text must still ship."""
+    from envoy_cli import mcp
+
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    mcp._emit_line(stream, json.dumps({"text": "容器内转写验证"}, ensure_ascii=False))
+    stream.flush()
+    assert json.loads(raw.getvalue().decode("utf-8"))["text"] == "容器内转写验证"
+
+
+def test_mcp_run_stream_writes_chinese_under_legacy_stdio(monkeypatch):
+    from envoy_cli import mcp
+
+    def fake_handle(message, session, toolset):
+        return {
+            "jsonrpc": "2.0",
+            "id": message.get("id"),
+            "result": {"content": [{"type": "text", "text": "转写完成"}]},
+        }
+
+    monkeypatch.setattr(mcp, "handle_message", fake_handle)
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    code = mcp.run_stream(
+        io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n"),
+        out,
+        "full",
+    )
+    out.flush()
+    assert code == 0
+    payload = json.loads(raw.getvalue().decode("utf-8"))
+    assert payload["result"]["content"][0]["text"] == "转写完成"
+
+
+def test_mcp_configure_stdio_switches_legacy_streams(monkeypatch):
+    from envoy_cli import mcp
+
+    calls = []
+
+    class FakeStream:
+        encoding = "cp1252"
+
+        def reconfigure(self, **kwargs):
+            calls.append(kwargs)
+
+    for name in ("stdin", "stdout", "stderr"):
+        monkeypatch.setattr(mcp.sys, name, FakeStream())
+    mcp._configure_stdio()
+    assert len(calls) == 3
+    assert all(call["encoding"] == "utf-8" for call in calls)
+
+
+def test_mcp_main_handles_a_cp1252_host_codec_end_to_end():
+    """The shipped entry point must not die when the host pins PYTHONIOENCODING=cp1252."""
+    import os
+    import subprocess
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "cp1252"
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(ROOT_DIR / "packages" / "envoy-core" / "src"),
+            str(ROOT_DIR / "packages" / "envoy-cli" / "src"),
+            env.get("PYTHONPATH", ""),
+        ]
+    )
+    request = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", "from envoy_cli.mcp import main; raise SystemExit(main('full'))"],
+        input=request + "\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout.strip().splitlines()[0])
+    assert payload["id"] == 1
+    assert "result" in payload
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("file:///C:/Users/me/clip.mp4", "C:/Users/me/clip.mp4"),
+        ("file:///c:/Users/me/clip.mp4", "c:/Users/me/clip.mp4"),
+        ("file:///Users/me/clip.mp4", "/Users/me/clip.mp4"),
+        ("file:///Users/me/%E8%A7%86%E9%A2%91.mp4", "/Users/me/视频.mp4"),
+        (r"C:\Users\me\clip.mp4", r"C:\Users\me\clip.mp4"),
+        ("https://example.com/a.mp4", None),
+    ],
+)
+def test_local_source_path_normalizes_windows_file_urls(url, expected):
+    from envoy_cli import mcp
+
+    assert mcp._local_source_path({"source": {"url": url}}) == expected

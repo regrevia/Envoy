@@ -822,6 +822,10 @@ def _local_source_path(arguments: dict) -> str | None:
         decoded = unquote(urlparse(raw).path or "") or unquote(raw[len(_LOCAL_FILE_SCHEME):])
         if not decoded:
             return None
+        if re.match(r"^/[A-Za-z]:[\\/]", decoded):
+            # file:///C:/clip.mp4 -> C:/clip.mp4; the leading slash before a drive
+            # letter is URL syntax, not the start of the Windows path.
+            decoded = decoded[1:]
         candidate = decoded
     elif raw.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", raw):
         candidate = raw
@@ -1585,6 +1589,45 @@ def handle_message(
     }, modern=modern_request)
 
 
+def _configure_stdio() -> None:
+    """Keep JSON-RPC on UTF-8 even when the host process asks for a legacy codec.
+
+    A Windows host may launch us with ``PYTHONIOENCODING=cp1252``; writing Chinese
+    source text then raised UnicodeEncodeError in the middle of a response. Switch
+    the standard streams to UTF-8 and replace what still cannot be encoded instead
+    of losing the response.
+    """
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            _LOGGER.debug("Could not reconfigure stdio stream", exc_info=True)
+
+
+def _emit_line(output_stream: TextIO, text: str) -> None:
+    """Write one JSON-RPC line, falling back to UTF-8 bytes if the codec rejects it.
+
+    Encodability is checked before touching the stream: writing first and catching
+    UnicodeEncodeError leaves a TextIOWrapper in a half-written state.
+    """
+    line = text + "\n"
+    encoding = getattr(output_stream, "encoding", None) or "utf-8"
+    try:
+        line.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        buffer = getattr(output_stream, "buffer", None)
+        if buffer is None:
+            output_stream.write(line.encode("utf-8", "replace").decode(encoding, "replace"))
+        else:
+            buffer.write(line.encode("utf-8"))
+    else:
+        output_stream.write(line)
+    output_stream.flush()
+
+
 def run_lines(lines: Iterable[dict], toolset: str | None = None) -> int:
     session = MCPProtocolSession()
     selected_toolset = normalize_toolset(toolset)
@@ -1600,7 +1643,7 @@ def run_lines(lines: Iterable[dict], toolset: str | None = None) -> int:
                 "Internal error while handling MCP request",
             )
         if response is not None:
-            print(json.dumps(response, ensure_ascii=False), flush=True)
+            _emit_line(sys.stdout, json.dumps(response, ensure_ascii=False))
     return 0
 
 
@@ -1617,8 +1660,7 @@ def run_stream(
         try:
             message = json.loads(line)
         except json.JSONDecodeError:
-            output_stream.write(json.dumps(_error(None, -32700, "Parse error")) + "\n")
-            output_stream.flush()
+            _emit_line(output_stream, json.dumps(_error(None, -32700, "Parse error")))
             continue
         try:
             response = handle_message(message, session, selected_toolset)
@@ -1631,12 +1673,12 @@ def run_stream(
                 "Internal error while handling MCP request",
             )
         if response is not None:
-            output_stream.write(json.dumps(response, ensure_ascii=False) + "\n")
-            output_stream.flush()
+            _emit_line(output_stream, json.dumps(response, ensure_ascii=False))
     return 0
 
 
 def main(toolset: str | None = None) -> int:
+    _configure_stdio()
     try:
         selected_toolset = normalize_toolset(toolset)
     except ValueError as exc:
