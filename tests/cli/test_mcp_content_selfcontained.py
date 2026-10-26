@@ -110,6 +110,7 @@ def test_needs_host_text_carries_the_observe_call_shape() -> None:
                 "resource_id": "res-0001",
                 "mime_type": "image/jpeg",
                 "source_url": "https://example.org/frame-1.jpg",
+                "delivery": {"type": "local_file", "path": "/Users/apple/.envoy/materials/frames-mat-abc/frame-001.jpg"},
             }
         ],
         "needs": [
@@ -130,6 +131,40 @@ def test_needs_host_text_carries_the_observe_call_shape() -> None:
     assert "session_id=sess-1" in text
     assert "do not repeat envoy_read" in text
     assert "handoff" in text
+
+
+def test_needs_host_text_names_the_original_frame_path() -> None:
+    payload = {
+        "tool": "envoy_read",
+        "result": "needs_host",
+        "execution_state": "waiting_for_host",
+        "material_id": "mat-abc123",
+        "source_revision": "r" * 40,
+        "session_id": "sess-1",
+        "blocks": [],
+        "resources": [
+            {
+                "resource_id": "res-0001",
+                "mime_type": "image/jpeg",
+                "delivery": {
+                    "type": "local_file",
+                    "path": "/Users/apple/.envoy/materials/frames-mat-abc/frame-001.jpg",
+                },
+            }
+        ],
+        "needs": [
+            {
+                "type": "inspect_visual",
+                "resource_ids": ["res-0001"],
+                "source_block_ids": ["blk-video-frame-001"],
+            }
+        ],
+    }
+
+    text = mcp._tool_content_text(payload, True, _request(include_visual=True))
+
+    assert "/Users/apple/.envoy/materials/frames-mat-abc/frame-001.jpg" in text
+    assert "open it with an image or file tool" in text
 
 
 def test_empty_search_text_explains_zero_matches_instead_of_saying_empty() -> None:

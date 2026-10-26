@@ -831,6 +831,10 @@ def _needs_lines(
         note = f"- resource {resource.get('resource_id')} · {resource.get('mime_type')}"
         if resource.get("expires_at"):
             note += f" · expires {resource.get('expires_at')}"
+        delivery = resource.get("delivery")
+        path = str(delivery.get("path") or "") if isinstance(delivery, dict) else ""
+        if path:
+            note += f" · path {path}"
         lines.append(note)
     if not resources:
         for resource_id in resource_ids[:8]:
@@ -844,6 +848,14 @@ def _needs_lines(
                 f'source_block_id={block_id} session_id={session_id} '
                 'observation="<what you saw>"'
             )
+    if any(
+        isinstance(resource.get("delivery"), dict) and resource["delivery"].get("path")
+        for resource in resources
+    ):
+        lines.append(
+            "each path above is an absolute file on this machine: open it with an image or "
+            "file tool to view the original frame, and quote the locator when you cite it"
+        )
     lines.append(
         "source URL may be omitted when the material is retained because Envoy derives "
         "and verifies it from the delivered resource"
