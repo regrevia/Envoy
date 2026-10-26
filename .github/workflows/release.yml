@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  # Auto Release pushes the tag with the run's GITHUB_TOKEN, and GitHub does not
+  # start a workflow for a ref pushed by GITHUB_TOKEN. It dispatches this one
+  # explicitly instead, which needs a workflow_dispatch trigger of its own.
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish
+        required: true
+        type: string
   workflow_call:
     inputs:
       release_tag:

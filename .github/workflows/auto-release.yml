@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 concurrency:
   group: auto-release-main
@@ -120,14 +120,21 @@ jobs:
             fi
             sleep "$POLL_SECONDS"
           done
-      - name: 推送发行标签 / Push release tag
+      - name: 推送发行标签并发行 / Push release tag and publish
         if: steps.version.outputs.release == 'true'
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git tag "$RELEASE_TAG" "$GITHUB_SHA"
           git push origin "$RELEASE_TAG"
-  # The tag pushed above triggers release.yml through its `push: tags: v*`
-  # trigger. Calling release.yml from here as well published every release
-  # twice: the second `gh release create --verify-tag` exited non-zero after the
-  # assets already existed. One tag push, one publisher.
+          # A tag pushed with GITHUB_TOKEN does not start another workflow, so the
+          # `push: tags: v*` trigger in release.yml never fires from here. Dispatch
+          # it explicitly: one tag push, one publisher, and the run is visible in
+          # the Actions list instead of silently missing.
+      - name: 触发发行工作流 / Dispatch the release workflow
+        if: steps.version.outputs.release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref "$RELEASE_TAG" -f release_tag="$RELEASE_TAG"
