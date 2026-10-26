@@ -67,7 +67,7 @@ def main() -> int:
     os.environ["ENVOY_BROWSER_PROFILE_DIR"] = str(work / "profile")
 
     from envoy_cli import authflow, auth_window, cli, collect as collect_module, reader
-    from envoy_core.schemas import ErrorCode, ReadRequest
+    from envoy_core.schemas import ErrorCode
 
     reads: list[str] = []
 

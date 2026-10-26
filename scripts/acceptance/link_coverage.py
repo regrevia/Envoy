@@ -24,7 +24,6 @@ import concurrent.futures
 import json
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -127,7 +126,6 @@ def reachable(url: str, timeout: float = 15.0) -> bool:
 def classify(response: dict) -> tuple[str, str, int, int, str, str]:
     result = str(response.get("result") or "")
     state = str(response.get("execution_state") or "")
-    kind = str((response.get("source") or {}).get("kind") or "")
     blocks = response.get("blocks") or []
     chars = 0
     for block in blocks:
