@@ -88,9 +88,10 @@ it is not silently dropped and not retried in a loop.
 
 The bundled integrations start the MCP bridge as `envoy mcp`, which
 defaults to the `core` toolset: `mcp__envoy__envoy_read`, `mcp__envoy__envoy_expand`,
-`mcp__envoy__envoy_search`, and `mcp__envoy__envoy_observe`.
-Those four cover ordinary link reading, bounded continuation, in-material
-search, and visual handoff without paying for every advanced schema.
+`mcp__envoy__envoy_search`, `mcp__envoy__envoy_observe`, and `envoy_auth`.
+Those five cover ordinary link reading, bounded continuation, in-material
+search, visual handoff, and handing one sign-in to the user in the chat
+without paying for every advanced schema.
 
 The `full` toolset adds `mcp__envoy__envoy_read_local_video`, `mcp__envoy__envoy_discover`,
 `mcp__envoy__envoy_collection_checkpoint`, `mcp__envoy__envoy_replay`, `mcp__envoy__envoy_visual_history`, and
@@ -161,8 +162,16 @@ The request must include:
 
 Do not put API keys, cookies, browser profile paths, or full chat history in
 the request. Envoy does not read credentials from the user's personal browser.
-When a page requires login, the user may sign in manually in Envoy's separate
-local browser profile; that session remains on the machine.
+When a page requires login, do not ask the user to leave the chat. Call
+`envoy_auth` with `action: "open"` and the blocked `url`: it puts the site's
+sign-in page in a background browser and returns `screen_path`, a picture of that
+page (usually the QR code). Show the picture, ask the user to scan or confirm it,
+and keep working on the rest of the request. When they say they are done, call
+`envoy_auth` with `action: "status"`; a `signed_in` status means the same link
+now reads with `mcp__envoy__envoy_read`, and a still-`waiting` status means show the picture
+again instead of re-reading. The browser stays alive between calls, so one scan
+covers every pause for the same site in the batch; `action: "cancel"` closes it.
+The session stays in Envoy's separate local browser profile on the machine.
 
 Hooks are optional, not required for normal use. A host may wrap tool calls for
 logging, caching, or usage accounting, but the Envoy request/response contract

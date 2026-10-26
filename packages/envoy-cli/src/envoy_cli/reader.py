@@ -132,6 +132,10 @@ SAFE_VIDEO_QUERY_KEYS = {
 }
 TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst")
 TEXT_CONTENT_TYPES = {
+    "application/atom+xml",
+    "application/rss+xml",
+    "application/rdf+xml",
+    "application/x-rss+xml",
     "text/plain",
     "text/markdown",
     "text/csv",
@@ -930,10 +934,30 @@ def _browser_page_has_video(page, requested_kind: str) -> bool:
     )
 
 
+def _should_read_media_first(url: str, include_visual: bool) -> bool:
+    """Decide whether a page URL is a single video worth a media-first read.
+
+    Media extractors also match pages that merely embed a player (a tweet, a
+    subreddit thread, a product page, a record page). Reading those through
+    subtitles/ASR first turns a perfectly readable link into a
+    missing-capability block, so only a single-video page - or a caller that
+    asked for visuals - takes that route.
+    """
+    return include_visual or _url_is_video_page(url) or _is_single_video_path(url)
+
+
 def _url_is_video_page(value: str) -> bool:
     return (
         classify_public_url(value) == "video_page"
         or bool(re.search(r"/(?:video|watch|shorts?)/", urlparse(value).path.lower()))
+    )
+
+
+def _is_single_video_path(value: str) -> bool:
+    """A path ending in a player segment is one video, not a page with a player."""
+
+    return bool(
+        re.search(r"/(?:video|watch|shorts?)(?:/|$)", urlparse(value).path.lower())
     )
 
 
@@ -4638,10 +4662,76 @@ def _read_pdf_source(request: ReadRequest, source_url: str, dns_cache: dict[str,
     return _parse_pdf_source(request, source)
 
 
+FEED_SEPARATOR = "\n\n"
+
+
+def _render_feed_text(url: str, text: str) -> str | None:
+    """Turn an RSS/Atom document into readable lines instead of raw markup."""
+    head = text.lstrip()[:400].lower()
+    if not text.lstrip().startswith("<"):
+        return None
+    if "<rss" not in head and "<feed" not in head and "<rdf:rdf" not in head:
+        return None
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return None
+    namespace = ""
+    if root.tag.startswith("{"):
+        namespace = root.tag[1:].split("}", 1)[0]
+    prefix = f"{{{namespace}}}" if namespace else ""
+
+    def _local(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1].lower()
+
+    def _text_of(node) -> str:
+        for child in node:
+            if _local(child.tag) in {"title", "name"}:
+                return (child.text or "").strip()
+        return ""
+
+    def _plain(value: str) -> str:
+        cleaned = re.sub(r"<[^>]+>", " ", value or "")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned[:400]
+
+    feed_title = _text_of(root) or urlparse(url).hostname or "Feed"
+    entries = [child for child in root.iter() if _local(child.tag) in {"item", "entry"}]
+    lines = [f"Feed: {feed_title}", f"Source: {url}"]
+    for entry in entries[:60]:
+        fields: dict[str, str] = {}
+        for child in entry:
+            fields.setdefault(_local(child.tag), (child.text if child.text else "").strip())
+            if _local(child.tag) == "link":
+                href = child.get("href") or ""
+                if href and "link" not in fields:
+                    fields["link"] = href
+        title = fields.get("title") or fields.get("name") or "(untitled)"
+        link = fields.get("link") or ""
+        summary = _plain(fields.get("description") or fields.get("summary") or fields.get("content") or "")
+        stamp = fields.get("pubdate") or fields.get("updated") or fields.get("published") or ""
+        line = f"- {title}"
+        if stamp:
+            line += f" ({stamp})"
+        if link:
+            line += f"\n  {link}"
+        if summary:
+            line += f"\n  {summary}"
+        lines.append(line)
+    if len(lines) <= 2:
+        return None
+    return FEED_SEPARATOR.join([lines[0], "\n".join(lines[1:])])
+
+
 def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
     data = source["data"]
     text = data.decode(str(source.get("encoding") or "utf-8"), errors="replace")
     text = re.sub(r"\n{3,}", "\n\n", text.replace("\r\n", "\n").replace("\r", "\n")).strip()
+    feed_text = _render_feed_text(source["url"], text)
+    if feed_text:
+        text = feed_text
     if not text:
         raise PublicPageError("The text document is empty", ErrorCode.EMPTY_CONTENT)
     source_truncated = len(text) > MAX_TEXT_CHARS
@@ -6374,11 +6464,13 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     direct_xhs_note = classify_public_url(source_url) in {
         "xiaohongshu_note", "xiaohongshu_share",
     }
+    media_first = _should_read_media_first(source_url, bool(request.scope.include_visual))
     if (
         not direct_video_path
         and not direct_douyin_note
         and not direct_xhs_note
         and has_specialized_extractor(source_url)
+        and media_first
     ):
         subtitle_result = extract_public_subtitles(
             source_url,
@@ -7379,6 +7471,21 @@ def _login_user_action(
         "question": question,
         "requires_human": True,
         "options": [
+            {
+                "action": "in_chat_sign_in",
+                "requires_human": True,
+                "instruction": (
+                    "Call envoy_auth with action open and this source_url; it "
+                    "returns a picture of the site's sign-in page (usually the "
+                    "QR code) to show the user. They scan once, the browser "
+                    "stays in the background, and this link reads normally once "
+                    "envoy_auth status reports signed_in."
+                ),
+                "effect": (
+                    "The user signs in once from the chat, without a terminal, "
+                    "and Envoy's isolated profile keeps the session"
+                ),
+            },
             {
                 "action": "import_cookies",
                 "requires_human": True,

@@ -253,6 +253,15 @@ def _parser() -> argparse.ArgumentParser:
     auth_open.add_argument("--url", default=None)
     auth_open.add_argument("--timeout", type=int, default=300)
     auth_open.add_argument("--json", action="store_true")
+    auth_shot = auth_commands.add_parser(
+        "shot",
+        help="open the sign-in page in a background browser and save a picture of it",
+    )
+    auth_shot.add_argument("--action-id", default=None)
+    auth_shot.add_argument("--url", default=None)
+    auth_shot.add_argument("--timeout", type=int, default=300)
+    auth_shot.add_argument("--visible", action="store_true")
+    auth_shot.add_argument("--json", action="store_true")
     auth_verify = auth_commands.add_parser(
         "verify", help="check whether the original link is readable now"
     )
@@ -302,6 +311,34 @@ def _emit(payload: dict, as_json: bool, lines: list[str]) -> None:
     else:
         for line in lines:
             print(line)
+
+
+def _run_auth_shot(args) -> int:
+    from . import auth_session
+
+    url = getattr(args, "url", None)
+    action_id = getattr(args, "action_id", None)
+    if not action_id and not url:
+        print("envoy auth shot: pass --action-id or --url", file=sys.stderr)
+        return 2
+    try:
+        payload = auth_session.start(
+            str(url or ""),
+            action_id=action_id or None,
+            timeout_seconds=int(args.timeout),
+            visible=bool(getattr(args, "visible", False)),
+        )
+    except (ValueError, RuntimeError) as exc:
+        print(f"envoy auth shot: {exc}", file=sys.stderr)
+        return 2
+    lines = [
+        f"{payload.get('host') or payload.get('source_url')}: sign-in page saved as a picture",
+        f"picture: {payload.get('screen_path') or '(waiting for the first frame)'}",
+        f"the browser stays in the background until {payload.get('timeout_seconds')}s pass",
+        f"next: envoy auth verify --action-id {payload.get('action_id')} after the person signs in",
+    ]
+    _emit(payload, bool(getattr(args, "json", False)), lines)
+    return 0 if payload.get("screen_path") else 1
 
 
 def _run_auth_open(args) -> int:
@@ -403,6 +440,8 @@ def _run_auth_resume(args) -> int:
 def _run_auth(args) -> int:
     from . import cookies as cookie_store
 
+    if args.auth_command == "shot":
+        return _run_auth_shot(args)
     if args.auth_command == "open":
         return _run_auth_open(args)
     if args.auth_command == "verify":

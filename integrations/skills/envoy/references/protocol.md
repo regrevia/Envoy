@@ -126,6 +126,20 @@ full-video visual coverage. If the source asks for login or anti-bot
 verification, report that access boundary instead of using cookies or bypass
 techniques.
 
+## Sign-in handoff
+
+A read that answers with a sign-in or risk-control page returns `blocked` and
+`details.needs_user_action` (`kind: "login_or_verification"`) with an
+`action_id` and a `resume_token`. The first option is `in_chat_sign_in`: the
+model calls `envoy_auth` with `action: "open"` and the blocked `url`, and gets
+back `screen_path` — a picture of the site's sign-in page, usually the QR code —
+that it shows to the user. The browser runs in the background between calls, so
+one scan covers every pause for that site in the batch. `action: "status"`
+reports `signed_in` once the page loads content on its own; then re-read the
+original link. `action: "cancel"` closes the background worker. The same
+operation is available outside MCP as `envoy auth shot --url <link> --json`;
+`envoy auth verify --action-id <id>` checks the link after the person signs in.
+
 ## Expand long text
 
 When a read returns `partial` with `continuation_available: true`, send:
