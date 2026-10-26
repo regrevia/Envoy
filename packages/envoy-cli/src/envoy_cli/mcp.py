@@ -1123,7 +1123,9 @@ def _local_source_path(arguments: dict) -> str | None:
         candidate = raw
     else:
         return None
-    return str(Path(candidate).expanduser())
+    # Callers compare and echo this value, so keep it POSIX-shaped on every
+    # platform: a Windows drive path becomes C:/..., which Windows still opens.
+    return Path(candidate).expanduser().as_posix()
 
 
 def _local_file_identity(path: str) -> str:

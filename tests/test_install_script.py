@@ -162,6 +162,47 @@ def test_stale_python_venv_is_rebuilt_and_health_uses_the_runtime(tmp_path):
     assert "runtime 0.1.14, protocol envoy.read/1" in result.stdout
 
 
+def test_uv_is_bootstrapped_when_only_an_old_python3_exists(tmp_path):
+    """A machine with just macOS python3 3.9 has no usable interpreter: the
+    installer must fetch uv itself instead of sending the user to a doc."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    uv_copy = bin_dir / "uv-inner"
+    uv_copy.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        '  venv)\n'
+        '    for arg in "$@"; do dir="$arg"; done\n'
+        '    mkdir -p "$dir/bin"\n'
+        '    printf \'#!/bin/sh\\ncase "$2" in *version_info*) exit 0;; esac\\nexec /usr/bin/python3 "$@"\\n\' > "$dir/bin/python"\n'
+        '    printf \'#!/bin/sh\\necho "{\\\"cli_version\\\":\\\"0.1.14\\\"}"\\n\' > "$dir/bin/envoy"\n'
+        '    chmod +x "$dir/bin/python" "$dir/bin/envoy"\n'
+        '    ;;\n'
+        'esac\n'
+        'exit 0\n'
+    )
+    uv_copy.chmod(0o755)
+    curl_stub = bin_dir / "curl"
+    curl_stub.write_text(f'#!/bin/sh\nmkdir -p "{home}/.local/bin"\ncp "{uv_copy}" "{home}/.local/bin/uv"\nchmod +x "{home}/.local/bin/uv"\n')
+    curl_stub.chmod(0o755)
+    runtime = tmp_path / "runtime"
+
+    env = {
+        "HOME": str(home),
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "ENVOY_HOME": str(runtime),
+        "ENVOY_VERSION": "0.1.14",
+    }
+    result = subprocess.run(
+        ["sh", str(SCRIPT), "mcp"], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    assert "uv not found; installing it" in result.stdout
+    assert (runtime / "bin" / "envoy").is_file()
+
+
 def test_dev_install_script_is_valid_posix_sh():
     script = SCRIPT.parents[1] / "scripts" / "dev_install.sh"
     assert script.is_file()
