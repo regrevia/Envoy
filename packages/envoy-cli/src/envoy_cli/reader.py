@@ -902,6 +902,24 @@ def _browser_read_failure_code(error) -> ErrorCode:
     return ErrorCode.AUTH_REQUIRED
 
 
+def _blocked_challenge_code(error) -> ErrorCode:
+    """Code for a page that already presented a verification wall.
+
+    The static body says the source demands login or verification. A fallback
+    browser that cannot even start does not turn that into a capability gap:
+    the page still asks the human for something, so keep the challenge code and
+    let the message name the runtime failure too.
+    """
+
+    from .browser import BrowserRuntimeUnavailable
+
+    if isinstance(error, BrowserRuntimeUnavailable):
+        return ErrorCode.CHALLENGE_REQUIRED
+    if isinstance(error, Exception):
+        return _browser_read_failure_code(error)
+    return ErrorCode.CHALLENGE_REQUIRED
+
+
 def _browser_page_has_video(page, requested_kind: str) -> bool:
     path = urlparse(page.url).path.lower()
     return (
@@ -6623,9 +6641,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
             return _blocked(
                 request,
-                _browser_read_failure_code(browser_error)
-                if isinstance(browser_error, Exception)
-                else ErrorCode.CHALLENGE_REQUIRED,
+                _blocked_challenge_code(browser_error),
                 "The page still requires login or security verification. "
                 f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                 action_required=True,
@@ -6653,9 +6669,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
                 return _blocked(
                     request,
-                    _browser_read_failure_code(browser_error)
-                    if isinstance(browser_error, Exception)
-                    else ErrorCode.CHALLENGE_REQUIRED,
+                    _blocked_challenge_code(browser_error),
                     "The page still requires login or security verification. "
                     f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                     action_required=True,

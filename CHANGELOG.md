@@ -155,6 +155,9 @@
 - `challenge_required` / `auth_required` 现在如实标注 `retryable: true`，并在剩余预算
   不少于 5 秒时内部重试一次（`internal_retry_attempts`），用于站点抖动后自行恢复；
   仍不绕过验证。
+- 页面本身已报出登录/验证墙时，回退浏览器即使起不来也保持 `challenge_required`，
+  不再降级成 `missing_capability`：要人做的事没有因为本机缺浏览器而消失，运行时
+  失败原因写进消息。
 - 页面视频绑定不再“看到播放器就用第一个地址”：`envoy_read` 依次用房源 JSON-LD
   `contentUrl`、`og:video`、播放器状态、主播放器 `currentSrc` 与 URL 身份确认候选，
   字节数只在已归因的镜像之间排序；无法唯一确认时**不下载**，返回
@@ -237,6 +240,10 @@
   interactive terminal only (stdin and stdout must both be a TTY plus an
   explicit `ENVOY_VISIBLE_BROWSER=1`) and is refused in an agent, MCP host, or
   any non-interactive process, so an agent must never set that variable.
+- When the page itself already returned a login or verification wall, a fallback
+  browser that cannot start no longer downgrades the result to
+  `missing_capability`: the human step is still there, and the runtime failure is
+  named in the message.
 - Fix original-video capture on feed pages such as Douyin: the player may start
   with only a `blob:` MSE source or none at all. Envoy now waits briefly for a
   real HTTP source (returning immediately when the page is already playing

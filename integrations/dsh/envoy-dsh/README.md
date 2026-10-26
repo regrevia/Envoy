@@ -28,18 +28,33 @@ The same Envoy skill ships for Codex and Claude Code; this package is the
 DeepSeek Harness build, and the deliverables are the same Markdown, wiki, or
 knowledge-base material on all three hosts.
 
-## Measured against reading the link without Envoy
+## What changes when it is installed
 
-Same links, same model, 20 sources × 3 questions, 95 turns scored:
+Same model, same links. The difference is what a read puts in front of the
+agent.
 
-| How the turn ended | Without Envoy | With Envoy |
-| --- | ---: | ---: |
-| Hands over the finished artifact | 23% | 58% |
-| Never gets the content (asks you to log in, scan, authorize, or says it cannot read it) | 7% | 5% |
-| Cut off at the time limit | 70% | 37% |
+| Ask | Harness on its own | With this bundle |
+| --- | --- | --- |
+| Long article, WeChat post, Zhihu column | Truncated text, or only the digest | Body text with headings and source locators |
+| PDF | First pages, or a screenshot of the page | Per-page text with page numbers and locators |
+| Video (Douyin, Bilibili) | Title, cover, description, danmaku | Bound player file; captions or ASR with a coverage figure; frames when the host declares it can show them |
+| Audio | Nothing usable | Timestamped transcript; low confidence and no-speech are stated, not hidden |
+| Login wall | 403, empty body, or a captcha page | `challenge_required` plus the human step: import cookies for one site scope, or sign in once |
+| Unreadable page | A plausible guess | `partial` with the part that was read, and the gap named |
 
-Time limits are 15 and 40 minutes, and a timed-out turn is not a failure.
-Sample is 95 of 120 turns. Full data: [fixed evaluation set v1](../../../benchmarks/fixed-set-v1/README.md).
+The turn-level A/B we ran is exploratory, not a claim: the two arms had
+different time limits (900 s and 2400 s) and one arm was graded terminal-only.
+Article-level citation counts came out level within noise over 60 turns per arm.
+What this bundle guarantees is the per-read behaviour above, and the tests
+assert it.
+
+## What stays the same without the bundle
+
+Reading a link without Envoy still works. What the bundle adds is not a new
+capability the model lacks, but a bounded one: declared visual input, a
+retained material you can search instead of re-fetching, an explicit gap when
+a source cannot be read, and a human step instead of an executable command
+when the page needs one.
 
 ## Requirements
 
