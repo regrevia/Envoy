@@ -8,6 +8,7 @@
 - 插件市场那条命令不再依赖已发布的 npm 版本：发行版同时挂出 `envoy-dsh-<版本>.tgz`，`dsh plugin add` 可直接装这个包，和 npm 发布解耦。
 - 修掉 0.1.13 的安装断点：`min_runtime` 指向的 0.1.13 wheel 从未发行（GitHub 上最新正式发行还是 0.1.9），按文档装的新用户会拿到 404；本版补上发行，并把版本号纳入自动发布检查。
 - 首次读网页缺 Chromium 时自动装（`playwright install chromium`），失败才提示手动 `envoy browser setup`；`ENVOY_DISABLE_AUTO_BROWSER_SETUP=1` 可关掉自动安装。
+- 安装脚本补上 `mcp` 与 `skill` 两个目标（覆盖 Claude Desktop / Cursor / Windsurf 这类只有 MCP 配置、或只认 skill 目录的宿主），下载后用发行里的 `SHA256SUMS` 校验，结束时自己跑 `envoy doctor --json` 报版本，失败停在出错的那一步。
 
 ### English
 
@@ -15,6 +16,7 @@
 - The marketplace install no longer waits on npm: each release publishes `envoy-dsh-<version>.tgz`, which `dsh plugin add` accepts directly.
 - Fixes the 0.1.13 install gap: the wheel its `min_runtime` pointed at was never released, so a fresh install hit a 404. This release publishes it.
 - A missing Chromium is installed on first page read (with `ENVOY_DISABLE_AUTO_BROWSER_SETUP=1` as the opt-out) instead of failing the read.
+- The installer also covers `mcp` and `skill` targets (Claude Desktop, Cursor, Windsurf, and hosts that only read a skill directory), verifies downloads against the release `SHA256SUMS`, and ends with an `envoy doctor --json` version check.
 
 ## 0.1.13 - 2026-10-26
 

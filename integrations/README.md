@@ -25,9 +25,17 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 
 # DeepSeek Harness
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+
+# Claude Desktop / Cursor / Windsurf (one mcpServers entry, existing servers kept)
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- mcp
+
+# Hosts that only read a skill directory
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- skill
 ```
 
-`all` installs every host whose CLI is on PATH. The same commands without
+`all` installs every host whose CLI is on PATH, and falls back to the MCP entry
+when none is. Downloads are checked against the release `SHA256SUMS`, and the run
+ends with `envoy doctor --json`. The same commands without
 `curl | sh` are listed in each host README below when you would rather read
 them before running them.
 
