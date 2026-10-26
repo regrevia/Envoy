@@ -530,3 +530,28 @@ console.log(JSON.stringify(prompts.map((text) => mod.routableUrls(text))))
         [],
         [],
     ]
+
+
+def test_routing_notice_skips_code_host_diff_pages(tmp_path):
+    """The plugin mirrors hooks.py: commit/blob pages are not routed."""
+
+    result = _run_node_probe(
+        tmp_path,
+        "code-host.mjs",
+        PROBE_HEADER
+        + """
+const prompts = [
+  'https://github.com/a/b/commit/deadbeef',
+  'https://github.com/a/b/blob/main/x.py 改了什么',
+  'https://github.com/a/b',
+  'https://example.com/a 和 https://gitlab.com/a/b/-/blob/main/x.py',
+]
+console.log(JSON.stringify(prompts.map((text) => mod.routableUrls(text))))
+""",
+    )
+
+    payload = result
+    assert payload[0] == []
+    assert payload[1] == []
+    assert payload[2] == ["https://github.com/a/b"]
+    assert payload[3] == ["https://example.com/a"]

@@ -378,3 +378,34 @@ def test_codex_user_hook_install_refuses_malformed_hook_shape(tmp_path):
     assert result["changed"] is False
     assert result["installed"] is False
     assert path.read_text(encoding="utf-8") == original
+
+
+def test_inspect_prompt_skips_code_host_diff_pages():
+    """Code-host commit/blob pages go to git/gh, so they are not routed."""
+
+    for url in (
+        "https://github.com/regrevia/Envoy/commit/8e6d17ae56e8e6f73385783bde39d8190ff68f85",
+        "https://github.com/regrevia/Envoy/blob/main/README.md",
+        "https://gitlab.com/a/b/-/blob/main/x.py",
+        "https://bitbucket.org/a/b/pull-requests/3",
+        "https://www.github.com/a/b/issues/12",
+        "https://codeberg.org/a/b/compare/main...dev",
+    ):
+        assert inspect_prompt(url).urls == (), url
+
+    for url in (
+        "https://github.com/regrevia/Envoy",
+        "https://gist.github.com/regrevia/abc123",
+        "https://github.com/orgs/regrevia/repositories",
+        "https://example.com/commit/abc",
+    ):
+        assert inspect_prompt(url).urls == (url,), url
+
+
+def test_inspect_prompt_keeps_article_link_beside_a_commit_link():
+    text = (
+        "看 https://github.com/a/b/commit/deadbeef 和 "
+        "https://example.com/post 有什么区别"
+    )
+
+    assert inspect_prompt(text).urls == ("https://example.com/post",)

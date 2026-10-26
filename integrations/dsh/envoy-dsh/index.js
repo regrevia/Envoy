@@ -249,6 +249,33 @@ export function isPublicUrl(url) {
   return host.includes('.')
 }
 
+const CODE_HOSTS = ['github.com', 'gitlab.com', 'bitbucket.org', 'codeberg.org']
+const CODE_PATH_RE = /^\/[^/]+\/[^/]+\/(?:-\/)?(?:commit|commits|blob|tree|raw|pull|pulls|pull-requests|merge_requests|issues|compare)(?:\/|$)/iu
+
+/**
+ * Whether a URL is a source-code page whose diff Envoy cannot return. Mirrors
+ * hooks.py `is_code_host_diff_url`: commit, file, tree, pull-request, and issue
+ * pages belong to `git`/`gh`, not to the reader.
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isCodeHostDiffUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) return false
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  let host = parsed.hostname.toLowerCase().replace(/\.+$/u, '')
+  if (host.startsWith('www.')) host = host.slice(4)
+  if (host === 'gist.github.com') return false
+  if (!CODE_HOSTS.includes(host) && !CODE_HOSTS.some((item) => host.endsWith(`.${item}`))) {
+    return false
+  }
+  return CODE_PATH_RE.test(parsed.pathname || '')
+}
+
 /**
  * Extract unique public http(s) URLs in first-seen order. Mirrors hooks.py
  * `extract_public_urls`: deduplication is case-insensitive while the returned
@@ -335,7 +362,7 @@ export function inspectPrompt(text) {
 export function routableUrls(text) {
   if (typeof text !== 'string' || text.length === 0) return []
   if (mentionsEnvoyTooling(text)) return []
-  return extractPublicUrls(text)
+  return extractPublicUrls(text).filter((url) => !isCodeHostDiffUrl(url))
 }
 
 /**

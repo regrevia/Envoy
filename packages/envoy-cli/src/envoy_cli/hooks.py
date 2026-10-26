@@ -119,6 +119,40 @@ def _is_public_url(url: str) -> bool:
     )
 
 
+_CODE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org")
+_CODE_PATH_RE = re.compile(
+    r"^/[^/]+/[^/]+/(?:-/)?(?:commit|commits|blob|tree|raw|pull|pulls|pull-requests|merge_requests|issues|compare)(?:/|$)",
+    re.IGNORECASE,
+)
+
+
+def is_code_host_diff_url(url: str) -> bool:
+    """Whether ``url`` is a source-code page whose diff Envoy cannot return.
+
+    Envoy reads the rendered page, so a commit, file, tree, pull-request, or
+    issue page yields the title and at most the commit message, never the diff.
+    Those links belong to `git`/`gh`, and routing them to Envoy costs a fetch
+    that cannot answer the question.
+    """
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host in {"gist.github.com"}:
+        return False
+    if host not in _CODE_HOSTS and not any(host.endswith("." + item) for item in _CODE_HOSTS):
+        return False
+    return bool(_CODE_PATH_RE.match(parts.path or ""))
+
+
+def _routable(urls: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(url for url in urls if not is_code_host_diff_url(url))
+
+
 def extract_public_urls(text: str) -> tuple[str, ...]:
     """Extract unique public ``http(s)`` URLs, preserving first-seen order."""
 
@@ -146,7 +180,7 @@ def _opted_out(text: str) -> bool:
 
 
 def inspect_prompt(text: str) -> PromptRouting:
-    return PromptRouting(urls=extract_public_urls(text), opted_out=_opted_out(text))
+    return PromptRouting(urls=_routable(extract_public_urls(text)), opted_out=_opted_out(text))
 
 
 def detect_prompt_language(text: str) -> str:
