@@ -96,7 +96,7 @@ def create_auth_action(
         "source_url": str(source_url),
         "purpose": purpose,
         "reason": str(reason or "")[:400],
-        "resume_token": resume_token or secrets.token_urlsafe(18),
+        "resume_token": resume_token or secrets.token_hex(16),
         "allow_visible": bool(allow_visible),
         "created_at": _iso(now),
         "updated_at": _iso(now),

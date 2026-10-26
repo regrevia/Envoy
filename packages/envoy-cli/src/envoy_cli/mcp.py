@@ -34,6 +34,7 @@ from .collections import (
     create_collection,
     discover_profile,
     get_collection,
+    list_collections,
     update_collection,
 )
 from .local_video import read_local_video
@@ -314,7 +315,7 @@ TOOLS = [
                 "action": {"type": "string", "enum": [
                     "create", "get", "select", "item_state", "record_evidence",
                     "discovery_snapshot", "record_handoff", "record_observation",
-                    "record_usage", "set_cursor",
+                    "record_usage", "set_cursor", "touch_lease", "list",
                 ]},
                 "collection_id": {"type": "string"},
                 "run_id": {"type": "string"},
@@ -1392,7 +1393,14 @@ def handle_message(
             action = str(arguments.get("action") or "")
             collection_id = str(arguments.get("collection_id") or "")
             run_id = str(arguments.get("run_id") or "")
-            if action == "create":
+            if action == "list":
+                payload = {
+                    "tool": "envoy_collection_checkpoint",
+                    "action": "list",
+                    "runs": list_collections(),
+                    "resultType": "complete",
+                }
+            elif action == "create":
                 payload = create_collection(
                     collection_id,
                     run_id,

@@ -47,6 +47,7 @@ from .collections import (
     create_collection,
     discover_profile,
     get_collection,
+    list_collections,
     update_collection,
 )
 from .local_video import read_local_video
@@ -113,8 +114,13 @@ def _parser() -> argparse.ArgumentParser:
         "collect",
         help="enumerate a Douyin or Bilibili profile into one Markdown source pack",
     )
-    collect_parser.add_argument("--url", required=True)
-    collect_parser.add_argument("--out", required=True)
+    collect_parser.add_argument("--url")
+    collect_parser.add_argument("--out")
+    collect_parser.add_argument(
+        "--list",
+        action="store_true",
+        help="list resumable collection runs and their progress",
+    )
     collect_parser.add_argument("--limit", type=int, default=10)
     collect_parser.add_argument("--goal", default="")
     collect_parser.add_argument("--collection-id")
@@ -545,7 +551,28 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                 "error": {"code": "collection_error", "message": str(exc)},
             }, ensure_ascii=False))
             return 2
+    if args.command == "collect" and args.list:
+        runs = list_collections()
+        if args.json:
+            print(json.dumps({"runs": runs}, ensure_ascii=False))
+        elif not runs:
+            print("没有可续跑的采集任务")
+        else:
+            for run in runs:
+                print(
+                    f"{run['collection_id']} · {run['platform']} · "
+                    f"{run['completed']}/{run['selected']} 完成 · "
+                    f"{run['blocked']} 待登录 · {run['failed']} 失败 · {run['updated_at']}"
+                )
+            print(f"续跑：envoy collect --url <profile> --out <文件> --retry-reason auth")
+        return 0
     if args.command == "collect":
+        if not args.url or not args.out:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "usage", "message": "collect needs --url and --out, or --list"},
+            }, ensure_ascii=False))
+            return 2
         try:
             summary = collect(
                 args.url,

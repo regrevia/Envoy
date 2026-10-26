@@ -534,6 +534,59 @@ def create_collection(
         return manifest
 
 
+def list_collections() -> list[dict]:
+    """Every resumable run on this machine, newest first."""
+
+    found: list[dict] = []
+    try:
+        paths = sorted(_collection_root().glob("collection-*.json"))
+    except OSError:
+        return found
+    for path in paths:
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        items = manifest.get("items") if isinstance(manifest.get("items"), dict) else {}
+        selected = [str(value) for value in manifest.get("selected_candidate_ids") or []]
+        states = [str((items.get(cid) or {}).get("state") or "selected") for cid in selected]
+        found.append({
+            "collection_id": manifest.get("collection_id"),
+            "run_id": manifest.get("run_id"),
+            "profile_url": manifest.get("profile_url"),
+            "platform": manifest.get("platform"),
+            "selected": len(selected),
+            "completed": states.count("completed"),
+            "blocked": states.count("blocked"),
+            "failed": states.count("failed"),
+            "partial": states.count("partial"),
+            "in_flight": states.count("processing"),
+            "manifest_revision": manifest.get("manifest_revision"),
+            "updated_at": max(
+                (str((items.get(cid) or {}).get("updated_at") or "") for cid in selected),
+                default=str(manifest.get("updated_at") or ""),
+            ),
+        })
+    found.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    return found
+
+
+def renew_lease(collection_id: str, run_id: str, candidate_id: str) -> dict:
+    """Extend the lease of one in-flight item without spending a retry."""
+
+    manifest = get_collection(collection_id, run_id)
+    return update_collection(
+        collection_id,
+        run_id=run_id,
+        expected_revision=int(manifest["manifest_revision"]),
+        operation_id=f"lease-{candidate_id}-{time.time_ns()}",
+        action="touch_lease",
+        candidate_id_value=candidate_id,
+    )
+
+
 def get_collection(collection_id: str, run_id: str) -> dict:
     path = _manifest_path(collection_id, run_id)
     with _locked(path):
@@ -595,7 +648,7 @@ def update_collection(
 ) -> dict:
     allowed_actions = {
         "select", "item_state", "record_evidence", "record_usage", "set_cursor",
-        "discovery_snapshot", "record_handoff", "record_observation",
+        "discovery_snapshot", "record_handoff", "record_observation", "touch_lease",
     }
     if action not in allowed_actions:
         raise CollectionError("Unsupported collection checkpoint action")
@@ -707,6 +760,16 @@ def update_collection(
                 "attempts": attempts,
                 "retryable": False,
                 "lease_expires_at": time.time() + 300 if state == "processing" else None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        elif action == "touch_lease":
+            candidate = _safe_identity(candidate_id_value or "", "candidate_id")
+            previous = manifest["items"].get(candidate) or {}
+            if previous.get("state") != "processing":
+                raise CollectionError("Only an in-flight candidate holds a lease")
+            manifest["items"][candidate] = {
+                **previous,
+                "lease_expires_at": time.time() + 300,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         elif action == "record_handoff":

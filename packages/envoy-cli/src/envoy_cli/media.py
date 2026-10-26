@@ -1324,6 +1324,39 @@ def _whisper_worker(
         result_connection.close()
 
 
+def asr_checkpoint_dir() -> Path:
+    override = os.getenv("ENVOY_ASR_CHECKPOINT_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".envoy" / "asr"
+
+
+def _asr_identity(source: Path, model_name: str, start: float, end: float) -> str:
+    stat = source.stat()
+    raw = f"{source}|{stat.st_size}|{int(stat.st_mtime)}|{model_name}|{start:.1f}|{end:.1f}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _load_asr_checkpoint(path: Path) -> dict | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_asr_checkpoint(path: Path, payload: dict) -> None:
+    """One finished chunk is worth keeping even if the process dies next second."""
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        return
+
+
 def _transcribe_with_worker(
     source: Path,
     model_name: str,
@@ -1333,12 +1366,23 @@ def _transcribe_with_worker(
     duration: float,
     timeout: int,
     started: float,
+    *,
+    checkpoint_path: Path | None = None,
+    prior_segments: list[dict] | None = None,
+    resume_from: float | None = None,
 ) -> dict[str, Any]:
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
     process = context.Process(
         target=_whisper_worker,
-        args=(str(source), str(model_name), str(model_root), start, end, send_connection),
+        args=(
+            str(source),
+            str(model_name),
+            str(model_root),
+            start if resume_from is None else float(resume_from),
+            end,
+            send_connection,
+        ),
         daemon=True,
     )
     process_started = False
@@ -1347,6 +1391,27 @@ def _transcribe_with_worker(
     next_seconds = start
     completed = False
     failure = None
+    carried = list(prior_segments or [])
+
+    def persist(status: str) -> None:
+        if checkpoint_path is None:
+            return
+        _write_asr_checkpoint(
+            checkpoint_path,
+            {
+                "audio": str(source),
+                "model": str(model_name),
+                "start": start,
+                "end": end,
+                "duration_seconds": duration,
+                "next_seconds": next_seconds,
+                "language": language,
+                "segments": carried + segments,
+                "status": status,
+                "updated_at": time.time(),
+            },
+        )
+
     try:
         process.start()
         process_started = True
@@ -1372,24 +1437,29 @@ def _transcribe_with_worker(
                 segments.extend(event.get("segments") or [])
                 language = str(event.get("language") or language)
                 next_seconds = float(event.get("end_seconds") or next_seconds)
+                persist("partial")
             elif event.get("event") == "complete":
                 completed = True
                 language = str(event.get("language") or language)
                 next_seconds = float(event.get("end_seconds") or next_seconds)
+                persist("complete")
             elif event.get("event") == "failed":
                 failure = str(event.get("error") or "ASR failed")
         if completed or failure is not None:
             process.join(5)
         elif not process.is_alive():
             process.join(1)
-        if failure and not segments:
+        everything = carried + segments
+        if failure and not everything:
             raise MediaProcessingError(failure)
-        if not segments and not completed:
+        if not everything and not completed:
             raise MediaBudgetExceeded(f"ASR produced no cues within max_work_seconds ({timeout})")
+        if not completed:
+            persist("partial")
         return {
-            "status": "success" if completed and segments else "partial" if segments else "no_speech",
+            "status": "success" if completed and everything else "partial" if everything else "no_speech",
             "language": language,
-            "segments": segments,
+            "segments": everything,
             "next_seconds": next_seconds,
             "duration_seconds": duration,
             "model": str(model_name),
@@ -1442,11 +1512,33 @@ def transcribe_audio_file(
     remaining = timeout - (time.monotonic() - started)
     if remaining <= 0:
         raise MediaBudgetExceeded("ASR work budget expired before its model slot was acquired")
+    checkpoint_path = asr_checkpoint_dir() / f"{_asr_identity(source, model_name, start, end)}.json"
+    stored = _load_asr_checkpoint(checkpoint_path)
+    carried: list[dict] = []
+    resume_start = start
+    if stored:
+        stored_segments = [item for item in (stored.get("segments") or []) if isinstance(item, dict)]
+        stored_end = float(stored.get("next_seconds") or start)
+        if stored.get("status") == "complete" and stored_end >= end - 0.01:
+            return {
+                "status": "success" if stored_segments else "no_speech",
+                "language": str(stored.get("language") or ""),
+                "segments": stored_segments,
+                "next_seconds": stored_end,
+                "duration_seconds": duration,
+                "model": str(model_name),
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+                "cached": True,
+                "checkpoint": str(checkpoint_path),
+            }
+        if stored_segments and start <= stored_end <= end:
+            carried = stored_segments
+            resume_start = stored_end
     with asr_model_slot(model_root, max_wait_seconds=remaining):
         remaining = timeout - (time.monotonic() - started)
         if remaining <= 0:
             raise MediaBudgetExceeded("ASR work budget expired while waiting for its model slot")
-        return _transcribe_with_worker(
+        result = _transcribe_with_worker(
             source,
             model_name,
             model_root,
@@ -1455,4 +1547,10 @@ def transcribe_audio_file(
             duration,
             max(int(remaining), 1),
             started,
+            checkpoint_path=checkpoint_path,
+            prior_segments=carried,
+            resume_from=resume_start,
         )
+        result["cached"] = False
+        result["checkpoint"] = str(checkpoint_path)
+        return result

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 from urllib.parse import urlparse
+import threading
 import json
 import os
 from datetime import datetime, timezone
@@ -148,6 +149,36 @@ def _auth_pause_of(response, candidate: str, source_url: str) -> dict | None:
         "open_command": action.get("open_command"),
         "candidates": [candidate],
     }
+
+
+_LEASE_INTERVAL_SECONDS = 60.0
+
+
+class _LeaseHeartbeat:
+    """Keep the lease warm while a long read is still running."""
+
+    def __init__(self, collection_id: str, run_id: str, candidate: str, interval: float | None = None):
+        self._args = (collection_id, run_id, candidate)
+        self._interval = max(0.01, float(_LEASE_INTERVAL_SECONDS if interval is None else interval))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self):
+        def beat():
+            while not self._stop.wait(self._interval):
+                try:
+                    checkpoint.renew_lease(*self._args)
+                except Exception:
+                    return
+
+        self._thread = threading.Thread(target=beat, name="envoy-lease", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
 
 
 def _open_collection(
@@ -483,13 +514,14 @@ def collect(
             continue
         manifest = _set_state(manifest, candidate, "processing")
         try:
-            response = read_public_page(
-                ReadRequest(
-                    request_id=f"collect-{collection_id}-{candidate[:24]}",
-                    source={"url": str(item.get("source_url") or "")},
-                    goal=goal,
+            with _LeaseHeartbeat(collection_id, run_id, candidate):
+                response = read_public_page(
+                    ReadRequest(
+                        request_id=f"collect-{collection_id}-{candidate[:24]}",
+                        source={"url": str(item.get("source_url") or "")},
+                        goal=goal,
+                    )
                 )
-            )
         except Exception as exc:  # a single item must not sink the run
             manifest = _set_state(manifest, candidate, "failed")
             sources[candidate] = {

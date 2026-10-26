@@ -22,6 +22,7 @@ def test_a_pause_is_persisted_and_reused_for_the_same_link(auth_home):
 
     assert first["action_id"] == second["action_id"]
     assert other["action_id"] != first["action_id"]
+    assert first["resume_token"].isalnum(), "a resume token must survive --token parsing"
     assert authflow.load_auth_action(first["action_id"])["status"] == "pending"
     assert authflow.resolve_resume_token(first["resume_token"])["action_id"] == first["action_id"]
 
