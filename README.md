@@ -71,6 +71,17 @@
 
 见[评测方法](benchmarks/README.md)、[口径与偏差](benchmarks/fixed-set-v1/AB-PROTOCOL.md)与[复核记录](docs/acceptance/envoy-read-failure-2026-10-25.md)。
 
+## 本地 Web 界面（Docker）
+
+需要 Docker Desktop，仓库根目录：
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+前端 `http://127.0.0.1:8200`，后端健康检查 `http://127.0.0.1:8140/api/v1/health` 返回 `{"status":"ok"}`。`docker compose ps` 里 `mysql`、`redis`、`backend`、`frontend` 都 `healthy` 即可用；MySQL 首次启动会自动执行 `sql/` 下的建表脚本，上传与导出都写在 `envoy_runtime` 卷里，默认不需要对象存储。首次构建会拉 MySQL 8.4、Redis，并在后端镜像里装 FFmpeg、Tesseract、Chromium，耗时几分钟。`docker compose down` 保留数据卷；只有 `down -v` 会删库和本地文件。端口、密码、模型配置都在 `.env`，构建加速与排错见 [Docker 一键启动](docs/quickstart-docker.md)。
+
 ## 文档
 
 - [安装、更新与 MCP 配置](integrations/skills/envoy/INSTALL.md)
@@ -148,6 +159,17 @@ Same link, same model, the only difference is whether Envoy is installed; 20 tas
 **What it cannot be read as.** The two arms ran under different caps: baseline 900 s (`cap_seconds` in `/tmp/AB3/run-meta.json`; 41 of 60 turns hit it) and envoy 2400 s (`turn_timeout_seconds` in `/tmp/AB6`; 0 of 60 hit it). The completion gap is inflated by that difference and is not a capability comparison; `suspect_complete` is not "correct". Turning this into a conclusion needs a same-budget run (both arms at one cap), a real task-level verdict that can be reviewed (not keyword rules), artifacts that can be checked against the source snapshots, and a full 60/60-turn ledger per arm. The earlier front-page completion rates and sample counts came from an earlier partial run, cannot be reproduced from the archived data here, and have been withdrawn.
 
 See the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md), and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
+
+### Local web interface (Docker)
+
+With Docker Desktop running, from the repository root:
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+The interface is at `http://127.0.0.1:8200`; `http://127.0.0.1:8140/api/v1/health` answers `{"status":"ok"}`. The stack is ready when `mysql`, `redis`, `backend` and `frontend` all report `healthy`; MySQL bootstraps the schema from `sql/` on first start, and uploads plus exports stay on the `envoy_runtime` volume, so no object storage is required. The first build pulls MySQL 8.4 and Redis and installs FFmpeg, Tesseract and Chromium into the backend image, so it takes a few minutes. `docker compose down` keeps the volumes; only `down -v` drops the database and local files. Ports, passwords and model settings live in `.env`; build acceleration and troubleshooting are in [Docker quickstart](docs/quickstart-docker.md).
 
 ### Documentation
 

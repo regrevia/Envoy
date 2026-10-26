@@ -1,0 +1,6 @@
+# Heavy optional stack for ASR (whisper) and OCR (paddleocr).
+# Installed when the backend image is built with WITH_MEDIA=1.
+openai-whisper==20250625
+paddleocr==3.7.0
+# 3.3.x has no linux/arm64 wheel, so stay below it for multi-arch builds.
+paddlepaddle>=3.2,<3.3
