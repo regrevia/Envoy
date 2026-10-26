@@ -1,0 +1,138 @@
+{
+ "summary": {
+  "total": 7,
+  "usable": 2,
+  "usable_rate": 0.286,
+  "by_verdict": {
+   "readable": 1,
+   "truncated": 1,
+   "unreachable": 2,
+   "partial": 1,
+   "failed": 1,
+   "blocked": 1
+  },
+  "by_family": {
+   "api": {
+    "readable": 1
+   },
+   "blog": {
+    "truncated": 1,
+    "unreachable": 1,
+    "partial": 1,
+    "failed": 1
+   },
+   "image": {
+    "unreachable": 1,
+    "blocked": 1
+   }
+  }
+ },
+ "outcomes": [
+  {
+   "family": "api",
+   "label": "json-api",
+   "url": "https://api.github.com/repos/psf/requests",
+   "verdict": "readable",
+   "status": "ready",
+   "source_kind": "",
+   "chars": 6683,
+   "blocks": 2,
+   "code": "",
+   "message": "",
+   "seconds": 3.9647619159999863,
+   "material_id": "mat-9c2174c85d2161d08c33c66e",
+   "detail": {}
+  },
+  {
+   "family": "blog",
+   "label": "danluu",
+   "url": "https://danluu.com/",
+   "verdict": "truncated",
+   "status": "partial",
+   "source_kind": "",
+   "chars": 19,
+   "blocks": 1,
+   "code": "",
+   "message": "",
+   "seconds": 1.719102250000006,
+   "material_id": "mat-d88d9f33e30ba1aaab691749",
+   "detail": {}
+  },
+  {
+   "family": "blog",
+   "label": "medium",
+   "url": "https://medium.com/@karpathy/a-recipe-for-training-neural-networks-9c4c9f7d4b6c",
+   "verdict": "unreachable",
+   "status": "",
+   "source_kind": "",
+   "chars": 0,
+   "blocks": 0,
+   "code": "host_unreachable",
+   "message": "no TCP/HTTP answer from this machine within 15s",
+   "seconds": 0.0,
+   "material_id": "",
+   "detail": {}
+  },
+  {
+   "family": "blog",
+   "label": "simonwillison",
+   "url": "https://simonwillison.net/",
+   "verdict": "partial",
+   "status": "partial",
+   "source_kind": "",
+   "chars": 591,
+   "blocks": 14,
+   "code": "",
+   "message": "",
+   "seconds": 1.7356174170000003,
+   "material_id": "mat-fb61d9762d2eb1ddfdd918e1",
+   "detail": {}
+  },
+  {
+   "family": "blog",
+   "label": "substack",
+   "url": "https://platformer.news/",
+   "verdict": "failed",
+   "status": "",
+   "source_kind": "",
+   "chars": 0,
+   "blocks": 0,
+   "code": "timeout",
+   "message": "no answer within 60s",
+   "seconds": 60.009447542000004,
+   "material_id": "",
+   "detail": {}
+  },
+  {
+   "family": "image",
+   "label": "pinterest",
+   "url": "https://www.pinterest.com/pin/1139481143253437748/",
+   "verdict": "unreachable",
+   "status": "",
+   "source_kind": "",
+   "chars": 0,
+   "blocks": 0,
+   "code": "host_unreachable",
+   "message": "no TCP/HTTP answer from this machine within 15s",
+   "seconds": 0.0,
+   "material_id": "",
+   "detail": {}
+  },
+  {
+   "family": "image",
+   "label": "unsplash",
+   "url": "https://unsplash.com/s/photos/ocean",
+   "verdict": "blocked",
+   "status": "blocked",
+   "source_kind": "",
+   "chars": 0,
+   "blocks": 0,
+   "code": "auth_required",
+   "message": "The source requires access that Envoy cannot provide. Page.goto: net::ERR_CONNECTION_CLOSED at https://unsplash.com/s/photos/ocean\nCall log:\n  - navigating to \"https://unsplash.com/s/photos/ocean\", waiting until \"commit\"",
+   "seconds": 44.72056904200001,
+   "material_id": "",
+   "detail": {}
+  }
+ ],
+ "generated_at": "2026-10-26T10:57:29Z"
+}

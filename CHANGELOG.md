@@ -9,6 +9,7 @@
 - 风控页会主动改走该站的登录入口（知乎、小红书、微博、抖音），截图里是真正的登录/扫码页而不是 403 文本。
 - `needs_user_action` 的选项新增 `in_chat_sign_in`，排在第一条：告诉模型用 `envoy_auth` 把二维码发出来，而不是让用户去开终端。
 - CLI 等价入口：`envoy auth shot --url <link> --json`，其余参数与 MCP 工具一致。
+- 链接覆盖基线入库：57 条真实链接、14 个类别，脚本 `scripts/acceptance/link_coverage.py`，可用率 45.6% → 52.6%（可达到语料 68.4% → 78.9%），原始测量 JSON 与复测命令见 `docs/product/link-coverage-benchmark.md`。
 
 ## 0.1.12 - 2026-10-26
 
