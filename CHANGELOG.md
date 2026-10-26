@@ -1,5 +1,36 @@
 # 更新日志 / Changelog
 
+## 0.1.10 - 2026-10-26
+
+### 中文
+
+- 登录暂停成为可恢复的一步：新增 `envoy auth open|verify|resume|status|clear`。
+  同一站点在一批任务里只暂停一次，恢复时用 `--retry-reason auth` 只重试被挡住的
+  条目；判定只来自对原链接的无头复检，打开窗口本身不算成功。
+- 长读取期间心跳续租 item lease，避免长视频在读完前被 `lease-reap` 判为超时；
+  `touch_lease` 只接受处于 `processing` 的条目，不消耗重试次数。
+- ASR 每 60 秒把已完成分片写入检查点；中断后从最后一片续跑，完整转写直接复用。
+- 任务可发现：`envoy collect --list [--json]` 与 `envoy_collection_checkpoint`
+  的 `action="list"` 列出本机可续跑的任务、完成数与待登录数。
+- 工具改名 `envoy_observe_visual` → `envoy_observe`，保留一个版本的调用别名。
+- 新增 `scripts/acceptance/auth_pause_resume.py`：覆盖「17 条完成、3 条因同一站点
+  认证暂停、只打开一次验证窗口、只续那 3 条、退出后重开仍能找到任务」。
+
+### English
+
+- A login pause is now a resumable, site-scoped step (`envoy auth open|verify|resume|status|clear`).
+  One site pauses once per batch; resume re-reads only the blocked items via
+  `--retry-reason auth`, and success is decided by a headless re-check of the
+  original URL, never by the window having opened.
+- Long reads renew their item lease; `touch_lease` accepts only `processing` items
+  and does not consume attempts.
+- ASR persists finished chunks every 60 seconds, resumes from the last chunk, and
+  reuses a complete transcript.
+- `envoy collect --list [--json]` and `envoy_collection_checkpoint` `action="list"`
+  report resumable runs with progress.
+- Renamed `envoy_observe_visual` to `envoy_observe`, with a one-release alias.
+- Added `scripts/acceptance/auth_pause_resume.py` for the 17+3 pause scenario.
+
 ## 0.1.9 - 2026-10-26
 
 ### 中文
