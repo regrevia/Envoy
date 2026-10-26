@@ -120,6 +120,16 @@ dsh plugin --profile web remove envoy-dsh
 uv tool uninstall envoy-cli
 ```
 
+## 源码开发 / From a checkout
+
+```bash
+scripts/dev_install.sh        # .venv + editable envoy-core 与 envoy-cli
+```
+
+只用 `pip install -e packages/envoy-cli` 会失败：CLI 导入 `envoy-core`，而它不在
+PyPI 上；且 CLI 要 Python >= 3.10，macOS 自带的 `python3` 是 3.9。脚本用 `uv`
+取一个够新的解释器并两个包一起装。
+
 ## 可选能力 / Optional capabilities
 
 - **浏览器渲染**：首次读到需要 JS 的页面时自动 `playwright install chromium`。
