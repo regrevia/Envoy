@@ -51,10 +51,11 @@ def _write_markdown(out: Path, text: str) -> None:
     os.replace(tmp, out)
 
 
-def _excerpt(response) -> str:
+def _excerpt_from_blocks(blocks: list) -> str:
     parts: list[str] = []
-    for block in response.blocks:
-        data = block.model_dump(mode="json")
+    for data in blocks:
+        if not isinstance(data, dict):
+            continue
         for field in _TEXT_BLOCK_FIELDS:
             value = data.get(field)
             if isinstance(value, str) and value.strip():
@@ -69,6 +70,34 @@ def _excerpt(response) -> str:
     if len(text) > EXCERPT_LIMIT:
         return text[:EXCERPT_LIMIT] + "\n\n（摘录已截断，用 material_id 展开）"
     return text
+
+
+def _excerpt(response) -> str:
+    return _excerpt_from_blocks(
+        [block.model_dump(mode="json") for block in response.blocks]
+    )
+
+
+def _excerpt_from_material(material_id: str) -> str:
+    """Rebuild an excerpt from the local material store, without the network."""
+    if not material_id:
+        return ""
+    try:
+        from .reader import _material_root
+
+        path = _material_root() / f"{material_id}.json"
+        if path.is_symlink() or not path.is_file():
+            return ""
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return ""
+    if not isinstance(stored, dict):
+        return ""
+    response = stored.get("operation_response") or stored.get("response")
+    blocks = response.get("blocks") if isinstance(response, dict) else None
+    if not isinstance(blocks, list):
+        blocks = stored.get("blocks")
+    return _excerpt_from_blocks(blocks if isinstance(blocks, list) else [])
 
 
 def _reason(response) -> str:
@@ -276,6 +305,53 @@ def _render(
     return "\n".join(lines)
 
 
+def _repair_artifacts(
+    out: Path,
+    sources_path: Path,
+    manifest: dict,
+    sources: dict,
+    candidates: dict,
+    selected: list[str],
+    *,
+    platform: str,
+    profile_url: str,
+) -> dict:
+    """Recreate lost sidecars from the material store instead of re-reading."""
+    repaired: list[str] = []
+    filled = 0
+    for candidate in selected:
+        item = candidates.get(candidate) or {}
+        record = sources.get(candidate) or {}
+        state = str(manifest["items"].get(candidate, {}).get("state") or "selected")
+        evidence = (manifest.get("evidence") or {}).get(candidate) or {}
+        material_id = str(record.get("material_id") or evidence.get("material_id") or "")
+        if not material_id:
+            continue
+        if not record:
+            record = {"title": str(item.get("title") or ""), "url": item.get("source_url")}
+        record["material_id"] = material_id
+        if not str(record.get("excerpt") or "").strip():
+            excerpt = _excerpt_from_material(material_id)
+            if excerpt:
+                record["excerpt"] = excerpt
+                filled += 1
+        record.setdefault("state", state)
+        if not record.get("state"):
+            record["state"] = state
+        sources[candidate] = record
+    if filled or sources:
+        _save_sources(sources_path, sources)
+    markdown_missing = not out.is_file() or out.stat().st_size == 0
+    if markdown_missing and (sources or selected):
+        _write_markdown(
+            out, _render(manifest, sources, platform=platform, profile_url=profile_url)
+        )
+        repaired.append("markdown")
+    if filled:
+        repaired.append("excerpts")
+    return {"rebuilt": repaired, "excerpts_filled": filled}
+
+
 def collect(
     profile_url: str,
     out_path: str | Path,
@@ -322,6 +398,16 @@ def collect(
         if isinstance(item, dict)
     }
     selected = [str(value) for value in manifest.get("selected_candidate_ids") or []]
+    rebuilt = _repair_artifacts(
+        out,
+        sources_path,
+        manifest,
+        sources,
+        candidates,
+        selected,
+        platform=platform,
+        profile_url=canonical,
+    )
     read_now = 0
     skipped = 0
     for candidate in selected:
@@ -399,6 +485,8 @@ def collect(
     return {
         "ok": True,
         "output": str(out),
+        "rebuilt": rebuilt.get("rebuilt") or [],
+        "excerpts_filled": rebuilt.get("excerpts_filled") or 0,
         "sources": str(sources_path),
         "platform": platform,
         "profile_url": canonical,

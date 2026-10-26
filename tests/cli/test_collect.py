@@ -221,3 +221,55 @@ def test_a_real_block_shape_is_excerpted_and_skipped_on_resume(tmp_path, monkeyp
     assert second["skipped"] == 2
     sources = json.loads((tmp_path / "notes.md.sources.json").read_text(encoding="utf-8"))
     assert any("真实正文内容" in str(item.get("excerpt") or "") for item in sources.values())
+
+
+def test_lost_artifacts_are_rebuilt_from_the_material_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        collect_module.checkpoint, "discover_profile", _fake_discovery("douyin")
+    )
+
+    from envoy_cli import reader
+
+    root = reader._material_root()
+    root.mkdir(parents=True, exist_ok=True)
+    material_id = "mat-" + "a" * 24
+    (root / f"{material_id}.json").write_text(
+        json.dumps(
+            {
+                "operation_response": {
+                    "blocks": [{"kind": "text", "content": {"type": "text", "text": "离线重建正文"}}]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / f"{material_id}.expires").write_text("9999999999", encoding="ascii")
+
+    calls = []
+
+    class _Resp(_RealResponse):
+        def __init__(self):
+            super().__init__()
+            self.material_id = material_id
+
+    def read(request):
+        calls.append(request.source.url)
+        return _Resp()
+
+    monkeypatch.setattr(collect_module, "read_public_page", read)
+    out = tmp_path / "notes.md"
+    first = collect_module.collect(PROFILE, out, limit=5)
+    assert first["read_now"] == 2
+
+    out.unlink()
+    collect_module._sources_path(out).unlink()
+
+    second = collect_module.collect(PROFILE, out, limit=5)
+
+    assert len(calls) == 2, "losing the pack must not send us back to the sites"
+    assert second["read_now"] == 0
+    assert out.is_file() and out.stat().st_size > 0
+    assert "离线重建正文" in out.read_text(encoding="utf-8")
+    assert second["excerpts_filled"] >= 1
