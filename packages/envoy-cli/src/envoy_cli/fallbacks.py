@@ -99,6 +99,59 @@ def _client() -> httpx.Client:
     )
 
 
+#: Only failures that prove the direct route did not carry the request are
+#: retried through a proxy; an HTTP status is an answer from the source itself.
+_CONNECTION_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.RemoteProtocolError,
+    OSError,
+)
+
+
+def _proxy_url() -> str | None:
+    """The proxy to retry through, or None when outbound policy says direct."""
+
+    try:
+        from .netpolicy import detected_proxy, explicit_proxy
+
+        return explicit_proxy() or detected_proxy()
+    except Exception:  # noqa: BLE001 — a proxy is optional, never a hard failure
+        return None
+
+
+def _send(
+    client: httpx.Client, method: str, url: str, budget: float, **kwargs: Any
+) -> httpx.Response:
+    """Send one request directly, retrying once through a proxy on connect failure."""
+
+    request = dict(kwargs)
+    request["timeout"] = httpx.Timeout(min(_HTTP_TIMEOUT, budget))
+    try:
+        return client.request(method, url, **request)
+    except _CONNECTION_ERRORS:
+        proxy = _proxy_url()
+        if not proxy:
+            raise
+        # The proxy URL may carry credentials, so it is never logged or returned.
+        with _proxy_client(proxy) as proxied:
+            return proxied.request(method, url, **request)
+
+
+def _proxy_client(proxy: str) -> httpx.Client:
+    """A throwaway client bound to one proxy, for the retry attempt only."""
+
+    return httpx.Client(
+        proxy=proxy,
+        timeout=httpx.Timeout(_HTTP_TIMEOUT),
+        follow_redirects=True,
+        max_redirects=_MAX_REDIRECTS,
+        trust_env=False,
+        headers={"User-Agent": _USER_AGENT},
+    )
+
+
 def _get_json(
     client: httpx.Client,
     url: str,
@@ -107,9 +160,7 @@ def _get_json(
 ) -> Any:
     if budget <= 0:
         return None
-    response = client.get(
-        url, timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)), headers=headers
-    )
+    response = _send(client, "GET", url, budget, headers=headers)
     response.raise_for_status()
     return response.json()
 
@@ -129,10 +180,8 @@ def _resolve_b23(client: httpx.Client, code: str, budget: float) -> str | None:
 
     if budget <= 0:
         return None
-    response = client.head(
-        f"https://b23.tv/{code}",
-        timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)),
-        follow_redirects=False,
+    response = _send(
+        client, "HEAD", f"https://b23.tv/{code}", budget, follow_redirects=False
     )
     location = response.headers.get("location")
     if not location:
@@ -143,13 +192,18 @@ def _resolve_b23(client: httpx.Client, code: str, budget: float) -> str | None:
     return str(location)
 
 
-def _result(backend: str, title: str, text: str, url: str) -> dict:
-    return {
+def _result(
+    backend: str, title: str, text: str, url: str, *, min_chars: int | None = None
+) -> dict:
+    result = {
         "backend": backend,
         "title": title.strip() or url,
         "text": text.strip()[:_MAX_TEXT],
         "url": url,
     }
+    if min_chars is not None:
+        result["min_chars"] = min_chars
+    return result
 
 
 def _stackexchange(client: httpx.Client, question_id: str, budget: float) -> dict | None:
@@ -337,10 +391,12 @@ def _douban(client: httpx.Client, subject_id: str, budget: float) -> dict | None
 def _juejin(client: httpx.Client, article_id: str, budget: float) -> dict | None:
     if budget <= 0:
         return None
-    response = client.post(
+    response = _send(
+        client,
+        "POST",
         "https://api.juejin.cn/content_api/v1/article/detail",
+        budget,
         json={"article_id": article_id, "client_type": 2608},
-        timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)),
     )
     response.raise_for_status()
     payload = response.json()
@@ -393,7 +449,9 @@ def _sspai(client: httpx.Client, article_id: str, budget: float) -> dict | None:
     body = _plain(data.get("body"))
     if body:
         parts.extend(["", body])
-    return _result("sspai", title, "\n".join(parts), page_url)
+    # A paid or client-only post is short by nature; the endpoint still owns it,
+    # so a short body beats rendering the shell that hides it.
+    return _result("sspai", title, "\n".join(parts), page_url, min_chars=80)
 
 
 def public_api_fallback(
