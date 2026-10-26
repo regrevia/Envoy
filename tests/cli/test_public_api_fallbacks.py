@@ -208,4 +208,140 @@ def test_an_unrelated_url_never_touches_the_network(monkeypatch):
 
     monkeypatch.setattr(fallbacks, "_client", _serve(handler))
     assert fallbacks.public_api_fallback("https://example.com/") is None
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/video/av170001") is None
+    assert fallbacks.public_api_fallback("https://book.douban.com/subject/1292052/") is None
     assert fallbacks.public_api_fallback("") is None
+
+
+def test_bilibili_video_summary_and_pages(monkeypatch):
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.url.path))
+        if request.url.host == "b23.tv":
+            return httpx.Response(302, headers={"location": "https://www.bilibili.com/video/BV1GJ411x7h7"})
+        return _json(
+            {
+                "code": 0,
+                "message": "OK",
+                "data": {
+                    "bvid": "BV1GJ411x7h7",
+                    "title": "Never Gonna Give You Up",
+                    "desc": "Official MV",
+                    "pubdate": 1577835803,
+                    "owner": {"name": "Sony Music"},
+                    "stat": {"view": 107725304, "danmaku": 151306},
+                    "pages": [
+                        {"page": 1, "part": "Official MV", "duration": 213},
+                        {"page": 2, "part": "Behind the scenes", "duration": 75},
+                    ],
+                },
+            }
+        )
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    result = fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7?spm_id_from=1")
+
+    assert result is not None
+    assert result["backend"] == "bilibili"
+    assert result["url"] == "https://www.bilibili.com/video/BV1GJ411x7h7"
+    assert result["title"] == "Never Gonna Give You Up"
+    text = result["text"]
+    assert "UP: Sony Music" in text
+    assert "107725304 views" in text and "151306 danmaku" in text
+    assert "Official MV" in text
+    assert "P2 Behind the scenes (1:15)" in text
+
+    short = fallbacks.public_api_fallback("https://b23.tv/abc123")
+    assert short is not None and short["url"] == "https://www.bilibili.com/video/BV1GJ411x7h7"
+    assert ("b23.tv", "/abc123") in seen
+
+
+def test_bilibili_form_that_is_not_a_video_page(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/") is None
+    assert fallbacks.public_api_fallback("https://space.bilibili.com/12345") is None
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/video/av170001") is None
+
+
+def test_bilibili_network_error_is_none(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("no route", request=request)
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7") is None
+
+
+def test_bilibili_api_error_payload_is_none(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json({"code": -404, "message": "啥都木有", "data": None})
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7") is None
+
+
+def test_douban_movie_summary(monkeypatch):
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({"path": request.url.path, "referer": request.headers.get("referer")})
+        return _json(
+            {
+                "id": "1292052",
+                "title": "The Shawshank Redemption",
+                "original_title": "The Shawshank Redemption",
+                "year": "1994",
+                "rating": {"value": 9.7, "count": 3353644},
+                "directors": [{"name": "Frank Darabont"}],
+                "actors": [{"name": "Tim Robbins"}, {"name": "Morgan Freeman"}],
+                "genres": ["Drama", "Crime"],
+                "durations": ["142 minutes"],
+                "intro": "A banker is sentenced to life in Shawshank prison.",
+            }
+        )
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    result = fallbacks.public_api_fallback("https://movie.douban.com/subject/1292052/")
+
+    assert result is not None
+    assert result["backend"] == "douban"
+    assert result["url"] == "https://movie.douban.com/subject/1292052/"
+    assert result["title"] == "The Shawshank Redemption (1994)"
+    text = result["text"]
+    assert "rating: 9.7/10 from 3353644 ratings" in text
+    assert "directors: Frank Darabont" in text
+    assert "cast: Tim Robbins, Morgan Freeman" in text
+    assert "A banker is sentenced to life" in text
+    assert seen == [
+        {"path": "/rexxar/api/v2/movie/1292052", "referer": "https://m.douban.com/"}
+    ]
+
+
+def test_douban_form_that_is_not_a_movie_page(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://movie.douban.com/") is None
+    assert fallbacks.public_api_fallback("https://movie.douban.com/subject/abc/") is None
+    assert fallbacks.public_api_fallback("https://book.douban.com/subject/1292052/") is None
+
+
+def test_douban_network_error_is_none(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://movie.douban.com/subject/1292052/") is None
+
+
+def test_douban_blocked_response_is_none(monkeypatch):
+    monkeypatch.setattr(
+        fallbacks,
+        "_client",
+        _serve(lambda request: httpx.Response(403, json={"msg": "login required"})),
+    )
+    assert fallbacks.public_api_fallback("https://movie.douban.com/subject/1292052/") is None

@@ -39,6 +39,14 @@ _NPM = re.compile(
 _HACKER_NEWS = re.compile(
     r"^https?://news\.ycombinator\.com/item\?(?:[^#]*&)?id=(?P<id>\d+)(?:[&#].*)?$"
 )
+_BILIBILI = re.compile(
+    r"^(?:https?://(?:www\.|m\.)?bilibili\.com/video/(?P<bvid>BV[0-9A-Za-z]{10})"
+    r"(?:[/?#].*)?|https?://b23\.tv/(?P<short>[\w-]+)/?(?:[?#].*)?)$"
+)
+_DOUBAN = re.compile(
+    r"^https?://movie\.douban\.com/subject/(?P<id>\d+)/?(?:[?#].*)?$"
+)
+_DOUBAN_REFERER = {"Referer": "https://m.douban.com/"}
 
 
 class _PlainText(HTMLParser):
@@ -89,12 +97,48 @@ def _client() -> httpx.Client:
     )
 
 
-def _get_json(client: httpx.Client, url: str, budget: float) -> Any:
+def _get_json(
+    client: httpx.Client,
+    url: str,
+    budget: float,
+    headers: dict[str, str] | None = None,
+) -> Any:
     if budget <= 0:
         return None
-    response = client.get(url, timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)))
+    response = client.get(
+        url, timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)), headers=headers
+    )
     response.raise_for_status()
     return response.json()
+
+
+def _seconds(seconds: Any) -> str:
+    if not isinstance(seconds, int) or seconds < 0:
+        return ""
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _resolve_b23(client: httpx.Client, code: str, budget: float) -> str | None:
+    """Follow one b23.tv hop and return the final public video URL."""
+
+    if budget <= 0:
+        return None
+    response = client.head(
+        f"https://b23.tv/{code}",
+        timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)),
+        follow_redirects=False,
+    )
+    location = response.headers.get("location")
+    if not location:
+        return None
+    location = httpx.URL(location)
+    if str(location).startswith("/"):
+        return None
+    return str(location)
 
 
 def _result(backend: str, title: str, text: str, url: str) -> dict:
@@ -205,6 +249,89 @@ def _hacker_news(client: httpx.Client, item_id: str, budget: float) -> dict | No
     return _result("hackernews", title, "\n".join(parts), f"https://news.ycombinator.com/item?id={item_id}")
 
 
+def _bilibili(client: httpx.Client, bvid: str, budget: float) -> dict | None:
+    payload = _get_json(
+        client, f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}", budget
+    )
+    data = (payload or {}).get("data")
+    if not isinstance(data, dict) or payload.get("code") != 0:
+        return None
+    title = str(data.get("title") or "").strip() or f"Bilibili video {bvid}"
+    page_url = f"https://www.bilibili.com/video/{bvid}"
+    parts = [title, page_url]
+    owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
+    uploader = str(owner.get("name") or "").strip()
+    if uploader:
+        parts.append(f"UP: {uploader}")
+    published = data.get("pubdate")
+    if isinstance(published, int) and published > 0:
+        stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(published))
+        parts.append(f"published: {stamp}")
+    stat = data.get("stat") if isinstance(data.get("stat"), dict) else {}
+    numbers = []
+    if isinstance(stat.get("view"), int):
+        numbers.append(f"{stat['view']} views")
+    if isinstance(stat.get("danmaku"), int):
+        numbers.append(f"{stat['danmaku']} danmaku")
+    if numbers:
+        parts.append("stats: " + ", ".join(numbers))
+    description = str(data.get("desc") or "").strip()
+    if description and description != "-":
+        parts.extend(["", description])
+    pages = data.get("pages") if isinstance(data.get("pages"), list) else []
+    listing = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        part = str(page.get("part") or "").strip()
+        length = _seconds(page.get("duration"))
+        if part:
+            listing.append(f"P{page.get('page', '?')} {part}" + (f" ({length})" if length else ""))
+    if len(listing) > 1:
+        parts.extend(["", "--- pages ---", *listing])
+    return _result("bilibili", title, "\n".join(parts), page_url)
+
+
+def _douban(client: httpx.Client, subject_id: str, budget: float) -> dict | None:
+    payload = _get_json(
+        client,
+        f"https://m.douban.com/rexxar/api/v2/movie/{subject_id}",
+        budget,
+        headers=_DOUBAN_REFERER,
+    )
+    if not isinstance(payload, dict) or not payload.get("title"):
+        return None
+    title = str(payload["title"]).strip()
+    year = str(payload.get("year") or "").strip()
+    original = str(payload.get("original_title") or "").strip()
+    label = title + (f" ({year})" if year else "")
+    page_url = f"https://movie.douban.com/subject/{subject_id}/"
+    parts = [label, page_url]
+    if original and original != title:
+        parts.append(original)
+    rating = payload.get("rating") if isinstance(payload.get("rating"), dict) else {}
+    if rating.get("value") is not None:
+        count = rating.get("count")
+        star = f"{rating['value']}/10" + (f" from {count} ratings" if isinstance(count, int) else "")
+        parts.append(f"rating: {star}")
+    for key, header in (("directors", "directors"), ("actors", "cast")):
+        people = payload.get(key) if isinstance(payload.get(key), list) else []
+        names = [str(person.get("name")).strip() for person in people if isinstance(person, dict)]
+        names = [name for name in names if name][:5]
+        if names:
+            parts.append(f"{header}: " + ", ".join(names))
+    genres = [str(genre).strip() for genre in payload.get("genres") or [] if str(genre).strip()]
+    if genres:
+        parts.append("genres: " + ", ".join(genres))
+    durations = [str(item).strip() for item in payload.get("durations") or [] if str(item).strip()]
+    if durations:
+        parts.append("duration: " + ", ".join(durations))
+    intro = str(payload.get("intro") or "").strip()
+    if intro:
+        parts.extend(["", intro])
+    return _result("douban", label, "\n".join(parts), page_url)
+
+
 def public_api_fallback(
     url: str, *, goal: str = "", max_work_seconds: int = 20
 ) -> dict | None:
@@ -216,7 +343,9 @@ def public_api_fallback(
     stackoverflow = _STACKOVERFLOW.match(url)
     npm = _NPM.match(url)
     hacker_news = _HACKER_NEWS.match(url)
-    if not (stackoverflow or npm or hacker_news):
+    bilibili = _BILIBILI.match(url)
+    douban = _DOUBAN.match(url)
+    if not (stackoverflow or npm or hacker_news or bilibili or douban):
         return None
     deadline = time.monotonic() + max(1, int(max_work_seconds))
     try:
@@ -226,6 +355,18 @@ def public_api_fallback(
                 return _stackexchange(client, stackoverflow.group("id"), budget)
             if npm:
                 return _npm(client, npm.group("name"), budget)
-            return _hacker_news(client, hacker_news.group("id"), budget)
+            if hacker_news:
+                return _hacker_news(client, hacker_news.group("id"), budget)
+            if douban:
+                return _douban(client, douban.group("id"), budget)
+            if bilibili.group("bvid"):
+                return _bilibili(client, bilibili.group("bvid"), budget)
+            resolved = _resolve_b23(client, bilibili.group("short"), budget)
+            if not resolved:
+                return None
+            match = _BILIBILI.match(resolved)
+            if not match or not match.group("bvid"):
+                return None
+            return _bilibili(client, match.group("bvid"), deadline - time.monotonic())
     except Exception:  # noqa: BLE001 — a fallback must never raise into the reader
         return None
