@@ -267,10 +267,30 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--compare", default="")
     parser.add_argument("--envoy", default="envoy", help="envoy executable")
+    parser.add_argument(
+        "--skip-hosts",
+        default="xiaohongshu.com,zhihu.com,douyin.com,weibo.com,xiaohongshu",
+        help="comma-separated host fragments left out of an automated run; these sites treat "
+        "repeated automated hits as risk control and can warn the user's account",
+    )
+    parser.add_argument(
+        "--hit-risk-hosts",
+        action="store_true",
+        help="include the skipped hosts anyway (only for a deliberate one-off check, never in a loop)",
+    )
     args = parser.parse_args()
 
     families = {item.strip() for item in args.only.split(",") if item.strip()}
-    corpus = [entry for entry in CORPUS if not families or entry[0] in families]
+    selected = [entry for entry in CORPUS if not families or entry[0] in families]
+    skip = [] if args.hit_risk_hosts else [h.strip() for h in args.skip_hosts.split(",") if h.strip()]
+    corpus, skipped = [], []
+    for entry in selected:
+        if any(fragment in entry[2] for fragment in skip):
+            skipped.append(entry)
+        else:
+            corpus.append(entry)
+    for family, label, url in skipped:
+        print(f"skipped {family:<9} {label:<18} {url} (risk-control host, use --hit-risk-hosts)", flush=True)
     outcomes: list[Outcome] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         futures = [
@@ -292,6 +312,10 @@ def main() -> int:
                 {
                     "summary": summary,
                     "outcomes": [item.__dict__ for item in outcomes],
+                    "skipped": [
+                        {"family": family, "label": label, "url": url}
+                        for family, label, url in skipped
+                    ],
                     "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 },
                 ensure_ascii=False,
