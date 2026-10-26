@@ -70,6 +70,12 @@ def test_url_inference_uses_the_registrable_domain_not_the_last_two_labels():
         ("https://m.example.com.cn/a", "example.com.cn"),
         ("https://sub.deep.example.org/x", "example.org"),
         ("https://www.douyin.com/video/1", "douyin.com"),
+        ("https://mine.co.ke/login", "mine.co.ke"),
+        ("https://shop.example.com.es/", "example.com.es"),
+        ("https://www.example.com.pt/", "example.com.pt"),
+        ("https://mail.example.com.ru/", "example.com.ru"),
+        ("https://news.example.com.pl/", "example.com.pl"),
+        ("https://portal.example.ac.ae/", "example.ac.ae"),
     ],
 )
 def test_url_inference_respects_multi_label_public_suffixes(url, expected):
