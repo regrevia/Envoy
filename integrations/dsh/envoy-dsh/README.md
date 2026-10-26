@@ -84,15 +84,27 @@ transport, so a login prompt with no window on screen is expected.
 
 ## Install
 
-From the DeepSeek Harness marketplace, one command:
+In the app: Plugin Manager → search `Envoy` → Install. That is the whole flow —
+the bundle ships its own Harness patch, so nothing in the profile is edited by
+hand.
+
+From a shell, one command (it finds the CLI inside the desktop app when `dsh`
+is not on PATH):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+```
+
+Without the script it is the same single command, optionally with
+`--profile <name>`:
 
 ```text
 dsh plugin --profile web add envoy-dsh
 ```
 
-Or in the app: Plugin Manager → search `Envoy` → Install, or point it at the
-marketplace entry. The bundle is published as `envoy-dsh` on npm; the package
-declares its own Harness patch, so nothing in the profile is edited by hand.
+A release tarball (`envoy-dsh-<version>.tgz` on the GitHub release) installs
+with the same command and does not wait on the npm registry, which publishes
+separately.
 
 Developing against a checkout instead: Plugin Manager → Install bundle →
 `/absolute/path/to/Envoy/integrations/dsh/envoy-dsh`, or `plugin_manager` with

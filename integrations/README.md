@@ -13,18 +13,23 @@ discovery, collection, replay, visual-history, or doctor tools are needed.
 | Codex | [`codex/envoy`](codex/envoy/README.md) | plugin manifest + `.mcp.json`; `envoy hook install` writes the user-level `UserPromptSubmit` hook to `~/.codex/hooks.json` |
 | DeepSeek Harness | [`dsh/envoy-dsh`](dsh/envoy-dsh/README.md) | Cordis bundle, `agent/pre-step` hook, MCP bridge |
 
-The two coding-agent plugins can be installed directly from this repository:
+One line per host. It puts an up-to-date `envoy` on PATH (reusing one that is
+new enough) and registers the plugin, so there is no separate runtime step:
 
 ```bash
 # Claude Code
-claude plugin marketplace add regrevia/Envoy
-claude plugin install envoy@envoy
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
 
-# Codex
-codex plugin marketplace add https://github.com/regrevia/Envoy.git
-codex plugin add envoy@envoy
-envoy hook install --host codex   # Codex 0.156+ loads hooks at user level only
+# Codex (plugin for MCP, plus the user-level hook 0.156+ needs)
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+
+# DeepSeek Harness
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
+
+`all` installs every host whose CLI is on PATH. The same commands without
+`curl | sh` are listed in each host README below when you would rather read
+them before running them.
 
 The repository root contains the marketplace entry points:
 

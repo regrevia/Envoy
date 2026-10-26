@@ -14,39 +14,21 @@ uses two pieces:
 
 ## Install
 
-1. Install the Envoy runtime first (see
-   [INSTALL.md](../../skills/envoy/INSTALL.md)). A development checkout can be
-   used with `uv run --python 3.11 --with-editable packages/envoy-cli`.
-2. Add this repository as a marketplace and install the plugin:
+```bash
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+```
+
+It provisions an up-to-date `envoy`, adds this repository as a marketplace,
+installs `envoy@envoy`, then runs `envoy hook install --host codex`. By hand:
 
 ```bash
 codex plugin marketplace add https://github.com/regrevia/Envoy.git
 codex plugin add envoy@envoy
-```
-
-For a local checkout:
-
-```bash
-codex plugin marketplace add /absolute/path/to/Envoy
-codex plugin add envoy@envoy
+envoy hook install --host codex   # user-level hook; safe to re-run
 codex plugin list
 ```
 
-3. Install the user-level hook once (idempotent, safe to re-run):
-
-```bash
-envoy hook install --host codex
-```
-
-Restart Codex, open `/hooks` (or start a turn) and approve the Envoy hook when
-Codex asks for hook trust. In non-interactive `codex exec` runs, pass
-`--dangerously-bypass-hook-trust` only when you understand that flag.
-
-To remove it:
-
-```bash
-envoy hook install --host codex --uninstall
-```
+For a local checkout pass the checkout directory to `plugin marketplace add`.
 
 ## What it adds
 
