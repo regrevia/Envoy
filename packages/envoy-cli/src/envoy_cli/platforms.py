@@ -27,6 +27,25 @@ _ZHIHU_ARTICLE_RE = re.compile(
     r"^/(?:question/\d+/answer/\d+|p/\d+)", re.IGNORECASE
 )
 _WECHAT_ARTICLE_HOSTS = {"mp.weixin.qq.com"}
+_DOUYIN_HOSTS = {"douyin.com", "www.douyin.com", "m.douyin.com", "iesdouyin.com"}
+_DOUYIN_SHORT_HOSTS = {"v.douyin.com"}
+_DOUYIN_VIDEO_RE = re.compile(r"^/(?:video|share/video)/\d+", re.IGNORECASE)
+_WEIBO_HOSTS = {"weibo.com", "www.weibo.com", "m.weibo.cn", "weibo.cn", "www.weibo.cn"}
+_WEIBO_SHORT_HOSTS = {"t.cn"}
+_WEIBO_TV_RE = re.compile(r"^/tv/show/", re.IGNORECASE)
+_TIKTOK_HOSTS = {"tiktok.com", "www.tiktok.com", "m.tiktok.com"}
+_TIKTOK_SHORT_HOSTS = {"vm.tiktok.com", "vt.tiktok.com"}
+_TIKTOK_VIDEO_RE = re.compile(r"^/@[^/]+/video/\d+", re.IGNORECASE)
+_KUAISHOU_HOSTS = {
+    "kuaishou.com",
+    "www.kuaishou.com",
+    "m.kuaishou.com",
+    "k.kuaishou.com",
+}
+_KUAISHOU_VIDEO_RE = re.compile(r"^/(?:short-video|video|photo|fw/photo)/", re.IGNORECASE)
+_WECHAT_CHANNELS_HOSTS = {"channels.weixin.qq.com"}
+_XIAOYUZHOU_HOSTS = {"xiaoyuzhoufm.com", "www.xiaoyuzhoufm.com"}
+_FEED_SUFFIXES = (".xml", ".rss", ".atom")
 
 
 def classify_public_url(value: str) -> str:
@@ -68,9 +87,35 @@ def classify_public_url(value: str) -> str:
         return "platform_page"
     if host in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
         return "platform_page"
-    if host in {"kuaishou.com", "www.kuaishou.com"}:
-        if re.match(r"^/(?:short-video|video|photo)/", path):
+    if host in _KUAISHOU_HOSTS:
+        if host == "k.kuaishou.com":
+            return "platform_page"
+        if _KUAISHOU_VIDEO_RE.match(path):
             return "video_page"
+        return "platform_page"
+    if host in _DOUYIN_SHORT_HOSTS:
+        return "platform_page"
+    if host in _DOUYIN_HOSTS:
+        if _DOUYIN_VIDEO_RE.match(path):
+            return "video_page"
+        return "platform_page"
+    if host in _WEIBO_SHORT_HOSTS:
+        return "platform_page"
+    if host in _WEIBO_HOSTS:
+        if _WEIBO_TV_RE.match(path):
+            return "video_page"
+        return "platform_page"
+    if host in _TIKTOK_SHORT_HOSTS:
+        return "platform_page"
+    if host in _TIKTOK_HOSTS:
+        if _TIKTOK_VIDEO_RE.match(parsed.path):
+            return "video_page"
+        return "platform_page"
+    if host in _WECHAT_CHANNELS_HOSTS:
+        return "platform_page"
+    if host in _XIAOYUZHOU_HOSTS:
+        return "platform_page"
+    if path.endswith(_FEED_SUFFIXES):
         return "platform_page"
     return "generic"
 
