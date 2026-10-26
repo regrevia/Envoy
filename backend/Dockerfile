@@ -25,7 +25,10 @@ COPY requirements.txt requirements-media.txt requirements-media-extras.txt ./
 RUN pip install --upgrade pip --index-url "$PIP_INDEX_URL" \
     && pip install --index-url "$PIP_INDEX_URL" -r requirements.txt -r requirements-media.txt \
     && if [ "$WITH_MEDIA" = "1" ]; then \
-         pip install --index-url "$PIP_INDEX_URL" -r requirements-media-extras.txt; \
+         pip install --index-url "$PIP_INDEX_URL" --no-deps torch==2.9.1 \
+         && pip install --index-url "$PIP_INDEX_URL" more-itertools numba numpy tiktoken tqdm \
+         && pip install --index-url "$PIP_INDEX_URL" --no-deps openai-whisper==20250625 \
+         && pip install --index-url "$PIP_INDEX_URL" -r requirements-media-extras.txt; \
        fi \
     && if [ -n "$PLAYWRIGHT_DOWNLOAD_HOST" ]; then \
          PLAYWRIGHT_DOWNLOAD_HOST="$PLAYWRIGHT_DOWNLOAD_HOST" python -m playwright install --with-deps chromium; \

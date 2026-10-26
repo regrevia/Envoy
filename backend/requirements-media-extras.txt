@@ -1,6 +1,9 @@
 # Heavy optional stack for ASR (whisper) and OCR (paddleocr).
 # Installed when the backend image is built with WITH_MEDIA=1.
-openai-whisper==20250625
+# whisper itself and its torch dependency are installed by the Dockerfile with --no-deps:
+# torch 2.14.x on PyPI is a CUDA build (it pulls ~3 GB of nvidia wheels and fails to import
+# without them), while the 2.9.1 arm64/x86_64 wheels are CPU-only. A CPU-only container only
+# needs the ASR/OCR stack, so torch is pinned in the Dockerfile instead of here.
 paddleocr==3.7.0
 # 3.3.x has no linux/arm64 wheel, so stay below it for multi-arch builds.
 paddlepaddle>=3.2,<3.3

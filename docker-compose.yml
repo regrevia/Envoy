@@ -61,12 +61,14 @@ services:
     environment:
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-envoy-dev-password}@mysql:3306/envoy_v1
       REDIS_URL: redis://redis:6379/0
-      ENVOY_TASK_EXECUTION_MODE: local
+      ENVOY_TASK_EXECUTION_MODE: ${ENVOY_TASK_EXECUTION_MODE:-local}
       ENVOY_STORAGE_MODE: ${ENVOY_STORAGE_MODE:-local}
       # Keep uploads/exports inside the mounted volume (/app/tmp) so they survive recreation.
       ENVOY_LOCAL_STORAGE_DIR: /app/tmp/storage
       ENVOY_EXPORT_DIR: /app/tmp/exports
       ENVOY_VIDEO_DOWNLOAD_DIR: /app/tmp/video-downloads
+      # Whisper model weights (~0.5 GB) live on the runtime volume, not the container layer.
+      WHISPER_DOWNLOAD_ROOT: /app/tmp/whisper
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-envoy-minio-password}
@@ -91,6 +93,45 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
+
+  # Optional background worker: without it the API runs tasks in-process (mode=local).
+  # Enable with `--profile worker` and ENVOY_TASK_EXECUTION_MODE=celery in .env.
+  worker:
+    profiles: ["worker"]
+    # Same image as the backend, only the entrypoint differs.
+    image: envoy-backend:latest
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app.celery_app
+      - worker
+      - -Q
+      - envoy
+      - --concurrency
+      - ${ENVOY_CELERY_CONCURRENCY:-2}
+      - --loglevel
+      - info
+    environment:
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-envoy-dev-password}@mysql:3306/envoy_v1
+      REDIS_URL: redis://redis:6379/0
+      ENVOY_TASK_EXECUTION_MODE: celery
+      ENVOY_STORAGE_MODE: ${ENVOY_STORAGE_MODE:-local}
+      ENVOY_LOCAL_STORAGE_DIR: /app/tmp/storage
+      ENVOY_EXPORT_DIR: /app/tmp/exports
+      ENVOY_VIDEO_DOWNLOAD_DIR: /app/tmp/video-downloads
+      # Whisper model weights (~0.5 GB) live on the runtime volume, not the container layer.
+      WHISPER_DOWNLOAD_ROOT: /app/tmp/whisper
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-envoy-minio-password}
+      MINIO_BUCKET: ${MINIO_BUCKET:-envoy}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - envoy_runtime:/app/tmp
 
   frontend:
     build:
