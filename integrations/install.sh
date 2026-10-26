@@ -103,6 +103,16 @@ verify_checksum() {
   printf 'envoy install: checksum ok for %s\n' "$name"
 }
 
+# The CLI requires Python >= 3.10, and macOS ships 3.9 as `python3`. Ask uv for a
+# suitable interpreter (it downloads one) and treat an existing older venv as
+# stale instead of installing into it.
+ENVOY_PYTHON="${ENVOY_PYTHON:-3.11}"
+
+python_is_new_enough() {
+  [ -x "$1" ] || return 1
+  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+
 install_runtime() {
   version="$1"
   wheel="envoy_cli-$version-py3-none-any.whl"
@@ -119,10 +129,19 @@ install_runtime() {
   fi
 
   if command -v uv >/dev/null 2>&1; then
-    uv venv --allow-existing "$RUNTIME_HOME" >/dev/null 2>&1 || uv venv "$RUNTIME_HOME" >/dev/null
-    uv pip install --python "$RUNTIME_HOME/bin/python" "$url" >/dev/null
+    if ! python_is_new_enough "$RUNTIME_HOME/bin/python"; then
+      rm -rf "$RUNTIME_HOME"
+      uv venv --quiet --python "$ENVOY_PYTHON" "$RUNTIME_HOME" >/dev/null \
+        || die "uv could not provision Python $ENVOY_PYTHON; set ENVOY_PYTHON to a version >= 3.10"
+    fi
+    uv pip install --quiet --python "$RUNTIME_HOME/bin/python" "$url" >/dev/null
   elif command -v python3 >/dev/null 2>&1; then
-    [ -x "$RUNTIME_HOME/bin/python" ] || python3 -m venv "$RUNTIME_HOME"
+    if ! python_is_new_enough "$RUNTIME_HOME/bin/python"; then
+      python_is_new_enough "$(command -v python3)" \
+        || die "python3 is $(python3 -c 'import platform; print(platform.python_version())'), envoy needs >= 3.10; install uv (brew install uv) or a newer Python and re-run"
+      rm -rf "$RUNTIME_HOME"
+      python3 -m venv "$RUNTIME_HOME"
+    fi
     curl -fsSL -o "$tmpdir/$wheel" "$url"
     verify_checksum "$tmpdir/$wheel" "$wheel"
     "$RUNTIME_HOME/bin/python" -m pip install --quiet --upgrade "$tmpdir/$wheel"
@@ -150,12 +169,16 @@ report_health() {
     printf '  + envoy doctor --json\n'
     return 0
   fi
-  report="$(envoy doctor --json 2>/dev/null)" || report=""
+  report="$("$(envoy_binary)" doctor --json 2>/dev/null)" || report=""
   if [ -z "$report" ]; then
     printf 'envoy install: envoy doctor did not answer; run it yourself if the first read fails\n' >&2
     return 0
   fi
-  printf '%s' "$report" | python3 -c '
+  summarizer="python3"
+  if [ -x "$RUNTIME_HOME/bin/python" ]; then
+    summarizer="$RUNTIME_HOME/bin/python"
+  fi
+  printf '%s' "$report" | "$summarizer" -c '
 import json, sys
 try:
     data = json.load(sys.stdin)
