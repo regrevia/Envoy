@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import ipaddress
 import json
@@ -943,7 +944,17 @@ def _should_read_media_first(url: str, include_visual: bool) -> bool:
     missing-capability block, so only a single-video page - or a caller that
     asked for visuals - takes that route.
     """
+    if _SKIP_MEDIA_FIRST.get():
+        return False
     return include_visual or _url_is_video_page(url) or _is_single_video_path(url)
+
+
+# Set while a video page is being re-read as plain text after the media route
+# found nothing readable (no subtitle track and no local ASR). Without this the
+# retry would immediately take the same media route again.
+_SKIP_MEDIA_FIRST: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "envoy_skip_media_first", default=False
+)
 
 
 def _url_is_video_page(value: str) -> bool:
@@ -6413,6 +6424,51 @@ def _read_video_media_url(request: ReadRequest, media_source: dict) -> ReadRespo
 _CHALLENGE_RETRY_DELAY_SECONDS = 1.0
 
 
+def _read_video_page_text(request: ReadRequest, source_url: str) -> ReadResponse | None:
+    """Read a video page as plain text when no transcript path is available.
+
+    A video page still carries the title, the description, chapters and links;
+    blocking the whole read hides material the page itself published. This
+    retries the page with the media route disabled and only keeps the result
+    when it actually produced body text.
+    """
+
+    if request.scope.include_visual:
+        return None
+    if _SKIP_MEDIA_FIRST.get():
+        return None
+    token = _SKIP_MEDIA_FIRST.set(True)
+    try:
+        fallback = _read_public_page_once(request)
+    except Exception:  # noqa: BLE001 - a failed fallback must not mask the block
+        return None
+    finally:
+        _SKIP_MEDIA_FIRST.reset(token)
+    if fallback.result not in {ReadResult.READY, ReadResult.PARTIAL}:
+        return None
+    body_chars = sum(
+        len(block.content.text or "")
+        for block in fallback.blocks
+        if getattr(block.content, "text", None)
+    )
+    if body_chars < 200:
+        return None
+    fallback = fallback.model_copy(update={
+        "errors": [
+            *fallback.errors,
+            ReadError(
+                code=ErrorCode.MISSING_CAPABILITY,
+                message=(
+                    "No transcript is available for this video; the text below is the page itself"
+                ),
+                retryable=False,
+                action_required=False,
+            ),
+        ],
+    })
+    return fallback
+
+
 def read_public_page(request: ReadRequest) -> ReadResponse:
     response = _read_public_page_once(request)
     for attempt in range(1, 2):
@@ -6562,6 +6618,9 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                         if status == "no_subtitles"
                         else "Public subtitle extraction failed"
                     )
+                    page_text = _read_video_page_text(request, source_url)
+                    if page_text is not None:
+                        return page_text
                     return _blocked(
                         request,
                         ErrorCode.MISSING_CAPABILITY,
