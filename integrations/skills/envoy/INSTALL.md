@@ -84,6 +84,10 @@ cd envoy-v0.1.14
 uv tool install --python 3.11 ./envoy_cli-0.1.14-py3-none-any.whl
 ```
 
+也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.14)
+页面上直接下载 wheel 与 `SHA256SUMS` 手工核对。下载慢或装依赖超时，给
+`install.sh` 设 `ENVOY_PYPI_INDEX_URL` 指向可用镜像即可。
+
 然后在宿主的 MCP 配置里加一条：
 
 ```json
@@ -113,6 +117,9 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","so
 # 更新 runtime：重跑安装脚本，或在 DSH 里重装 bundle
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 
+# 单独换 wheel
+uv tool install --force --python 3.11 ./envoy_cli-0.1.14-py3-none-any.whl
+
 # 卸载
 claude plugin uninstall envoy
 codex plugin remove envoy
@@ -136,7 +143,8 @@ PyPI 上；且 CLI 要 Python >= 3.10，macOS 自带的 `python3` 是 3.9。脚�
   想自己控制就在启动宿主前设 `ENVOY_DISABLE_AUTO_BROWSER_SETUP=1`，之后手动
   `envoy browser setup`。
 - **ASR（本地视频转写）**：需要时按提示装 FFmpeg 与对应模型；没有它时视频页
-  会退化成读页面正文并标 `partial`，不是整条失败。
+  会退化成读页面正文并标 `partial`，不是整条失败。手工装可跑
+  `envoy asr install --model base`。
 - **OCR**：截图里的文字在缺 OCR 时不可用，装好后再读同一 `material_id`。
 
 ## Scope and license
