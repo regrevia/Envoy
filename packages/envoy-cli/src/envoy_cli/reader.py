@@ -6432,6 +6432,21 @@ def _read_video_media_url(request: ReadRequest, media_source: dict) -> ReadRespo
 _CHALLENGE_RETRY_DELAY_SECONDS = 1.0
 
 
+def _fallback_min_chars(fallback: dict) -> int:
+    """How short a public-endpoint answer may be before rendering beats it.
+
+    A generic endpoint is only worth taking when it clearly beats the page, so
+    the floor is high. A backend that owns the whole article (a package readme, a
+    post that is genuinely short) declares its own floor instead.
+    """
+
+    try:
+        declared = int(fallback.get("min_chars") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    return declared if declared > 0 else _PUBLIC_API_FALLBACK_MIN_CHARS
+
+
 def _public_api_fallback_response(
     request: ReadRequest, source_url: str, fallback: dict
 ) -> ReadResponse:
@@ -6643,7 +6658,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         except Exception:  # noqa: BLE001 - a fallback must never fail a read
             fallback = None
         if fallback is not None and len(str(fallback.get("text") or "")) >= (
-            _PUBLIC_API_FALLBACK_MIN_CHARS
+            _fallback_min_chars(fallback)
         ):
             return _public_api_fallback_response(request, source_url, fallback)
 
