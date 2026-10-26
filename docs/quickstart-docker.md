@@ -2,6 +2,10 @@
 
 从零到能用的 Web 界面只需要 Docker Desktop，不需要本机装 Python、Node、MySQL、FFmpeg 或 Chromium——这些都在镜像里。
 
+## 这个 Docker 栈负责什么
+
+Docker 只跑仓库里这套旧的 Web 界面（FastAPI + Next.js + MySQL + Redis）。`envoy` CLI、DSH 插件和三个宿主的 skill 全部跑在宿主机上，用 `pip install envoy-cli` 安装，不需要 Docker、也不需要这套 compose；只读网页/视频时本机装 FFmpeg 和 Chromium 就够。两套东西版本号相同但互不依赖，Web 栈只是可选的图形界面。
+
 ## 启动
 
 ```bash
@@ -28,6 +32,22 @@ docker compose --profile object-storage up -d
 ```
 
 MinIO 镜像自 2025 年起不再提供免费 tag，`docker pull minio/minio` 会失败；需要对象存储时用自己已有的 S3 兼容服务，或在有授权的环境里提供镜像。
+
+## 后台任务（可选 worker）
+
+默认 `ENVOY_TASK_EXECUTION_MODE=local`：任务在 API 进程内的线程池里跑（`ENVOY_LOCAL_TASK_MAX_CONCURRENCY`，默认 2），不用额外服务，适合单人本地用。
+
+同时提交多个耗时任务、或希望 API 重启不打断任务时，切到 worker：
+
+```bash
+# .env
+ENVOY_TASK_EXECUTION_MODE=celery
+ENVOY_CELERY_CONCURRENCY=2
+
+docker compose --profile worker up -d
+```
+
+`worker` 服务和 `backend` 用同一个镜像、同一个 `envoy_runtime` 卷，队列走已有的 Redis（`envoy` 队列）。转写/OCR 这类媒体任务在 worker 里直接跑在任务进程内（不嵌套 fork），所以不需要额外权限；`ENVOY_CELERY_CONCURRENCY` 控制同时处理几个任务。`docker compose ps` 会多出 `worker` 一行，日志在 `docker compose logs -f worker`。切回 `local` 时把 `.env` 改回去并 `docker compose up -d`，worker 可以留着不启。
 
 ## 数据
 
@@ -72,7 +92,14 @@ ENVOY_PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 
 同一台 arm64 机器上实测：容器内清华 pip 源装完整应用依赖 + 媒体依赖 43 秒，单包峰值 11.6 MB/s；阿里云 pip 源只有 0.28 MB/s。Playwright 的 Chromium（190.5 MiB）与 FFmpeg（119.9 MiB）走 npmmirror 各约 30 秒。宿主机的代理/镜像设置对容器内的 CDN 速度没有影响，要在构建参数里指定。
 
-`ENVOY_WITH_MEDIA=1`（默认）会再装 `openai-whisper` 与 `paddleocr`，镜像会到 3 GB 量级；只做界面与联网抓取时设 `ENVOY_WITH_MEDIA=0`，镜像约 2.4 GB，行为差异只是本地转写/OCR 不可用。arm64 上 `paddlepaddle` 最高只有 3.2.2（3.3.x 没有 linux/arm64 轮子），所以约束写成 `>=3.2,<3.3`，让多架构都能构建。
+`ENVOY_WITH_MEDIA=1`（默认）会再装 `openai-whisper`、`paddleocr`（含 PaddlePaddle 与中文字体）和 `yt-dlp`。本机（arm64、Docker 29.9）实测：带媒体依赖 `envoy-backend:latest` 是 **4.64 GB**，`python -c "import torch, whisper, paddleocr"` 通过，`torch 2.9.1+cpu`、`paddle 3.2.2`、`paddleocr 3.7.0`。只做界面与联网抓取时设 `ENVOY_WITH_MEDIA=0`，省掉这一层。
+
+两个和 arm64 有关的坑已经写进 Dockerfile：
+
+- `torch` 固定 `2.9.1` 并 `--no-deps` 安装。PyPI 上更高的 `torch` 在 arm64 上是 CUDA 构建，会拉 3 GB 的 nvidia 轮子，而且 `import torch` 直接报 `libcublasLt.so.* not found`；2.9.1 的 manylinux aarch64 轮子是纯 CPU（104 MB，`Requires-Dist` 里没有 `nvidia-`）。
+- `paddlepaddle` 约束 `>=3.2,<3.3`：3.3.x 没有 linux/arm64 轮子。
+
+`openai-whisper` 第一次转写会下载 `small` 模型（461 MB）。容器把 `WHISPER_DOWNLOAD_ROOT` 指到 `/app/tmp/whisper`（`envoy_runtime` 卷），所以重建容器不会重新下；要换更小/更大的模型设 `MEDIA_WHISPER_MODEL`（`base`、`medium`…）。
 
 ## 排错
 
@@ -91,3 +118,5 @@ ENVOY_PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 ## 验收记录
 
 `docs/acceptance/docker-quickstart-2026-10-26.md` 记录这台机器上的实际启动结果与耗时。
+
+容器内视频转 Markdown 已在 arm64 Mac 上跑通（2026-10-26）：6 秒中文 H.264/AAC 样片放进 `envoy_runtime` 后，`POST /api/v1/tasks/video-to-markdown` 返回 `success`，导出目录里有 `index.md`、`themes/转写.md`、`evidence.jsonl` 和逐条证据页，`themes/转写.md` 里的正文就是 Whisper 在容器内转出的中文。同一条任务在 `local` 和 `celery` 两种执行模式下都通过。首次请求会下载 Whisper `small` 权重（461 MB，CPU），之后从 `envoy_runtime` 卷复用。

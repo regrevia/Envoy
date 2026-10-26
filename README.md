@@ -87,6 +87,8 @@
 
 ## 本地 Web 界面（Docker）
 
+**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：`pip install envoy-cli` 或 `uv tool install`，再加一个 skills 目录或插件包，不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
+
 需要 Docker Desktop，仓库根目录：
 
 ```bash
@@ -189,6 +191,8 @@ This table says whether the agent could read the source at all — not how fast 
 See the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md), and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
 
 ### Local web interface (Docker)
+
+**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: `pip install envoy-cli` or `uv tool install`, plus a skills directory or plugin package — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
 
 With Docker Desktop running, from the repository root:
 
