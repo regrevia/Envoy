@@ -305,7 +305,9 @@ TOOLS = [
         "description": (
             "Create, retrieve, or revision-checkpoint a bounded collection run. "
             "Operation IDs make repeated updates idempotent. Work state and "
-            "evidence availability are reported separately."
+            "evidence availability are reported separately. action=list returns "
+            "every resumable run on this machine with its progress, so a later "
+            "session can pick a paused batch back up."
         ),
         "inputSchema": {
             "type": "object",
