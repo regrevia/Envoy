@@ -119,6 +119,9 @@ if ("structuredContent" in e && e.structuredContent !== void 0) {
 - Codex 接入：`~/.codex/config.toml` 的 `[mcp_servers.mockprobe]`；运行 `codex exec --dangerously-bypass-approvals-and-sandbox "<prompt>"`（默认审批策略下 MCP 工具调用会被 `approval policy is never` 挡掉）。
 - Claude Code 接入：`claude mcp add --transport stdio -s user mockprobe -- python3 /tmp/mcp_mock/server.py`。
 
+抓宿主转发内容的假端点已收进仓库：`docs/product/mcp-host-probe/`（`anthropic_stub.py` +
+`settings.example.json` + 用法），Claude Code 那条请求级证据就是用它抓的。
+
 ## Envoy 0.1.11 的处理
 
 采用上面第 2 条做法（保留 `structuredContent`，其中同样放完整载荷），因为 Codex 与
