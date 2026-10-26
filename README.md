@@ -106,6 +106,8 @@ docker compose up -d --build
 - [DeepSeek Harness 插件](integrations/dsh/README.md)
 - [产品与技术状态](docs/architecture/agent-link-reader-status.md)
 - [平台真实验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)
+- [链接覆盖基线与复测](docs/product/link-coverage-benchmark.md)
+- [登录扫码交接](docs/product/qr-signin-handoff.md)
 - [版本记录](CHANGELOG.md)
 - [安全与隐私说明](NOTICE)
 
@@ -211,5 +213,7 @@ The interface is at `http://127.0.0.1:8200`; `http://127.0.0.1:8140/api/v1/healt
 - [DeepSeek Harness plugin](integrations/dsh/README.md)
 - [Product and engineering status](docs/architecture/agent-link-reader-status.md)
 - [Platform acceptance matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md)
+- [Link coverage baseline and re-run](docs/product/link-coverage-benchmark.md)
+- [Sign-in QR handoff](docs/product/qr-signin-handoff.md)
 - [Changelog](CHANGELOG.md)
 - [Security and privacy](NOTICE)
