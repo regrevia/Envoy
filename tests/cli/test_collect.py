@@ -179,3 +179,45 @@ def test_the_cli_reports_the_written_pack(tmp_path, monkeypatch, capsys):
     printed = capsys.readouterr().out
     assert "Wrote" in printed
     assert out.exists()
+
+
+class _RealTextBlock:
+    """The payload shape a real MaterialBlock serialises to."""
+
+    def model_dump(self, mode="json"):
+        return {"kind": "text", "content": {"type": "text", "text": "真实正文内容"}}
+
+
+class _RealResponse:
+    def __init__(self, text="真实正文内容"):
+        self.result = "ready"
+        self.material_id = "mat-real"
+        self.source_revision = "rev-1"
+        self.expires_at = None
+        self.blocks = [_RealTextBlock()]
+        self.errors = []
+
+
+def test_a_real_block_shape_is_excerpted_and_skipped_on_resume(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        collect_module.checkpoint, "discover_profile", _fake_discovery("douyin")
+    )
+    calls = []
+
+    def read(request):
+        calls.append(request.source.url)
+        return _RealResponse()
+
+    monkeypatch.setattr(collect_module, "read_public_page", read)
+    out = tmp_path / "notes.md"
+
+    first = collect_module.collect(PROFILE, out, limit=5)
+    second = collect_module.collect(PROFILE, out, limit=5)
+
+    assert first["read_now"] == 2
+    assert len(calls) == 2, "a completed item must not be read again"
+    assert second["read_now"] == 0
+    assert second["skipped"] == 2
+    sources = json.loads((tmp_path / "notes.md.sources.json").read_text(encoding="utf-8"))
+    assert any("真实正文内容" in str(item.get("excerpt") or "") for item in sources.values())
