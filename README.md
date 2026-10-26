@@ -63,6 +63,20 @@
 
 同一条链接、同一个模型，只差装不装 Envoy；20 个任务包 × 3 轮提问（每臂 60 轮，共 120 轮），题目与来源冻结在 `benchmarks/fixed-set-v1`。下面是**探索性观察**，还不足以当作结论。
 
+**一眼能看懂的差别。** 同一条链接、同一个模型，只差装不装 Envoy：
+
+| 发生了什么 | 没装 Envoy | 装了 Envoy |
+| --- | --- | --- |
+| 给出「读完了」的结论 | 13 / 60 轮 | 55 / 60 轮 |
+| 跑到超时也没结论 | 41 / 60 轮 | 0 轮 |
+| 答案里至少说中一条材料事实 | 14 / 60 轮 | 49 / 60 轮 |
+| 材料要点被说中的比例 | 约 9%（47/516） | 约 38%（197/516） |
+| 第一次拿到证据要等多久（中位） | 88 秒 | 48 秒 |
+| 回答长度（中位） | 3,125 字 | 8,142 字 |
+| 空回答（另一组 60 对） | 31 处 | 0 处 |
+
+这张表说明的是「能不能读到东西」，不是「快多少、省多少」：两臂时间上限不同（900 秒 vs 2400 秒），人工核对也没做（`verified` 两臂都是 0）。
+
 **怎么判的。** 每轮先按答案文本归类：`timed_out`（撞墙钟上限）、`no_output`、`infra_failed`、`needs_action`、`cannot_see`（要登录/扫码/授权，或说读不到）、`suspect_complete`（进程正常结束、答案不短、没说读不到——**只是疑似完成，不验证事实是否正确、引用是否落位**）。`verified` 只统计人工评审把 `answer_correct` 判为 true 的轮次；本轮 **verified = 0**，评审表未填。facts 命中是 60% 词覆盖匹配，引用命中要求 URL 规范化到文章级（同一公众号的不同文章不再互相计分），两者都不是正确性判定。
 
 **本轮可复算的观察。** baseline 60 轮：`suspect_complete` 13、`timed_out` 41、`cannot_see` 5、`needs_action` 1。envoy 60 轮：`suspect_complete` 55、`timed_out` 0、`cannot_see` 4、`needs_action` 1。两个 `verified` 都是 0。facts 词覆盖也偏向 envoy（claim 覆盖 9.1% vs 38.2%，至少命中一条 facts 的轮次 14/60 vs 49/60），但同样受下面这条限制影响，只能算线索。
@@ -151,6 +165,20 @@ No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement f
 ### Evaluation
 
 Same link, same model, the only difference is whether Envoy is installed; 20 task packages × 3 questions per arm (60 turns each, 120 total) on a frozen package (`benchmarks/fixed-set-v1`). What follows is an **exploratory observation**, not yet a conclusion.
+
+**The short version.** Same link, same model, the only difference is Envoy:
+
+| What happens | Without Envoy | With Envoy |
+| --- | --- | --- |
+| Reaches a "finished reading" answer | 13 / 60 turns | 55 / 60 turns |
+| Times out with no answer | 41 / 60 turns | 0 turns |
+| Answer states at least one fact from the source | 14 / 60 turns | 49 / 60 turns |
+| Share of source claims that get stated | ~9% (47/516) | ~38% (197/516) |
+| Time to the first piece of evidence (median) | 88 s | 48 s |
+| Answer length (median) | 3,125 chars | 8,142 chars |
+| Empty answers (a separate 60-pair run) | 31 | 0 |
+
+This table says whether the agent could read the source at all — not how fast or how cheap it is. The arms ran under different caps (900 s vs 2400 s), and no human correctness review exists yet (`verified` is 0 for both).
 
 **How turns are scored.** Each turn is classified from its answer text: `timed_out` (hit the wall-clock cap), `no_output`, `infra_failed`, `needs_action`, `cannot_see` (asks for login/scan/authorization, or says it cannot read), `suspect_complete` (process exited normally, answer is not short, no refusal — **suspected only, with no check of factual correctness or citation placement**). `verified` counts only turns a human review marked `answer_correct = true`; **verified = 0** here because the review file is still empty. Fact hits are a 60% token-overlap match, and citation hits require an article-level canonical URL (two posts from the same WeChat account no longer credit each other); neither is a correctness verdict.
 
