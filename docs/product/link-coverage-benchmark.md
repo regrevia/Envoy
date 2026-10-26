@@ -41,6 +41,7 @@ Envoy 的目标是「大部分链接都能读」。这份文档给出可复跑�
 | 交付被截断 | `truncated`（抽取到正文，交付只剩几百字符） | 交付预算按块累积，不再提前截断 |
 | 排版型正文（含 `pre`/代码块） | `partial` 且正文过少 | 通用正文兜底把 `<pre>`、列表、引用计入正文候选 |
 | 登录/风控站点 | `challenge_required` | 新增 `envoy_auth` 交接：后台浏览器出登录页截图（多为二维码）给用户扫一次，扫完复用同一会话；见 `docs/product/qr-signin-handoff.md` |
+| 视频页没有字幕 | `missing_capability`（整条读不到） | 本地没装 ASR 时回退读该页自身正文（标题、简介、分P），结果标 `partial` 并写明「没有转写，下面是页面本身」 |
 
 ## 复测（本轮）
 
@@ -48,15 +49,16 @@ Envoy 的目标是「大部分链接都能读」。这份文档给出可复跑�
 
 | 口径 | 修复前 | 修复后 | 变化 |
 |---|---|---|---|
-| 全语料可用 | 26/57 = 45.6% | **30/57 = 52.6%** | +4 条 |
-| 可达到语料可用 | 26/38 = 68.4% | **30/38 = 78.9%** | +10.5 个点 |
+| 全语料可用 | 26/57 = 45.6% | **31/57 = 54.4%** | +5 条 |
+| 可达到语料可用 | 26/38 = 68.4% | **31/38 = 81.6%** | +13.2 个点 |
 | 修复前分布 | `readable 10 · partial 16 · blocked 8 · empty 3 · truncated 1 · unreachable 19` | | |
-| 修复后分布 | `readable 11 · partial 19 · blocked 5 · empty 3 · truncated 1 · unreachable 19` | | |
+| 修复后分布 | `readable 10 · partial 21 · blocked 4 · empty 3 · unreachable 19` | | |
 
 逐条变化（全部是改善，没有一条退步）：
 
 | 链接 | 修复前 | 修复后 | 正文 |
 |---|---|---|---|
+| bilibili | `blocked` | `partial` | 0 → 5369 字符（无字幕时回退读页面自身正文） |
 | substack | `blocked` | `partial` | 0 → 2405 字符 |
 | github-atom | `blocked` | `readable` | 0 → 3818 字符 |
 | python-docs | `truncated` | `partial` | 56 → 3708 字符 |
