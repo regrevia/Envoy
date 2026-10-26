@@ -47,6 +47,7 @@ from .collections import (
     create_collection,
     discover_profile,
     get_collection,
+    list_collections,
     update_collection,
 )
 from .local_video import read_local_video
@@ -113,14 +114,24 @@ def _parser() -> argparse.ArgumentParser:
         "collect",
         help="enumerate a Douyin or Bilibili profile into one Markdown source pack",
     )
-    collect_parser.add_argument("--url", required=True)
-    collect_parser.add_argument("--out", required=True)
+    collect_parser.add_argument("--url")
+    collect_parser.add_argument("--out")
+    collect_parser.add_argument(
+        "--list",
+        action="store_true",
+        help="list resumable collection runs and their progress",
+    )
     collect_parser.add_argument("--limit", type=int, default=10)
     collect_parser.add_argument("--goal", default="")
     collect_parser.add_argument("--collection-id")
     collect_parser.add_argument("--run-id")
     collect_parser.add_argument("--max-work-seconds", type=int, default=120)
     collect_parser.add_argument("--retry-blocked", action="store_true")
+    collect_parser.add_argument(
+        "--retry-reason",
+        default=None,
+        help="retry only unfinished items whose reason contains this word (for example auth)",
+    )
     collect_parser.add_argument("--json", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
@@ -230,9 +241,35 @@ def _parser() -> argparse.ArgumentParser:
     )
     auth_import.add_argument("--url", default=None, help="copy cookies for this link's site")
     auth_import.add_argument("--json", action="store_true")
-    auth_status = auth_commands.add_parser("status", help="report imported cookies")
+    auth_status = auth_commands.add_parser(
+        "status", help="report imported cookies and pauses waiting for a person"
+    )
     auth_status.add_argument("--json", action="store_true")
-    auth_commands.add_parser("clear", help="delete imported cookies")
+    auth_open = auth_commands.add_parser(
+        "open",
+        help="open one visible window so a person can sign in, then check the link",
+    )
+    auth_open.add_argument("--action-id", default=None)
+    auth_open.add_argument("--url", default=None)
+    auth_open.add_argument("--timeout", type=int, default=300)
+    auth_open.add_argument("--json", action="store_true")
+    auth_verify = auth_commands.add_parser(
+        "verify", help="check whether the original link is readable now"
+    )
+    auth_verify.add_argument("--action-id", default=None)
+    auth_verify.add_argument("--url", default=None)
+    auth_verify.add_argument("--json", action="store_true")
+    auth_resume = auth_commands.add_parser(
+        "resume", help="pick up a paused task from its resume token"
+    )
+    auth_resume.add_argument("--token", required=True)
+    auth_resume.add_argument("--json", action="store_true")
+    auth_clear = auth_commands.add_parser(
+        "clear", help="delete the login state Envoy saved for a site"
+    )
+    auth_clear.add_argument("--host", default=None)
+    auth_clear.add_argument("--all", action="store_true")
+    auth_clear.add_argument("--json", action="store_true")
     mcp_parser = subparsers.add_parser("mcp", help="run the stdio MCP bridge")
     mcp_parser.add_argument(
         "--toolset",
@@ -247,9 +284,131 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _auth_action_for(args):
+    from . import authflow
+
+    action_id = getattr(args, "action_id", None)
+    if action_id:
+        return authflow.load_auth_action(action_id)
+    url = getattr(args, "url", None)
+    if url:
+        return authflow.create_auth_action(url)
+    return None
+
+
+def _emit(payload: dict, as_json: bool, lines: list[str]) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for line in lines:
+            print(line)
+
+
+def _run_auth_open(args) -> int:
+    from . import authflow, auth_window
+
+    action = _auth_action_for(args)
+    if not action:
+        print("envoy auth open: pass --action-id or --url", file=sys.stderr)
+        return 2
+    if action.get("status") == "canceled":
+        print("envoy auth open: this request was canceled", file=sys.stderr)
+        return 2
+    authflow.update_auth_action(
+        action["action_id"], status="verifying", attempts=int(action.get("attempts") or 0) + 1
+    )
+    print(f"Opening {action.get('host') or action['source_url']} in a browser window…")
+    print("Sign in there. Envoy checks the original link when the window closes or the wait ends.")
+    try:
+        window = auth_window.open_login_window(
+            str(action["source_url"]), timeout_seconds=int(args.timeout)
+        )
+    except auth_window.AuthWindowError as exc:
+        authflow.update_auth_action(action["action_id"], status="failed")
+        print(f"envoy auth open: {exc}", file=sys.stderr)
+        return 2
+    verification = auth_window.verify_source(str(action["source_url"]))
+    updated = authflow.record_verification(action["action_id"], verification) or action
+    payload = {
+        "action_id": updated["action_id"],
+        "status": updated.get("status"),
+        "window": window,
+        "verification": verification,
+        "resume_token": updated.get("resume_token"),
+    }
+    lines = [
+        f"{action.get('host') or action['source_url']}: {verification.get('reason')}",
+    ]
+    if verification.get("headless_reusable"):
+        lines.append("The link is readable again. Continue the paused task.")
+    elif verification.get("page_access"):
+        lines.append("The page loads, but the media is still missing. Try a different sign-in or another source.")
+    else:
+        lines.append("Still blocked. Nothing was resumed.")
+    _emit(payload, bool(args.json), lines)
+    return 0 if verification.get("headless_reusable") else 1
+
+
+def _run_auth_verify(args) -> int:
+    from . import authflow, auth_window
+
+    action = _auth_action_for(args)
+    if not action:
+        print("envoy auth verify: pass --action-id or --url", file=sys.stderr)
+        return 2
+    verification = auth_window.verify_source(str(action["source_url"]))
+    updated = authflow.record_verification(action["action_id"], verification) or action
+    payload = {
+        "action_id": updated["action_id"],
+        "status": updated.get("status"),
+        "verification": verification,
+        "resume_token": updated.get("resume_token"),
+    }
+    _emit(
+        payload,
+        bool(args.json),
+        [f"{verification.get('reason')} (status {updated.get('status')})"],
+    )
+    return 0 if verification.get("headless_reusable") else 1
+
+
+def _run_auth_resume(args) -> int:
+    from . import authflow, auth_window
+
+    action = authflow.resolve_resume_token(args.token)
+    if not action:
+        print("envoy auth resume: unknown token", file=sys.stderr)
+        return 2
+    verification = auth_window.verify_source(str(action["source_url"]))
+    updated = authflow.record_verification(action["action_id"], verification) or action
+    payload = {
+        "action_id": updated["action_id"],
+        "status": updated.get("status"),
+        "source_url": updated.get("source_url"),
+        "purpose": updated.get("purpose"),
+        "verification": verification,
+        "resume_token": updated.get("resume_token"),
+    }
+    _emit(
+        payload,
+        bool(args.json),
+        [
+            f"{updated.get('host')}: {verification.get('reason')}",
+            f"Resume the task for {updated.get('source_url')}.",
+        ],
+    )
+    return 0 if verification.get("headless_reusable") else 1
+
+
 def _run_auth(args) -> int:
     from . import cookies as cookie_store
 
+    if args.auth_command == "open":
+        return _run_auth_open(args)
+    if args.auth_command == "verify":
+        return _run_auth_verify(args)
+    if args.auth_command == "resume":
+        return _run_auth_resume(args)
     if args.auth_command == "import":
         try:
             report = cookie_store.import_cookies(args.source, args.domain, args.url)
@@ -265,19 +424,57 @@ def _run_auth(args) -> int:
             )
         return 0
     if args.auth_command == "status":
+        from . import authflow, profile_state
+
         report = cookie_store.cookies_status()
+        report["profile"] = profile_state.profile_state_status()
+        report["pauses"] = authflow.auth_status()
         if args.json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
-        elif not report.get("imported"):
-            print("No imported cookies. Run `envoy auth import --from chrome --domain <site>`.")
         else:
+            if report.get("imported"):
+                print(
+                    f"{report['imported']} imported cookies for "
+                    f"{', '.join(report['domains'] or [])} from {report['source']}"
+                )
+            else:
+                print("No imported cookies. Run `envoy auth import --from chrome --domain <site>`.")
+            profile = report["profile"]
             print(
-                f"{report['imported']} cookies for {', '.join(report['domains'] or [])} "
-                f"from {report['source']}, imported {report['imported_at']}"
+                f"Saved sign-in profile: {profile['cookie_rows']} cookie rows at {profile['profile']}"
             )
+            for pause in report["pauses"]["pending"]:
+                print(
+                    f"Waiting on a person: {pause.get('host')} "
+                    f"({pause['action_id']}) → envoy auth open --action-id {pause['action_id']}"
+                )
+            if not report["pauses"]["pending"]:
+                print("No pauses waiting on a person.")
         return 0
-    removed = cookie_store.clear_imported_cookies()
-    print("Deleted imported cookies" if removed else "No imported cookies to delete")
+
+    from . import authflow, profile_state
+
+    target = getattr(args, "host", None)
+    if target:
+        result = profile_state.clear_site_cookies(target)
+    else:
+        result = profile_state.clear_profile_state()
+    removed_cookies = cookie_store.clear_imported_cookies()
+    invalidated = authflow.invalidate_actions(host=target)
+    payload = {
+        **result,
+        "imported_cookies_removed": removed_cookies,
+        "pauses_invalidated": invalidated,
+    }
+    _emit(
+        payload,
+        bool(getattr(args, "json", False)),
+        [
+            f"Deleted Envoy's saved sign-in for {target}" if target
+            else "Deleted the saved sign-in profile Envoy kept locally",
+            f"Pauses invalidated: {invalidated}",
+        ],
+    )
     return 0
 
 
@@ -354,7 +551,28 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                 "error": {"code": "collection_error", "message": str(exc)},
             }, ensure_ascii=False))
             return 2
+    if args.command == "collect" and args.list:
+        runs = list_collections()
+        if args.json:
+            print(json.dumps({"runs": runs}, ensure_ascii=False))
+        elif not runs:
+            print("没有可续跑的采集任务")
+        else:
+            for run in runs:
+                print(
+                    f"{run['collection_id']} · {run['platform']} · "
+                    f"{run['completed']}/{run['selected']} 完成 · "
+                    f"{run['blocked']} 待登录 · {run['failed']} 失败 · {run['updated_at']}"
+                )
+            print(f"续跑：envoy collect --url <profile> --out <文件> --retry-reason auth")
+        return 0
     if args.command == "collect":
+        if not args.url or not args.out:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "usage", "message": "collect needs --url and --out, or --list"},
+            }, ensure_ascii=False))
+            return 2
         try:
             summary = collect(
                 args.url,
@@ -365,6 +583,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                 run_id=args.run_id,
                 max_work_seconds=args.max_work_seconds,
                 retry_blocked=args.retry_blocked,
+                retry_reason=args.retry_reason,
             )
         except CollectionError as exc:
             print(json.dumps({

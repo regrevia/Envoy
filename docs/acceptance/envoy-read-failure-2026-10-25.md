@@ -1,6 +1,6 @@
 # DSH 会话 `session-915d8ef8` 的读取失败与幻觉复盘（2026-10-25）
 
-会话标题「Envoy分析AI视频制作与SVG技术」，工作目录 `$HOME/Desktop/DSH`，
+会话标题「Envoy分析AI视频制作与SVG技术」，工作目录 `/Users/apple/Desktop/DSH`，
 权限 `workspace-write`。本文只记录可从artifact复核的事实，以及据此做出的修复。
 
 ## 1. 现象
@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | 1 | MCP `envoy_read`，`https://v.douyin.com/ncJzPGyPDIA/`，`include_visual: true` | `Error: [object Object]`，`isError: true` |
 | 2 | 同上重试 | `Envoy read partial: 151 text characters, 2 blocks, 0 resources. material_id=mat-eee94267a98250978caaf9dc`（没有任何原因或动作） |
-| 3 | CLI `envoy read --request-json /tmp/envoy-dy/req.json` | `{"error": "invalid_request", "message": "[Errno 1] Operation not permitted: '$HOME/.envoy/materials/.read-6f.lock'"}` |
+| 3 | CLI `envoy read --request-json /tmp/envoy-dy/req.json` | `{"error": "invalid_request", "message": "[Errno 1] Operation not permitted: '/Users/apple/.envoy/materials/.read-6f.lock'"}` |
 
 随后模型产出的 `motion-video/README.md` 里写着「封面帧 ✅ 看到」「评论区 32 条可见」，
 但 Envoy 交付物里两者都不存在。
@@ -47,8 +47,8 @@
 插件名 `dsh-unlag`、`lite-memory`、`CreatorLab`、`dsh-video-preview` 第一次出现在
 该会话自己的工具结果里：
 
-- event 69：`ls -la $HOME/Desktop/DSH`（tool call 66）列出这些目录；
-- event 76：`find $HOME/Desktop/DSH/{CreatorLab,dsh-video-preview}`；
+- event 69：`ls -la /Users/apple/Desktop/DSH`（tool call 66）列出这些目录；
+- event 76：`find /Users/apple/Desktop/DSH/{CreatorLab,dsh-video-preview}`；
 - event 73 的 reasoning 明说「There is `dsh-video-preview` and `CreatorLab` dirs in
   workspace — interesting, maybe prior work」。
 

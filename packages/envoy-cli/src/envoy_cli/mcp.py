@@ -34,6 +34,7 @@ from .collections import (
     create_collection,
     discover_profile,
     get_collection,
+    list_collections,
     update_collection,
 )
 from .local_video import read_local_video
@@ -304,7 +305,9 @@ TOOLS = [
         "description": (
             "Create, retrieve, or revision-checkpoint a bounded collection run. "
             "Operation IDs make repeated updates idempotent. Work state and "
-            "evidence availability are reported separately."
+            "evidence availability are reported separately. action=list returns "
+            "every resumable run on this machine with its progress, so a later "
+            "session can pick a paused batch back up."
         ),
         "inputSchema": {
             "type": "object",
@@ -314,7 +317,7 @@ TOOLS = [
                 "action": {"type": "string", "enum": [
                     "create", "get", "select", "item_state", "record_evidence",
                     "discovery_snapshot", "record_handoff", "record_observation",
-                    "record_usage", "set_cursor",
+                    "record_usage", "set_cursor", "touch_lease", "list",
                 ]},
                 "collection_id": {"type": "string"},
                 "run_id": {"type": "string"},
@@ -633,6 +636,13 @@ def _action_text(action: dict) -> str:
             label = f"{label} -> {command}" if label else command
         if label:
             parts.append(label)
+    action_id = str(action.get("action_id") or "").strip()
+    if action_id:
+        parts.append(
+            f"Pause id {action_id}, resumable: the user runs "
+            f"`envoy auth open --action-id {action_id}` once in their terminal; "
+            f"`envoy auth verify --action-id {action_id}` re-checks without a window."
+        )
     return " ".join(parts)
 
 
@@ -1385,7 +1395,14 @@ def handle_message(
             action = str(arguments.get("action") or "")
             collection_id = str(arguments.get("collection_id") or "")
             run_id = str(arguments.get("run_id") or "")
-            if action == "create":
+            if action == "list":
+                payload = {
+                    "tool": "envoy_collection_checkpoint",
+                    "action": "list",
+                    "runs": list_collections(),
+                    "resultType": "complete",
+                }
+            elif action == "create":
                 payload = create_collection(
                     collection_id,
                     run_id,

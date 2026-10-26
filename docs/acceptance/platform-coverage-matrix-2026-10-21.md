@@ -102,7 +102,7 @@ headless browser after a dismissible overlay is closed.
 | MDN flower MP4 through current checkout `envoy read`, requesting two host-inspectable frames | Current checkout source, same machine, 30-second work budget, 5 MB download cap, FFmpeg available, Whisper absent | `needs_host`; downloaded 1,128,375 bytes and delivered two timestamped frames at 1.264s and 3.791s. Frame pixels were visually checked: a closed bud and the opened flower. ASR was unavailable and explicitly reported as a coverage gap |
 
 The connected MCP process uses the installed CLI under
-`$HOME/.local/share/uv/tools/envoy-cli`, not the current checkout. The
+`/Users/apple/.local/share/uv/tools/envoy-cli`, not the current checkout. The
 current source succeeds on the known direct-MP4 frame path while the installed
 MCP process times out on the same URL; refresh/reinstall that MCP runtime
 before treating its video result as representative of the current source.
@@ -116,7 +116,7 @@ the initial 12 MB media budget; a bounded 30-second ASR range succeeded.
 
 The repository was built as
 `0.1.0+preview.g814f460c3e2a.20261021040910` and installed in the isolated
-`$HOME/.local/share/envoy-preview` virtual environment. Its doctor and
+`/Users/apple/.local/share/envoy-preview` virtual environment. Its doctor and
 MCP doctor both identify `channel: local-preview`, revision `814f460c3e2a`,
 and a dirty source tree. The existing Release command and environment remain
 separate. The user's global Envoy Skill was synchronized from this checkout,

@@ -11,6 +11,8 @@ invents a summary, a timestamp, or a quote.
 from __future__ import annotations
 
 import hashlib
+from urllib.parse import urlparse
+import threading
 import json
 import os
 from datetime import datetime, timezone
@@ -51,10 +53,11 @@ def _write_markdown(out: Path, text: str) -> None:
     os.replace(tmp, out)
 
 
-def _excerpt(response) -> str:
+def _excerpt_from_blocks(blocks: list) -> str:
     parts: list[str] = []
-    for block in response.blocks:
-        data = block.model_dump(mode="json")
+    for data in blocks:
+        if not isinstance(data, dict):
+            continue
         for field in _TEXT_BLOCK_FIELDS:
             value = data.get(field)
             if isinstance(value, str) and value.strip():
@@ -71,6 +74,34 @@ def _excerpt(response) -> str:
     return text
 
 
+def _excerpt(response) -> str:
+    return _excerpt_from_blocks(
+        [block.model_dump(mode="json") for block in response.blocks]
+    )
+
+
+def _excerpt_from_material(material_id: str) -> str:
+    """Rebuild an excerpt from the local material store, without the network."""
+    if not material_id:
+        return ""
+    try:
+        from .reader import _material_root
+
+        path = _material_root() / f"{material_id}.json"
+        if path.is_symlink() or not path.is_file():
+            return ""
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return ""
+    if not isinstance(stored, dict):
+        return ""
+    response = stored.get("operation_response") or stored.get("response")
+    blocks = response.get("blocks") if isinstance(response, dict) else None
+    if not isinstance(blocks, list):
+        blocks = stored.get("blocks")
+    return _excerpt_from_blocks(blocks if isinstance(blocks, list) else [])
+
+
 def _reason(response) -> str:
     if not response.errors:
         return ""
@@ -78,6 +109,76 @@ def _reason(response) -> str:
     message = str(data.get("message") or "").strip()
     code = str(data.get("code") or "").strip()
     return f"{code}: {message}" if message else code
+
+
+def _host_of(url: str) -> str:
+    return (urlparse(str(url or "")).hostname or "").lower()
+
+
+def _should_retry(
+    state: str,
+    reason: str,
+    retry_blocked: bool,
+    retry_reason: str | None,
+) -> bool:
+    if state not in _UNFINISHED_STATES:
+        return True
+    wanted = str(retry_reason or "").strip().lower()
+    if wanted:
+        return wanted in str(reason or "").lower()
+    return retry_blocked
+
+
+def _auth_pause_of(response, candidate: str, source_url: str) -> dict | None:
+    """One site needs a person once, not once per post."""
+
+    if not getattr(response, "errors", None):
+        return None
+    error = response.errors[0].model_dump(mode="json")
+    code = str(error.get("code") or "")
+    if code not in {"auth_required", "challenge_required"}:
+        return None
+    details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    action = details.get("needs_user_action")
+    action = action if isinstance(action, dict) else {}
+    return {
+        "host": _host_of(source_url),
+        "reason": code,
+        "action_id": action.get("action_id"),
+        "resume_token": action.get("resume_token"),
+        "open_command": action.get("open_command"),
+        "candidates": [candidate],
+    }
+
+
+_LEASE_INTERVAL_SECONDS = 60.0
+
+
+class _LeaseHeartbeat:
+    """Keep the lease warm while a long read is still running."""
+
+    def __init__(self, collection_id: str, run_id: str, candidate: str, interval: float | None = None):
+        self._args = (collection_id, run_id, candidate)
+        self._interval = max(0.01, float(_LEASE_INTERVAL_SECONDS if interval is None else interval))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self):
+        def beat():
+            while not self._stop.wait(self._interval):
+                try:
+                    checkpoint.renew_lease(*self._args)
+                except Exception:
+                    return
+
+        self._thread = threading.Thread(target=beat, name="envoy-lease", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
 
 
 def _open_collection(
@@ -276,6 +377,53 @@ def _render(
     return "\n".join(lines)
 
 
+def _repair_artifacts(
+    out: Path,
+    sources_path: Path,
+    manifest: dict,
+    sources: dict,
+    candidates: dict,
+    selected: list[str],
+    *,
+    platform: str,
+    profile_url: str,
+) -> dict:
+    """Recreate lost sidecars from the material store instead of re-reading."""
+    repaired: list[str] = []
+    filled = 0
+    for candidate in selected:
+        item = candidates.get(candidate) or {}
+        record = sources.get(candidate) or {}
+        state = str(manifest["items"].get(candidate, {}).get("state") or "selected")
+        evidence = (manifest.get("evidence") or {}).get(candidate) or {}
+        material_id = str(record.get("material_id") or evidence.get("material_id") or "")
+        if not material_id:
+            continue
+        if not record:
+            record = {"title": str(item.get("title") or ""), "url": item.get("source_url")}
+        record["material_id"] = material_id
+        if not str(record.get("excerpt") or "").strip():
+            excerpt = _excerpt_from_material(material_id)
+            if excerpt:
+                record["excerpt"] = excerpt
+                filled += 1
+        record.setdefault("state", state)
+        if not record.get("state"):
+            record["state"] = state
+        sources[candidate] = record
+    if filled or sources:
+        _save_sources(sources_path, sources)
+    markdown_missing = not out.is_file() or out.stat().st_size == 0
+    if markdown_missing and (sources or selected):
+        _write_markdown(
+            out, _render(manifest, sources, platform=platform, profile_url=profile_url)
+        )
+        repaired.append("markdown")
+    if filled:
+        repaired.append("excerpts")
+    return {"rebuilt": repaired, "excerpts_filled": filled}
+
+
 def collect(
     profile_url: str,
     out_path: str | Path,
@@ -286,6 +434,7 @@ def collect(
     run_id: str | None = None,
     max_work_seconds: int = 120,
     retry_blocked: bool = False,
+    retry_reason: str | None = None,
     budget=None,
 ) -> dict:
     """Enumerate a profile, read the selected posts, and write the pack."""
@@ -322,8 +471,19 @@ def collect(
         if isinstance(item, dict)
     }
     selected = [str(value) for value in manifest.get("selected_candidate_ids") or []]
+    rebuilt = _repair_artifacts(
+        out,
+        sources_path,
+        manifest,
+        sources,
+        candidates,
+        selected,
+        platform=platform,
+        profile_url=canonical,
+    )
     read_now = 0
     skipped = 0
+    auth_pause: dict | None = None
     for candidate in selected:
         item = candidates.get(candidate) or {}
         record = sources.get(candidate) or {}
@@ -331,18 +491,37 @@ def collect(
         if state == "completed" and (record.get("excerpt") or record.get("material_id")):
             skipped += 1
             continue
-        if state in _UNFINISHED_STATES and not retry_blocked:
+        if state in _UNFINISHED_STATES and not _should_retry(
+            state, str(record.get("reason") or ""), retry_blocked, retry_reason
+        ):
+            skipped += 1
+            continue
+        if (
+            auth_pause
+            and _host_of(item.get("source_url")) == auth_pause["host"]
+            and str(retry_reason or "").lower() not in {"auth", "challenge", "auth_required", "challenge_required"}
+        ):
+            manifest = _set_state(manifest, candidate, "blocked")
+            sources[candidate] = {
+                **record,
+                "title": record.get("title") or item.get("title") or "",
+                "url": item.get("source_url"),
+                "state": "blocked",
+                "reason": f"auth_pause: waiting for {auth_pause.get('action_id') or auth_pause['host']}",
+            }
+            auth_pause["candidates"].append(candidate)
             skipped += 1
             continue
         manifest = _set_state(manifest, candidate, "processing")
         try:
-            response = read_public_page(
-                ReadRequest(
-                    request_id=f"collect-{collection_id}-{candidate[:24]}",
-                    source={"url": str(item.get("source_url") or "")},
-                    goal=goal,
+            with _LeaseHeartbeat(collection_id, run_id, candidate):
+                response = read_public_page(
+                    ReadRequest(
+                        request_id=f"collect-{collection_id}-{candidate[:24]}",
+                        source={"url": str(item.get("source_url") or "")},
+                        goal=goal,
+                    )
                 )
-            )
         except Exception as exc:  # a single item must not sink the run
             manifest = _set_state(manifest, candidate, "failed")
             sources[candidate] = {
@@ -361,6 +540,9 @@ def collect(
             final_state = "completed"
         elif result == "blocked":
             final_state = "blocked"
+            pause = _auth_pause_of(response, candidate, str(item.get("source_url") or ""))
+            if pause:
+                auth_pause = pause
         elif result in {"partial", "needs_host"}:
             final_state = "partial"
         else:
@@ -399,6 +581,8 @@ def collect(
     return {
         "ok": True,
         "output": str(out),
+        "rebuilt": rebuilt.get("rebuilt") or [],
+        "excerpts_filled": rebuilt.get("excerpts_filled") or 0,
         "sources": str(sources_path),
         "platform": platform,
         "profile_url": canonical,
@@ -410,5 +594,6 @@ def collect(
         "read_now": read_now,
         "skipped": skipped,
         "pending": pending,
+        "auth_pause": auth_pause,
         "manifest_revision": manifest["manifest_revision"],
     }

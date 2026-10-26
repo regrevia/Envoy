@@ -221,3 +221,101 @@ def test_a_real_block_shape_is_excerpted_and_skipped_on_resume(tmp_path, monkeyp
     assert second["skipped"] == 2
     sources = json.loads((tmp_path / "notes.md.sources.json").read_text(encoding="utf-8"))
     assert any("真实正文内容" in str(item.get("excerpt") or "") for item in sources.values())
+
+
+def test_lost_artifacts_are_rebuilt_from_the_material_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        collect_module.checkpoint, "discover_profile", _fake_discovery("douyin")
+    )
+
+    from envoy_cli import reader
+
+    root = reader._material_root()
+    root.mkdir(parents=True, exist_ok=True)
+    material_id = "mat-" + "a" * 24
+    (root / f"{material_id}.json").write_text(
+        json.dumps(
+            {
+                "operation_response": {
+                    "blocks": [{"kind": "text", "content": {"type": "text", "text": "离线重建正文"}}]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / f"{material_id}.expires").write_text("9999999999", encoding="ascii")
+
+    calls = []
+
+    class _Resp(_RealResponse):
+        def __init__(self):
+            super().__init__()
+            self.material_id = material_id
+
+    def read(request):
+        calls.append(request.source.url)
+        return _Resp()
+
+    monkeypatch.setattr(collect_module, "read_public_page", read)
+    out = tmp_path / "notes.md"
+    first = collect_module.collect(PROFILE, out, limit=5)
+    assert first["read_now"] == 2
+
+    out.unlink()
+    collect_module._sources_path(out).unlink()
+
+    second = collect_module.collect(PROFILE, out, limit=5)
+
+    assert len(calls) == 2, "losing the pack must not send us back to the sites"
+    assert second["read_now"] == 0
+    assert out.is_file() and out.stat().st_size > 0
+    assert "离线重建正文" in out.read_text(encoding="utf-8")
+    assert second["excerpts_filled"] >= 1
+
+
+def test_one_site_pause_stops_the_rest_of_that_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("ENVOY_AUTH_DIR", str(tmp_path / "auth"))
+    monkeypatch.setattr(
+        collect_module.checkpoint, "discover_profile", _fake_discovery("douyin")
+    )
+
+    from envoy_core.schemas import ErrorCode, ReadRequest
+
+    from envoy_cli import reader
+
+    calls = []
+
+    def read(request):
+        calls.append(request.source.url)
+        if len(calls) == 1:
+            return reader._blocked(
+                ReadRequest(request_id="r1", source={"url": request.source.url}),
+                ErrorCode.AUTH_REQUIRED,
+                "This page needs a signed-in session",
+                action_required=True,
+            )
+        return _Response()
+
+    monkeypatch.setattr(collect_module, "read_public_page", read)
+    out = tmp_path / "notes.md"
+    first = collect_module.collect(PROFILE, out, limit=5)
+
+    assert first["read_now"] == 1, "the second post must not re-hit the same wall"
+    assert first["auth_pause"]["action_id"].startswith("auth-")
+    assert len(first["auth_pause"]["candidates"]) == 2
+    blocked = [item for item in first["pending"] if item["state"] == "blocked"]
+    assert len(blocked) == 2
+    assert any("auth_pause" in str(item["reason"]) for item in blocked)
+
+    second = collect_module.collect(PROFILE, out, limit=5)
+
+    assert second["read_now"] == 0, "a paused batch must not retry by itself"
+
+    third = collect_module.collect(PROFILE, out, limit=5, retry_reason="auth")
+
+    assert len(calls) == 3
+    assert third["read_now"] == 2
+    assert third["completed"] == 2

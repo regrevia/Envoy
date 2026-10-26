@@ -3,7 +3,7 @@ uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
 alembic==1.14.0
 pymysql==1.1.1
-cryptography==50.0.2
+cryptography==44.0.1
 pydantic==2.10.4
 python-multipart==0.0.20
 redis==5.2.1
