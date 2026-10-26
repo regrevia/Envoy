@@ -9,15 +9,29 @@ services:
       - "${MYSQL_PORT:-3307}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      # Schema bootstrap on a fresh volume (MySQL runs *.sql here once, in name order).
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-envoy-dev-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
     container_name: envoy-redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   minio:
     image: minio/minio:latest
+    profiles: ["object-storage"]
     container_name: envoy-minio
     command: server /data --console-address ":${MINIO_CONSOLE_PORT:-9001}"
     environment:
@@ -28,15 +42,31 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   backend:
     build:
       context: ./backend
+      args:
+        BASE_IMAGE: ${ENVOY_BACKEND_BASE_IMAGE:-python:3.11-slim}
+        PIP_INDEX_URL: ${ENVOY_PIP_INDEX_URL:-https://pypi.org/simple}
+        DEBIAN_MIRROR: ${ENVOY_DEBIAN_MIRROR:-http://deb.debian.org/debian}
+        WITH_MEDIA: ${ENVOY_WITH_MEDIA:-1}
+        PLAYWRIGHT_DOWNLOAD_HOST: ${ENVOY_PLAYWRIGHT_DOWNLOAD_HOST:-}
     environment:
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-envoy-dev-password}@mysql:3306/envoy_v1
       REDIS_URL: redis://redis:6379/0
       ENVOY_TASK_EXECUTION_MODE: local
-      ENVOY_STORAGE_MODE: minio
+      ENVOY_STORAGE_MODE: ${ENVOY_STORAGE_MODE:-local}
+      # Keep uploads/exports inside the mounted volume (/app/tmp) so they survive recreation.
+      ENVOY_LOCAL_STORAGE_DIR: /app/tmp/storage
+      ENVOY_EXPORT_DIR: /app/tmp/exports
+      ENVOY_VIDEO_DOWNLOAD_DIR: /app/tmp/video-downloads
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-envoy-minio-password}
@@ -45,21 +75,41 @@ services:
     ports:
       - "${BACKEND_PORT:-8140}:8140"
     depends_on:
-      - mysql
-      - redis
-      - minio
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - envoy_runtime:/app/tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8140/api/v1/health', timeout=3).status == 200 else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
 
   frontend:
     build:
       context: ./frontend
+      args:
+        BASE_IMAGE: ${ENVOY_FRONTEND_BASE_IMAGE:-node:20-alpine}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8140}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   mysql_data:

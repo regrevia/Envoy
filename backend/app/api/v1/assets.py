@@ -75,7 +75,14 @@ async def upload_asset_api(
         storage_name = f"{uuid4().hex}{Path(file.filename).suffix.lower()}"
     storage_info = upload_fileobj_to_storage(storage_name, file.file, file_size, file.content_type or "application/octet-stream")
     if storage_info.get("storage") not in {"local", "minio"}:
-        raise HTTPException(status_code=503, detail=f"Storage backend unavailable: {storage_info.get('reason') or 'unknown'}")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Storage backend unavailable: {storage_info.get('reason') or 'unknown'}. "
+                "Set ENVOY_STORAGE_MODE=local for filesystem storage, "
+                "or start MinIO with `docker compose --profile object-storage up -d`."
+            ),
+        )
     payload = AssetCreate(
         project_id=project_id,
         asset_type=normalized_asset_type,

@@ -1,6 +1,5 @@
+# Runtime extras that are always installed (media CLI tooling + browser automation).
+# The heavy ASR/OCR stack lives in requirements-media-extras.txt behind WITH_MEDIA.
 setuptools<81
-openai-whisper==20250625
-paddleocr==3.7.0
-paddlepaddle==3.3.1
 yt-dlp>=2026.8.19
 playwright>=1.52.0
