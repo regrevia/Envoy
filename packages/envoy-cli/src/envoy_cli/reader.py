@@ -2318,6 +2318,10 @@ def _read_operation_result_is_cacheable(payload: dict) -> bool:
             or error.code in retryable_codes
             for error in response.errors
         )
+    if response.result == ReadResult.PARTIAL:
+        # A partial read that stopped on authentication would replay the same
+        # truncated result after the user signs in; keep it retryable instead.
+        return not any(error.code in retryable_codes for error in response.errors)
     return True
 
 

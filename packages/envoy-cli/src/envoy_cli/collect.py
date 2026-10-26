@@ -59,6 +59,12 @@ def _excerpt(response) -> str:
             value = data.get(field)
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())
+            elif isinstance(value, dict):
+                # A real block keeps its payload as {"type": "text", "text": ...};
+                # reading only top-level strings left the excerpt empty.
+                inner = value.get("text") or value.get("value")
+                if isinstance(inner, str) and inner.strip():
+                    parts.append(inner.strip())
     text = "\n\n".join(dict.fromkeys(parts))
     if len(text) > EXCERPT_LIMIT:
         return text[:EXCERPT_LIMIT] + "\n\n（摘录已截断，用 material_id 展开）"
@@ -322,7 +328,7 @@ def collect(
         item = candidates.get(candidate) or {}
         record = sources.get(candidate) or {}
         state = str(manifest["items"].get(candidate, {}).get("state") or "selected")
-        if state == "completed" and record.get("excerpt"):
+        if state == "completed" and (record.get("excerpt") or record.get("material_id")):
             skipped += 1
             continue
         if state in _UNFINISHED_STATES and not retry_blocked:
