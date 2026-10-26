@@ -11,7 +11,7 @@
 
 | 宿主 | 版本 | 协商的 MCP 协议版本 | `content` 到模型？ | `structuredContent` 到模型？ | 证据 |
 | --- | --- | --- | --- | --- | --- |
-| Claude Code | 2.1.197 | `2025-11-25` | 否（有 `structuredContent` 时文本块被丢弃） | 是，序列化成 JSON 文本 | 静态证据：CLI 二进制里的结果转换函数；**未做端到端**（见下方限制） |
+| Claude Code | 2.1.197 | `2025-11-25` | 否（有 `structuredContent` 时文本块被丢弃） | 是，序列化成 JSON 文本 | 真实客户端 + 本地模型端点抓到的请求体；二进制里的结果转换函数与之一致 |
 | Codex CLI | 0.156.1 | `2025-06-18` | 否 | 是，`{"secret":"STRUCT_MARKER_BETA"}` | 端到端 + rollout 记录 |
 | DSH | 桌面版 0.2.1-rc.3（`dsh-mcp-client` 0.0.1） | `2025-11-25` | 是，`CONTENT_MARKER_ALPHA` | 否 | 端到端 headless + 源码 |
 
@@ -76,7 +76,7 @@ Codex 自己的 rollout 记录里，同一调用的**原始结果两个字段都
 REQ {"method":"initialize","id":0,"protocolVersion":"2025-06-18","clientInfo":{"name":"codex-mcp-client","version":"0.156.1"}}
 ```
 
-### Claude Code —— 静态证据，未端到端
+### Claude Code —— 抓到了真实客户端发给模型的请求体
 
 **限制先说清**：这台机器上 Claude Code 连的是内网网关（`ANTHROPIC_BASE_URL` 指向 LiteLLM 风格代理），每一次模型请求都被网关以同一个 400 拒绝，与提示词长短无关（最小的 `say OK` 也一样）：
 
@@ -119,6 +119,9 @@ if ("structuredContent" in e && e.structuredContent !== void 0) {
 - Codex 接入：`~/.codex/config.toml` 的 `[mcp_servers.mockprobe]`；运行 `codex exec --dangerously-bypass-approvals-and-sandbox "<prompt>"`（默认审批策略下 MCP 工具调用会被 `approval policy is never` 挡掉）。
 - Claude Code 接入：`claude mcp add --transport stdio -s user mockprobe -- python3 /tmp/mcp_mock/server.py`。
 
+抓宿主转发内容的假端点已收进仓库：`docs/product/mcp-host-probe/`（`anthropic_stub.py` +
+`settings.example.json` + 用法），Claude Code 那条请求级证据就是用它抓的。
+
 ## Envoy 0.1.11 的处理
 
 采用上面第 2 条做法（保留 `structuredContent`，其中同样放完整载荷），因为 Codex 与
@@ -133,6 +136,14 @@ Claude Code 只读这一槽位：
   `modern=True` 与 legacy 分支都必须出现，且 `content` 里能直接抄出 `envoy_observe`
   调用。
 
-仍未端到端验证的只有 Claude Code 一条：本机 CLI 的模型网关对每次请求返回 400
-（`requested 0 output tokens ... at least 262145 input tokens`），因此它的结论来自
-二进制静态证据，不来自一次成功调用。
+Claude Code 一条补上了请求级证据：真实 CLI（2.1.197）连真实 `envoy` MCP，只把模型端点
+换成本地假端点（`/tmp/claude_mock/server.py`，`--settings` 里改 `ANTHROPIC_BASE_URL`，
+第一次回 `tool_use`、第二次回文本），假端点把收到的请求体原样写盘。第二条请求里的
+`tool_result` 内容是 Envoy 的 `structuredContent` JSON 本身，2417 字符，逐字包含
+`This domain is for use in documentation examples ...`（`example.com` 正文）、
+`material_id`、`source_revision`、`session_id`，**没有** 被替换成回执。也就是说正文确实
+到得了模型，只是走 JSON 这一路。
+
+仍未做的是「真实模型读完后作答」这一步：本机网关对紧跟 `tool_result` 的续写请求返回
+400（`requested 0 output tokens ... at least 262145 input tokens`），这是网关侧的
+`max_tokens` 计算问题，与 Envoy 返回什么无关。
