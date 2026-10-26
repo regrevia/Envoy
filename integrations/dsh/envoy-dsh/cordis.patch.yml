@@ -55,10 +55,14 @@
             fi;
             URL="https://github.com/regrevia/Envoy/releases/download/v$V/envoy_cli-$V-py3-none-any.whl";
             if command -v uv >/dev/null 2>&1; then
-            [ -x "$RT/bin/python" ] || uv venv "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot create $RT" >&2; exit 1; };
+            PYOK="import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)";
+            if ! "$RT/bin/python" -c "$PYOK" >/dev/null 2>&1; then rm -rf "$RT"; uv venv --quiet --python "${ENVOY_PYTHON:-3.11}" "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot provision Python ${ENVOY_PYTHON:-3.11} for $RT; install uv and retry" >&2; exit 1; }; fi;
             uv pip install --quiet --upgrade --python "$RT/bin/python" "$URL" || { echo "envoy-dsh: failed to install $URL" >&2; exit 1; };
             elif command -v python3 >/dev/null 2>&1; then
-            [ -x "$RT/bin/python" ] || python3 -m venv "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot create $RT" >&2; exit 1; };
+            if ! "$RT/bin/python" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
+            python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" || { echo "envoy-dsh: python3 is $(python3 -c "import platform; print(platform.python_version())" 2>/dev/null), envoy needs >= 3.10; install uv (brew install uv) then restart Harness" >&2; exit 1; };
+            rm -rf "$RT"; python3 -m venv "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot create $RT" >&2; exit 1; };
+            fi;
             "$RT/bin/python" -m pip install --quiet --upgrade "$URL" || { echo "envoy-dsh: failed to install $URL" >&2; exit 1; };
             else
             echo "envoy-dsh: no Envoy runtime and no uv/python3 to install one; install uv from https://docs.astral.sh/uv/ then restart Harness" >&2; exit 1;

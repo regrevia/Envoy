@@ -114,6 +114,55 @@ def test_skill_target_unpacks_the_release_zip(tmp_path):
     assert (tmp_path / "skill" / "SKILL.md").is_file()
 
 
+def test_stale_python_venv_is_rebuilt_and_health_uses_the_runtime(tmp_path):
+    """A 3.9 runtime venv (macOS default python3) must be replaced, not reused."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "uv.log"
+    uv = bin_dir / "uv"
+    uv.write_text(
+        "#!/bin/sh\n"
+        f'printf \'%s\\n\' "$*" >> "{log}"\n'
+        'case "$1" in\n'
+        '  venv)\n'
+        '    for arg in "$@"; do dir="$arg"; done\n'
+        '    mkdir -p "$dir/bin"\n'
+        '    printf \'#!/bin/sh\\ncase "$2" in *version_info*) exit 0;; esac\\nexec /usr/bin/python3 "$@"\\n\' > "$dir/bin/python"\n'
+        '    cat > "$dir/bin/envoy" <<\'EOS\'\n'
+        '#!/bin/sh\n'
+        'if [ "$1" = doctor ]; then echo \'{"cli_version":"0.1.14","protocol_version":"envoy.read/1"}\'; fi\n'
+        'EOS\n'
+        '    chmod +x "$dir/bin/python" "$dir/bin/envoy"\n'
+        '    ;;\n'
+        'esac\n'
+        'exit 0\n'
+    )
+    uv.chmod(0o755)
+    runtime = tmp_path / "runtime"
+    (runtime / "bin").mkdir(parents=True)
+    stale = runtime / "bin" / "python"
+    stale.write_text("#!/bin/sh\nexit 1\n")
+    stale.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    env = {
+        "HOME": str(home),
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "ENVOY_HOME": str(runtime),
+        "ENVOY_VERSION": "0.1.14",
+        "ENVOY_DRY_RUN": "0",
+    }
+    result = subprocess.run(
+        ["sh", str(SCRIPT), "mcp"], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    invocations = log.read_text()
+    assert "venv --quiet --python 3.11" in invocations
+    assert (runtime / "bin" / "envoy").is_file()
+    assert "runtime 0.1.14, protocol envoy.read/1" in result.stdout
+
+
 def test_dev_install_script_is_valid_posix_sh():
     script = SCRIPT.parents[1] / "scripts" / "dev_install.sh"
     assert script.is_file()
