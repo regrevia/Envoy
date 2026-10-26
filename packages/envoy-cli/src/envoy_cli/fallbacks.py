@@ -47,6 +47,8 @@ _DOUBAN = re.compile(
     r"^https?://movie\.douban\.com/subject/(?P<id>\d+)/?(?:[?#].*)?$"
 )
 _DOUBAN_REFERER = {"Referer": "https://m.douban.com/"}
+_JUEJIN = re.compile(r"^https?://juejin\.cn/post/(?P<id>\d{19})(?:[/?#].*)?$")
+_SSPAI = re.compile(r"^https?://sspai\.com/post/(?P<id>\d+)/?(?:[?#].*)?$")
 
 
 class _PlainText(HTMLParser):
@@ -332,6 +334,68 @@ def _douban(client: httpx.Client, subject_id: str, budget: float) -> dict | None
     return _result("douban", label, "\n".join(parts), page_url)
 
 
+def _juejin(client: httpx.Client, article_id: str, budget: float) -> dict | None:
+    if budget <= 0:
+        return None
+    response = client.post(
+        "https://api.juejin.cn/content_api/v1/article/detail",
+        json={"article_id": article_id, "client_type": 2608},
+        timeout=httpx.Timeout(min(_HTTP_TIMEOUT, budget)),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("err_no") != 0:
+        return None
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    article = data.get("article_info") if isinstance(data.get("article_info"), dict) else {}
+    if not article.get("title"):
+        return None
+    title = str(article["title"]).strip()
+    page_url = f"https://juejin.cn/post/{article_id}"
+    parts = [title, page_url]
+    author = data.get("author_user_info") if isinstance(data.get("author_user_info"), dict) else {}
+    if author.get("user_name"):
+        parts.append(f"author: {author['user_name']}")
+    if isinstance(article.get("ctime"), str) and article["ctime"].isdigit():
+        parts.append("published: " + time.strftime("%Y-%m-%d", time.localtime(int(article["ctime"]))))
+    tags = [str(tag.get("tag_name")).strip() for tag in data.get("tags") or [] if isinstance(tag, dict)]
+    tags = [tag for tag in tags if tag]
+    if tags:
+        parts.append("tags: " + ", ".join(tags))
+    body = _plain(article.get("content")) or str(article.get("mark_content") or "")
+    body = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", body)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    if body:
+        parts.extend(["", body])
+    return _result("juejin", title, "\n".join(parts), page_url)
+
+
+def _sspai(client: httpx.Client, article_id: str, budget: float) -> dict | None:
+    payload = _get_json(
+        client, f"https://sspai.com/api/v1/article/info/get?id={article_id}", budget
+    )
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict) or not data.get("title"):
+        return None
+    title = str(data["title"]).strip()
+    page_url = f"https://sspai.com/post/{article_id}"
+    parts = [title, page_url]
+    author = data.get("author") if isinstance(data.get("author"), dict) else {}
+    if author.get("nickname"):
+        parts.append(f"author: {author['nickname']}")
+    released = data.get("released_time")
+    if isinstance(released, int) and released > 0:
+        parts.append("published: " + time.strftime("%Y-%m-%d", time.localtime(released)))
+    tags = [str(tag.get("title")).strip() for tag in data.get("tags") or [] if isinstance(tag, dict)]
+    tags = [tag for tag in tags if tag]
+    if tags:
+        parts.append("tags: " + ", ".join(tags))
+    body = _plain(data.get("body"))
+    if body:
+        parts.extend(["", body])
+    return _result("sspai", title, "\n".join(parts), page_url)
+
+
 def public_api_fallback(
     url: str, *, goal: str = "", max_work_seconds: int = 20
 ) -> dict | None:
@@ -345,7 +409,9 @@ def public_api_fallback(
     hacker_news = _HACKER_NEWS.match(url)
     bilibili = _BILIBILI.match(url)
     douban = _DOUBAN.match(url)
-    if not (stackoverflow or npm or hacker_news or bilibili or douban):
+    juejin = _JUEJIN.match(url)
+    sspai = _SSPAI.match(url)
+    if not (stackoverflow or npm or hacker_news or bilibili or douban or juejin or sspai):
         return None
     deadline = time.monotonic() + max(1, int(max_work_seconds))
     try:
@@ -359,6 +425,10 @@ def public_api_fallback(
                 return _hacker_news(client, hacker_news.group("id"), budget)
             if douban:
                 return _douban(client, douban.group("id"), budget)
+            if juejin:
+                return _juejin(client, juejin.group("id"), budget)
+            if sspai:
+                return _sspai(client, sspai.group("id"), budget)
             if bilibili.group("bvid"):
                 return _bilibili(client, bilibili.group("bvid"), budget)
             resolved = _resolve_b23(client, bilibili.group("short"), budget)

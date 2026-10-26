@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from envoy_cli import fallbacks
@@ -210,6 +212,9 @@ def test_an_unrelated_url_never_touches_the_network(monkeypatch):
     assert fallbacks.public_api_fallback("https://example.com/") is None
     assert fallbacks.public_api_fallback("https://www.bilibili.com/video/av170001") is None
     assert fallbacks.public_api_fallback("https://book.douban.com/subject/1292052/") is None
+    assert fallbacks.public_api_fallback("https://juejin.cn/post/abc") is None
+    assert fallbacks.public_api_fallback("https://sspai.com/") is None
+    assert fallbacks.public_api_fallback("https://www.reddit.com/r/python/comments/abc/") is None
     assert fallbacks.public_api_fallback("") is None
 
 
@@ -345,3 +350,131 @@ def test_douban_blocked_response_is_none(monkeypatch):
         _serve(lambda request: httpx.Response(403, json={"msg": "login required"})),
     )
     assert fallbacks.public_api_fallback("https://movie.douban.com/subject/1292052/") is None
+
+
+def test_juejin_article_summary(monkeypatch):
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({"method": request.method, "path": request.url.path, "body": request.content.decode()})
+        return _json(
+            {
+                "err_no": 0,
+                "err_msg": "success",
+                "data": {
+                    "article_info": {
+                        "title": "Cursor to Codex",
+                        "content": "",
+                        "mark_content": "# Heading\n\n![image](https://x/y.png)\n\nBody text.",
+                        "ctime": "1778379468",
+                    },
+                    "author_user_info": {"user_name": "deep"},
+                    "tags": [{"tag_name": "AI"}],
+                },
+            }
+        )
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    result = fallbacks.public_api_fallback("https://juejin.cn/post/7637856870833635343")
+
+    assert result is not None
+    assert result["backend"] == "juejin"
+    assert result["url"] == "https://juejin.cn/post/7637856870833635343"
+    assert result["title"] == "Cursor to Codex"
+    text = result["text"]
+    assert "author: deep" in text
+    assert "tags: AI" in text
+    assert "Body text." in text and "Heading" in text
+    assert "x/y.png" not in text
+    assert seen[0]["method"] == "POST"
+    body = json.loads(seen[0]["body"])
+    assert body == {"article_id": "7637856870833635343", "client_type": 2608}
+
+
+def test_juejin_form_that_is_not_an_article_page(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://juejin.cn/") is None
+    assert fallbacks.public_api_fallback("https://juejin.cn/post/abc") is None
+    assert fallbacks.public_api_fallback("https://juejin.cn/user/1204720475313342") is None
+
+
+def test_juejin_network_error_is_none(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline", request=request)
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://juejin.cn/post/7637856870833635343") is None
+
+
+def test_juejin_api_error_payload_is_none(monkeypatch):
+    monkeypatch.setattr(
+        fallbacks,
+        "_client",
+        _serve(lambda request: _json({"err_no": 2, "err_msg": "参数错误", "data": None})),
+    )
+    assert fallbacks.public_api_fallback("https://juejin.cn/post/7637856870833635343") is None
+
+
+def test_sspai_article_summary(monkeypatch):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _json(
+            {
+                "error": 0,
+                "msg": "",
+                "data": {
+                    "id": 117529,
+                    "title": "App picks",
+                    "released_time": 1793009866,
+                    "author": {"nickname": "sspai editors"},
+                    "tags": [{"title": "apps"}],
+                    "body": "<p>First <b>paragraph</b>.</p><p>Second.</p>",
+                },
+            }
+        )
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    result = fallbacks.public_api_fallback("https://sspai.com/post/117529")
+
+    assert result is not None
+    assert result["backend"] == "sspai"
+    assert result["url"] == "https://sspai.com/post/117529"
+    assert result["title"] == "App picks"
+    text = result["text"]
+    assert "author: sspai editors" in text
+    assert "tags: apps" in text
+    assert "First paragraph." in text and "Second." in text
+    assert "<b>" not in text
+    assert "id=117529" in seen[0]
+
+
+def test_sspai_form_that_is_not_an_article_page(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://sspai.com/") is None
+    assert fallbacks.public_api_fallback("https://sspai.com/post/abc") is None
+    assert fallbacks.public_api_fallback("https://sspai.com/u/ee0vj778/updates") is None
+
+
+def test_sspai_network_error_is_none(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.RemoteProtocolError("reset", request=request)
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    assert fallbacks.public_api_fallback("https://sspai.com/post/117529") is None
+
+
+def test_sspai_missing_article_is_none(monkeypatch):
+    monkeypatch.setattr(
+        fallbacks,
+        "_client",
+        _serve(lambda request: _json({"error": 1000, "msg": "文章数据不存在", "data": None})),
+    )
+    assert fallbacks.public_api_fallback("https://sspai.com/post/999999999") is None
