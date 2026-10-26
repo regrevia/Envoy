@@ -1,11 +1,11 @@
 # 更新日志 / Changelog
 
-## Unreleased
+## 0.1.9 - 2026-10-26
 
 ### 中文
 
 - 安装/升级链路对齐：`INSTALL.md` 指向的正式发行版、wheel 名和 Release 链接统一为
-  `0.1.8`（`hook install` 只存在于 0.1.7 及以后，旧文档却让人先装 0.1.6），
+  `0.1.9`（`hook install` 只存在于 0.1.7 及以后，旧文档却让人先装 0.1.6），
   `scripts/check_versions.py` 仍然校验文档里的版本号。
 - DSH 插件启动器不再「有旧 runtime 就直接用」：每次挂载先比对 `envoy --version`
   与插件要求的最低 runtime，自备 runtime 过低时原地升级（venv 与 `~/.envoy` 分离，
@@ -182,7 +182,7 @@
 
 ### English
 
-- Install and upgrade paths now agree: `INSTALL.md` names release `0.1.8` in its
+- Install and upgrade paths now agree: `INSTALL.md` names release `0.1.9` in its
   prose, wheel name, and Release link, because `envoy hook install` only exists
   from 0.1.7 on while the document used to install 0.1.6 first.
 - The DSH bundle launcher no longer accepts any existing runtime: on every mount

@@ -137,7 +137,7 @@ After installation, check that:
   restart with `ENVOY_MCP_TOOLSET=full` in the Harness environment.
 - The skill catalog contains `envoy`; loading it shows
   `# Envoy Link Reader in DeepSeek Harness` and `mcp__envoy__` tool names.
-- `envoy doctor --json` reports `0.1.8` and the expected capability catalog.
+- `envoy doctor --json` reports `0.1.9` and the expected capability catalog.
   When the bridge runs with `full`, `mcp__envoy__envoy_doctor` is equivalent.
 - On the **first step** of a turn that contains a public URL, the model sees one
   injected `[envoy-link-routing]` message. A linkless prompt, a follow-up step,
