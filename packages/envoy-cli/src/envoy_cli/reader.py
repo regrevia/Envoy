@@ -124,6 +124,8 @@ _SUBTITLE_PHASE_SECONDS = 45
 # of the budget and fall through to the page when it cannot.
 _PUBLIC_API_FALLBACK_SECONDS = 15
 _PUBLIC_API_FALLBACK_MIN_CHARS = 200
+# Below this a platform page is a script shell rather than content.
+_THIN_PLATFORM_PAGE_CHARS = 300
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
@@ -7372,6 +7374,10 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             else []
         )
         image_note_unknown_total = image_note_page and image_note_total is None
+        thin_platform_page = (
+            len(text.strip()) < _THIN_PLATFORM_PAGE_CHARS
+            and is_platform_page(str(request.source.url or ""))
+        )
         image_partial = (
             len(resources) < len(parser.images)
             or (image_note_total is not None and len(resources) < image_note_total)
@@ -7422,6 +7428,13 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                                     if source_text_truncated
                                     else []
                                 ),
+                                *(
+                                    [
+                                        "The platform page returned almost no text; it is rendered by scripts and needs cookies or a host browser"
+                                    ]
+                                    if thin_platform_page
+                                    else []
+                                ),
                             ]
                         ),
                         details={
@@ -7434,6 +7447,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             **_token_budget_details(request, returned_tokens, text[returned_end:]),
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
+                            **({"thin_platform_page": True} if thin_platform_page else {}),
                             **(
                                 {
                                     "goal_terms": goal_terms,
