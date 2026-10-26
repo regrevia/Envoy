@@ -26,7 +26,7 @@ Restart Claude Code or run `/plugin` to confirm the plugin is enabled.
 ## What it adds
 
 - **MCP**: starts `envoy mcp`, so the default catalog is
-  `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe_visual`.
+  `envoy_read`, `envoy_expand`, `envoy_search`, and `envoy_observe`.
   Export `ENVOY_MCP_TOOLSET=full` in the shell that launches Claude Code and
   restart (or use the CLI) for local video, discovery, collections, replay,
   visual history, and doctor tools.

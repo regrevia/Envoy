@@ -51,7 +51,7 @@
 - [x] Extend the protocol to let the host explicitly declare frame capability and optionally request a video-time range. Do not infer image inspection solely from the URL or user prose.
 - [x] Publish every core `ReadRequest` field through MCP's strict tool schema and assert schema parity for scope, budget, retention, and host capabilities.
 - [x] When requested, extract no more than `max_visual_inputs` frames, scale each within `max_visual_pixels_per_input`, preserve actual source timestamps, and return frame blocks/resources with `local_file` delivery and source-linked locators.
-- [x] Persist derived frame files under the material lease; clean them with expired material cleanup. Store matching resource/block/source records so `envoy_observe_visual` can persist a host observation against the correct frame.
+- [x] Persist derived frame files under the material lease; clean them with expired material cleanup. Store matching resource/block/source records so `envoy_observe` can persist a host observation against the correct frame.
 - [x] If no frames are produced, the host cannot consume local images, the media URL is unsafe, or the budget is insufficient, return explicit `partial`/`blocked` coverage and do not produce a false `needs_host` result.
 - [x] Run frame delivery, resource binding, lease survival, and explicit observation/history tests.
 - [x] Validate all yt-dlp DNS resolutions and redirect targets against global IP addresses while allowing configured proxy endpoints; constrain the HTTP handler to the guarded urllib path.

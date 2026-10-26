@@ -372,7 +372,7 @@ TOOLS = [
             "evidence and coverage gaps, not job-location or company-match conclusions. "
             "An envoy_read needs_host response is a handoff, not a terminal state. "
             "For inspect_visual, inspect every "
-            "listed resource, call envoy_observe_visual once per inspected resource "
+            "listed resource, call envoy_observe once per inspected resource "
             "using its matching material_id, resource_id, source_block_id and original "
             "session_id. source_url is optional when the material is retained; Envoy "
             "derives and verifies it from the delivered resource. Then answer from "
@@ -436,7 +436,7 @@ TOOLS = [
         "inputSchema": {"type": "object", "additionalProperties": False},
     },
     {
-        "name": "envoy_observe_visual",
+        "name": "envoy_observe",
         "description": (
             "Submit a bounded observation made by the host from a source-linked "
             "image. The observation is untrusted source material and remains "
@@ -473,10 +473,14 @@ TOOLSETS: dict[str, tuple[str, ...]] = {
         "envoy_read",
         "envoy_expand",
         "envoy_search",
-        "envoy_observe_visual",
+        "envoy_observe",
     ),
     "full": tuple(tool["name"] for tool in TOOLS),
 }
+# Renamed tools keep accepting the previous spelling for one release, so a
+# session started before the restart does not fail on a stale name.
+TOOL_ALIASES: dict[str, str] = {"envoy_observe_visual": "envoy_observe"}
+
 TOOLSET_NAMES = tuple(TOOLSETS)
 
 
@@ -735,7 +739,7 @@ def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
             return (
                 "Envoy read needs_host is a handoff, not a terminal state: inspect "
                 "each listed resource before its lease expires, then call "
-                "envoy_observe_visual once per inspected resource with its matching "
+                "envoy_observe once per inspected resource with its matching "
                 "material_id, resource_id, source_block_id, and original session_id. "
                 "source URL may be omitted when the material is retained because "
                 "Envoy derives it from the resource binding. Continue "
@@ -1138,7 +1142,7 @@ def _server_arguments(name: str, arguments: dict) -> dict:
         "envoy_expand": ExpandRequest,
         "envoy_replay": MaterialReplayRequest,
         "envoy_search": MaterialSearchRequest,
-        "envoy_observe_visual": VisualObservationRequest,
+        "envoy_observe": VisualObservationRequest,
         "envoy_visual_history": VisualObservationHistoryRequest,
     }.get(name)
     if model is not None:
@@ -1278,6 +1282,8 @@ def handle_message(
         return _error(request_id, -32601, f"Method not found: {method}")
 
     name = params.get("name")
+    if isinstance(name, str):
+        name = TOOL_ALIASES.get(name, name)
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
         return _error(request_id, -32602, "Tool arguments must be an object")
@@ -1446,7 +1452,7 @@ def handle_message(
                     "browser": browser_runtime_status(),
                 },
             }
-        elif name == "envoy_observe_visual":
+        elif name == "envoy_observe":
             request = VisualObservationRequest.model_validate(arguments)
             source_url = (
                 _observation_source_url(request.source_url)

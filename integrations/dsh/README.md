@@ -14,7 +14,7 @@
 
 - `envoy-mcp`：通过官方 `@deepseek-ai/dsh-mcp-client` 启动
   `envoy mcp`（默认 `core`），把 `envoy_read`、`envoy_expand`、
-  `envoy_search`、`envoy_observe_visual` 四个工具挂载为 `mcp__envoy__*`。
+  `envoy_search`、`envoy_observe` 四个工具挂载为 `mcp__envoy__*`。
   `full` 工具集额外提供本地视频、主页发现、合集、回放、视觉历史和 doctor
   工具，需要时在启动 Harness 的环境里导出 `ENVOY_MCP_TOOLSET=full` 并重启。
 - `envoy-skill`：通过公开的 `ctx.skills` 服务注册 Envoy Skill，内容由
@@ -76,7 +76,7 @@ Envoy 默认无头读取。页面需要用户登录或验证时，工具返回
 - 插件管理器显示 **Envoy 链接阅读器**，带 Envoy 小鸟图标；
 - 工具列表出现 `mcp__envoy__envoy_read`、
   `mcp__envoy__envoy_expand`、`mcp__envoy__envoy_search` 和
-  `mcp__envoy__envoy_observe_visual`；高级工具需重启为 `full` 后才出现；
+  `mcp__envoy__envoy_observe`；高级工具需重启为 `full` 后才出现；
 - 技能目录出现 `envoy`，加载后以
   `# Envoy Link Reader in DeepSeek Harness` 开头；
 - `envoy doctor --json` 的 `cli_version` 不低于 `0.1.9`；使用 `full` 时也可调用

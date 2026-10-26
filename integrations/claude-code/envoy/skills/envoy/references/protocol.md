@@ -92,7 +92,7 @@ the host can inspect Envoy's leased local image files:
 The response returns bounded frames with actual `video_time` locators and
 leased `local_file` resources. For every `inspect_visual` need, inspect each
 listed resource the host can access before its `expires_at` lease and submit
-one `envoy_observe_visual` call per inspected frame. The need's `action_id`
+one `envoy_observe` call per inspected frame. The need's `action_id`
 identifies the handoff and `purpose` explains why it was requested. Pair
 `resource_ids[i]` and `source_block_ids[i]` at the same index; pass the
 original `material_id` and `session_id`,
@@ -193,7 +193,7 @@ unobserved visual resources are returned; use `envoy_visual_history` for
 observations already submitted in the source session.
 
 When a host inspected an image resource, submit only the concise observation
-through `envoy_observe_visual`; keep the original URL, resource ID, source
+through `envoy_observe`; keep the original URL, resource ID, source
 block ID, and pass `material_id` when available. Envoy stores a bounded derived
 observation list in that local material snapshot. The observation is untrusted
 source material, not an agent command. The resource ID, block ID, and source URL

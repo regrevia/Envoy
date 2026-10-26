@@ -118,7 +118,7 @@ def capability_catalog() -> dict:
                 "use": "Discover this runtime catalog.",
             },
             {
-                "tool": "envoy_observe_visual",
+                "tool": "envoy_observe",
                 "use": "Return a bounded host observation linked to a previously delivered image resource.",
             },
             {

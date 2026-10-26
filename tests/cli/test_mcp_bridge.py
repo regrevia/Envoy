@@ -50,12 +50,12 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
         "envoy_replay",
         "envoy_search",
         "envoy_doctor",
-        "envoy_observe_visual",
+        "envoy_observe",
         "envoy_visual_history",
     }
     assert "needs_host response is a handoff, not a terminal state" in tools["envoy_read"]["description"]
     assert "inspect every" in tools["envoy_read"]["description"]
-    assert "one observation per inspected resource" in tools["envoy_observe_visual"]["description"]
+    assert "one observation per inspected resource" in tools["envoy_observe"]["description"]
     assert "idempotency_key" in tools["envoy_read_local_video"]["inputSchema"]["required"]
 
 
@@ -84,7 +84,7 @@ def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
         "envoy_read",
         "envoy_expand",
         "envoy_search",
-        "envoy_observe_visual",
+        "envoy_observe",
     }
     error = lines[2]["error"]
     assert error["code"] == -32602
@@ -94,7 +94,7 @@ def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
         "envoy_read",
         "envoy_expand",
         "envoy_search",
-        "envoy_observe_visual",
+        "envoy_observe",
     ]
     assert "--toolset full" in error["data"]["hint"]
 
@@ -418,7 +418,7 @@ def test_mcp_needs_host_visual_text_requires_observe_for_each_resource():
     }, modern=True)
 
     assert "each listed resource" in text
-    assert "envoy_observe_visual" in text
+    assert "envoy_observe" in text
     assert "material_id" in text
     assert "resource_id" in text
     assert "source_block_id" in text
@@ -444,7 +444,7 @@ def test_mcp_visual_tool_description_explains_needs_index_mapping(capsys):
 
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     tools = {tool["name"]: tool for tool in lines[1]["result"]["tools"]}
-    description = tools["envoy_observe_visual"]["description"]
+    description = tools["envoy_observe"]["description"]
     assert "resource_ids" in description
     assert "source_block_ids" in description
     assert "same index" in description
@@ -481,7 +481,7 @@ def test_mcp_bridge_rejects_unlinked_visual_observation(capsys):
         "id": "observe",
         "method": "tools/call",
         "params": {
-            "name": "envoy_observe_visual",
+            "name": "envoy_observe",
             "arguments": {
                 "protocol_version": "envoy.observe/1",
                 "request_id": "observe-1",
@@ -533,7 +533,7 @@ def test_mcp_visual_observation_infers_source_from_needs_resource_binding(
         "id": "observe",
         "method": "tools/call",
         "params": {
-            "name": "envoy_observe_visual",
+            "name": "envoy_observe",
             "arguments": {
                 "protocol_version": "envoy.observe/1",
                 "request_id": "observe-from-needs",
@@ -565,7 +565,7 @@ def test_mcp_bridge_redacts_visual_observation_source_query(capsys):
         "id": "observe",
         "method": "tools/call",
         "params": {
-            "name": "envoy_observe_visual",
+            "name": "envoy_observe",
             "arguments": {
                 "protocol_version": "envoy.observe/1",
                 "request_id": "observe-redact",
@@ -727,7 +727,7 @@ def test_mcp_bridge_rejects_mismatched_visual_observation_as_error(tmp_path, mon
         "id": "observe",
         "method": "tools/call",
         "params": {
-            "name": "envoy_observe_visual",
+            "name": "envoy_observe",
             "arguments": {
                 "protocol_version": "envoy.observe/1",
                 "request_id": "observe-mismatch",

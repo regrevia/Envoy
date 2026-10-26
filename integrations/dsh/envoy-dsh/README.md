@@ -117,7 +117,7 @@ The bundle inserts two rows:
 | `envoy-skill` | `envoy-dsh` | Registers the Envoy skill provider and the link-routing `agent/pre-step` hook. |
 
 `core` exposes `envoy_read`, `envoy_expand`, `envoy_search`, and
-`envoy_observe_visual`. The `full` toolset adds local-video, discovery,
+`envoy_observe`. The `full` toolset adds local-video, discovery,
 collection, replay, visual-history, and doctor tools. Export
 `ENVOY_MCP_TOOLSET=full` in the Harness environment and restart the bundle
 when those are needed. Starting with
@@ -148,7 +148,7 @@ After installation, check that:
   bundled bird icon.
 - The agent's tool list contains `mcp__envoy__envoy_read`,
   `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`, and
-  `mcp__envoy__envoy_observe_visual`. The advanced tools appear only after a
+  `mcp__envoy__envoy_observe`. The advanced tools appear only after a
   restart with `ENVOY_MCP_TOOLSET=full` in the Harness environment.
 - The skill catalog contains `envoy`; loading it shows
   `# Envoy Link Reader in DeepSeek Harness` and `mcp__envoy__` tool names.
