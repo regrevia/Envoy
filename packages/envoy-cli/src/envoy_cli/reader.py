@@ -24,6 +24,8 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import httpx
 from pypdf import PdfReader
 from .video import extract_public_subtitles, has_specialized_extractor
+from .fallbacks import public_api_fallback
+from .feeds import fetch_feed, looks_like_feed_url
 from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
 from .platforms import (
     classify_public_url,
@@ -114,6 +116,16 @@ CHALLENGE_MARKERS = (
 )
 MAX_FETCH_ATTEMPTS = 3
 MIN_EXPANSION_CHARS = 128
+# Upper bound for the subtitle-discovery leg of a video read. Sites whose
+# extractor negotiates against a signed API can stall for minutes; the page
+# fallback must still get its turn inside the caller's budget.
+_SUBTITLE_PHASE_SECONDS = 45
+# A site's own JSON endpoint answers in a second or two; give it a short slice
+# of the budget and fall through to the page when it cannot.
+_PUBLIC_API_FALLBACK_SECONDS = 15
+_PUBLIC_API_FALLBACK_MIN_CHARS = 200
+# Below this a platform page is a script shell rather than content.
+_THIN_PLATFORM_PAGE_CHARS = 300
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
@@ -6420,6 +6432,95 @@ def _read_video_media_url(request: ReadRequest, media_source: dict) -> ReadRespo
 _CHALLENGE_RETRY_DELAY_SECONDS = 1.0
 
 
+def _public_api_fallback_response(
+    request: ReadRequest, source_url: str, fallback: dict
+) -> ReadResponse:
+    """Answer from a site's own public endpoint instead of its rendered page.
+
+    A few sites serve a browser shell and keep the readable text behind a public
+    JSON API (a question body, a package readme). Reading that endpoint is both
+    faster and more complete than parsing the shell, and the reply says which
+    reader produced it so the evidence stays traceable.
+    """
+
+    title = _clean_text(str(fallback.get("title") or "")) or source_url
+    backend = str(fallback.get("backend") or "public_api")
+    text = str(fallback.get("text") or "").strip()
+    char_budget = _response_char_budget(request)
+    truncated = len(text) > char_budget
+    if truncated:
+        text = text[:char_budget]
+    source_revision = hashlib.sha256(
+        f"{source_url}\n{backend}\n{text}".encode("utf-8", errors="replace")
+    ).hexdigest()
+    material_id = _material_id(
+        source_url, source_revision, request.session_id, request.request_id
+    )
+    blocks = [
+        MaterialBlock(
+            id="blk-title",
+            kind=MaterialKind.HEADING,
+            content=TextContent(type="text", text=title),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=WebLocator(
+                type="web",
+                source_url=source_url,
+                block_id="blk-title",
+                quote=title[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
+            order=0,
+        )
+    ]
+    if text:
+        blocks.append(
+            MaterialBlock(
+                id="blk-body-0001",
+                kind=MaterialKind.PARAGRAPH,
+                content=TextContent(type="text", text=text),
+                origin=MaterialOrigin.SOURCE_TEXT,
+                locator=WebLocator(
+                    type="web",
+                    source_url=source_url,
+                    block_id="blk-body-0001",
+                    quote=text[:MAX_LOCATOR_QUOTE_CHARS],
+                ),
+                parent_id="blk-title",
+                order=1,
+            )
+        )
+    return ReadResponse(
+        request_id=request.request_id,
+        session_id=request.session_id,
+        material_id=material_id,
+        source_revision=source_revision,
+        execution_state=ExecutionState.COMPLETED,
+        result=ReadResult.PARTIAL if truncated else ReadResult.READY,
+        blocks=blocks,
+        coverage=Coverage(
+            modalities={
+                "text": CoverageItem(
+                    discovered=1,
+                    extracted=1,
+                    returned=1 if text else 0,
+                    extraction="partial" if truncated else ("complete" if text else "failed"),
+                    unresolved=(
+                        ["The endpoint returned more text than the response budget allowed"]
+                        if truncated
+                        else []
+                    ),
+                    details={
+                        "reader": f"public_api:{backend}",
+                        "backend": backend,
+                        "total_chars": len(str(fallback.get("text") or "")),
+                        "returned_chars": len(text),
+                        "continuation_available": False,
+                    },
+                )
+            }
+        ),
+    )
+
+
 def _read_video_page_text(request: ReadRequest, source_url: str) -> ReadResponse | None:
     """Read a video page as plain text when no transcript path is available.
 
@@ -6517,6 +6618,35 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         "xiaohongshu_note", "xiaohongshu_share",
     }
     media_first = _should_read_media_first(source_url, bool(request.scope.include_visual))
+    if not request.scope.include_visual and looks_like_feed_url(source_url):
+        try:
+            feed = fetch_feed(
+                source_url,
+                max_work_seconds=min(
+                    _remaining_work_seconds(request), _PUBLIC_API_FALLBACK_SECONDS
+                ),
+            )
+        except Exception:  # noqa: BLE001 - a feed probe must never fail a read
+            feed = None
+        if feed is not None:
+            return _public_api_fallback_response(request, source_url, feed)
+
+    if not request.scope.include_visual:
+        try:
+            fallback = public_api_fallback(
+                source_url,
+                goal=request.goal,
+                max_work_seconds=min(
+                    _remaining_work_seconds(request), _PUBLIC_API_FALLBACK_SECONDS
+                ),
+            )
+        except Exception:  # noqa: BLE001 - a fallback must never fail a read
+            fallback = None
+        if fallback is not None and len(str(fallback.get("text") or "")) >= (
+            _PUBLIC_API_FALLBACK_MIN_CHARS
+        ):
+            return _public_api_fallback_response(request, source_url, fallback)
+
     if (
         not direct_video_path
         and not direct_douyin_note
@@ -6528,7 +6658,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             source_url,
             preferred_language=request.video_subtitle_language,
             max_download_bytes=request.budget.max_download_bytes,
-            max_work_seconds=_remaining_work_seconds(request),
+            # Subtitle discovery is the cheap leg of a video read. A site whose
+            # extractor answers slowly (signed APIs, anti-bot handshakes) must
+            # not consume the whole budget before the page fallback runs; the
+            # deep media budget belongs to ASR, which the caller opts into.
+            max_work_seconds=min(_remaining_work_seconds(request), _SUBTITLE_PHASE_SECONDS),
             public_url_validator=lambda url: _is_public_http_url(url, dns_cache),
         )
         if subtitle_result.get("status") == "ready":
@@ -7240,6 +7374,10 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             else []
         )
         image_note_unknown_total = image_note_page and image_note_total is None
+        thin_platform_page = (
+            len(text.strip()) < _THIN_PLATFORM_PAGE_CHARS
+            and is_platform_page(str(request.source.url or ""))
+        )
         image_partial = (
             len(resources) < len(parser.images)
             or (image_note_total is not None and len(resources) < image_note_total)
@@ -7290,6 +7428,13 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                                     if source_text_truncated
                                     else []
                                 ),
+                                *(
+                                    [
+                                        "The platform page returned almost no text; it is rendered by scripts and needs cookies or a host browser"
+                                    ]
+                                    if thin_platform_page
+                                    else []
+                                ),
                             ]
                         ),
                         details={
@@ -7302,6 +7447,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             **_token_budget_details(request, returned_tokens, text[returned_end:]),
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
+                            **({"thin_platform_page": True} if thin_platform_page else {}),
                             **(
                                 {
                                     "goal_terms": goal_terms,

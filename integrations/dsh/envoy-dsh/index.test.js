@@ -1,0 +1,116 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import {
+  buildRoutingText,
+  LINK_ROUTING_MARKER,
+  readSupportVerdict,
+  routableUrls,
+} from './index.js'
+
+test('readSupportVerdict classifies the three policies', () => {
+  const cases = new Map([
+    ['https://www.bilibili.com/video/BV1xx411c7mD', 'supported'],
+    ['https://b23.tv/abcdefg', 'supported'],
+    ['https://www.douyin.com/video/7300000000000000000', 'supported'],
+    ['https://www.douyin.com/note/7300000000000000000', 'supported'],
+    ['https://mp.weixin.qq.com/s/abcdefg', 'supported'],
+    ['https://example.com/a.pdf', 'supported'],
+    ['https://x.com/someone/status/1234567890', 'unsupported'],
+    ['https://twitter.com/someone/status/1234567890', 'unsupported'],
+    ['https://www.instagram.com/p/CxYzAbCdEfG/', 'unsupported'],
+    ['https://www.linkedin.com/posts/someone-activity-123', 'unsupported'],
+    ['https://live.douyin.com/123456', 'unsupported'],
+    ['https://www.douyin.com/live/123456', 'unsupported'],
+    ['https://t.me/+abcdefg', 'unsupported'],
+    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'unknown'],
+    ['https://www.xiaohongshu.com/explore/abcdefg', 'unknown'],
+    ['https://www.douyin.com/user/MS4wLjABAAAA', 'unknown'],
+    ['https://example.com/a', 'unknown'],
+    ['', 'unknown'],
+  ])
+  for (const [url, expected] of cases) {
+    assert.equal(readSupportVerdict(url), expected, url)
+  }
+})
+
+test('supported links route to envoy_read only', () => {
+  const text = buildRoutingText(
+    ['https://www.bilibili.com/video/BV1xx411c7mD'],
+    'zh',
+  )
+  assert.ok(text.startsWith(LINK_ROUTING_MARKER))
+  assert.match(text, /以下链接用 envoy_read 读：/)
+  assert.ok(text.includes('https://www.bilibili.com/video/BV1xx411c7mD'))
+  assert.ok(text.includes('mcp__envoy__envoy_read'))
+  assert.doesNotMatch(text, /不要调用 envoy 工具/)
+  assert.doesNotMatch(text, /先试 envoy_read/)
+})
+
+test('unsupported links route to native fetch without envoy', () => {
+  const text = buildRoutingText(
+    ['https://www.instagram.com/p/CxYzAbCdEfG/'],
+    'zh',
+  )
+  assert.ok(text.startsWith(LINK_ROUTING_MARKER))
+  assert.match(text, /不要调用 envoy 工具/)
+  assert.ok(text.includes('https://www.instagram.com/p/CxYzAbCdEfG/'))
+  assert.doesNotMatch(text, /mcp__envoy__envoy_read/)
+  assert.doesNotMatch(text, /以下链接用 envoy_read 读/)
+})
+
+test('unknown links keep the try-envoy-first policy', () => {
+  const text = buildRoutingText(['https://example.com/a'], 'zh')
+  assert.match(text, /以下链接先试 envoy_read，失败再用宿主原生抓取：/)
+  assert.ok(text.includes('mcp__envoy__envoy_read'))
+  assert.ok(text.includes('以图片为准'))
+  assert.ok(text.includes('mcp__envoy__envoy_expand'))
+  assert.ok(text.includes('mcp__envoy__envoy_search'))
+})
+
+test('mixed prompt groups links once per verdict and keeps one marker', () => {
+  const urls = [
+    'https://www.bilibili.com/video/BV1xx411c7mD',
+    'https://x.com/someone/status/1234567890',
+    'https://example.com/a',
+  ]
+  const text = buildRoutingText(urls, 'zh')
+  assert.equal(text.split(LINK_ROUTING_MARKER).length - 1, 1)
+  const supportedAt = text.indexOf('以下链接用 envoy_read 读：')
+  const unsupportedAt = text.indexOf('以下链接不要调用 envoy 工具')
+  const unknownAt = text.indexOf('以下链接先试 envoy_read')
+  assert.ok(supportedAt >= 0 && unsupportedAt > supportedAt)
+  assert.ok(unknownAt > unsupportedAt)
+  // Each URL appears once, inside its own group.
+  for (const url of urls) {
+    assert.equal(text.split(url).length - 1, 1)
+  }
+})
+
+test('english prompt gets the same three groups', () => {
+  const text = buildRoutingText(
+    [
+      'https://www.bilibili.com/video/BV1xx411c7mD',
+      'https://www.instagram.com/p/CxYzAbCdEfG/',
+      'https://example.com/a',
+    ],
+    'en',
+  )
+  assert.match(text, /Read these links with `mcp__envoy__envoy_read`:/)
+  assert.match(text, /Do not call Envoy tools for these links/)
+  assert.match(text, /Try `mcp__envoy__envoy_read` on these links first/)
+  assert.ok(text.includes("not a replacement for the host's web search"))
+})
+
+test('an empty URL list injects the marker but no link groups', () => {
+  const text = buildRoutingText([], 'zh')
+  assert.ok(text.startsWith(LINK_ROUTING_MARKER))
+  assert.doesNotMatch(text, /^- /m)
+})
+
+test('routableUrls still skips prompts that already mention Envoy tooling', () => {
+  assert.deepEqual(routableUrls('请用 envoy_read 读 https://example.com/a'), [])
+  assert.deepEqual(routableUrls('看看 https://www.bilibili.com/video/BV1x'), [
+    'https://www.bilibili.com/video/BV1x',
+  ])
+})

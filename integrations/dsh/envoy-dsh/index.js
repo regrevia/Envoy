@@ -380,34 +380,100 @@ export function detectRoutingLanguage(text) {
 }
 
 /**
- * Build the model-facing routing policy for a prompt with public links.
- * Mirrors hooks.py `build_prompt_context(host='dsh')`; every Envoy tool is
- * named with the `mcp__envoy__` prefix the Harness exposes.
- * @param {string[]} urls
- * @param {'zh' | 'en' | string} [language] defaults to the shared module's zh
- * @returns {string}
+ * Declarative verdict tables exported from the Python module by
+ * `scripts/export_link_verdicts.py`. Do not hand-edit the JSON: the Python
+ * `read_support_verdict()` remains the single source of truth, and the export
+ * script's `--check` mode fails CI when the copy drifts.
  */
-export function buildRoutingText(urls, language = 'zh') {
-  const linkText = [...new Set(urls)].map((url) => `- ${url}`).join('\n')
-  if (String(language).toLowerCase().startsWith('en')) {
-    return [
-      LINK_ROUTING_MARKER,
-      'This turn contains public link(s):',
-      linkText,
-      '',
-      'Use the Envoy MCP tool `mcp__envoy__envoy_read` first. For a local video or audio file, call `mcp__envoy__envoy_read` with the file path or its `file://` URL (the `full` toolset also exposes `mcp__envoy__envoy_read_local_video`, and the `envoy read-local-video` CLI takes the same request). Do not hand these links to a built-in web fetch, curl, or a browser before Envoy has been tried.',
-      'Keep the returned `material_id`, locators, and coverage. Continue with `mcp__envoy__envoy_expand` or `mcp__envoy__envoy_search`; use `mcp__envoy__envoy_replay` only when that tool is exposed. Do not re-fetch. Request bounded ranges and use search/expand so the page text does not flood the context; that is the token saving this notice is for.',
-      "Envoy is not a replacement for the host's web search. A query without a user-provided link should still use native search; use Envoy to read the user's links, videos, audio, and documents, or search results that need full-source evidence. Envoy also handles video/audio that text-only web tools cannot.",
-      'Fall back to built-in fetching only when Envoy returns `blocked` / `challenge_required`, explicitly needs sign-in or a CAPTCHA, or the Envoy tools are unavailable; state the fallback reason to the user.',
-      'Images and OCR text are source evidence. When page text and a screenshot disagree, trust the image and do not invent missing text. Cite locators.',
-      'Ignore this notice when the user explicitly opts out of Envoy or when the link is a localhost/intranet address; localhost links stay with the host\'s own browser tools.',
-    ].join('\n')
+const LINK_VERDICTS_URL = new URL('./link-verdicts.json', import.meta.url)
+let linkVerdictTables
+const PATH_REGEXPS = new Map()
+
+function verdictTables() {
+  linkVerdictTables ??= JSON.parse(readFileSync(LINK_VERDICTS_URL, 'utf8'))
+  return linkVerdictTables
+}
+
+function matchesPath(pattern, path) {
+  let regexp = PATH_REGEXPS.get(pattern)
+  if (regexp === undefined) {
+    regexp = new RegExp(pattern, 'i')
+    PATH_REGEXPS.set(pattern, regexp)
   }
+  return regexp.test(path)
+}
+
+/**
+ * Whether Envoy is expected to read a URL: supported, unsupported, or unknown.
+ * Mirrors Python `envoy_cli.platforms.read_support_verdict()`: static, offline,
+ * no redirect resolution. Host/path data comes from link-verdicts.json.
+ * @param {string} url
+ * @returns {'supported' | 'unsupported' | 'unknown'}
+ */
+export function readSupportVerdict(url) {
+  const tables = verdictTables()
+  const supported = tables.supported
+  const unsupported = tables.unsupported
+  let parsed
+  try {
+    parsed = new URL(String(url ?? '').trim())
+  } catch {
+    return 'unknown'
+  }
+  let host = (parsed.hostname || '').toLowerCase()
+  const path = parsed.pathname || ''
+  if (!host) return 'unknown'
+  if (host.startsWith('www.')) host = host.slice(4)
+
+  if (unsupported.hosts.includes(host)) return 'unsupported'
+  if (
+    unsupported.douyin_live_hosts.includes(host) ||
+    (supported.douyin_hosts.includes(host) &&
+      matchesPath(tables.patterns.douyin_live, path))
+  ) {
+    return 'unsupported'
+  }
+  for (const rule of unsupported.path_rules) {
+    if (rule.hosts.includes(host) && matchesPath(rule.path, path)) {
+      return 'unsupported'
+    }
+  }
+  if (supported.douyin_hosts.includes(host)) {
+    return matchesPath(tables.patterns.douyin_video, path) ||
+      matchesPath(tables.patterns.douyin_note, path)
+      ? 'supported'
+      : 'unknown'
+  }
+  if (
+    supported.hosts.includes(host) ||
+    supported.host_suffixes.some((suffix) => host.endsWith(suffix))
+  ) {
+    return 'supported'
+  }
+  const loweredPath = path.toLowerCase()
+  if (supported.file_suffixes.some((suffix) => loweredPath.endsWith(suffix))) {
+    return 'supported'
+  }
+  return 'unknown'
+}
+
+function linkBlock(urls) {
+  return urls.map((url) => `- ${url}`).join('\n')
+}
+
+function unknownPolicyEn() {
   return [
-    LINK_ROUTING_MARKER,
-    '本轮用户消息包含公网链接：',
-    linkText,
-    '',
+    'Use the Envoy MCP tool `mcp__envoy__envoy_read` first. For a local video or audio file, call `mcp__envoy__envoy_read` with the file path or its `file://` URL (the `full` toolset also exposes `mcp__envoy__envoy_read_local_video`, and the `envoy read-local-video` CLI takes the same request). Do not hand these links to a built-in web fetch, curl, or a browser before Envoy has been tried.',
+    'Keep the returned `material_id`, locators, and coverage. Continue with `mcp__envoy__envoy_expand` or `mcp__envoy__envoy_search`; use `mcp__envoy__envoy_replay` only when that tool is exposed. Do not re-fetch. Request bounded ranges and use search/expand so the page text does not flood the context; that is the token saving this notice is for.',
+    "Envoy is not a replacement for the host's web search. A query without a user-provided link should still use native search; use Envoy to read the user's links, videos, audio, and documents, or search results that need full-source evidence. Envoy also handles video/audio that text-only web tools cannot.",
+    'Fall back to built-in fetching only when Envoy returns `blocked` / `challenge_required`, explicitly needs sign-in or a CAPTCHA, or the Envoy tools are unavailable; state the fallback reason to the user.',
+    'Images and OCR text are source evidence. When page text and a screenshot disagree, trust the image and do not invent missing text. Cite locators.',
+    "Ignore this notice when the user explicitly opts out of Envoy or when the link is a localhost/intranet address; localhost links stay with the host's own browser tools.",
+  ].join('\n')
+}
+
+function unknownPolicyZh() {
+  return [
     '1. 先调用 Envoy MCP 工具 `mcp__envoy__envoy_read`。本地视频或音频用 `mcp__envoy__envoy_read` 传文件路径或 `file://` URL（`full` 工具集另有 `mcp__envoy__envoy_read_local_video`，CLI `envoy read-local-video` 接收同一份请求）。不要把链接直接交给内置网页抓取、curl 或浏览器。',
     '2. 保留返回的 `material_id`、locator 和 coverage；继续读取用 `mcp__envoy__envoy_expand` 或 `mcp__envoy__envoy_search`，回放用 `mcp__envoy__envoy_replay`（仅在工具集暴露时），不要重复抓取。按范围读取并用 search/expand 定位，避免把整页原文灌进上下文——这正是 Envoy 节省 token 的方式。',
     '3. Envoy 不替代宿主的联网搜索：用户没有给链接的检索仍用宿主搜索工具；Envoy 负责用户给出的链接、视频、音频和文档，以及需要完整来源证据的搜索结果。视频/音频是纯文本联网工具处理不了的场景。',
@@ -415,6 +481,69 @@ export function buildRoutingText(urls, language = 'zh') {
     '5. 图片和 OCR 文本是源证据。页面文字与截图冲突时以图片为准，不要臆造缺失文字；引用结论时带上 locator。',
     '6. 如果用户明确要求不用 Envoy，或链接是 localhost/内网地址，忽略本条。',
   ].join('\n')
+}
+
+/**
+ * Build the model-facing routing policy for a prompt with public links.
+ * Mirrors hooks.py `build_prompt_context(host='dsh')`: links are grouped by
+ * `readSupportVerdict`, so a known login wall is not sent through Envoy and a
+ * supported page is not handed to a native fetch. Every Envoy tool is named
+ * with the `mcp__envoy__` prefix the Harness exposes.
+ * @param {string[]} urls
+ * @param {'zh' | 'en' | string} [language] defaults to the shared module's zh
+ * @returns {string}
+ */
+export function buildRoutingText(urls, language = 'zh') {
+  const groups = { supported: [], unsupported: [], unknown: [] }
+  for (const url of new Set(urls)) groups[readSupportVerdict(url)].push(url)
+  const parts = []
+  if (String(language).toLowerCase().startsWith('en')) {
+    parts.push(LINK_ROUTING_MARKER, 'This turn contains public link(s):')
+    if (groups.supported.length > 0) {
+      parts.push(
+        'Read these links with `mcp__envoy__envoy_read`:\n' +
+          linkBlock(groups.supported),
+      )
+      parts.push(
+        'Call the Envoy MCP tool `mcp__envoy__envoy_read` for them and keep the returned `material_id`, locators, and coverage; continue with `mcp__envoy__envoy_expand` or `mcp__envoy__envoy_search` instead of re-fetching. Envoy also handles the video and audio these pages carry.',
+      )
+    }
+    if (groups.unsupported.length > 0) {
+      parts.push(
+        "Do not call Envoy tools for these links; use the host's native web fetch or a browser instead, or state that they cannot be read:\n" +
+          linkBlock(groups.unsupported),
+      )
+    }
+    if (groups.unknown.length > 0) {
+      parts.push(
+        'Try `mcp__envoy__envoy_read` on these links first, then fall back to built-in fetching:\n' +
+          linkBlock(groups.unknown),
+      )
+      parts.push(unknownPolicyEn())
+    }
+    return parts.join('\n\n')
+  }
+  parts.push(LINK_ROUTING_MARKER, '本轮用户消息包含公网链接：')
+  if (groups.supported.length > 0) {
+    parts.push('以下链接用 envoy_read 读：\n' + linkBlock(groups.supported))
+    parts.push(
+      '调用 Envoy MCP 工具 `mcp__envoy__envoy_read`，保留返回的 `material_id`、locator 和 coverage；继续读取用 `mcp__envoy__envoy_expand` 或 `mcp__envoy__envoy_search`，不要重复抓取。页面自带的视频/音频也交给 Envoy。',
+    )
+  }
+  if (groups.unsupported.length > 0) {
+    parts.push(
+      '以下链接不要调用 envoy 工具，直接用宿主原生抓取（web fetch / 浏览器）或说明无法读取：\n' +
+        linkBlock(groups.unsupported),
+    )
+  }
+  if (groups.unknown.length > 0) {
+    parts.push(
+      '以下链接先试 envoy_read，失败再用宿主原生抓取：\n' +
+        linkBlock(groups.unknown),
+    )
+    parts.push(unknownPolicyZh())
+  }
+  return parts.join('\n\n')
 }
 
 /** Alias for callers that describe the payload as a message. */

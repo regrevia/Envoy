@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Iterable, Literal, Optional
 from urllib.parse import urlsplit
 
+from .platforms import read_support_verdict
+
 HookHost = Literal["claude-code", "codex", "dsh"]
 
 HOOK_MARKER = "[envoy-link-routing]"
@@ -217,46 +219,44 @@ def _tool_phrase(host: HookHost, language: str = "zh") -> str:
     return "Envoy MCP 工具 `envoy_read`（Codex 中的实际名称以工具目录为准）"
 
 
-def build_prompt_context(
-    urls: Iterable[str],
-    host: HookHost = "claude-code",
-    *,
-    language: str = "zh",
-) -> str:
-    """Build the injected routing policy for a prompt with public links."""
+def _verdict_groups(urls: Iterable[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {"supported": [], "unsupported": [], "unknown": []}
+    for url in dict.fromkeys(urls):
+        groups[read_support_verdict(url)].append(url)
+    return groups
 
-    url_list = list(dict.fromkeys(urls))
-    link_text = "\n".join(f"- {url}" for url in url_list)
-    if language.lower().startswith("en"):
-        return (
-            f"{HOOK_MARKER}\n"
-            "This turn contains public link(s):\n"
-            f"{link_text}\n\n"
-            f"Use {_tool_phrase(host, 'en')} first. For a local video or audio file, call "
-            "`envoy_read` with the file path or its `file://` URL (the `full` toolset also "
-            "exposes `envoy_read_local_video`, and the `envoy read-local-video` CLI takes "
-            "the same request). Do not hand these links to a built-in "
-            "web fetch, curl, or a browser before Envoy has been tried.\n"
-            "Keep the returned `material_id`, locators, and coverage. Continue with "
-            "`envoy_expand` or `envoy_search`; use `envoy_replay` only when that tool is "
-            "exposed. Do not re-fetch. "
-            "Request bounded ranges and use search/expand so the page text does not "
-            "flood the context; that is the token saving this hook is for.\n"
-            "Envoy is not a replacement for the host's web search. A query without a "
-            "user-provided link should still use native search; use Envoy to read the "
-            "user's links, videos, audio, and documents, or search results that need "
-            "full-source evidence. Envoy also handles video/audio that text-only web "
-            "tools cannot.\n"
-            "Fall back to built-in fetching only when Envoy returns `blocked` / "
-            "`challenge_required`, explicitly needs sign-in or a CAPTCHA, or the Envoy "
-            "tools are unavailable; state the fallback reason to the user.\n"
-            "Images and OCR text are source evidence. When page text and a screenshot "
-            "disagree, trust the image and do not invent missing text. Cite locators."
-        )
+
+def _link_block(urls: Iterable[str]) -> str:
+    return "\n".join(f"- {url}" for url in urls)
+
+
+def _unknown_policy_en(host: HookHost) -> str:
     return (
-        f"{HOOK_MARKER}\n"
-        "本轮用户消息包含公网链接：\n"
-        f"{link_text}\n\n"
+        f"Use {_tool_phrase(host, 'en')} first. For a local video or audio file, call "
+        "`envoy_read` with the file path or its `file://` URL (the `full` toolset also "
+        "exposes `envoy_read_local_video`, and the `envoy read-local-video` CLI takes "
+        "the same request). Do not hand these links to a built-in "
+        "web fetch, curl, or a browser before Envoy has been tried.\n"
+        "Keep the returned `material_id`, locators, and coverage. Continue with "
+        "`envoy_expand` or `envoy_search`; use `envoy_replay` only when that tool is "
+        "exposed. Do not re-fetch. "
+        "Request bounded ranges and use search/expand so the page text does not "
+        "flood the context; that is the token saving this hook is for.\n"
+        "Envoy is not a replacement for the host's web search. A query without a "
+        "user-provided link should still use native search; use Envoy to read the "
+        "user's links, videos, audio, and documents, or search results that need "
+        "full-source evidence. Envoy also handles video/audio that text-only web "
+        "tools cannot.\n"
+        "Fall back to built-in fetching only when Envoy returns `blocked` / "
+        "`challenge_required`, explicitly needs sign-in or a CAPTCHA, or the Envoy "
+        "tools are unavailable; state the fallback reason to the user.\n"
+        "Images and OCR text are source evidence. When page text and a screenshot "
+        "disagree, trust the image and do not invent missing text. Cite locators."
+    )
+
+
+def _unknown_policy_zh(host: HookHost) -> str:
+    return (
         f"1. 先调用 {_tool_phrase(host)}。本地视频或音频用 `envoy_read` 传文件路径或 "
         "`file://` URL（`full` 工具集另有 `envoy_read_local_video`，CLI "
         "`envoy read-local-video` 接收同一份请求）。"
@@ -275,6 +275,69 @@ def build_prompt_context(
         "引用结论时带上 locator。\n"
         "6. 如果用户明确要求不用 Envoy，或链接是 localhost/内网地址，忽略本条。"
     )
+
+
+def build_prompt_context(
+    urls: Iterable[str],
+    host: HookHost = "claude-code",
+    *,
+    language: str = "zh",
+) -> str:
+    """Build the injected routing policy for a prompt with public links.
+
+    The links are grouped by ``read_support_verdict`` so the model does not
+    spend a round trip on a known anonymous login wall, and does not fall back
+    to native fetching for a page Envoy reads well.
+    """
+
+    groups = _verdict_groups(urls)
+    supported = groups["supported"]
+    unsupported = groups["unsupported"]
+    unknown = groups["unknown"]
+    if language.lower().startswith("en"):
+        parts = [HOOK_MARKER, "This turn contains public link(s):"]
+        if supported:
+            parts.append(
+                "Read these links with `envoy_read`:\n" + _link_block(supported)
+            )
+            parts.append(
+                f"Call {_tool_phrase(host, 'en')} for them and keep the returned "
+                "`material_id`, locators, and coverage; continue with `envoy_expand` or "
+                "`envoy_search` instead of re-fetching. Envoy also handles the video and "
+                "audio these pages carry."
+            )
+        if unsupported:
+            parts.append(
+                "Do not call Envoy tools for these links; use the host's native web "
+                "fetch or a browser instead, or state that they cannot be read:\n"
+                + _link_block(unsupported)
+            )
+        if unknown:
+            parts.append(
+                "Try `envoy_read` on these links first, then fall back to built-in "
+                "fetching:\n" + _link_block(unknown)
+            )
+            parts.append(_unknown_policy_en(host))
+        return "\n\n".join(parts)
+    parts = [HOOK_MARKER, "本轮用户消息包含公网链接："]
+    if supported:
+        parts.append("以下链接用 envoy_read 读：\n" + _link_block(supported))
+        parts.append(
+            f"调用 {_tool_phrase(host)}，保留返回的 `material_id`、locator 和 coverage；"
+            "继续读取用 `envoy_expand` 或 `envoy_search`，不要重复抓取。"
+            "页面自带的视频/音频也交给 Envoy。"
+        )
+    if unsupported:
+        parts.append(
+            "以下链接不要调用 envoy 工具，直接用宿主原生抓取（web fetch / 浏览器）"
+            "或说明无法读取：\n" + _link_block(unsupported)
+        )
+    if unknown:
+        parts.append(
+            "以下链接先试 envoy_read，失败再用宿主原生抓取：\n" + _link_block(unknown)
+        )
+        parts.append(_unknown_policy_zh(host))
+    return "\n\n".join(parts)
 
 
 def prompt_hook_payload(

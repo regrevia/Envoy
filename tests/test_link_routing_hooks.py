@@ -409,3 +409,62 @@ def test_inspect_prompt_keeps_article_link_beside_a_commit_link():
     )
 
     assert inspect_prompt(text).urls == ("https://example.com/post",)
+
+
+def test_context_groups_supported_links_to_envoy_read():
+    context = build_prompt_context(
+        ["https://www.bilibili.com/video/BV1GJ411x7h7"], host="dsh"
+    )
+    assert "以下链接用 envoy_read 读" in context
+    assert "https://www.bilibili.com/video/BV1GJ411x7h7" in context
+    assert "不要调用 envoy 工具" not in context
+
+
+def test_context_routes_unsupported_links_to_native_fetch():
+    context = build_prompt_context(
+        ["https://x.com/user/status/123", "https://www.instagram.com/p/Cabc123/"],
+        host="codex",
+    )
+    assert "以下链接不要调用 envoy 工具" in context
+    assert "web fetch" in context
+    assert "https://x.com/user/status/123" in context
+    assert "https://www.instagram.com/p/Cabc123/" in context
+    assert "以下链接用 envoy_read 读" not in context
+
+
+def test_context_keeps_try_envoy_first_wording_for_unknown_links():
+    context = build_prompt_context(["https://example.com/a"], host="codex")
+    assert "先试 envoy_read，失败再用宿主原生抓取" in context
+    assert "先调用 Envoy MCP 工具 `envoy_read`" in context
+    assert "不要调用 envoy 工具" not in context
+
+
+def test_context_injects_verdict_groups_separately_for_mixed_prompt():
+    context = build_prompt_context(
+        [
+            "https://www.douyin.com/video/7300000000000000000",
+            "https://x.com/user/status/123",
+            "https://example.com/a",
+        ],
+        host="codex",
+    )
+    assert "以下链接用 envoy_read 读" in context
+    assert "以下链接不要调用 envoy 工具" in context
+    assert "以下链接先试 envoy_read" in context
+    assert "7300000000000000000" in context
+    assert "x.com/user/status/123" in context
+    assert "example.com/a" in context
+    assert context.startswith(HOOK_MARKER)
+    assert context.count(HOOK_MARKER) == 1
+
+
+def test_context_groups_links_in_english_too():
+    supported = build_prompt_context(
+        ["https://www.bilibili.com/video/BV1GJ411x7h7"], host="codex", language="en"
+    )
+    unsupported = build_prompt_context(
+        ["https://x.com/user/status/123"], host="codex", language="en"
+    )
+    assert "Read these links with `envoy_read`" in supported
+    assert "Do not call Envoy tools" in unsupported
+    assert "native web fetch" in unsupported

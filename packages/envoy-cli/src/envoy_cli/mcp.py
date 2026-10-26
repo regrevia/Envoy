@@ -415,8 +415,11 @@ TOOLS = [
             "payload; this server exposes no MCP resources capability, so listing MCP "
             "resources is always empty by design. budget is accepted "
             "but not declared: {max_work_seconds, max_download_bytes, "
-            "max_response_chars}; refresh true re-reads instead of replaying "
-            "retained material."
+            "max_response_chars}. Raise max_work_seconds for long audio or video "
+            "(a one-hour recording needs several hundred seconds; the ceiling is "
+            "3600) and raise max_response_chars up to 1000000 only when you really "
+            "need the whole text in one reply; refresh true re-reads instead of "
+            "replaying retained material."
         ),
         "inputSchema": READ_SCHEMA,
     },
