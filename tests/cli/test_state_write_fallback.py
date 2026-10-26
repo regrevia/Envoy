@@ -16,6 +16,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
+# ``os.chmod`` cannot make a directory unwritable on Windows; these tests pin the
+# POSIX permission path and are skipped there rather than asserting a no-op.
+requires_posix_permissions = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="chmod does not restrict writes on Windows",
+)
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-core" / "src"))
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-cli" / "src"))
@@ -51,6 +60,7 @@ def _restore(path: Path) -> None:
             pass
 
 
+@requires_posix_permissions
 def test_unwritable_state_root_falls_back_to_a_writable_directory(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -88,6 +98,7 @@ def test_preferred_root_needs_no_fallback(tmp_path: Path, monkeypatch) -> None:
         storage.reset_root_cache()
 
 
+@requires_posix_permissions
 def test_lock_skips_instead_of_failing_the_read(tmp_path: Path, monkeypatch) -> None:
     blocked = _readonly_root(tmp_path)
     monkeypatch.setattr(reader, "_material_root", lambda: blocked)
@@ -111,6 +122,7 @@ def test_lock_skips_instead_of_failing_the_read(tmp_path: Path, monkeypatch) -> 
     assert any("process serialization" in note for note in video.unresolved)
 
 
+@requires_posix_permissions
 def test_optional_lock_reports_skipped_but_runs_the_body(tmp_path: Path) -> None:
     blocked = _readonly_root(tmp_path)
     seen: list[bool] = []

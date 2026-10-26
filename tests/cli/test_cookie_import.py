@@ -81,8 +81,16 @@ def test_chromium_plaintext_strips_the_host_prefix_and_padding(monkeypatch):
         "_openssl_decrypt",
         lambda key, payload: b"\x00" * 32 + b"session-value" + b"\x06" * 6,
     )
-    assert cookies._chromium_plaintext(b"v10" + b"cipher", b"k" * 16) == "session-value"
-    assert cookies._chromium_plaintext(b"plain-value", None) == "plain-value"
+    # Pin the platform: the Windows branch unwraps a DPAPI-protected key first, so
+    # it does not reach the CBC helper this test substitutes.
+    assert (
+        cookies._chromium_plaintext(b"v10" + b"cipher", b"k" * 16, platform="linux")
+        == "session-value"
+    )
+    assert (
+        cookies._chromium_plaintext(b"plain-value", None, platform="linux")
+        == "plain-value"
+    )
 
 
 def test_unpad_only_strips_a_full_padding_tail():
