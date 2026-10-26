@@ -1118,14 +1118,14 @@ def _local_source_path(arguments: dict) -> str | None:
             # file:///C:/clip.mp4 -> C:/clip.mp4; the leading slash before a drive
             # letter is URL syntax, not the start of the Windows path.
             decoded = decoded[1:]
-        candidate = decoded
+        # A URL path is forward-slash by syntax, so a file:// URL keeps that
+        # shape on Windows too; callers echo it back as written.
+        return Path(decoded).expanduser().as_posix()
     elif raw.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", raw):
         candidate = raw
     else:
         return None
-    # Callers compare and echo this value, so keep it POSIX-shaped on every
-    # platform: a Windows drive path becomes C:/..., which Windows still opens.
-    return Path(candidate).expanduser().as_posix()
+    return str(Path(candidate).expanduser())
 
 
 def _local_file_identity(path: str) -> str:
