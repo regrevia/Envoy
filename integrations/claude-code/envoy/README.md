@@ -5,23 +5,22 @@ user prompts through Envoy before Claude's built-in web fetch.
 
 ## Install
 
-1. Install the Envoy runtime first (see
-   [INSTALL.md](../../skills/envoy/INSTALL.md)).
-2. Add this repository as a marketplace and install the plugin:
+```bash
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
+```
+
+That is the whole flow: it provisions an up-to-date `envoy` if you do not have
+one, adds this repository as a marketplace, installs `envoy@envoy`, and reminds
+you to restart. To run the steps by hand:
 
 ```bash
 claude plugin marketplace add regrevia/Envoy
 claude plugin install envoy@envoy
 ```
 
-For a local checkout:
-
-```bash
-claude plugin marketplace add /absolute/path/to/Envoy
-claude plugin install envoy@envoy
-```
-
-Restart Claude Code or run `/plugin` to confirm the plugin is enabled.
+For a local checkout use `claude plugin marketplace add /absolute/path/to/Envoy`
+first. If `envoy` lives outside PATH, set `ENVOY_BIN` to its absolute path before
+starting Claude Code.
 
 ## What it adds
 

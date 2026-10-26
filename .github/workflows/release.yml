@@ -70,6 +70,12 @@ jobs:
           ]
           Path("dist/SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="ascii")
           PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 构建插件市场包 / Build marketplace bundle
+        run: |
+          npm pack --pack-destination dist integrations/dsh/envoy-dsh
       - name: Publish GitHub Release (Chinese first, English below)
         env:
           GH_TOKEN: ${{ github.token }}

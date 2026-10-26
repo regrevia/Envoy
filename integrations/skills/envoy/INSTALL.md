@@ -59,6 +59,21 @@ hook 需再执行一次 `envoy hook install --host codex` 写入用户级
 `blocked` / `challenge_required`、需要登录/验证码或工具不可用时才回退到宿主
 自带抓取。
 
+一条命令装完（运行时会自动补齐，不需要先手动装 CLI）：
+
+```bash
+# Claude Code
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
+
+# Codex：插件装 MCP，脚本同时写用户级 hook
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+
+# DeepSeek Harness
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+```
+
+想逐条执行时：
+
 ```bash
 # Claude Code
 claude plugin marketplace add regrevia/Envoy
