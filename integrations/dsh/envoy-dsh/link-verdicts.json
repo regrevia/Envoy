@@ -1,0 +1,100 @@
+{
+  "generated_by": "scripts/export_link_verdicts.py",
+  "patterns": {
+    "douyin_live": "^/live(?:/|$)",
+    "douyin_note": "^/note/",
+    "douyin_video": "^/(?:video|share/video)/\\d+"
+  },
+  "supported": {
+    "douyin_hosts": [
+      "douyin.com",
+      "iesdouyin.com",
+      "m.douyin.com"
+    ],
+    "file_suffixes": [
+      ".aac",
+      ".atom",
+      ".flac",
+      ".m4a",
+      ".m4b",
+      ".m4v",
+      ".mov",
+      ".mp3",
+      ".mp4",
+      ".oga",
+      ".ogg",
+      ".ogv",
+      ".opus",
+      ".pdf",
+      ".rss",
+      ".wav",
+      ".webm",
+      ".xml"
+    ],
+    "host_suffixes": [
+      ".wikipedia.org"
+    ],
+    "hosts": [
+      "36kr.com",
+      "arxiv.org",
+      "b23.tv",
+      "bili2233.cn",
+      "bilibili.com",
+      "channels.weixin.qq.com",
+      "developer.mozilla.org",
+      "export.arxiv.org",
+      "gist.github.com",
+      "github.com",
+      "k.kuaishou.com",
+      "kuaishou.com",
+      "m.36kr.com",
+      "m.bilibili.com",
+      "m.kuaishou.com",
+      "m.tiktok.com",
+      "m.weibo.cn",
+      "mp.weixin.qq.com",
+      "raw.githubusercontent.com",
+      "t.cn",
+      "tiktok.com",
+      "v.douyin.com",
+      "vm.tiktok.com",
+      "vt.tiktok.com",
+      "weibo.cn",
+      "weibo.com",
+      "xiaoyuzhoufm.com",
+      "zhihu.com",
+      "zhuanlan.zhihu.com"
+    ]
+  },
+  "unsupported": {
+    "douyin_live_hosts": [
+      "live.douyin.com"
+    ],
+    "hosts": [
+      "linkedin.com"
+    ],
+    "path_rules": [
+      {
+        "hosts": [
+          "t.me",
+          "telegram.me"
+        ],
+        "path": "^/(?:\\+|joinchat/|c/)"
+      },
+      {
+        "hosts": [
+          "twitter.com",
+          "x.com"
+        ],
+        "path": "^/[^/]+/status/\\d+"
+      },
+      {
+        "hosts": [
+          "instagram.com"
+        ],
+        "path": "^/(?:p|reel|reels|tv)/[^/]+"
+      }
+    ]
+  },
+  "version": 1
+}
