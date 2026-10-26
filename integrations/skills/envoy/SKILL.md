@@ -31,6 +31,7 @@ call:
 | Video or audio: transcript, timeline, frames | `envoy_read`. |
 | Long article, report, PDF, or image post | `envoy_read`. |
 | Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `envoy_read`; a plain fetch is known to fail there. |
+| Source-code host pages: github.com, gitlab.com, bitbucket.org paths `/commit`, `/blob`, `/tree`, `/pull`, `/issues`, `/compare` | `gh api` / `git show` / plain fetch. Envoy returns the page title and at most the commit message, never the diff. |
 | Short static page, nothing pasted | Plain fetch first, escalate only if blocked, truncated, or JavaScript-rendered. |
 
 Stop after one plain fetch and one Envoy read. A short source that returns
