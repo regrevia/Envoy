@@ -23,6 +23,7 @@ from envoy_core.schemas.read_v1 import (
 )
 
 from . import __version__
+from . import auth_session
 from .browser import browser_runtime_status
 from . import storage as state_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
@@ -269,6 +270,19 @@ VISUAL_HISTORY_SCHEMA = {
     },
 }
 
+AUTH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["action"],
+    "properties": {
+        "action": {"type": "string", "enum": ["open", "status", "cancel"]},
+        "action_id": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]},
+        "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 900},
+        "visible": {"type": "boolean", "default": False},
+    },
+}
+
 TOOLS = [
     {
         "name": "envoy_read_local_video",
@@ -466,6 +480,22 @@ TOOLS = [
         ),
         "inputSchema": VISUAL_HISTORY_SCHEMA,
     },
+    {
+        "name": "envoy_auth",
+        "description": (
+            "Hand a sign-in that needs a human to the user, in the chat. Use it "
+            "when envoy_read returns challenge_required or login required on a "
+            "site whose content the user wants: action 'open' starts the site's "
+            "own sign-in page in a background browser of its own and returns a "
+            "screenshot of it (usually the QR code to scan); show that picture to "
+            "the user with its absolute path, then call action 'status' after they "
+            "finish and re-read the original link. The browser stays open in the "
+            "background between calls, so a scan is enough and the user never has "
+            "to find a terminal. action 'cancel' closes it. Pass action_id when a "
+            "previous open gave one, or url to start from a link."
+        ),
+        "inputSchema": AUTH_SCHEMA,
+    },
 ]
 
 # Tool declarations are part of every request prefix, so hosts that only read
@@ -480,6 +510,7 @@ TOOLSETS: dict[str, tuple[str, ...]] = {
         "envoy_expand",
         "envoy_search",
         "envoy_observe",
+        "envoy_auth",
     ),
     "full": tuple(tool["name"] for tool in TOOLS),
 }
@@ -1383,6 +1414,60 @@ def _local_file_blocked_payload(request_id: Any, path: str, reason: str, message
     }
 
 
+def _auth_payload(arguments: dict) -> dict:
+    """Shape one envoy_auth call into a payload every host can render.
+
+    The screenshot path is repeated as plain text because DSH reads only the
+    text block and the picture itself is what the user has to see.
+    """
+
+    action = str(arguments.get("action") or "").strip()
+    action_id = str(arguments.get("action_id") or "").strip()
+    url = str(arguments.get("url") or "").strip()
+    timeout_seconds = int(arguments.get("timeout_seconds") or 300)
+    payload: dict = {"tool": "envoy_auth", "action": action}
+    if action == "open":
+        if not action_id and not url:
+            raise ValueError("envoy_auth open needs action_id or url")
+        result = auth_session.start(
+            url,
+            action_id=action_id or None,
+            timeout_seconds=timeout_seconds,
+            visible=bool(arguments.get("visible")),
+        )
+        payload.update(result)
+        payload["result"] = "ready" if result.get("screen_path") else "starting"
+        payload["instruction"] = (
+            "show the user the picture at screen_path (it is usually their sign-in "
+            "QR code) and ask them to scan or finish the verification; the browser "
+            "keeps running in the background. When they say they are done, call "
+            "envoy_auth {action:'status', action_id} and then re-read source_url "
+            "with envoy_read; never repeat a read before the status says signed_in."
+        )
+    elif action == "status":
+        if not action_id:
+            raise ValueError("envoy_auth status needs action_id")
+        result = auth_session.status(action_id)
+        payload.update(result)
+        signed_in = result.get("status") == "signed_in"
+        payload["result"] = "ready" if signed_in else "waiting"
+        payload["instruction"] = (
+            "the sign-in worked and the source can be read now: call envoy_read on "
+            "source_url"
+            if signed_in
+            else "still waiting for the human; show screen_path again if they lost "
+            "it, do not re-read the source yet"
+        )
+    elif action == "cancel":
+        if not action_id:
+            raise ValueError("envoy_auth cancel needs action_id")
+        payload.update(auth_session.stop(action_id))
+        payload["result"] = "canceled"
+    else:
+        raise ValueError("envoy_auth action must be open, status, or cancel")
+    return payload
+
+
 def _server_arguments(name: str, arguments: dict) -> dict:
     """Complete a compact tool call into the full request model accepts.
 
@@ -1817,6 +1902,8 @@ def handle_message(
                 VisualObservationHistoryRequest.model_validate(arguments)
             )
             payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_auth":
+            payload = _auth_payload(arguments)
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
     except PublicPageError as exc:

@@ -1746,6 +1746,7 @@ def test_browser_video_evidence_refuses_a_cover_preview_as_the_post(monkeypatch)
     assert action["kind"] == "login_or_verification"
     assert action["host"] == "www.douyin.com"
     assert [option["action"] for option in action["options"]] == [
+        "in_chat_sign_in",
         "import_cookies",
         "human_sign_in",
     ]
@@ -1797,6 +1798,7 @@ def test_a_fresh_cookie_demand_asks_for_a_scoped_import():
     assert "command" not in import_option
     assert "not necessarily what it wants" in action["question"]
     assert [option["action"] for option in action["options"]] == [
+        "in_chat_sign_in",
         "import_cookies",
         "human_sign_in",
     ]

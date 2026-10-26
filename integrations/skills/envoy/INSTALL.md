@@ -1,6 +1,6 @@
 # 安装 Envoy
 
-Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前开发版为 `0.1.12`，发行说明以 `CHANGELOG.md` 为准。
+Envoy 分为 Skill 指令、本地 CLI runtime 和宿主 MCP 连接三部分。按以下步骤完成后，AI 才能实际调用 Envoy 读取链接。当前开发版为 `0.1.13`，发行说明以 `CHANGELOG.md` 为准。
 
 ## 1. 安装 Skill
 

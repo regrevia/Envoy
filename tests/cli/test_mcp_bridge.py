@@ -42,6 +42,7 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
     assert lines[0]["result"]["protocolVersion"] == "2025-11-25"
     tools = {tool["name"]: tool for tool in lines[1]["result"]["tools"]}
     assert set(tools) == {
+        "envoy_auth",
         "envoy_discover",
         "envoy_collection_checkpoint",
         "envoy_read_local_video",
@@ -85,6 +86,7 @@ def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
         "envoy_expand",
         "envoy_search",
         "envoy_observe",
+        "envoy_auth",
     }
     error = lines[2]["error"]
     assert error["code"] == -32602
@@ -95,6 +97,7 @@ def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
         "envoy_expand",
         "envoy_search",
         "envoy_observe",
+        "envoy_auth",
     ]
     assert "--toolset full" in error["data"]["hint"]
 
