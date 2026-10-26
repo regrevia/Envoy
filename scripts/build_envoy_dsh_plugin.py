@@ -40,7 +40,7 @@ DESCRIPTION_RE = re.compile(r"^description:\s*(.*)$", re.MULTILINE)
 TOOL_NAMES = (
     "envoy_read_local_video",
     "envoy_collection_checkpoint",
-    "envoy_observe_visual",
+    "envoy_observe",
     "envoy_visual_history",
     "envoy_discover",
     "envoy_expand",
@@ -78,7 +78,7 @@ not launch a second process. The exposed tools are:
 - `envoy_read`
 - `envoy_expand`
 - `envoy_search`
-- `envoy_observe_visual`
+- `envoy_observe`
 
 The `full` toolset additionally exposes `envoy_read_local_video`,
 `envoy_discover`, `envoy_collection_checkpoint`, `envoy_replay`,

@@ -90,7 +90,7 @@ it is not silently dropped and not retried in a loop.
 
 The bundled integrations start the MCP bridge as `envoy mcp`, which
 defaults to the `core` toolset: `envoy_read`, `envoy_expand`,
-`envoy_search`, and `envoy_observe_visual`.
+`envoy_search`, and `envoy_observe`.
 Those four cover ordinary link reading, bounded continuation, in-material
 search, and visual handoff without paying for every advanced schema.
 
@@ -226,7 +226,7 @@ For a Xiaohongshu note or `xhslink.com` share, call `envoy_read` on the exact
 link. Envoy follows public redirects and, when the resulting note is exposed,
 returns page text and ordered note images. Inspect every returned image resource
 when the user's request depends on image content, then submit one
-`envoy_observe_visual` call per inspected resource. Album totals may be unknown;
+`envoy_observe` call per inspected resource. Album totals may be unknown;
 report that gap rather than claiming the entire note was read. This image-note
 route is experimental, not general Xiaohongshu video support. Unattributed page
 or recommendation videos never enter video ASR as evidence for the note.
@@ -248,7 +248,7 @@ relevant to the user's goal. Envoy first uses local PaddleOCR when installed,
 then system Tesseract; it returns OCR blocks linked to the source image through
 an `image_region` locator with normalized coordinates, confidence, backend, and
 cache metadata. OCR text is a derived evidence hint, not a complete image
-interpretation. Use the source image and `envoy_observe_visual` for layout,
+interpretation. Use the source image and `envoy_observe` for layout,
 charts, ambiguous text, or low-confidence regions. If no OCR backend is
 available, report the `missing_capability`/partial gap and do not invent text.
 
@@ -263,7 +263,7 @@ omitted, the runtime default remains in effect.
 - `partial`: answer from returned material and state what was not covered.
 - `needs_host`: complete each requested host action before finalizing. For an
   `inspect_visual` need, inspect every listed resource that the host can
-  access before its `expires_at` lease. Then call `envoy_observe_visual` once
+  access before its `expires_at` lease. Then call `envoy_observe` once
   per inspected resource. The need's `action_id` identifies the handoff and
   `purpose` explains why it was requested; do not send either field in the
   observation request. pairing `resource_ids[i]` with `source_block_ids[i]`
@@ -435,7 +435,7 @@ For a follow-up about an image already inspected in this material, call
 before requesting another visual inspection. This reuses saved observations
 without re-fetching the image or spending another vision call. Preserve the
 original `session_id` on all follow-up tools (`envoy_search`, `envoy_expand`,
-`envoy_visual_history`, and `envoy_observe_visual`) when one was used.
+`envoy_visual_history`, and `envoy_observe`) when one was used.
 
 For a follow-up about the same retained source, call `envoy_search` first with
 the prior `material_id` and the user's question in natural language. Envoy

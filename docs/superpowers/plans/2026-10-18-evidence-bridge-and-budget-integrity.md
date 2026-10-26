@@ -20,7 +20,7 @@
 
 - [x] Add a request model for a bounded host visual observation and a test that it produces a source-located `host_visual` block.
 - [x] Run the focused test and confirm the new MCP tool/model is absent.
-- [x] Add `envoy_observe_visual` to the MCP tool list and return a compact structured response with the observation as untrusted source material.
+- [x] Add `envoy_observe` to the MCP tool list and return a compact structured response with the observation as untrusted source material.
 - [x] Verify that an observation cannot contain credentials, arbitrary tool instructions, or an unbounded payload.
 
 ### Task 2: Incremental budget ledger

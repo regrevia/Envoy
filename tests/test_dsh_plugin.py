@@ -27,7 +27,7 @@ ENVOY_TOOLS = (
     "envoy_replay",
     "envoy_search",
     "envoy_doctor",
-    "envoy_observe_visual",
+    "envoy_observe",
     "envoy_visual_history",
 )
 BARE_TOOL = re.compile(
