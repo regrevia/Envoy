@@ -712,3 +712,32 @@ def test_browser_failure_maps_to_a_distinguishable_error_code(
         getattr(item, "code", None) == ErrorCode.EMPTY_CONTENT
         for item in response.errors
     )
+
+
+def test_browser_media_download_budget_excludes_probe_spend(monkeypatch):
+    """Probing charges the same allowance as the download; the rest must reach the downloader."""
+
+    request = _request("budget-minus-probe", budget={"max_download_bytes": 100_000})
+    _bind_identities(monkeypatch, {CURRENT_CLIP: ("aaa", "video/mp4", 1_000_000)})
+    monkeypatch.setattr(
+        reader,
+        "_probe_page_media_identities",
+        lambda *_a, **_k: ({CURRENT_CLIP: ("aaa", "video/mp4", 1_000_000)}, 40_000),
+    )
+    captured = {}
+
+    def fake_download(url, output_dir, *, max_download_bytes, max_work_seconds):
+        captured["max_download_bytes"] = max_download_bytes
+        return {"path": None, "duration": None, "downloaded_bytes": 0}
+
+    monkeypatch.setattr(reader, "download_video_for_frames", fake_download)
+
+    reader._attach_browser_video_evidence(
+        request,
+        PAGE_URL,
+        [CURRENT_CLIP],
+        _empty_response(request),
+        bound_media_urls=[CURRENT_CLIP],
+    )
+
+    assert captured["max_download_bytes"] == 60_000
