@@ -1841,7 +1841,7 @@ def test_material_search_ignores_english_stopwords_for_goal_queries(tmp_path, mo
     ]
 
 
-def test_material_search_and_expand_share_returned_range_ledger(tmp_path, monkeypatch):
+def test_material_search_does_not_lock_the_same_range_out_of_expand(tmp_path, monkeypatch):
     from envoy_cli import reader
     from envoy_core.schemas.read_v1 import ExpandRequest, MaterialSearchRequest
 
@@ -1877,10 +1877,23 @@ def test_material_search_and_expand_share_returned_range_ledger(tmp_path, monkey
         "offset": searched.blocks[0].order,
         "max_chars": 256,
     }))
+    repeated = reader.expand_material(ExpandRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "req-expand-repeat-range",
+        "material_id": material_id,
+        "offset": searched.blocks[0].order,
+        "max_chars": 256,
+    }))
 
     assert searched.result.value == "ready"
-    assert expanded.result.value == "blocked"
-    assert "overlaps an earlier response" in expanded.errors[0].message
+    # A search ships one short window per hit, so it must not close the region to
+    # a later expand: treating it as full delivery deadlocked the model into
+    # re-reading the URL.
+    assert expanded.result.value in {"ready", "partial"}
+    assert expanded.blocks
+    # A range an expand already delivered stays closed.
+    assert repeated.result.value == "blocked"
+    assert "overlaps an earlier response" in repeated.errors[0].message
 
 
 def test_retained_material_followup_rejects_different_session(tmp_path, monkeypatch):

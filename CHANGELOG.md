@@ -1,5 +1,34 @@
 # 更新日志 / Changelog
 
+## 0.1.11 - 2026-10-26
+
+### 中文
+
+- 修复「工具结果只给回执」这一类故障：`envoy_read` / `envoy_search` / `envoy_expand`
+  的 `content` 文本现在自带正文、命中片段、`material_id`、`source_revision`、资源 id 与
+  应调用的下一步；`structuredContent` 同样携带完整载荷。三宿主对「哪个字段到模型」的
+  结论不同（DSH 只读 `content`，Codex CLI 与 Claude Code 只读 `structuredContent`），
+  两者都放回执就会在对应宿主上复现该故障，详见 `docs/product/mcp-host-content-matrix.md`。
+- `envoy_search` 不再把命中的窗口写进读取交付账本，命中后再 `envoy_expand` 同一区域
+  不再被「overlaps an earlier response」挡住（此前会把模型逼回重读 URL）。
+- `envoy_replay` 允许省略 `source_session_id`，由保留物料记录推断；跨进程/重启后接管
+  不再因为模型不知道服务端会话 id 而失败。
+
+### English
+
+- Fix the "receipt-only tool result" class of failure: the `content` text of
+  `envoy_read` / `envoy_search` / `envoy_expand` now carries the block text,
+  search hits, `material_id`, `source_revision`, resource ids, and the next call,
+  and `structuredContent` carries the same full payload. Hosts disagree about
+  which field reaches the model (DSH reads only `content`; Codex CLI and Claude
+  Code read only `structuredContent`), so a receipt in either field reproduces
+  the failure on that host. See `docs/product/mcp-host-content-matrix.md`.
+- `envoy_search` no longer records hit windows in the delivery ledger, so
+  `envoy_expand` of the same region is not rejected with "overlaps an earlier
+  response".
+- `envoy_replay` accepts an omitted `source_session_id` and derives it from the
+  retained material, so taking over after a process restart no longer fails.
+
 ## 0.1.10 - 2026-10-26
 
 ### 中文
