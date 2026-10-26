@@ -20,11 +20,19 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 # DeepSeek Harness
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 
+# Claude Desktop / Cursor / Windsurf：只写一条 MCP 配置
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- mcp
+
+# 只认 skill 目录的宿主：解到 ~/.envoy/skill/envoy
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- skill
+
 # 机器上装了几个就都装
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- all
 ```
 
-装完重启宿主。想先看脚本会做什么：加 `ENVOY_DRY_RUN=1`，只打印命令不执行。
+脚本下载 runtime 时用 release 里的 `SHA256SUMS` 校验，装完自己跑一遍
+`envoy doctor --json` 并打印版本；哪一步失败会停在那一步并给出原因。装完重启
+宿主。想先看脚本会做什么：加 `ENVOY_DRY_RUN=1`，只打印命令不执行。
 
 ## 手动安装 / Manual
 
@@ -59,7 +67,16 @@ Codex 会要求确认 hook 信任。
 
 ### 没有插件的宿主：Skill + runtime
 
-任何能读 skill 目录、能连 MCP 的宿主都可以只装这两样：
+任何能读 skill 目录、能连 MCP 的宿主都可以只装这两样，一条命令分别装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- mcp
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- skill
+```
+
+`mcp` 会找 Claude Desktop、Cursor、Windsurf 的配置并只加 `mcpServers.envoy`
+一条（先备份，不动其他 server）；`skill` 把 `envoy-skill.zip` 解到
+`~/.envoy/skill/envoy`（`ENVOY_SKILL_DIR` 可改目标）。要手工来一遍：
 
 ```bash
 gh release download v0.1.14 --repo regrevia/Envoy --dir envoy-v0.1.14
@@ -67,8 +84,7 @@ cd envoy-v0.1.14
 uv tool install --python 3.11 ./envoy_cli-0.1.14-py3-none-any.whl
 ```
 
-把 `envoy-skill.zip` 解到宿主的 skill 目录（或直接用仓库里的
-`integrations/skills/envoy`），然后在宿主的 MCP 配置里加一条：
+然后在宿主的 MCP 配置里加一条：
 
 ```json
 {
@@ -88,7 +104,8 @@ uv tool install --python 3.11 ./envoy_cli-0.1.14-py3-none-any.whl
 printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","source":{"url":"https://example.org/"}}' | envoy read --request-json -
 ```
 
-只验证公开网页读取，不代表视频或 ASR 已就绪。
+只验证公开网页读取，不代表视频或 ASR 已就绪。安装脚本结束时也会打印
+`envoy doctor --json` 的 runtime 版本与协议版本，对不上就是没装成。
 
 ## 更新与卸载 / Update and remove
 
