@@ -30,7 +30,8 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- all
 ```
 
-脚本下载 runtime 时用 release 里的 `SHA256SUMS` 校验，装完自己跑一遍
+脚本只要求机器上有 `curl`：uv 和 Python 3.11 由它自己装（`ENVOY_SKIP_UV_INSTALL=1`
+可关掉）。下载 runtime 时用 release 里的 `SHA256SUMS` 校验，装完自己跑一遍
 `envoy doctor --json` 并打印版本；哪一步失败会停在那一步并给出原因。装完重启
 宿主。想先看脚本会做什么：加 `ENVOY_DRY_RUN=1`，只打印命令不执行。
 

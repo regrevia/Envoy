@@ -109,6 +109,10 @@ def _pid_alive(pid: object) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        # Windows raises WinError 87 instead of ProcessLookupError for a pid
+        # that is already gone.
+        return False
     return True
 
 

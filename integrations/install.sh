@@ -113,6 +113,25 @@ python_is_new_enough() {
   "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
 }
 
+# uv is the one prerequisite this script can supply itself: without it a machine
+# whose only python3 is 3.9 (macOS) cannot get a working runtime. Installing uv
+# is a single curl, so do it instead of asking the user to read a doc.
+ensure_uv() {
+  command -v uv >/dev/null 2>&1 && return 0
+  [ "${ENVOY_SKIP_UV_INSTALL:-0}" = "1" ] && return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  printf 'envoy install: uv not found; installing it -> %s/.local/bin\n' "$HOME"
+  curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || return 1
+  for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+    if [ -x "$candidate" ]; then
+      PATH="$(dirname "$candidate"):$PATH"
+      export PATH
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_runtime() {
   version="$1"
   wheel="envoy_cli-$version-py3-none-any.whl"
@@ -126,6 +145,12 @@ install_runtime() {
     printf '  + download %s\n' "$url"
     printf '  + pip install %s\n' "$wheel"
     return 0
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    if ! command -v python3 >/dev/null 2>&1 || ! python_is_new_enough "$(command -v python3)"; then
+      ensure_uv || true
+    fi
   fi
 
   if command -v uv >/dev/null 2>&1; then
