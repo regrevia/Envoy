@@ -39,13 +39,16 @@
 | `export-markdown`（单文档） | < 2 秒，任务轮询 6 秒时已 `success` |
 | 冷构建依赖层（apt + pip，lean） | 103.5 秒（tuna pip 源） |
 | Playwright 浏览器与 FFmpeg 下载 | 29.7 秒（npmmirror），Chromium 190.5 MiB + FFmpeg 119.9 MiB |
-| 镜像体积 | `envoy-backend` 2.38 GB（lean）、`envoy-frontend` 308 MB |
+| 镜像体积 | `envoy-backend` 2.38 GB（`ENVOY_WITH_MEDIA=0`）/ 4.64 GB（`=1`，含 whisper+paddleocr+torch+paddle）、`envoy-frontend` 308 MB |
+| 容器内视频转 Markdown（`local`） | 30 秒内 `success`，产物 `index.md` + `themes/转写.md` + `evidence/`，正文由容器内 Whisper `small` 转出 |
+| 容器内视频转 Markdown（`celery` worker） | worker 收任务 30.5 秒 `succeeded`（`video_markdown_ready`），产物同上 |
 
 容器内 CDN 速度是主要变量，同一台机器实测：清华 pip 源装完整应用依赖 + 媒体依赖 43 秒、单包峰值 11.6 MB/s；阿里云 pip 源 0.28 MB/s。宿主机的代理配置不作用于容器内下载，必须用构建参数指定镜像源。
 
 ## 明确没有验证的部分
 
-- **只构建并跑通了 `ENVOY_WITH_MEDIA=0`（lean）镜像。** 带 whisper + paddleocr 的完整镜像没有在本机构建验证；arm64 上 `paddlepaddle` 无 3.3.x 轮子，约束为 `>=3.2,<3.3`，多架构可构建性只做了依赖解析层面的确认。
+- **视频转写只用 6 秒合成中文样片验证。** 样片 84,428 B / 640x360 / H.264+AAC，由宿主机 `say` 生成中文语音再用 ffmpeg 合成，容器内 Whisper `small` 直接读它。真实平台视频（B 站/抖音/YouTube 等）走的是宿主机 Envoy 抓取，不在容器链路范围内；容器内的转写结果也仍是 CPU `small` 模型的水平，转出文字有断句与错字（例：`这是Envoy容器内转写的测试音频,用于验证视频转markdown是否`），不作为 ASR 准确率验收。
+- **完整媒体镜像只在这台 arm64 Mac 上构建。** `paddlepaddle` 在 arm64 没有 3.3.x 轮子（约束 `>=3.2,<3.3`）；x86_64 与多架构构建未执行。torch 必须锁 CPU 轮（`torch==2.9.1 --no-deps`），否则装到 CUDA 轮后 `import torch` 直接报 `libcublasLt.so` 缺失。
 - **MinIO 模式未跑通。** `minio/minio` 已无免费 tag 且本机拉不到镜像，所以对象存储只保留 profile 与文档说明，验收走本地文件存储。
-- **未在 Linux / Windows 主机、非 arm64 架构上重复。**
-- **视频转写链路未在容器内验证**（lean 镜像没有本地模型），只验证了文档素材的上传与 Markdown 导出；视频抓取依赖宿主机的 Envoy CLI + 多模态 API。
+- **未在 Linux / Windows 主机上重复。**
+- **Celery 并发压力未测。** 只验证了单任务在 worker 上成功；多任务并发、worker 重启后的任务恢复没有压测。
