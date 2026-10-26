@@ -26,3 +26,13 @@
 - 短链不预解析、不探测，短链域名与长链域名可能落到不同类型的读取路径，以重定向后的 URL 重新分类为准。
 - RSS 只按订阅源读取，不把源内音频当作请求目标；需要音频时读取节目页或音频直链。
 - `platform_page` 与 `article_page` 都进入隔离浏览器路径，区别仅在语义标注。
+
+## 判定与降级
+
+`read_support_verdict(url)` 在 `classify_public_url()` 之上给出静态的三档判定，不联网、不解析短链，只回答「这一条现在交给 Envoy 值不值得」：
+
+- `supported`：本机已实测能读到正文/媒体，或 `docs/acceptance/platform-coverage-matrix-2026-10-21.md` 里有 accepted 记录。包括 B 站（含短链）、抖音视频/图文（含 `v.douyin.com` 短链）、微博博文与 `tv/show`、TikTok（本机网络不可达也算平台支持）、快手、视频号、小宇宙、公众号文章、知乎、36kr、GitHub/gist、Wikipedia、MDN、arXiv，以及 PDF/音视频/RSS 直链。Hook 对这些链接写「以下链接用 envoy_read 读」。
+- `unsupported`：已确认匿名访问拿不到内容，调用 Envoy 只是白跑一次。当前只有 Instagram 单条（`/p/`、`/reel/`、`/tv/`）、X/Twitter 单条 status、LinkedIn、抖音直播（`live.douyin.com`、`/live/`）、Telegram 私有频道（`t.me/+…`、`/joinchat/`、`/c/`）。Hook 对这些写「不要调用 envoy 工具」，让模型直接用宿主原生抓取或明说读不到。判定只收有实测或矩阵结论支撑的站点；只是本机网络超时（如 Pinterest、Amazon）不算 unsupported，保持 `unknown`。
+- `unknown`：其余全部，含 YouTube、Vimeo、Dailymotion、小红书（本轮未动，不并入判定）以及未收录站点。Hook 维持原文案：先试 `envoy_read`，失败再回退原生抓取。
+
+降级顺序固定：`unsupported` 直接走宿主原生；`unknown` 先 Envoy 后原生；`supported` 先 Envoy。无论哪档，Envoy 返回 `blocked` / `challenge_required`、明确需要登录或验证码时都回退原生并向用户说明原因。同一轮里既有 supported 又有 unsupported 时，Hook 按档分组注入，不把两类混成一句话。
