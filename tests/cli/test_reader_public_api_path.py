@@ -162,3 +162,18 @@ def test_floor_defaults_to_the_generic_minimum(monkeypatch):
             reader._read_public_page_once(
                 _request("https://www.npmjs.com/package/left-pad")
             )
+
+
+def test_volcengine_security_check_counts_as_an_access_challenge():
+    title = "36氪_让一部分人先看到未来"
+    shell = (
+        "火山引擎 正在进行安全检测... 为保障您的访问安全，"
+        "系统正在检测当前网络环境，该过程通常需要几秒钟，请耐心等待"
+    )
+    assert reader._looks_like_access_challenge(title, shell)
+
+    article = (
+        "这家公司把安全检测做成订阅服务，客户覆盖金融与制造业。"
+        "文章讨论了巡检成本，并给出三条落地建议。"
+    )
+    assert not reader._looks_like_access_challenge("网络安全检测公司融资", article)

@@ -113,6 +113,13 @@ CHALLENGE_MARKERS = (
     "verify you are human",
     "checking your browser",
     "captcha",
+    # Volcengine / ByteDance WAF interstitial: 36kr and other Chinese portals
+    # serve this shell to a plain fetch and open the page only to a browser.
+    "正在进行安全检测",
+    "检测当前网络环境",
+    "安全检测中",
+    "just a moment",
+    "enable javascript and cookies",
 )
 MAX_FETCH_ATTEMPTS = 3
 MIN_EXPANSION_CHARS = 128
