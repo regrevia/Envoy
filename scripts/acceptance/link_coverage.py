@@ -81,6 +81,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("news", "reuters-tech", "https://www.reuters.com/technology/"),
     ("news", "nytimes", "https://www.nytimes.com/section/technology"),
     ("news", "guardian", "https://www.theguardian.com/international"),
+    ("news", "oschina", "https://www.oschina.net/news"),
     ("news", "thepaper", "https://www.thepaper.cn/"),
     # -- blog ------------------------------------------------------------
     ("blog", "medium", "https://medium.com/@karpathy/a-recipe-for-training-neural-networks-9c4c9f7d4b6c"),
