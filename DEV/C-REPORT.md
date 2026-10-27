@@ -15,7 +15,7 @@
 | C6 | 离线安装用例脚本 | `scripts/check_installer_offline.sh` | 7/7 通过 |
 | C7 | `envoy doctor` 新增 `runtime` 段：pin 状态（pinned / unpinned / stale_pin / shadowed）+ 每条一句修复动作，`--json` 同步给 `runtime.install` | `install_state.py`、`cli.py`、`INSTALL.md` | `unit_checked`（9 用例 + doctor 回归 12 用例） |
 | C8 | 安装脚本收尾打印浏览器状态与安装状态（非 pinned 点名 PATH 指向），POSIX 与 Windows 两份对齐 | `install.sh`、`install.ps1` | `unit_checked`（7/7 离线用例，含 shadowed 分支） |
-| C9 | 新增装前校验器 `verify_delivery.py`：离线核对摘要/清单/wheel 渠道与依赖/tgz 版本/Skill 包/两个安装脚本的版本解析契约，一条命令替代手工比对 | `scripts/verify_delivery.py`、交付目录同名额 | `unit_checked`（5 用例，含摘要篡改、`+preview` 拒收、缺依赖拒收） |
+| C9 | 新增装前校验器 `verify_delivery.py`：离线核对摘要/清单/wheel 渠道与依赖/tgz 版本/Skill 包/两个安装脚本的版本解析契约，一条命令替代手工比对 | `scripts/verify_delivery.py`、交付目录同名额 | `unit_checked`（6 用例，含摘要篡改、`+preview` 默认拒收/`--allow-preview` 放行、缺依赖拒收） |
 
 ## 2. 通过的检查（本轮真跑）
 
@@ -33,6 +33,8 @@
 
 ## 3. 打包结果（release 渠道，C7/C8 之后重建）
 
+
+预览候选：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24-preview/`（`local-preview` 渠道，wheel 带 `+preview.g03cd533283e7.20261027185022`，5 产物 + 清单 + `SHA256SUMS` + `verify_delivery.py` + `PREVIEW-NOTES.md`），只给在场首测，不上传。
 | 文件 | 作用 |
 | --- | --- |
 | `envoy_cli-0.1.24-py3-none-any.whl` | runtime（CLI + 内嵌 core） |
