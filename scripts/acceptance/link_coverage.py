@@ -181,6 +181,12 @@ CORPUS: list[tuple[str, str, str]] = [
     ("cn-media", "ifanr-home", "https://www.ifanr.com/"),
     ("cn-media", "pingwest-home", "https://www.pingwest.com/"),
     ("cn-media", "qbitai-home", "https://www.qbitai.com/"),
+    ("blog", "devto-home", "https://dev.to/"),
+    ("blog", "zenn-home", "https://zenn.dev/"),
+    ("blog", "qiita-home", "https://qiita.com/"),
+    ("blog", "brendangregg-blog", "https://www.brendangregg.com/blog/index.html"),
+    ("news", "lwn-home", "https://lwn.net/"),
+    ("news", "techcrunch-home", "https://techcrunch.com/"),
 ]
 
 #: Families a report table shows, in a stable order.

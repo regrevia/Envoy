@@ -228,6 +228,12 @@ _SUPPORTED_HOSTS = {
     "ifanr.com",
     "pingwest.com",
     "qbitai.com",
+    "dev.to",
+    "zenn.dev",
+    "qiita.com",
+    "lwn.net",
+    "brendangregg.com",
+    "techcrunch.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (
