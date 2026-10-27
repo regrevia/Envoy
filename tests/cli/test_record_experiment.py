@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import record_experiment  # noqa: E402
 
+
 def read_command(request_id: str = "V01", url: str = "<public-video-url>") -> str:
     body = {"request_id": request_id, "source": {"url": url}}
     payload = json.dumps(body, separators=(",", ":")).replace('"', '\\"')
@@ -225,3 +226,25 @@ def test_a_frozen_holdout_unblocks_the_dependent_result(tmp_path):
         ["--plan", str(path), "--id", "V01", "--status", "passed", "--evidence", "12/12 rows read", "--write"]
     )
     assert code == 0
+
+
+def test_progress_names_the_axis_split_and_what_the_holdout_blocks() -> None:
+    plan = {
+        "axes": {
+            "long-video": {"entries": [{"id": "V01", "status": "passed"}]},
+            "install": {"entries": [{"id": "I01", "status": "not_run"}]},
+        },
+        "holdout": {"id": "H12", "status": "pending_sample", "dependent_entries": ["V01"]},
+    }
+    line = record_experiment.progress(plan)
+    assert line.startswith("progress 1/2 (long-video 1/1, install 0/1)")
+    assert "H12 is pending_sample and still blocks V01" in line
+
+
+def test_progress_stops_mentioning_a_frozen_holdout() -> None:
+    plan = {
+        "axes": {"long-video": {"entries": [{"id": "V01", "status": "passed"}]}},
+        "holdout": {"id": "H12", "status": "frozen", "dependent_entries": ["V01"]},
+    }
+    line = record_experiment.progress(plan)
+    assert line == "progress 1/1 (long-video 1/1)"

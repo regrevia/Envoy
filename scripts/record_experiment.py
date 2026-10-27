@@ -106,6 +106,31 @@ def aggregate(rows: list[dict]) -> str:
     return "running"
 
 
+DONE = {"passed", "skipped"}
+
+
+def progress(plan: dict) -> str:
+    """One line a human can act on: what is left, per axis, and what stalls it."""
+    total = done = 0
+    parts = []
+    for axis_name, axis in plan.get("axes", {}).items():
+        entries = axis.get("entries", [])
+        finished = sum(1 for entry in entries if entry.get("status") in DONE)
+        total += len(entries)
+        done += finished
+        parts.append(f"{axis_name} {finished}/{len(entries)}")
+    line = f"progress {done}/{total} ({', '.join(parts)})"
+    holdout = plan.get("holdout") or {}
+    if holdout.get("status") != "frozen":
+        dependent = holdout.get("dependent_entries") or []
+        if dependent:
+            line += (
+                f"; holdout {holdout.get('id', '?')} is {holdout.get('status', '?')}"
+                f" and still blocks {', '.join(dependent)}"
+            )
+    return line
+
+
 def write_plan(path: Path, plan: dict) -> None:
     text = json.dumps(plan, ensure_ascii=False, indent=2) + "\n"
     handle, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
@@ -193,8 +218,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.write:
         write_plan(args.plan, plan)
         print(f"recorded {line} ({args.plan}, plan status {plan['status']})")
+        print(progress(plan))
     else:
         print(f"dry run: would record {line} in {args.plan} (nothing written; add --write)")
+        print(progress(plan))
     return 0
 
 
