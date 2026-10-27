@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十三轮）
+## 结论（最新一轮：第十五轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -27,6 +27,8 @@
 | 11 | 97 | 96 | 75 | 78.1% | 20 | 4.52s | MDN 补齐；wikipedia 回到 partial |
 | 12 | 100 | 99 | 76 | 76.8% | 21 | 3.55s | 补 gitlab/douban-group/ximalaya；social、audio 首次有可用行 |
 | 13 | 102 | 101 | 79 | 78.2% | 20 | 4.34s | 真 RFC PDF 替掉玩具 PDF；news 补 oschina/pingwest 到 6 可用 |
+| 14 | 104 | 103 | 79 | 76.7% | 23 | 4.44s | 补 arstechnica/verge feed（均 readable）；guardian/youtube/platformer 升 supported |
+| 15 | 107 | 106 | 83 | 78.3% | 25 | 4.24s | 补 4 条 feed/forum 行全部可用；dev.to/discourse.mozilla/arduino 升 supported |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -408,6 +410,59 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第十五轮（107 行 / 可用 78.3%，4 条新行全部可用，forum 与 audio 两族同时改善）
+
+本轮加 4 条行：feed 系 `simplecast-podcast`（audio 族）、`devto`、`discourse-mozilla`、
+`arduino-forum`（forum 族）。语料 104 → 107，死链 1，分母 106。
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 106 | 25 | 58 | 1 | 8 | 14 | 0 | 83 | **78.3%** |
+| 可达口径（剔 unreachable） | 92 | 25 | 58 | 1 | 8 | 0 | 0 | 83 | **90.2%** |
+| 同组成 102 行子集（= 第 14 轮分母） | 102 | 24 | 55 | 1 | 7 | 14 | 0 | 79 | **77.5%** |
+
+- 4 条新行全部可用，是历轮里新行命中率最高的一轮：
+  `discourse-mozilla` readable 2706 字 / 1.7s、`arduino-forum` readable 354 字 / 1.6s、
+  `devto` partial 6652 字 / 1.4s、`simplecast-podcast` partial 7284 字 / 12.8s。
+  forum 族 8 行变成 3 readable + 3 partial + 2 unreachable（可用率 75%），
+  audio 族 3 行 2 partial + 1 unreachable（可用率 67%，soundcloud 仍是出口问题）。
+- 三个 host 提升为 `supported`：`dev.to`、`discourse.mozilla.org`、`forum.arduino.cc`。
+  本轮做完交叉验证：**语料里已没有任何「实测可读但判为 unknown」的行**，
+  剩下的 unknown 行全部是 unreachable / blocked / empty，也就是说
+  「先试 Envoy 再回退」的无谓开销在语料范围内已经清零。
+- 抖动：`wikipedia` 与 `guardian` 掉到 unreachable（出口），`wikipedia-zh` 从
+  unreachable 回到 partial 7936 字，`gitlab-readme` 从 empty 回到 partial 7950 字，
+  `tiktok` 从 blocked 变 partial 517 字，`unsplash` 从 unreachable 变 challenge。
+  净效果：same-scope 子集 +1 可用行（78 → 79），全语料 +4（79 → 83）。
+- 时延：mean 22.6s / p50 4.24s / p90 77.31s / max 108.9s。
+
+## 第十四轮（104 行 / 可用 76.7%，feed 族从 2 可用升到 5 可用）
+
+本轮加 2 条 feed 行（`arstechnica-rss`、`verge-rss`），语料 102 → 104，死链 1，
+分母 103。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 103 | 23 | 56 | 2 | 0 | 9 | 13 | 0 | 79 | **76.7%** |
+| 可达口径（剔 unreachable） | 90 | 23 | 56 | 2 | 0 | 9 | 0 | 0 | 79 | **87.8%** |
+| 同组成 101 行子集（= 第 13 轮分母） | 101 | 22 | 55 | 1 | 0 | 8 | 13 | 0 | 77 | **76.2%** |
+
+- 两条新 feed 行一次通过：`arstechnica-rss` `readable` 5993 字 / 2.7s，
+  `verge-rss` `readable` 5315 字 / 2.5s（`public_api:feed`）。feed 族 6 行里
+  4 readable + 1 partial，只剩 `hn-rss` 是本机出口阻断。news 的
+  `theguardian.com`、blog 的 `platformer.news` 上一轮已实测出正文，本轮把三个
+  host 从 `unknown` 提升到 `supported`（`youtube.com` 同类）：语料实测交叉验证
+  —— `supported` 口径可用率 89.4%（76/85），`unknown` 口径只有 20%（3/15），
+  提升这 3 个等于少 3 次「先试 Envoy 再回退」的无谓开销。
+- 可用绝对数没变（79），分母 +2，所以全语料可用率从 78.2% 回落到 76.7%：
+  加进来的 2 行都可用，同时 3 行掉了（`oschina` 从 `partial` 5637 变
+  `blocked challenge_required`、`gitlab-readme` 从 7904 字变 `empty` 167 字、
+  `wikipedia-zh` 从 7936 字变 `unreachable`）。这 3 条都单独复跑过：
+  `oschina` 复现 challenge（真防护收紧），`wikipedia-zh` 复现 network_error
+  （出口问题），`gitlab-readme` 复跑 `partial` 11242 字 → 是批量并发下的瞬时失败，
+  不是能力回退。同组成子集 77/101 = 76.2%，-2.0pt 全部由这 3 次抖动造成。
+- 时延：mean 19.2s / p50 4.44s / p90 71.09s / max 112.2s。
 
 ## 第十三轮（102 行 / 可用 78.2%，news 族首次有 6 条可用）
 

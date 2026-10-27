@@ -102,6 +102,9 @@ CORPUS: list[tuple[str, str, str]] = [
     ("forum", "hackernews", "https://news.ycombinator.com/item?id=1"),
     ("forum", "reddit", "https://www.reddit.com/r/Python/comments/1c0v7q/"),
     ("forum", "discourse", "https://meta.discourse.org/t/what-is-discourse/1"),
+    ("forum", "devto", "https://dev.to/"),
+    ("forum", "discourse-mozilla", "https://discourse.mozilla.org/"),
+    ("forum", "arduino-forum", "https://forum.arduino.cc/"),
     ("forum", "lobsters", "https://lobste.rs/"),
     # -- social ----------------------------------------------------------
     ("social", "x-profile", "https://x.com/OpenAI"),
@@ -116,6 +119,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("video", "tiktok", "https://www.tiktok.com/@scout2015/video/6718335390845095173"),
     ("video", "ted-talk", "https://www.ted.com/talks/chimamanda_ngozi_adichie_the_danger_of_a_single_story"),
     # -- audio -----------------------------------------------------------
+    ("audio", "simplecast-podcast", "https://feeds.simplecast.com/54nAGcIl"),
     ("audio", "soundcloud", "https://soundcloud.com/forss/flickermood"),
     ("social", "douban-group", "https://www.douban.com/group/topic/30678422/"),
     ("audio", "ximalaya-album", "https://www.ximalaya.com/album/316137"),
@@ -134,6 +138,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("spa", "airtable-share", "https://airtable.com/"),
     ("spa", "google-sheets", "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"),
     # -- feed ------------------------------------------------------------
+    ("feed", "arstechnica-rss", "https://feeds.arstechnica.com/arstechnica/index"),
+    ("feed", "verge-rss", "https://www.theverge.com/rss/index.xml"),
     ("feed", "hn-rss", "https://news.ycombinator.com/rss"),
     ("feed", "github-atom", "https://github.com/psf/requests/releases.atom"),
     ("feed", "ruanyf-atom", "https://www.ruanyifeng.com/blog/atom.xml"),
