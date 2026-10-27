@@ -6454,6 +6454,56 @@ def _fallback_min_chars(fallback: dict) -> int:
     return declared if declared > 0 else _PUBLIC_API_FALLBACK_MIN_CHARS
 
 
+_FEED_ALTERNATE_PAGE_CHARS = 300
+_ALTERNATE_LINK = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+_ALTERNATE_ATTR = re.compile(r"""([a-zA-Z:-]+)\s*=\s*["']([^"']*)["']""")
+
+
+def _read_feed_alternate(
+    request: ReadRequest, source_url: str, final_url: str, html: str
+) -> ReadResponse | None:
+    """Follow a page's declared RSS/Atom alternate when the page itself is thin.
+
+    Many blogs and news sites ship a script-rendered index but also declare a
+    feed in the head. Reading that feed recovers real items when the rendered
+    page carries a menu and nothing else.
+    """
+
+    if not html:
+        return None
+    alternates: list[str] = []
+    for tag in _ALTERNATE_LINK.findall(html[:200_000]):
+        attrs = {name.lower(): value for name, value in _ALTERNATE_ATTR.findall(tag)}
+        rel = attrs.get("rel", "").lower()
+        kind = attrs.get("type", "").lower()
+        href = attrs.get("href", "").strip()
+        if "alternate" not in rel or not href:
+            continue
+        if not any(marker in kind for marker in ("rss", "atom", "xml")):
+            continue
+        alternates.append(urljoin(final_url, href))
+    for alternate in alternates[:2]:
+        if not _is_public_http_url(alternate, {}):
+            continue
+        try:
+            feed = fetch_feed(
+                alternate,
+                max_work_seconds=min(
+                    _remaining_work_seconds(request), _PUBLIC_API_FALLBACK_SECONDS
+                ),
+            )
+        except Exception:  # noqa: BLE001 - an alternate must never fail a read
+            continue
+        if feed is None:
+            continue
+        return _public_api_fallback_response(
+            request,
+            source_url,
+            {**feed, "backend": "feed_alternate"},
+        )
+    return None
+
+
 def _public_api_fallback_response(
     request: ReadRequest, source_url: str, fallback: dict
 ) -> ReadResponse:
@@ -6994,6 +7044,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                 action_required=True,
             )
+        if not request.scope.include_visual and len(text.strip()) < _FEED_ALTERNATE_PAGE_CHARS:
+            feed_page = _read_feed_alternate(request, source_url, final_url, html)
+            if feed_page is not None:
+                return feed_page
+
         if len(text) < 20 and not parser.images and not parser.video_urls:
             if not browser_attempted:
                 browser_page, browser_error = _read_with_isolated_browser(

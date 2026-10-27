@@ -177,3 +177,59 @@ def test_volcengine_security_check_counts_as_an_access_challenge():
         "文章讨论了巡检成本，并给出三条落地建议。"
     )
     assert not reader._looks_like_access_challenge("网络安全检测公司融资", article)
+
+
+THIN_BLOG_HTML = (
+    "<html><head><title>A blog</title>"
+    '<link rel="alternate" type="application/rss+xml" href="/feed.xml">'
+    "</head><body><nav>menu</nav></body></html>"
+)
+
+
+def test_a_thin_page_follows_its_declared_feed(monkeypatch):
+    _allow_url(monkeypatch)
+    monkeypatch.setattr(reader, "fetch_feed", lambda url, **_kwargs: None)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
+        "https://blog.example.com/", THIN_BLOG_HTML,
+    ))
+    calls = []
+
+    def fake_feed(url, **_kwargs):
+        calls.append(url)
+        return {"backend": "feed", "title": "Feed", "text": "item " * 80, "url": url}
+
+    monkeypatch.setattr(reader, "public_api_fallback", lambda *_a, **_k: None)
+
+    # The URL itself is not feed-shaped, so the first probe is the site endpoint.
+    monkeypatch.setattr(reader, "fetch_feed", fake_feed)
+
+    response = reader.read_public_page(_request("https://blog.example.com/"))
+
+    assert calls == ["https://blog.example.com/feed.xml"]
+    assert response.coverage.modalities["text"].details["reader"] == (
+        "public_api:feed_alternate"
+    )
+
+
+def test_a_full_page_does_not_hijack_its_declared_feed(monkeypatch):
+    _allow_url(monkeypatch)
+    monkeypatch.setattr(reader, "public_api_fallback", lambda *_a, **_k: None)
+    body = "real article sentence. " * 40
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
+        "https://blog.example.com/post",
+        "<html><head><title>Post</title>"
+        '<link rel="alternate" type="application/rss+xml" href="/feed.xml">'
+        f"</head><body><p>{body}</p></body></html>",
+    ))
+    monkeypatch.setattr(
+        reader,
+        "fetch_feed",
+        lambda *_args, **_kwargs: pytest.fail("a full page must keep its own text"),
+    )
+
+    response = reader.read_public_page(_request("https://blog.example.com/post"))
+
+    assert response.result.value == "ready"
+    assert "real article sentence" in "".join(
+        block.content.text for block in response.blocks if getattr(block.content, "text", None)
+    )
