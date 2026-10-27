@@ -17,6 +17,7 @@
 | C8 | 安装脚本收尾打印浏览器状态与安装状态（非 pinned 点名 PATH 指向），POSIX 与 Windows 两份对齐 | `install.sh`、`install.ps1` | `unit_checked`（7/7 离线用例，含 shadowed 分支） |
 | C9 | 新增装前校验器 `verify_delivery.py`：离线核对摘要/清单/wheel 渠道与依赖/tgz 版本/Skill 包/两个安装脚本的版本解析契约，一条命令替代手工比对 | `scripts/verify_delivery.py`、交付目录同名额 | `unit_checked`（6 用例，含摘要篡改、`+preview` 默认拒收/`--allow-preview` 放行、缺依赖拒收） |
 | C10 | 留出集冻结工具 `freeze_holdout.py`：候选列表按种子抽样、去重排序、写 sha256 与行数组；默认拒写已有文件，`--check` 校验留出集未被替换 | `scripts/freeze_holdout.py`、交付目录同名额 | `unit_checked`（6 用例，含重复候选、篡改行、`--force` 拒写） |
+| C11 | 实验计划干跑工具 `dry_run_experiments.py`：校验 32 条条目（id 唯一/状态词表/需求词表/占位符/留出集状态），渲染单条命令且不执行任何网络动作 | `scripts/dry_run_experiments.py`、交付目录同名额 | `unit_checked`（6 用例，含重复 id、未知状态、未知需求、冻结留出集缺 rows） |
 
 ## 2. 通过的检查（本轮真跑）
 
