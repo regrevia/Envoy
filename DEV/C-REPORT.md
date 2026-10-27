@@ -121,6 +121,10 @@ holdout pending_sample`，`shasum -a 256 -c SHA256SUMS` 均通过，两份计划
   `--force` 才能覆盖，一次手滑换不掉 12 行样本。
 
 真跑（本轮）：`test_dry_run_experiments.py` **21 passed**、`test_verify_delivery.py`
-**17 passed**、四工具合计 **63 passed**、`test_runbook_commands.py` **5 passed**；
+**17 passed**、四工具合计 **65 passed**、`test_runbook_commands.py` **5 passed**；
 两个交付目录同步工具与手册后 `delivery ok (13 checks)`、`plan ok: 35 entries (not_run 35);
 holdout pending_sample`、`SHA256SUMS` 通过；离线安装检查 10/10、本地环回安装 14/14。
+
+计划自己引用的 `dry_run` 三条命令（`--check/--list/--render`）现在也对照
+`dry_run_experiments.py` 自己的解析器校验：手改计划示例命令、写了个不存在的开关，
+`--check` 与打包校验都会指出来（`TOOL_FLAGS` 由真实 parser 派生，不另抄一份）。
