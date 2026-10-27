@@ -400,6 +400,33 @@ def _is_public_http_url(value: str, dns_cache: dict[str, bool] | None = None) ->
         return False
 
 
+def _host_lookup_failed(value: str) -> bool:
+    """True when the URL's host cannot be resolved at all.
+
+    The public-URL guard also rejects loopback and private addresses, and both
+    failures used to share one "not a public URL" message. A DNS failure is a
+    reachability fact, not a policy decision, so it gets its own wording.
+    """
+
+    try:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if not host:
+            return False
+        try:
+            ipaddress.ip_address(host)
+            return False
+        except ValueError:
+            pass
+        socket.getaddrinfo(
+            host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+        )
+    except (OSError, ValueError, TypeError):
+        return True
+    return False
+
+
 def _is_sensitive_query_key(key: str) -> bool:
     normalized = re.sub(r"[^a-z0-9_-]", "", key.lower())
     return normalized in SENSITIVE_QUERY_KEYS or normalized.endswith(("_token", "_secret", "_signature"))
@@ -6719,6 +6746,13 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     browser_snapshot = None
     browser_snapshot_for_video = False
     if not _is_public_http_url(source_url, dns_cache):
+        if _host_lookup_failed(source_url):
+            return _blocked(
+                request,
+                ErrorCode.NETWORK_ERROR,
+                "The host name does not resolve from this machine, so the source cannot be reached (DNS lookup failed)",
+                details={"reader": "url_guard"},
+            )
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     source_path = urlparse(source_url).path.lower()
     direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
@@ -7560,7 +7594,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             material_id=material_id,
             source_revision=source_revision,
             execution_state=ExecutionState.COMPLETED,
-            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video or ocr_unresolved else ReadResult.READY,
+            result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video or ocr_unresolved or thin_platform_page else ReadResult.READY,
             blocks=blocks,
             resources=resources,
             needs=ocr_visual_need,

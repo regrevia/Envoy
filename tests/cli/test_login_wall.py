@@ -88,3 +88,40 @@ def test_static_login_wall_skips_the_browser(monkeypatch):
 
     assert response.result.value == "blocked"
     assert browser_calls == []
+
+
+def test_thin_platform_page_is_partial_not_ready(monkeypatch):
+    """A platform page that yields only a title must not claim to be complete."""
+    request = _request("https://weibo.com/u/1642904381")
+    shell = (
+        "<html><head><title>微博</title></head><body>"
+        "<div id=\"app\">微信公众平台 请在微信客户端打开链接 环境异常</div></body></html>"
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *a, **k: True)
+    monkeypatch.setattr(reader, "_should_read_media_first", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "_url_is_video_page", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "fetch_feed", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "public_api_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "_read_with_isolated_browser", lambda *a, **k: (None, None))
+    monkeypatch.setattr(reader, "_fetch_html", lambda *a, **k: (request.source.url, shell))
+    response = reader._read_public_page_once(request)
+    assert response.result.value == "partial"
+    details = response.coverage.modalities["text"].details
+    assert details.get("thin_platform_page") is True
+    assert response.coverage.modalities["text"].unresolved
+
+
+def test_unresolvable_host_is_a_network_error_not_a_policy_rejection():
+    """A DNS failure must not be sold as "not a public URL"."""
+    request = _request("https://no-such-host.invalid/article")
+    response = reader._read_public_page_once(request)
+    assert response.result.value == "blocked"
+    assert response.errors[0].code.value == "network_error"
+    assert "dns" in response.errors[0].message.lower()
+
+
+def test_loopback_url_keeps_the_policy_message():
+    request = _request("http://127.0.0.1:8080/private")
+    response = reader._read_public_page_once(request)
+    assert response.errors[0].code.value == "source_unavailable"
+    assert "Only public HTTP(S) URLs are allowed" in response.errors[0].message

@@ -174,6 +174,9 @@ CORPUS: list[tuple[str, str, str]] = [
     ("cn-platform", "podcast-rss-geekpark", "https://www.geekpark.net/rss"),
     ("cn-platform", "podcast-rss-36kr", "https://www.36kr.com/feed"),
     ("cn-platform", "douban-movie", "https://movie.douban.com/subject/1292052/"),
+    ("cn-platform", "douban-book", "https://book.douban.com/subject/1084336/"),
+    ("cn-platform", "cnblogs-article", "https://www.cnblogs.com/rossiXYZ/p/15553994.html"),
+    ("cn-platform", "juejin-post", "https://juejin.cn/post/6844903967407734797"),
 ]
 
 #: Families a report table shows, in a stable order.
