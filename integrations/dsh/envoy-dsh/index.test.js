@@ -20,6 +20,7 @@ test('readSupportVerdict classifies the three policies', () => {
     ['https://feeds.arstechnica.com/arstechnica/index', 'supported'],
     ['https://feeds.simplecast.com/54nAGcIl', 'supported'],
     ['https://discourse.mozilla.org/', 'supported'],
+    ['https://v.youku.com/v_show/id_XNTk1ODQ0MjAw.html', 'supported'],
     ['https://x.com/someone/status/1234567890', 'unsupported'],
     ['https://twitter.com/someone/status/1234567890', 'unsupported'],
     ['https://www.instagram.com/p/CxYzAbCdEfG/', 'unsupported'],

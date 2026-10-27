@@ -1493,6 +1493,8 @@ _MEDIA_SOURCE_HOSTS = (
     "open.spotify.com",
     "music.163.com",
     "instagram.com",
+    "youku.com",
+    "v.youku.com",
     "facebook.com",
 )
 _MEDIA_DEFAULT_WORK_SECONDS = 300
