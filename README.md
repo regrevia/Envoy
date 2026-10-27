@@ -99,6 +99,15 @@
 
 剩下没拿到的 24 条里，16 条根本连不上（全是境外站点，卡在本机代理出口），8 条卡在登录墙或人机校验——这两种装不装 Envoy 都读不到，Envoy 会直说，让 Agent 走别的路。
 
+**装不装差多少。** 同一条链接、同一个模型，每臂 60 轮（探索性对照：两臂时间上限不同，`verified` 都是 0，读法见[评测](#评测)）：
+
+| 看什么 | 不装 Envoy | 装了 Envoy |
+| --- | --- | --- |
+| 读完并给出结论 | 22%（13/60 轮） | **92%（55/60 轮）** |
+| 跑到超时还没结论 | 68%（41/60 轮） | **0 轮** |
+| 答案里至少说中一条原文事实 | 23%（14/60 轮） | **82%（49/60 轮）** |
+| 空回答 | 31 处 | **0 处** |
+
 复算：`scripts/acceptance/link_coverage.py`（报告与口径见[兼容性实验](docs/experiments/link-compatibility.md)）。
 
 ## 本地 Web 界面（Docker）
@@ -221,6 +230,15 @@ See the [evaluation method](benchmarks/README.md), the [protocol and deviations]
 "Usable" means quotable in full, or partially read with the gap named; a failure states why (login, bot check, network) instead of guessing.
 
 Of the 24 that were not usable, 16 hosts were unreachable — all overseas, blocked at the local proxy exit — and 8 sat behind a login or bot-check wall. Neither case gets better with Envoy installed; Envoy says so and the agent takes another route.
+
+**With vs without.** Same link, same model, 60 turns per arm (exploratory: the arms ran under different caps and `verified` is 0 for both — see [Evaluation](#evaluation)):
+
+| What happens | Without Envoy | With Envoy |
+| --- | --- | --- |
+| Finishes reading and answers | 22% (13/60 turns) | **92% (55/60 turns)** |
+| Times out without an answer | 68% (41/60 turns) | **0 turns** |
+| Answer states at least one fact from the source | 23% (14/60 turns) | **82% (49/60 turns)** |
+| Empty answers | 31 | **0** |
 
 Rerun with `scripts/acceptance/link_coverage.py`; reports and definitions are in the [link-compatibility experiment](docs/experiments/link-compatibility.md).
 
