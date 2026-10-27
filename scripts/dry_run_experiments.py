@@ -135,6 +135,22 @@ def validate(plan: dict) -> list[str]:
                 for entry_id in dependent:
                     if entry_id not in known:
                         problems.append(f"holdout dependent entry {entry_id!r} is not in the plan")
+                listed = set(dependent)
+                placeholders = {
+                    entry.get("id")
+                    for entry in rows
+                    if "<public-" in str(entry.get("command", ""))
+                }
+                for entry_id in sorted(placeholders - listed):
+                    problems.append(
+                        f"{entry_id}: command reads a public URL but is not in "
+                        "holdout dependent_entries"
+                    )
+                for entry_id in sorted(listed - placeholders):
+                    problems.append(
+                        f"{entry_id}: is a holdout dependent entry but its command "
+                        "has no <public-*> placeholder"
+                    )
     return problems
 
 

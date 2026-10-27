@@ -179,6 +179,12 @@ def test_an_invalid_plan_is_refused_before_any_write(tmp_path, capsys):
 
 def _holdout_plan(dependent: bool = True) -> dict:
     plan = _plan()
+    # The validator ties dependent_entries to entries whose command reads a
+    # public URL, so the fixture has to carry the placeholder.
+    for axis in plan["axes"].values():
+        for entry in axis["entries"]:
+            if entry["id"] == "V01":
+                entry["command"] = "envoy read <public-video-url> --json"
     plan["holdout"] = {
         "status": "pending_sample",
         "size": 12,

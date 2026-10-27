@@ -131,3 +131,18 @@ def test_dependent_entries_that_exist_pass_the_check(tmp_path: Path) -> None:
     path = write(tmp_path, data)
     assert module.validate(data) == []
     assert module.main(["--plan", str(path), "--check"]) == 0
+
+
+def test_a_public_url_entry_missing_from_dependent_entries_is_reported() -> None:
+    module = load_module()
+    data = plan()
+    data["holdout"]["dependent_entries"] = []
+    assert any("not in holdout dependent_entries" in problem for problem in module.validate(data))
+
+
+def test_a_dependent_entry_without_a_placeholder_is_reported() -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "envoy read https://example.com/v --json"
+    data["holdout"]["dependent_entries"] = ["V01"]
+    assert any("has no <public-" in problem for problem in module.validate(data))
