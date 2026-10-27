@@ -216,3 +216,22 @@ def test_holdout_commands_on_the_real_tool_surface_pass() -> None:
         "python3 freeze_holdout.py --check holdout.json --plan EXPERIMENT-PLAN.json"
     )
     assert module.validate(data) == []
+
+def test_dry_run_block_naming_a_flag_the_tool_never_had_fails() -> None:
+    module = load_module()
+    data = plan()
+    data["dry_run"] = {"render": "python3 dry_run_experiments.py --render-me V02"}
+    problems = module.validate(data)
+    assert any("unknown dry_run_experiments.py flag --render-me" in problem for problem in problems)
+
+
+def test_dry_run_block_on_the_real_tool_surface_passes() -> None:
+    module = load_module()
+    data = plan()
+    data["dry_run"] = {
+        "check": "python3 dry_run_experiments.py --check",
+        "list": "python3 dry_run_experiments.py --list",
+        "render": "python3 dry_run_experiments.py --render V02",
+    }
+    assert module.validate(data) == []
+    assert module.TOOL_FLAGS == {"--help", "--plan", "--check", "--list", "--render", "--json", "-h"}

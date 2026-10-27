@@ -39,7 +39,7 @@
 - 安装/守卫/进程四文件定点回归（`test_install_state`、`test_browser_auto_setup`、`test_process_control`、`test_url_guard_determinism`）：**36 passed in 0.64s**。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
-- `tests/cli/test_dry_run_experiments.py`：**19 passed**；`test_record_experiment.py` **13 passed**；`test_freeze_holdout.py` **14 passed**（三文件 46 passed；含 `test_verify_delivery.py` 的全套为 63 passed）（新增「命令必须以可执行程序开头」，把 35 条计划里的散文步骤挪进 `notes`）。
+- `tests/cli/test_dry_run_experiments.py`：**21 passed**；`test_record_experiment.py` **13 passed**；`test_freeze_holdout.py` **14 passed**（三文件 46 passed；含 `test_verify_delivery.py` 的全套为 63 passed）（新增「命令必须以可执行程序开头」，把 35 条计划里的散文步骤挪进 `notes`）。
 - `tests/cli/test_record_experiment.py`：**13 passed**；对真实计划跑 `record_experiment.py --json` → `plan_status: not_run, entries: 35, not_run: 35, holdout: pending_sample`（不改文件）。
 - `tests/cli/test_verify_delivery.py`：**17 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (13 checks)**（新增第 13 项：交付目录里 `EXPERIMENT-PLAN.json` 的每条命令都要落在真实 CLI 表面上，`--pages`/`--json` 一类不存在的开关在打包校验阶段就报错；同时校验 `holdout.dependent_entries` 只引用真实存在的条目，拼错的 id 不会悄悄把被挡的实测放行；留出集还没冻结时，受它门控的条目不许已经带上结果；留出集的冻结/复核命令也要落在 `freeze_holdout.py` 的真实开关上，写错的 `--rows` 在打包时就报错而不是等人到齐才失效）。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
@@ -120,7 +120,7 @@ holdout pending_sample`，`shasum -a 256 -c SHA256SUMS` 均通过，两份计划
 - 手册里补了一句：`freeze_holdout.py --size/--id` 与计划不一致时同样拒写，
   `--force` 才能覆盖，一次手滑换不掉 12 行样本。
 
-真跑（本轮）：`test_dry_run_experiments.py` **19 passed**、`test_verify_delivery.py`
+真跑（本轮）：`test_dry_run_experiments.py` **21 passed**、`test_verify_delivery.py`
 **17 passed**、四工具合计 **63 passed**、`test_runbook_commands.py` **5 passed**；
 两个交付目录同步工具与手册后 `delivery ok (13 checks)`、`plan ok: 35 entries (not_run 35);
 holdout pending_sample`、`SHA256SUMS` 通过；离线安装检查 10/10、本地环回安装 14/14。

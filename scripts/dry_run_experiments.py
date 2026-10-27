@@ -36,6 +36,7 @@ REQUIREMENTS = {
     "auth",
     "network_or_local",
 }
+FLAG = re.compile(r"(?<![\w-])--([a-z][a-z0-9-]*)")
 PLACEHOLDER = re.compile(r"<[^<>]+>")
 RUNNABLE = re.compile(r"^(?:envoy|python3?|sh|bash|zsh|powershell|pwsh|uv|PATH=|HOME=|TMPDIR=|ENVOY_[A-Z0-9_]+=)")
 # Subcommands and flags envoy actually accepts, mirroring
@@ -184,6 +185,7 @@ def validate(plan: dict) -> list[str]:
         problems.append("version is missing")
     if plan.get("status") not in STATUSES:
         problems.append(f"plan status {plan.get('status')!r} is not in {sorted(STATUSES)}")
+    problems.extend(dry_run_block_problems(plan))
 
     for axis, block in plan["axes"].items():
         if not isinstance(block, dict):
@@ -302,13 +304,43 @@ def render(plan: dict, entry_id: str) -> str:
     raise PlanError(f"no entry with id {entry_id!r}")
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate and dry-run the Envoy experiment plan.")
     parser.add_argument("--plan", type=Path, default=Path("EXPERIMENT-PLAN.json"))
     parser.add_argument("--check", action="store_true", help="validate the plan and print counts")
     parser.add_argument("--list", action="store_true", help="one line per entry")
     parser.add_argument("--render", metavar="ID", help="print the command for one entry")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    return parser
+
+
+TOOL_FLAGS = frozenset(
+    option for action in _parser()._actions for option in action.option_strings
+)
+
+
+def dry_run_block_problems(plan: dict) -> list[str]:
+    """The plan hands the human its own commands; they must run this tool."""
+    block = plan.get("dry_run")
+    if not isinstance(block, dict):
+        return []
+    problems: list[str] = []
+    for field in ("check", "list", "render"):
+        command = block.get(field)
+        if not isinstance(command, str) or "dry_run_experiments.py" not in command:
+            continue
+        for flag in FLAG.findall(command):
+            if f"--{flag}" not in TOOL_FLAGS:
+                known = ", ".join(sorted(TOOL_FLAGS))
+                problems.append(
+                    f"dry run {field} names unknown dry_run_experiments.py flag "
+                    f"--{flag} (known: {known})"
+                )
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
     args = parser.parse_args(argv)
 
     try:
