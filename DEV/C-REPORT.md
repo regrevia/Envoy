@@ -1,6 +1,6 @@
 # C 线报告（安装 / 打包 / 跨平台）— 0.1.24
 
-基线 `main = fbdede5`（0.1.23）→ 本轮 HEAD `65ba636`（0.1.24）。
+基线 `main = fbdede5`（0.1.23）→ 0.1.24 交付提交（构建提交见 `release-manifest.json` 的 `source_commit`）。
 交付目录：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24/`。
 
 ## 1. 做了什么（按用户能感知的顺序）
@@ -26,16 +26,20 @@
 - `build_envoy_dsh_plugin.py --check`、`sync_host_skills.py --check`：均为 current。
 - 打包产物可用性：`uv run --offline --with <wheel> envoy --version` → `envoy-cli 0.1.24 (core 0.1.24)`；`envoy doctor --json` 能跑通并在 `envoy --version` 场景下正确报版本。
 
-## 3. 打包结果（release 渠道，源码提交 65ba636）
+## 3. 打包结果（release 渠道）
 
-| 文件 | 大小 | SHA256 |
-| --- | --- | --- |
-| `envoy_cli-0.1.24-py3-none-any.whl` | 238992 | `562ae938864313e76a7663495e34078501b33b45ee7a6ffa9d1a08884a36479c` |
-| `envoy-skill.zip` | 29531 | `9ba77acbc8f3cf668de7e7a114d04bf35d941497b391a4d5e4257c372bdd2bea` |
-| `envoy-dsh-0.1.24.tgz` | 99188 | `43b3769f3b8e5154bd70d4e499111d157306b3c7e9d5fa1109f4d2b9d2425f4a` |
-| `install.sh` | 19341 | `4d0a5dcaeca9de9db7f35f806e4268bd4330cebd200626e57633e9e4dc9b1972` |
-| `install.ps1` | 20372 | `cae7d3e92fabdf8f6ce85a4aa3649e9831c94d979261edee0046b8234ebc84d1` |
-| `release-manifest.json` | 979 | `c1f01c727df903ce828e93e940d74ccb714cda401dd64065c472c79a3d08562f` |
+| 文件 | 作用 |
+| --- | --- |
+| `envoy_cli-0.1.24-py3-none-any.whl` | runtime（CLI + 内嵌 core） |
+| `envoy-skill.zip` | Claude Code / Codex / DSH 共用的 Skill 包 |
+| `envoy-dsh-0.1.24.tgz` | DSH bundle（npm 包） |
+| `install.sh` | macOS / Linux 一键安装 |
+| `install.ps1` | Windows 一键安装 |
+| `release-manifest.json` | 发行清单（版本、min_runtime、协议、artifacts 摘要） |
+| `SHA256SUMS` | 全部发行资产的 sha256（权威摘要来源） |
+
+摘要一律以 `SHA256SUMS` 为准（`shasum -a 256 -c SHA256SUMS`）；
+构建用的源码提交记在 `release-manifest.json` 的 `source_commit`。本文不再复制哈希，避免文档与产物脱节。
 
 `SHA256SUMS` 覆盖上表 6 个文件；`release-manifest.json` 的 `artifacts` 覆盖 5 个
 （清单不含自身）。产物名与安装脚本拼的 URL 一致：`envoy_cli-<v>-py3-none-any.whl`、
