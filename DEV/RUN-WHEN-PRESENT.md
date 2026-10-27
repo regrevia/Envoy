@@ -108,6 +108,8 @@ envoy read /path/to/long.pdf --pages 10-25 --json
 ## 6. 记录与升级
 
 - 所有读数用 `record_experiment.py` 写回 `EXPERIMENT-PLAN.json`（见第 9 节），不要手改 `status`：手改不会带 `evidence` 和时间，也挡不住把跑过的条目改回 `not_run`。`holdout.dependent_entries` 里的条目（V01/V03/V04/V06/V07/V08，量的是留出集）在留出集冻结前记不进 `passed`。
+- 改计划后先 `python3 dry_run_experiments.py --check`：`holdout.dependent_entries` 必须正好等于命令里读
+  `<public-…>` 占位符的条目集，漏一个或多一个都会被点名拒绝，免得依赖集和条目正文各说各话。
 - 只有真的跑过，才能把 `COMPATIBILITY.md` 对应行改成实测；五个指标的对外文案
   必须等读数回来再改。
 - 出问题就把原始输出（退出码 + stderr 前 40 行）贴进当轮记录，不要只写结论。
