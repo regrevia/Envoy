@@ -204,6 +204,8 @@ _SUPPORTED_HOSTS = {
     "lobste.rs",
     "meta.discourse.org",
     "movie.douban.com",
+    "douban.com",
+    "gitlab.com",
     "notion.so",
     "airtable.com",
     "w3.org",

@@ -90,6 +90,7 @@ CORPUS: list[tuple[str, str, str]] = [
     # -- code ------------------------------------------------------------
     ("code", "github-repo", "https://github.com/psf/requests"),
     ("code", "github-issue", "https://github.com/psf/requests/issues/1"),
+    ("code", "gitlab-readme", "https://gitlab.com/gitlab-org/gitlab/-/blob/master/README.md"),
     ("code", "github-blob", "https://github.com/psf/requests/blob/main/README.md"),
     ("code", "pypi", "https://pypi.org/project/requests/"),
     ("code", "npm", "https://www.npmjs.com/package/express"),
@@ -114,6 +115,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("video", "ted-talk", "https://www.ted.com/talks/chimamanda_ngozi_adichie_the_danger_of_a_single_story"),
     # -- audio -----------------------------------------------------------
     ("audio", "soundcloud", "https://soundcloud.com/forss/flickermood"),
+    ("social", "douban-group", "https://www.douban.com/group/topic/30678422/"),
     ("audio", "ximalaya-album", "https://www.ximalaya.com/album/316137"),
     # -- image -----------------------------------------------------------
     ("image", "pinterest", "https://www.pinterest.com/pin/1139481143253437748/"),
