@@ -33,6 +33,7 @@
 | 17 | 111 | 110 | 87 | 79.1% | 26 | 3.45s | 补 npr/cnbc 新闻行（均 partial）；apnews 标 unsupported |
 | 18 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 连接级失败不再重试（p90 77.25s→25.81s）；substack 出口抖动掉出可用 |
 | 19 | 128 | 113 | 92 | 81.4% | 27 | 4.26s | 非 http(s)/x.com/微信首页判 unsupported（宿主直接走原生）；新增 apple-podcast、spotify-episode、agent-docs 三个可用行 |
+| 20 | 133 | 118 | 96 | 81.4% | 29 | 4.65s | 新增 infoq/engadget/theverge/php-manual/sspai-post 五行全部可用；gutenberg、guardian 出口抖动掉出 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -424,7 +425,7 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
-## 第十九轮（113 行 / 可用 80.5%，判定前置挡掉注定读不到的链接，audio/web 各补一行）
+## 第十九轮（113 行 / 可用 81.4%，判定前置挡掉注定读不到的链接，audio/web 各补一行）
 
 两件事：
 
@@ -453,6 +454,49 @@ unsplash、hn-rss 这一批出口抖动撞上浏览器两次尝试，不是新�
 验证：`tests/test_platform_classification.py` 163 个断言、`index.test.js` 9 个断言全过；
 `scripts/export_link_verdicts.py --check` 干净；`scripts/dev_test.sh` 仅剩既有的
 douyin 相册顺序用例失败（HEAD 上同样失败）。
+
+## 第二十轮（118 行 / 可用 96 = 81.4%，news 与 web 两族各补实测可读行）
+
+本轮只做一件正事：从「出口能过、reader 真出正文」的候选里补族。先单条探测再入语料，
+五行全部可用；`news` 族长期 0 readable，这轮第一次有了 readable 行。
+
+| 行 | 族 | 探测结果 |
+|---|---|---|
+| `infoq-home` | cn-media | 10047 字 / 4.8s（static_http） |
+| `engadget-home` | news | 557 字 / 11.9s（isolated_chromium，短页整页交付） |
+| `theverge-home` | news | 10552 字 / 2.2s（static_http） |
+| `php-manual` | reference | 11987 字 / 2.0s（static_http） |
+| `sspai-post` | cn-platform | 1870 字 / 0.7s（public_api:sspai，ready） |
+
+同时 `infoq.cn`、`engadget.com`、`php.net`、`theverge.com` 进 `_SUPPORTED_HOSTS`
+（`sspai.com` 本就在表内），Python 163 断言与 JS 9 断言各补 4 条，导出表重新导出后
+`--check` 干净。
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 118 | 29 | 67 | 0 | 7 | 15 | 0 | 96 | **81.4%** |
+| 可达口径（剔 unreachable） | 103 | 29 | 67 | 0 | 7 | 0 | 0 | 96 | **93.2%** |
+| 同组成 113 行子集（= 第十九轮口径） | 113 | – | – | – | – | 15 | 0 | 91 | **80.5%** |
+
+- 时延：mean **17.97s** / p50 **4.65s** / p90 **41.4s** / max **144.87s**。p90 与 max
+  都被这一轮的出口抖动推高：`unsplash` 单行 141.6s 才报 `network_error`，
+  `hn-rss`、`36kr`、`wechat-mp-platform` 也在 40–81s。这不是代码回退
+  （第十九轮同批 host 的 p50 仍是 4s 级）。
+- 组成变化：新增 5 行全部可用（+5）；`gutenberg`、`guardian` 由 partial 掉成
+  unreachable（-2）；`tiktok` 由 blocked 转 partial（+1）；`x-profile` 由 blocked
+  转 unreachable、`archive-org` 由 unreachable 转 blocked（都仍不可用，只是错误分类
+  随出口变化）。净 +4 可用行。
+- 族分布：reference 9（2 readable）/ news 13（1 readable，另 4 行本机出口不可达）/
+  blog 8（1）/ code 7（2）/ forum 8（3）/ social 4（1）/ video 7（2）/ audio 5（0）/
+  image 3（1）/ document 5（2）/ spa 4（2）/ feed 6（4）/ api 1（1）/ web 6（0
+  readable，1 blocked）/ platforms 8（1）/ cn-platform 12（5 readable）/ cn-media
+  12（1 readable，11 partial —— 这一族几乎全是首页，整页交付但被截断）。
+- 口径说明：`reachable_usable_rate` 为 93.2%，与第十九轮可达口径同一算法；两轮
+  分母不同（119 → 133 行声明），所以主指标同时给「全语料」与「同组成子集」两列，
+  不拿比例变化冒充提升。
+
+验证：`scripts/dev_test.sh` 809 passed / 1 failed（既有 douyin 相册顺序用例，HEAD 上
+同样失败）；`scripts/export_link_verdicts.py --check` 干净。
 
 ## 第十八轮（110 行 / 可用 78.2%，失败路径快速失败把 p90 从 77.25s 压到 25.81s）
 

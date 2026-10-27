@@ -7,6 +7,19 @@
 - 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
   连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
   实测不可达页面（reuters.com）单行从 `77.4 s` 降到 `25.9 s`，结论与错误码不变。
+- 适配：`podcasts.apple.com`、`open.spotify.com`、`docs.anthropic.com`、
+  `infoq.cn`、`engadget.com`、`php.net`、`theverge.com` 提升为 supported
+  （均以实测出正文为前提）。非 http(s) scheme（`mailto:` / `ftp:` / `file:` 等）
+  与 `x.com` / `twitter.com`、微信首页改判 unsupported：宿主要求「别调用工具、
+  走原生能力」，不再白付一次读。
+- 语料：第 19 轮补 3 行、第 20 轮补 5 行（feed / audio / web / news / reference /
+  cn-platform / cn-media），声明 133 行、实跑 118 行，可用 `96 = 81.4%`
+  （同组成 113 行子集 `91 = 80.5%`，可达口径 `96/103 = 93.2%`）。
+- 度量修正：`classify()` 原先用 200 字硬下限判可用，整页交付但只有 170 字的
+  `example.com` 被误记为 empty；现在「交付 ≥40 字且整页不超过交付量 2 倍」按短页
+  计可用，`total_chars >= 1000` 的截断分支保留。
+- Skill：长视频 / 播客要在同一次调用里显式抬高 `budget.max_work_seconds`
+  （短集 300、长录音到 900），而不是超时后重读一遍。
 
 ### English
 
@@ -14,6 +27,22 @@
   no longer retried three times on the same exit; each retry paid a fresh connect
   timeout. Planned exits are still tried in order. Measured on an unreachable page
   (reuters.com): one row drops from `77.4 s` to `25.9 s` with the same verdict.
+- Support: `podcasts.apple.com`, `open.spotify.com`, `docs.anthropic.com`,
+  `infoq.cn`, `engadget.com`, `php.net` and `theverge.com` become supported
+  (each one measured delivering text first). Non-HTTP(S) schemes (`mailto:`,
+  `ftp:`, `file:`, ...), `x.com` / `twitter.com` and the WeChat home page now
+  report unsupported, so the host skips the tool call and uses its native
+  reader instead of paying for a read that cannot succeed.
+- Corpus: 3 rows added in round 19 and 5 in round 20; 133 declared, 118 measured,
+  usable `96 = 81.4%` (same-composition 113-row subset `91 = 80.5%`,
+  reachable denominator `96/103 = 93.2%`).
+- Measurement fix: `classify()` used a flat 200-character floor, so
+  `example.com` (whole page delivered, 170 characters) was recorded as empty;
+  a page delivered in full with at least 40 characters now counts as usable,
+  while the `total_chars >= 1000` truncation branch stays.
+- Skill: a long video or podcast should raise `budget.max_work_seconds` in the
+  same call (300 for a short episode, up to 900 for a long recording) instead of
+  re-reading after the budget timeout.
 
 ## 0.1.21 - 2026-10-27
 
