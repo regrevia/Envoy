@@ -3,14 +3,14 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第八轮）
+## 结论（最新一轮：第九轮）
 
-数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round8.json`，
-`envoy 0.1.16`）。语料已扩到 90 条，预检剔 1 条死链，分母 **89**。
+数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
+`envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
 
-- **可用率**：全语料 `66/89 = 74.2%`（可读 18 + 部分 48）；同口径旧 82 行子集
-  `59/82 = 72.0%`，与第 7 轮持平，这轮增长全部来自 7 条新增行（7/7 可用）。
-- **完全可读 18 条、部分可读 48 条、空 2 条、拦截 8 条、本机出口不可达 13 条、失败 0 条。**
+- **可用率**：全语料 `69/92 = 75.0%`（可读 20 + 部分 49）；同口径旧 89 行子集
+  `66/89 = 74.2%`，且这 89 行与上一轮**逐行零翻转**。
+- **完全可读 20 条、部分可读 49 条、空 2 条、拦截 8 条、本机出口不可达 13 条、失败 0 条。**
 - **零超时**：p90 77.2s、max 127.5s，p90 由 5 条本机出口不可达的 77s 主导（不是产品慢）。
 - 口径纪律：`unsupported` 的链接根本不会调用工具（判定见 `platforms.read_support_verdict`），
   因此语料里的 `unreachable` 全部是「支持但本机出口不通」，和「没适配」是两件事，两个分母不合并。
@@ -22,6 +22,7 @@
 | 6 | 73 | 72 | 47 | 65.3% | 15 | 7.29s | 薄页/DNS 判据变严，主动改判 |
 | 7 | 83 | 82 | 59 | 72.0% | 18 | 6.19s | 10 条新行 + JSON 桩修复 |
 | 8 | 90 | 89 | 66 | 74.2% | 18 | 4.43s | 7 条新行全可用 |
+| 9 | 93 | 92 | 69 | 75.0% | 20 | 4.46s | 3 条新行全可用，零翻转 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -403,4 +404,27 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第九轮（新增 3 条全部可用，全语料 75.0%，零翻转）
+
+第八轮之后再补 3 条：`ted.com` 演讲页（新转正站点），以及两个真正能读的订阅源
+（`ruanyifeng.com/blog/atom.xml`、`ithome.com/rss/`）。语料 90 → 93 行，死链仍 1 条，分母 92。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 92 | 20 | 49 | 2 | 0 | 8 | 13 | 0 | 69 | **75.0%** |
+| 旧 89 行子集（与第 8 轮同组成） | 89 | 18 | 48 | 2 | 0 | 8 | 13 | 0 | 66 | **74.2%** |
+
+- 3 条新增行全部可用：`ted-talk` 502 字 / 1.5s（`readable`，`static_http`）、
+  `ruanyf-atom` 436 字 / 2.7s（`readable`，`public_api:feed`）、
+  `ithome-rss` 8004 字 / 0.7s（`partial`，`public_api:feed`）。RSS/Atom 通道再次验证可用，
+  更新频率天然短，所以停在 `partial` 是正确的，不是读取失败。
+- **旧 89 行零翻转**：与上一轮逐行比对，`readable/partial/empty/blocked/unreachable` 五类
+  完全一致，说明第 8 轮 74.2% 不是抖动。这也是目前最稳的一轮——没有一条行在两次运行之间换类。
+- 本轮同时修掉一个错误归类（不改善判定但影响模型行为）：浏览器导航失败此前落到
+  `auth_required`，会让模型对根本没登录框的站点（如 `reddit` 的 `ERR_CONNECTION_CLOSED`）
+  去跑 `envoy_auth`；现在报 `network_error`。
+- 延迟：mean 23.7s、p50 4.46s、p90 77.23s、max 115.2s，仍然零超时。
+- 回归：`pytest tests/cli` → 670 passed / 4 failed（已知 reportlab 缺依赖）/ 1 deselected；
+  分类+路由+语料 157 passed；`tests/cli/test_login_wall.py` 13 passed（含新增的导航错误归类）。
 

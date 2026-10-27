@@ -176,3 +176,16 @@ def test_real_api_json_is_still_content():
         },
     )
     assert response.result.value == "ready"
+
+
+def test_browser_navigation_failure_is_a_network_error_not_a_login_wall():
+    from envoy_cli.reader import _browser_read_failure_code
+    from envoy_core.schemas.read_v1 import ErrorCode
+
+    class Error(Exception):
+        """Stands in for a Playwright error escaping a failed navigation."""
+
+    failure = Error(
+        'Page.goto: net::ERR_CONNECTION_CLOSED at https://www.reddit.com/r/Python/'
+    )
+    assert _browser_read_failure_code(failure) is ErrorCode.NETWORK_ERROR

@@ -109,6 +109,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("video", "bilibili", "https://www.bilibili.com/video/BV1GJ411x7h7"),
     ("video", "vimeo", "https://vimeo.com/76979871"),
     ("video", "tiktok", "https://www.tiktok.com/@scout2015/video/6718335390845095173"),
+    ("video", "ted-talk", "https://www.ted.com/talks/chimamanda_ngozi_adichie_the_danger_of_a_single_story"),
     # -- audio -----------------------------------------------------------
     ("audio", "soundcloud", "https://soundcloud.com/forss/flickermood"),
     # -- image -----------------------------------------------------------
@@ -128,6 +129,8 @@ CORPUS: list[tuple[str, str, str]] = [
     # -- feed ------------------------------------------------------------
     ("feed", "hn-rss", "https://news.ycombinator.com/rss"),
     ("feed", "github-atom", "https://github.com/psf/requests/releases.atom"),
+    ("feed", "ruanyf-atom", "https://www.ruanyifeng.com/blog/atom.xml"),
+    ("feed", "ithome-rss", "https://www.ithome.com/rss/"),
     # -- api -------------------------------------------------------------
     ("api", "json-api", "https://api.github.com/repos/psf/requests"),
     # -- web -------------------------------------------------------------
