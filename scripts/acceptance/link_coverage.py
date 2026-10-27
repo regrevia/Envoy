@@ -124,7 +124,7 @@ CORPUS: list[tuple[str, str, str]] = [
     # -- document --------------------------------------------------------
     ("document", "arxiv-abs", "https://arxiv.org/abs/1706.03762"),
     ("document", "arxiv-pdf", "https://arxiv.org/pdf/1706.03762"),
-    ("document", "w3c-pdf", "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"),
+    ("document", "rfc9110-pdf", "https://www.rfc-editor.org/rfc/rfc9110.pdf"),
     ("document", "github-raw-md", "https://raw.githubusercontent.com/psf/requests/main/README.md"),
     ("document", "rfc", "https://www.rfc-editor.org/rfc/rfc9110.html"),
     # -- spa -------------------------------------------------------------
