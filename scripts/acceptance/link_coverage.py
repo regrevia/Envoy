@@ -507,10 +507,16 @@ def classify(response: dict) -> dict:
     modalities = coverage.get("modalities") or {}
     text_meta = modalities.get("text") or {}
     total_chars = int((text_meta.get("details") or {}).get("total_chars") or 0)
+    reader_pages_all = chars >= 40 and total_chars <= 2 * chars
     if result == "ready" and chars >= 200:
         verdict = "readable"
     elif result == "partial" and chars >= 200:
         verdict = "partial"
+    elif result in {"ready", "partial"} and reader_pages_all:
+        # A short page is not an empty one: `example.com` is 170 characters and
+        # the reader delivered all of it. Using a flat 200-character floor called
+        # that "empty", which was a measurement defect, not a page defect.
+        verdict = "readable" if result == "ready" else "partial"
     elif chars < 200 and total_chars >= 1000:
         # the page was extracted but almost nothing was delivered: a delivery
         # defect, not a reachability one.
