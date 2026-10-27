@@ -81,6 +81,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("news", "reuters-tech", "https://www.reuters.com/technology/"),
     ("news", "nytimes", "https://www.nytimes.com/section/technology"),
     ("news", "guardian", "https://www.theguardian.com/international"),
+    ("news", "pingwest", "https://www.pingwest.com/a/300000"),
+    ("news", "oschina", "https://www.oschina.net/news"),
     ("news", "thepaper", "https://www.thepaper.cn/"),
     # -- blog ------------------------------------------------------------
     ("blog", "medium", "https://medium.com/@karpathy/a-recipe-for-training-neural-networks-9c4c9f7d4b6c"),
@@ -123,7 +125,7 @@ CORPUS: list[tuple[str, str, str]] = [
     # -- document --------------------------------------------------------
     ("document", "arxiv-abs", "https://arxiv.org/abs/1706.03762"),
     ("document", "arxiv-pdf", "https://arxiv.org/pdf/1706.03762"),
-    ("document", "w3c-pdf", "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"),
+    ("document", "rfc9110-pdf", "https://www.rfc-editor.org/rfc/rfc9110.pdf"),
     ("document", "github-raw-md", "https://raw.githubusercontent.com/psf/requests/main/README.md"),
     ("document", "rfc", "https://www.rfc-editor.org/rfc/rfc9110.html"),
     # -- spa -------------------------------------------------------------

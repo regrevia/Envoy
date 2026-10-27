@@ -206,6 +206,7 @@ _SUPPORTED_HOSTS = {
     "movie.douban.com",
     "douban.com",
     "gitlab.com",
+    "oschina.net",
     "notion.so",
     "airtable.com",
     "w3.org",

@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十二轮）
+## 结论（最新一轮：第十三轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -26,6 +26,7 @@
 | 10 | 96 | 95 | 74 | 77.9% | 20 | 4.50s | 4 条新行全可用；YouTube 字幕显形 |
 | 11 | 97 | 96 | 75 | 78.1% | 20 | 4.52s | MDN 补齐；wikipedia 回到 partial |
 | 12 | 100 | 99 | 76 | 76.8% | 21 | 3.55s | 补 gitlab/douban-group/ximalaya；social、audio 首次有可用行 |
+| 13 | 102 | 101 | 79 | 78.2% | 20 | 4.34s | 真 RFC PDF 替掉玩具 PDF；news 补 oschina/pingwest 到 6 可用 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -407,6 +408,29 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第十三轮（102 行 / 可用 78.2%，news 族首次有 6 条可用）
+
+语料 100 → 102 行：把 23 字的玩具 PDF（`w3c-pdf`，永远 `empty`）换成真实
+`https://www.rfc-editor.org/rfc/rfc9110.pdf`，新增 `news/oschina`、`news/pingwest`。
+死链 1，分母 101。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 101 | 20 | 59 | 1 | 0 | 7 | 13 | 1 | 79 | **78.2%** |
+| 可达口径（剔 unreachable） | 88 | 20 | 59 | 1 | 0 | 7 | 0 | 1 | 79 | **89.8%** |
+| 旧 98 行子集（与第 12 轮同组成） | 98 | 19 | 57 | 1 | 0 | 7 | 13 | 1 | 76 | **77.6%** |
+
+- 三条新行全部可用：`rfc9110-pdf` `partial` 7389 字 / 5.1s（真 PDF，替换掉
+  23 字的 dummy 玩具行）；`oschina` `partial` 5637 字 / 1.9s；`pingwest`
+  `partial` 2542 字 / 1.3s。news 族从 3 可用升到 6 可用（9 行里 3 条是本机出口阻断的
+  bbc/reuters/nytimes）。
+- 相比第 12 轮（76/99 = 76.8%），全语料可用率 +1.4pt 到 78.2%；同 98 行子集
+  77.6% vs 第 12 轮同组成 78.1%，差 0.5pt，完全在单轮出口抖动范围内
+  （guardian 本轮连上 `partial` 5786、unsplash 本轮退回 `unreachable`）。
+- `pingwest-home` 本轮批量 `failed`（0 字，4.3s，无 error_code），单跑立刻
+  `ready` 764 字——是并发下的瞬时失败，不是能力缺口，下一轮若复现再查。
+- 时延：mean 21.2s / p50 4.34s / p90 72.81s / max 113.0s。
 
 ## 第十二轮（100 行 / 可用 76.8%，补 social 与 audio 两个零可用族）
 

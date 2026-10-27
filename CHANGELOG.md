@@ -1,5 +1,26 @@
 # 更新日志 / Changelog
 
+## 0.1.20 - 2026-10-27
+
+### 中文
+
+- 验收语料质量修正：把 23 字的 dummy PDF 换成真实 `rfc9110.pdf`（7389 字），
+  历史里那条永远 `empty` 的假阴性消失。
+- `news` 族补 `oschina.net`（5637 字）与 `pingwest` 文章页（2542 字），news 族可用
+  行从 3 升到 6。
+- 语料 102 行 / 分母 101：可用 `79/101 = 78.2%`；剔 13 条本机出口不可达后
+  可达口径 `79/88 = 89.8%`；同组成 98 行子集 `76/98 = 77.6%`。
+
+### English
+
+- Corpus quality fix: the 23-character dummy PDF is replaced with the real
+  `rfc9110.pdf` (7389 chars), removing a permanent false `empty` from the history.
+- The `news` family gains `oschina.net` (5637 chars) and a `pingwest` article
+  (2542 chars): usable news rows go from 3 to 6.
+- Corpus is 102 rows over a denominator of 101: usable `79/101 = 78.2%`; excluding
+  the 13 locally unreachable rows, `79/88 = 89.8%`; the same-scope 98-row subset is
+  `76/98 = 77.6%`.
+
 ## 0.1.19 - 2026-10-27
 
 ### 中文
