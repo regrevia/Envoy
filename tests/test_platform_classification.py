@@ -152,6 +152,7 @@ VERDICT_CASES = [
     ("https://www.solidot.org/", "supported"),
     ("https://www.guancha.cn/", "supported"),
     ("https://www.thepaper.cn/", "supported"),
+    ("https://www.ximalaya.com/album/316137", "supported"),
     ("https://www.jiemian.com/", "supported"),
     ("https://www.cls.cn/", "supported"),
     ("https://www.yicai.com/", "supported"),

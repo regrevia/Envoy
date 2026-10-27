@@ -195,6 +195,7 @@ _SUPPORTED_HOSTS = {
     "youtu.be",
     "docs.google.com",
     "docs.python.org",
+    "ximalaya.com",
     "kubernetes.io",
     "doc.rust-lang.org",
     "stackoverflow.com",

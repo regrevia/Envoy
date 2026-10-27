@@ -114,6 +114,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("video", "ted-talk", "https://www.ted.com/talks/chimamanda_ngozi_adichie_the_danger_of_a_single_story"),
     # -- audio -----------------------------------------------------------
     ("audio", "soundcloud", "https://soundcloud.com/forss/flickermood"),
+    ("audio", "ximalaya-album", "https://www.ximalaya.com/album/316137"),
     # -- image -----------------------------------------------------------
     ("image", "pinterest", "https://www.pinterest.com/pin/1139481143253437748/"),
     ("image", "unsplash", "https://unsplash.com/s/photos/ocean"),
