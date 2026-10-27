@@ -85,6 +85,22 @@
 
 见[评测方法](benchmarks/README.md)、[口径与偏差](benchmarks/fixed-set-v1/AB-PROTOCOL.md)与[复核记录](docs/acceptance/envoy-read-failure-2026-10-25.md)。
 
+## 链接兼容性
+
+123 条真实链接（新闻、公众号、B站、播客、PDF、论坛、代码文档……）跑了一遍，看三件事：
+
+| 看什么 | 结果 |
+| --- | --- |
+| 100 条链接里，能拿到可用材料 | **80 条（80.5%）** |
+| 能连上的 100 条里，能读出正文 | **93 条（92.5%）** |
+| 打不开的链接要干等多久 | **26 秒**（原来 77 秒，少了 67%） |
+
+「可用」= 能当素材：整篇可引用，或读到一部分并写明缺了什么；读不出来会说清原因（要登录、被人机校验拦住、网络不通），不猜。
+
+剩下没拿到的 24 条里，16 条根本连不上（全是境外站点，卡在本机代理出口），8 条卡在登录墙或人机校验——这两种装不装 Envoy 都读不到，Envoy 会直说，让 Agent 走别的路。
+
+复算：`scripts/acceptance/link_coverage.py`（报告与口径见[兼容性实验](docs/experiments/link-compatibility.md)）。
+
 ## 本地 Web 界面（Docker）
 
 **插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：`pip install envoy-cli` 或 `uv tool install`，再加一个 skills 目录或插件包，不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
@@ -191,6 +207,22 @@ This table says whether the agent could read the source at all — not how fast 
 **What it cannot be read as.** The two arms ran under different caps: baseline 900 s (`cap_seconds` in `/tmp/AB3/run-meta.json`; 41 of 60 turns hit it) and envoy 2400 s (`turn_timeout_seconds` in `/tmp/AB6`; 0 of 60 hit it). The completion gap is inflated by that difference and is not a capability comparison; `suspect_complete` is not "correct". Turning this into a conclusion needs a same-budget run (both arms at one cap), a real task-level verdict that can be reviewed (not keyword rules), artifacts that can be checked against the source snapshots, and a full 60/60-turn ledger per arm. The earlier front-page completion rates and sample counts came from an earlier partial run, cannot be reproduced from the archived data here, and have been withdrawn.
 
 See the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md), and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
+
+### Link coverage
+
+123 real links (news, WeChat posts, Bilibili, podcasts, PDFs, forums, code docs) — three questions:
+
+| Question | Answer |
+| --- | --- |
+| Out of 100 links, how many give usable material | **80 (80.5%)** |
+| Out of the 100 that answered at all, how many yielded body text | **93 (92.5%)** |
+| How long an unreachable link makes you wait | **26 s** (was 77 s, 67% less) |
+
+"Usable" means quotable in full, or partially read with the gap named; a failure states why (login, bot check, network) instead of guessing.
+
+Of the 24 that were not usable, 16 hosts were unreachable — all overseas, blocked at the local proxy exit — and 8 sat behind a login or bot-check wall. Neither case gets better with Envoy installed; Envoy says so and the agent takes another route.
+
+Rerun with `scripts/acceptance/link_coverage.py`; reports and definitions are in the [link-compatibility experiment](docs/experiments/link-compatibility.md).
 
 ### Local web interface (Docker)
 

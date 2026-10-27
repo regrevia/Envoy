@@ -1,7 +1,7 @@
 {
   "name": "envoy-dsh",
   "version": "0.1.21",
-  "description": "Any link in, the thing you wanted out: Markdown, wiki, knowledge base. Douyin/Bilibili/Xiaohongshu/Zhihu/PDF/podcast, measured 75% usable on 92 live links, 0 failures.",
+  "description": "Any link in, the thing you wanted out: Markdown, wiki, knowledge base. Douyin/Bilibili/Xiaohongshu/Zhihu/PDF/podcast, measured 80% usable on 123 live links (93% of reachable pages), 0 failures.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "./index.js",
