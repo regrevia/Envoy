@@ -1,21 +1,5 @@
 # 更新日志 / Changelog
 
-## Unreleased
-
-### 中文
-
-- `envoy doctor` 新增 `runtime` 一行：显示当前运行的 `envoy` 是否就是安装时固定在
-  `~/.envoy/runtime-path` 的那份。未固定、固定文件已消失、或 PATH 里另有旧 `envoy`
-  （`shadowed`）都直接点名，并给一条重跑安装脚本的动作。`doctor --json` 同步给出
-  `runtime.install`。
-
-### English
-
-- `envoy doctor` now reports the install state of the runtime: whether the running
-  `envoy` is the binary pinned at `~/.envoy/runtime-path`, and names the unpinned,
-  stale-pin, and shadowed-by-PATH cases with one action each. `doctor --json` carries
-  the same data under `runtime.install`.
-
 ## 0.1.24 - 2026-10-28
 
 ### 中文
@@ -72,6 +56,13 @@
 
 ### 中文
 
+- 安装后自检：`envoy doctor` 新增 `runtime` 一行，显示当前运行的 `envoy` 是否就是
+  安装时固定在 `~/.envoy/runtime-path` 的那份，并对未固定 / 固定文件已消失 /
+  PATH 里另有旧 `envoy`（`shadowed`）各给一条修复动作；`doctor --json` 同步给出
+  `runtime.install`。
+- 安装收尾：`install.sh` 与 `install.ps1` 装完打印浏览器状态和安装状态，非 `pinned`
+  时点名 PATH 实际指向哪里；Windows 安装用法并入 `INSTALL.md`。
+
 - 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
   连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
   实测不可达页面（reuters.com）单行从 `77.4 s` 降到 `25.9 s`，结论与错误码不变。
@@ -90,6 +81,14 @@
   （短集 300、长录音到 900），而不是超时后重读一遍。
 
 ### English
+
+- Post-install self-check: `envoy doctor` gains a `runtime` line that says whether
+  the running `envoy` is the one pinned at `~/.envoy/runtime-path`, with one
+  repair action for unpinned, stale-pin, and shadowed-by-PATH installs;
+  `doctor --json` exposes the same data under `runtime.install`.
+- Installer epilogue: `install.sh` and `install.ps1` now print the browser state
+  and the install state, naming where `PATH` actually points when it is not the
+  pinned runtime; the Windows usage lives in `INSTALL.md`.
 
 - Fast fail: connect-level failures (refused, connect timeout, unusable proxy) are
   no longer retried three times on the same exit; each retry paid a fresh connect
