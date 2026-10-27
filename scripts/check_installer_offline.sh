@@ -153,5 +153,15 @@ else
   bad "no host fallback: $out"
 fi
 
+# --- case: a reachable SHA256SUMS must never be silently skipped -----------
+case_start
+if grep -q 'checksum unavailable for %s' "$INSTALL" \
+  && grep -q 'SHA256SUMS has no entry for' "$INSTALL" \
+  && grep -q 'checksum skipped for %s' "$INSTALL"; then
+  ok "checksum verification names each outcome instead of failing open silently"
+else
+  bad "checksum verification still skips silently"
+fi
+
 printf '\n%s/%s installer checks passed\n' "$((CASES - FAILED))" "$CASES"
 [ "$FAILED" -eq 0 ]

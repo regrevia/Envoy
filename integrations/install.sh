@@ -98,14 +98,20 @@ verify_checksum() {
   file="$1"
   name="$2"
   sums_url="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/SHA256SUMS"
-  sums="$(curl -fsSL "$sums_url" 2>/dev/null)" || return 0
+  if ! sums="$(curl -fsSL "$sums_url" 2>/dev/null)"; then
+    printf 'envoy install: checksum unavailable for %s (SHA256SUMS not reachable); continuing unverified\n' "$name"
+    return 0
+  fi
   expected="$(printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1; exit}')"
-  [ -n "$expected" ] || return 0
+  if [ -z "$expected" ]; then
+    die "SHA256SUMS has no entry for $name; delete it and re-run"
+  fi
   if command -v shasum >/dev/null 2>&1; then
     actual="$(shasum -a 256 "$file" | awk '{print $1}')"
   elif command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$file" | awk '{print $1}')"
   else
+    printf 'envoy install: checksum skipped for %s (no shasum or sha256sum on this machine)\n' "$name"
     return 0
   fi
   if [ "$expected" != "$actual" ]; then

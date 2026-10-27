@@ -89,6 +89,9 @@
 - 实验记录：`record_experiment.py` 把一条实测结果连同证据行和观测数字写进
   `EXPERIMENT-PLAN.json`；没有证据的「通过 / 失败」写不进去，跑过的条目也不会
   被悄悄改回 `not_run`，计划级状态跟着条目重算。不带 `--write` 只干跑。
+- 安装包校验：`install.sh` 下载后核对 `SHA256SUMS`，取不到清单或机器上没有
+  `shasum`/`sha256sum` 时各打一行说明；清单拿到了却没有该文件条目就直接失败，
+  不再像以前那样静默跳过——和 Windows `install.ps1` 的失败语义对齐。
 
 ### English
 
@@ -131,6 +134,11 @@
   pass or fail without evidence is refused, an entry that already ran cannot
   be quietly turned back into `not_run`, and the plan-level status is
   recomputed from the entries. Without `--write` it only prints the change.
+
+- Installer checksum: `install.sh` verifies `SHA256SUMS` after downloading and now
+  says so when the list is unreachable or no `shasum`/`sha256sum` exists; a
+  reachable list that lacks the file's entry fails instead of being skipped, so
+  POSIX and Windows agree on when an unverified download is refused.
 
 ## 0.1.21 - 2026-10-27
 
