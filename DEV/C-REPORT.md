@@ -105,3 +105,22 @@ implemented / unit_checked / packaged / not_run）+ `DEVELOPMENT-REPORT.md` +
 验证：桩 `envoy`（离线、只 `json.loads` stdin）跑通 22 条 `envoy`/`sh -c` 命令；
 两个交付目录 `dry_run_experiments.py --check` 均 `plan ok: 35 entries (not_run 35);
 holdout pending_sample`，`shasum -a 256 -c SHA256SUMS` 均通过，两份计划逐字节相同。
+
+## 留出集与运行手册的命令守卫（2026-10-28 06:47–07:05）
+
+人是最后才到场的，脚本先死这件事只会在最贵的时候暴露：
+
+- 计划的 `holdout.freeze_command` / `verify_command` 是到场后最先粘贴的两条命令。
+  干跑与打包校验现在都对照 `freeze_holdout.py` 的真实开关校验，写成 `--rows` 这类
+  不存在的开关在 `--check` 与 `verify_delivery.py --dir .` 阶段就报错（打包校验仍是 13 项，
+  命令校验项内部加严，不新增项）；
+- `DEV/RUN-WHEN-PRESENT.md` 里每条 `envoy` 子命令/开关、每个 `python3 <脚本>.py` 开关
+  现在都对真实 argparse 与各脚本 `--help` 校验（`tests/cli/test_runbook_commands.py`，
+  5 用例，含「`envoy read --pages` 必须被拒」的负例）；
+- 手册里补了一句：`freeze_holdout.py --size/--id` 与计划不一致时同样拒写，
+  `--force` 才能覆盖，一次手滑换不掉 12 行样本。
+
+真跑（本轮）：`test_dry_run_experiments.py` **19 passed**、`test_verify_delivery.py`
+**17 passed**、四工具合计 **63 passed**、`test_runbook_commands.py` **5 passed**；
+两个交付目录同步工具与手册后 `delivery ok (13 checks)`、`plan ok: 35 entries (not_run 35);
+holdout pending_sample`、`SHA256SUMS` 通过；离线安装检查 10/10、本地环回安装 14/14。
