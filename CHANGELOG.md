@@ -70,6 +70,10 @@
   一次解析给出结论并在本次读取内复用，不再解析两次——两次之间 DNS 抖一下，
   报错码就可能从 `source_unavailable` 翻成 `network_error`（或反过来）。
 
+- 安装源可覆盖：`install.sh` 与 `install.ps1` 的四处下载都走 `ENVOY_RELEASES_BASE`（清单地址另有
+  `ENVOY_MANIFEST_URL`），镜像/本地目录按 `v<版本>/` 放产物与 `SHA256SUMS` 即可，默认仍是公开路径。
+  `scripts/check_installer_e2e_local.sh` 在 `127.0.0.1` 上真跑一遍「解析版本 → 下载 → 校验摘要 → 解包」，
+  再确认 `ENVOY_DRY_RUN=1` 只打印计划不落盘、篡改摘要会中止安装。
 - 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
   连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
   实测不可达页面（reuters.com）单行从 `77.4 s` 降到 `25.9 s`，结论与错误码不变。
