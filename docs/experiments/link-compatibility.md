@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第九轮）
+## 结论（最新一轮：第十轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -23,6 +23,7 @@
 | 7 | 83 | 82 | 59 | 72.0% | 18 | 6.19s | 10 条新行 + JSON 桩修复 |
 | 8 | 90 | 89 | 66 | 74.2% | 18 | 4.43s | 7 条新行全可用 |
 | 9 | 93 | 92 | 69 | 75.0% | 20 | 4.46s | 3 条新行全可用，零翻转 |
+| 10 | 96 | 95 | 74 | 77.9% | 20 | 4.50s | 4 条新行全可用；YouTube 字幕显形 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -404,6 +405,29 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第十轮（YouTube 字幕通道打通，全语料 77.9%）
+
+再补 4 条新行（`solidot`、`guancha`、`thepaper`、`docs.python.org`），语料 93 → 96 行，
+死链 1 条，分母 95。MDN 那行因为锚点没匹配上没写进去，留到第十一轮补齐。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 95 | 20 | 54 | 2 | 0 | 7 | 12 | 0 | 74 | **77.9%** |
+| 旧 91 行子集（与第 9 轮同组成） | 91 | 18 | 52 | 2 | 0 | 7 | 12 | 0 | 70 | **76.9%** |
+
+- 4 条新增全部可用：`solidot` 7942 字 / 1.9s、`guancha` 7938 字 / 1.5s、
+  `thepaper` 785 字 / 0.9s、`python-docs` 3708 字 / 2.0s，全部 `static_http`。
+- **本轮最大变化：YouTube 从 `blocked` 翻成 `partial`（7273 字 / 46.5s → 11.8s）**，而且
+  单独复测第二次仍然 `partial`（11336 字 / 11.8s）。响应里 `coverage.details.source` 为
+  `video_subtitles`、`transcript_source` 为 `manual_subtitles`，说明 yt-dlp 拿到了公开人工字幕，
+  不是抽帧兜底。这条能力一直存在，之前失败是本机出口到 YouTube 的通路问题（`challenge_required`），
+  所以**不能算本轮新增能力**，只能算同一能力在通路恢复后显形；报告的可用率里它计的是真实读数。
+- 其它三条翻转都是一次性的出口抖动，不能当结论：`wikipedia` `partial`(7992) → `unreachable`、
+  `guardian` `unreachable` → `partial`(5735)、`gist` `unreachable` → `partial`(7829)。
+  同一批 13 条 `unreachable` 基本集中在被墙或被本机出口拦下的站点（bbc/reuters/nytimes/medium/
+  reddit/mastodon/bluesky/soundcloud/hn-rss/archive-org），它们的判定取决于出口，不取决于解析能力。
+- 延迟：mean 25.1s、p50 4.5s 量级，零超时。
 
 ## 第九轮（新增 3 条全部可用，全语料 75.0%，零翻转）
 

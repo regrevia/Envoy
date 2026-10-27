@@ -7,7 +7,6 @@ import os
 import re
 import sys
 import uuid
-from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Iterable, TextIO
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse
