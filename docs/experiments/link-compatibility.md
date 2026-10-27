@@ -161,15 +161,70 @@ DRM），不是这台机器的网络问题。清单同时是 `read_support_verdi
 | --- | --- | --- |
 | 快手 视频 / 分享页（`kuaishou.com`、`k.kuaishou.com`） | 纯 HTTP 只剩 63 字节 | 静态 HTML 返回 `{"result":2,...}`；带 `did` cookie 拿到 76KB 但只是 SPA 外壳（`<title>短视频-快手</title>`，无正文数据）；GraphQL `visionVideoDetail` 返回 `result: 400002` + `captcha.zt.kuaishou.com` 校验地址 |
 | YouTube（`youtube.com/watch`） | `challenge_required` | `yt-dlp` 直接报 `Sign in to confirm you're not a bot`；本机也没有 deno，无 JS runtime 可解玩家脚本 |
-| Vimeo | `missing_capability` | 无公开字幕轨；DRM 保护流 |
+| Vimeo | 本机出口不通（`000`），产品侧已接 oEmbed | `vimeo.com/api/oembed.json?url=` 直接给出标题/作者/时长，`backend=vimeo`；本机 `curl` 与 `envoy read` 都是连接超时，所以只算单测通过、没算进语料可用率 |
 | X 个人主页（`x.com/<user>`） | `blocked / empty_content` | 隔离浏览器同样为空，时间线需登录 |
 | 知乎问题页 | `blocked / challenge_required` | 直连与代理都是 403 + 安全验证页 |
-| Instagram 帖子/Reels | `empty（189 字）` | 只有登录墙外壳；`/p/`、`/reel/` 已在规则里标 `unsupported` |
+| Instagram 帖子/Reels | `blocked / auth_required` | 页面只有登录墙外壳（「Post isn't available / Log in / Sign up」）。旧版把 189 字墙文当 `partial` 计成可用，已修：短页命中登录墙标记即报 `blocked`，不再充作正文 |
 | Unsplash | `blocked` | 人机校验页，隔离浏览器也过不去 |
 | LinkedIn | 规则层 `unsupported` | `_UNSUPPORTED_HOSTS`，离线就判死，不调工具 |
 | 微信文章 / 视频号具体内容 | 语料只放平台公开页 | 真实文章链接只存在于微信客户端内，不做伪造 URL |
 
-据此把「已验证可读」的主机从 30 条扩到 51 条（`packages/envoy-cli/src/envoy_cli/platforms.py`
+据此把「已验证可读」的主机从 30 条扩到 78 条（`packages/envoy-cli/src/envoy_cli/platforms.py`
 的 `_SUPPORTED_HOSTS`，每条都能在上面的语料里找到一次 ≥200 字正文的读取记录），
 DSH 插件的 `integrations/dsh/envoy-dsh/link-verdicts.json` 同步再生成，宿主侧据此判断
 「该不该调工具」。
+
+## 后续两处补正（同版本内）
+
+1. **登录墙不再算「部分可读」**。Instagram Reels 旧读数 189 字 `partial`（正文是
+   「Post isn't available / Log in / Sign up for Instagram」），其实一行来源内容都没有。现在
+   `< 600` 字且命中登录墙标记的页面统一返回 `blocked / auth_required` 并带
+   `action_required`，避免用墙文抬高可用率。回归测试 `tests/cli/test_login_wall.py`。
+2. **站点后端与判定表对齐**。`fallbacks.SITE_BACKENDS` 里每个公开端点都配一条样例 URL，
+   `tests/test_fallback_site_parity.py` 断言这条样例既匹配后端正则、又在
+   `read_support_verdict()` 里是 `supported`，防止「后端能读但路由说 unknown/unsupported」。
+   本轮据此新增 Vimeo（oEmbed）、Hacker News（Firebase item API，live 验证：`reader=public_api:hackernews`，
+   标题 + 正文 + 5 条评论共 2481 字），并把 Pinterest、Figma Community、`api.github.com`
+   加进 `_SUPPORTED_HOSTS`（依据是 round-3 语料里它们已经 `ready`，判定却还是 `unknown`）。
+3. **公开端点路径上的标题被拆成单字符**：`_clean_text()` 收的是 `list[str]`，fallback 标题却
+   按字符串传入，`"\n".join(str)` 于是把标题变成「M\ny\n…」。已修并加回归断言（同一路径
+   也影响 RSS/feed 备选标题），JSON 里 `blocks[0].text` 现在是完整一行。
+
+## 第四轮（登录墙改判 + 快速失败）
+
+命令（原始 JSON `/tmp/accept/round4.json`）：
+
+```bash
+python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
+  --out /tmp/accept/round4.json --envoy /tmp/envoy-live
+```
+
+这轮没带 `--include-risk-hosts`，所以抖音两条风控链接不在分母里，分母 70 条、无死链。
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | usable | usable_rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `no_risk` | 70 | 15 | 31 | 4 | 6 | 14 | 46 | 65.7% |
+
+延迟：`n=70 mean 33.4s p50 14.7s p90 80.7s max 109.2s`（比第三轮慢，原因是
+`--include-risk-hosts` 少了抖音两次长跑，但 tiktok/unsplash/wechat 这类超时页仍在分母里）。
+
+配对（两轮都 live 且都可达，n=56）：`usable 46 → 45（82.1% → 80.4%）`，
+`readable 15 → 14（26.8% → 25.0%）`。两处变化都不是能力退化，而是**把原先冒充正文的登录墙改判**：
+
+| 链接 | 第三轮 | 第四轮 | 说明 |
+| --- | --- | --- | --- |
+| `wechat-mp-platform`（`mp.weixin.qq.com/`） | `readable 566 字` | `blocked / auth_required` | 566 字其实是扫码登录表单 |
+| `instagram-reel` | `empty 189 字`（旧版曾计 `partial`） | `blocked / auth_required` | 189 字是「Post isn't available」墙 |
+
+也就是说本轮可用率下降 1 条、正好等于两条被纠正的假正文之差（第二个在第三轮已从 `partial`
+降级成 `empty`），**没有真实的读取回退**。
+
+顺带把「静态 HTML 里已经是登录墙」的路径改成不启浏览器：命中的短页直接
+`blocked / auth_required`（`mp.weixin.qq.com/` 实测 85.9s → 29s）。挑战页
+（`安全验证，请完成登录后继续`）不适用这条快路，仍然先让浏览器解一次人机校验，
+回归测试 `tests/cli/test_login_wall.py::test_static_login_wall_skips_the_browser`。
+
+本轮其它读数变化（都是环境抖动，不是代码）：`kuaishou-share/video` 预检 200、静态只剩
+78 字节空壳（`{"result":2,...}`），`unsplash` 仍 58s 后被 Anubis 挡下，`tiktok` 675 字
+`partial`（第三方嵌入壳），`figma-community` 556 字 `readable`、`pinterest` 267 字
+`readable`（与第三轮一致，这也是把它们写进 `_SUPPORTED_HOSTS` 的依据）。

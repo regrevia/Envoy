@@ -62,3 +62,29 @@ def test_instagram_login_wall_is_blocked_not_partial(monkeypatch):
     assert response.errors[0].code.value == "auth_required"
     assert response.errors[0].action_required is True
     assert "sign-in" in response.errors[0].message
+
+
+def test_static_login_wall_skips_the_browser(monkeypatch):
+    """A wall in the static HTML is final: booting Chromium only re-shows it."""
+    request = _request("https://example.com/members-only")
+    browser_calls: list[str] = []
+    wall = (
+        "<html><head><title>\u5fae\u4fe1\u516c\u4f17\u5e73\u53f0</title></head><body>"
+        "<p>\u8bf7\u5148\u767b\u5f55</p><p>\u767b\u5f55\u540e\u67e5\u770b</p></body></html>"
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *a, **k: True)
+    monkeypatch.setattr(reader, "_should_read_media_first", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "_url_is_video_page", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "fetch_feed", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "public_api_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *a, **k: ("https://example.com/members-only", wall))
+    monkeypatch.setattr(
+        reader,
+        "_read_with_isolated_browser",
+        lambda *a, **k: browser_calls.append("boot") or (None, None),
+    )
+
+    response = reader._read_public_page_once(request)
+
+    assert response.result.value == "blocked"
+    assert browser_calls == []

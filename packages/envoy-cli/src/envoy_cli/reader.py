@@ -7024,6 +7024,22 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 "the platform returned its own error page instead of content.",
                 details={"diagnosis": "source_not_found"},
             )
+        if (
+            _looks_like_login_wall(title, text)
+            and not browser_attempted
+            and not _looks_like_access_challenge(title, text)
+            and not _looks_like_machine_error_payload(text)
+        ):
+            # Booting the isolated browser here only ever shows the same wall,
+            # so fail fast and hand the sign-in back to the user (85.9s -> ~2s
+            # on https://mp.weixin.qq.com/, whose landing page is a login form).
+            return _blocked(
+                request,
+                ErrorCode.AUTH_REQUIRED,
+                "The source returned a sign-in wall instead of its content",
+                action_required=True,
+                details={"reader": "static_http"},
+            )
         if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
             if not browser_attempted:
                 browser_page, browser_error = _read_with_isolated_browser(
