@@ -293,7 +293,17 @@ _EXPAND_SCRIPT = r"""
 
 
 class BrowserRuntimeUnavailable(RuntimeError):
-    pass
+    """The browser runtime cannot start yet.
+
+    ``setup_required`` marks the recoverable case: Playwright is installed but
+    the Chromium binary is not. The caller can then tell the user to run
+    ``envoy browser setup`` once instead of reporting a page-level failure, and
+    ``next_action`` carries that command (or the reason none exists).
+    """
+
+    def __init__(self, message: str, *, setup_required: bool = False) -> None:
+        super().__init__(message)
+        self.setup_required = setup_required
 
 
 class BrowserReadError(RuntimeError):
@@ -390,8 +400,20 @@ def _chromium_executable_exists() -> bool:
         return False
 
 
-def ensure_browser_ready() -> bool:
-    """Return True when a Chromium binary is present, installing it once if not."""
+def ensure_browser_ready(
+    *,
+    timeout_seconds: float = 900.0,
+    auto_setup: bool | None = None,
+) -> bool:
+    """Return True when a Chromium binary is present, installing it once if not.
+
+    ``timeout_seconds`` bounds the download so a caller working inside a host
+    tool deadline can stop waiting instead of burning that deadline on a
+    bootstrap. ``auto_setup=None`` keeps the historical on-demand behaviour;
+    read paths pass ``auto_setup=False`` and let the install step provision the
+    browser up front (see ``integrations/install.sh``), because a first read
+    must not spend minutes downloading.
+    """
     global _AUTO_BROWSER_SETUP_ATTEMPTED
     try:
         import playwright  # noqa: F401
@@ -399,14 +421,17 @@ def ensure_browser_ready() -> bool:
         return False
     if _chromium_executable_exists():
         return True
-    if _AUTO_BROWSER_SETUP_ATTEMPTED or not _auto_setup_allowed():
+    allowed = _auto_setup_allowed() if auto_setup is None else bool(auto_setup)
+    if _AUTO_BROWSER_SETUP_ATTEMPTED or not allowed:
+        return False
+    if timeout_seconds <= 0:
         return False
     _AUTO_BROWSER_SETUP_ATTEMPTED = True
     try:
         result = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
             check=False,
-            timeout=900,
+            timeout=max(1.0, float(timeout_seconds)),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -415,6 +440,25 @@ def ensure_browser_ready() -> bool:
     if int(result.returncode) != 0:
         return False
     return _chromium_executable_exists()
+
+
+# A read may hand the setup at most this long before it gives up and reports a
+# capability gap. The full download takes 1-2 minutes on a normal connection;
+# anything slower belongs in the install step, not in a user's first click.
+_READ_SETUP_BUDGET_SECONDS = 120.0
+
+
+def _read_setup_budget(max_work_seconds: int) -> float:
+    return max(0.0, min(_READ_SETUP_BUDGET_SECONDS, float(max_work_seconds)))
+
+
+def _read_auto_setup_allowed() -> bool:
+    """A read provisions Chromium only when the user opted in for this host."""
+    return os.environ.get("ENVOY_AUTO_BROWSER_SETUP") == "1"
+
+
+def setup_command() -> str:
+    return "envoy browser setup"
 
 
 def setup_browser() -> int:
@@ -739,7 +783,20 @@ def read_page(
     if not _is_public_http_url(source_url, dns_cache):
         raise BrowserReadError("Browser reading is limited to public HTTP(S) addresses")
 
-    ensure_browser_ready()
+    # Bootstrap is judged here, not performed: a read that downloads Chromium
+    # inside the host's tool deadline turns a 300 s timeout into "page failed".
+    # The install step provisions the browser; a user who opted in with
+    # ENVOY_AUTO_BROWSER_SETUP=1 still gets one bounded attempt.
+    if not ensure_browser_ready(
+        timeout_seconds=_read_setup_budget(max_work_seconds),
+        auto_setup=_read_auto_setup_allowed(),
+    ):
+        raise BrowserRuntimeUnavailable(
+            "Envoy's browser is not installed yet; run "
+            f"`{setup_command()}` once (about 1-2 minutes) and retry. "
+            "Reading did not start, so nothing was downloaded or marked as a page failure.",
+            setup_required=True,
+        )
     profile = profile_dir or browser_profile_dir()
     profile.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name != "nt":

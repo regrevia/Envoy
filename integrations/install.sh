@@ -1,29 +1,38 @@
 #!/bin/sh
 # Envoy one-command installer for the three agent hosts.
 #
-#   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+#   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
 #   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
 #
-# It does two things: put an up-to-date `envoy` on PATH (reusing one that is
-# already new enough), then register the plugin the named host needs. Each host
-# keeps its own README for the manual path; this script exists so a marketplace
-# visitor has one line to paste instead of a runtime step followed by two
-# plugin commands.
+# It does three things: install one private runtime, register the host plugin,
+# then provision the browser once so the first link does not wait for a download.
+# With no argument it installs every host it can detect, so the same line works
+# for Claude Code, Codex and DeepSeek Harness.
+#
+# The runtime is pinned to one absolute path (`envoy path` prints it) instead of
+# trusting whatever `envoy` PATH happens to resolve to: a stale PATH binary could
+# otherwise win and the plugin would spawn an older runtime for months.
 #
 # Environment overrides:
-#   ENVOY_VERSION   runtime version to install (default: release manifest)
-#   ENVOY_HOME      private runtime root (default: ~/.local/share/envoy-dsh/runtime)
-#   DSH_PROFILE     Harness profile for the DSH bundle (default: web)
-#   ENVOY_DRY_RUN=1 print the commands instead of running them
+#   ENVOY_VERSION        runtime version to install (default: release manifest)
+#   ENVOY_HOME           private runtime root (default: ~/.local/share/envoy-dsh/runtime)
+#   ENVOY_RUNTIME_BIN    explicit runtime to reuse instead of installing one
+#   ENVOY_SETUP_BROWSER  1 (default) downloads Chromium at install time; 0 skips
+#   ENVOY_DETECT_DESKTOP_APP 1 (default) also finds the DeepSeek Harness app bundle
+#   DSH_PROFILE          Harness profile for the DSH bundle (default: web)
+#   ENVOY_DRY_RUN=1      print the commands instead of running them
 set -eu
 
 REPO="regrevia/Envoy"
 MANIFEST_URL="https://raw.githubusercontent.com/$REPO/main/integrations/release-manifest.json"
 RUNTIME_HOME="${ENVOY_HOME:-$HOME/.local/share/envoy-dsh/runtime}"
 RUNTIME_BIN="$RUNTIME_HOME/bin/envoy"
+RUNTIME_PIN="${ENVOY_RUNTIME_PIN:-$HOME/.envoy/runtime-path}"
 DSH_PROFILE="${DSH_PROFILE:-web}"
 DRY_RUN="${ENVOY_DRY_RUN:-0}"
+SETUP_BROWSER="${ENVOY_SETUP_BROWSER:-1}"
+DETECT_DESKTOP_APP="${ENVOY_DETECT_DESKTOP_APP:-1}"
 
 die() {
   printf 'envoy install: %s\n' "$1" >&2
@@ -40,14 +49,16 @@ run() {
 
 usage() {
   cat <<'EOF'
-usage: install.sh <dsh|claude-code|codex|mcp|skill|all>
+usage: install.sh [dsh|claude-code|codex|mcp|skill|all|path]
 
+  (no argument) every host detected on this machine
   dsh          install the DeepSeek Harness bundle from npm
   claude-code  add this repository as a marketplace, then install the plugin
   codex        same, plus the user-level prompt hook Codex needs
   mcp          add the envoy MCP server to Claude Desktop, Cursor or Windsurf
   skill        unpack the skill into ~/.envoy/skill/envoy for hosts without plugins
   all          every host whose CLI is on PATH, falling back to the MCP entry
+  path         print the runtime path the installer pinned (nothing is changed)
 EOF
 }
 
@@ -132,6 +143,27 @@ ensure_uv() {
   return 1
 }
 
+runtime_version_of() {
+  if [ ! -x "$1" ]; then
+    return 0
+  fi
+  "$1" --version 2>/dev/null | sed -n 's/.* \([0-9][0-9.]*\).*/\1/p' | head -1
+}
+
+pin_runtime() {
+  mkdir -p "$(dirname "$RUNTIME_PIN")"
+  printf '%s\n' "$1" > "$RUNTIME_PIN"
+}
+
+pinned_runtime() {
+  if [ -f "$RUNTIME_PIN" ]; then
+    candidate="$(head -1 "$RUNTIME_PIN" 2>/dev/null)"
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s' "$candidate"
+    fi
+  fi
+}
+
 install_runtime() {
   version="$1"
   wheel="envoy_cli-$version-py3-none-any.whl"
@@ -144,6 +176,8 @@ install_runtime() {
     printf '  + venv %s\n' "$RUNTIME_HOME"
     printf '  + download %s\n' "$url"
     printf '  + pip install %s\n' "$wheel"
+    printf '  + pin %s -> %s\n' "$RUNTIME_BIN" "$RUNTIME_PIN"
+    provision_browser "$RUNTIME_BIN"
     return 0
   fi
 
@@ -177,14 +211,34 @@ install_runtime() {
 
   # The DSH bundle keeps its runtime private; the two plugin hosts spawn a bare
   # `envoy`, so expose it on PATH without touching an existing install.
+  pin_runtime "$RUNTIME_BIN"
+  expose_runtime
+  provision_browser "$RUNTIME_BIN"
+}
+
+# The two plugin hosts spawn a bare `envoy`; expose the pinned runtime on PATH
+# without touching an existing install (a user may have their own envoy).
+expose_runtime() {
   if ! command -v envoy >/dev/null 2>&1; then
     mkdir -p "$HOME/.local/bin"
-    ln -sf "$RUNTIME_BIN" "$HOME/.local/bin/envoy"
+    ln -sf "$(envoy_binary)" "$HOME/.local/bin/envoy"
     case ":$PATH:" in
       *":$HOME/.local/bin:"*) ;;
       *) printf '\nexport PATH="$HOME/.local/bin:$PATH"\n  (add the line above to your shell profile)\n' >&2 ;;
     esac
   fi
+}
+
+# Chromium takes a minute or two and belongs to install time, not to the user's
+# first link: a read that downloads it would sit inside the host's tool deadline
+# and surface as a failed page instead of a one-time setup step.
+provision_browser() {
+  if [ "$SETUP_BROWSER" != "1" ]; then
+    printf 'envoy install: skipped browser setup (ENVOY_SETUP_BROWSER=0); run `envoy browser setup` before the first link\n'
+    return 0
+  fi
+  printf 'envoy install: browser runtime (one-time, about 1-2 minutes)\n'
+  run "$1" browser setup || printf 'envoy install: browser setup did not finish; run `envoy browser setup` later\n' >&2
 }
 
 # A finished install that cannot read a page is still a failed install, so say
@@ -220,30 +274,49 @@ RUNTIME_VERSION=""
 ensure_runtime() {
   version="$(resolve_version)"
   RUNTIME_VERSION="$version"
-  if command -v envoy >/dev/null 2>&1; then
-    current="$(envoy --version 2>/dev/null | sed -n 's/.* \([0-9][0-9.]*\).*/\1/p' | head -1)"
+
+  # One runtime, one absolute path. A pinned path wins over PATH so a stale
+  # `envoy` earlier in the user's PATH cannot hijack the plugin months later.
+  pinned="$(pinned_runtime)"
+  if [ -n "$pinned" ]; then
+    current="$(runtime_version_of "$pinned")"
     if [ -n "$current" ] && version_at_least "$current" "$version"; then
-      printf 'envoy install: using envoy %s from %s\n' "$current" "$(command -v envoy)"
+      printf 'envoy install: using envoy %s from %s (pinned)\n' "$current" "$pinned"
       return 0
     fi
-    printf 'envoy install: envoy %s on PATH is older than %s\n' "${current:-unknown}" "$version" >&2
+    printf 'envoy install: pinned envoy %s is older than %s\n' "${current:-unknown}" "$version" >&2
   fi
+
+  if [ -n "${ENVOY_RUNTIME_BIN:-}" ]; then
+    current="$(runtime_version_of "$ENVOY_RUNTIME_BIN")"
+    [ -n "$current" ] || die "ENVOY_RUNTIME_BIN=$ENVOY_RUNTIME_BIN is not runnable"
+    version_at_least "$current" "$version" || die "ENVOY_RUNTIME_BIN=$ENVOY_RUNTIME_BIN is envoy $current, older than $version"
+    pin_runtime "$ENVOY_RUNTIME_BIN"
+    printf 'envoy install: using envoy %s from %s (ENVOY_RUNTIME_BIN)\n' "$current" "$ENVOY_RUNTIME_BIN"
+    return 0
+  fi
+
   if [ -x "$RUNTIME_BIN" ]; then
-    current="$("$RUNTIME_BIN" --version 2>/dev/null | sed -n 's/.* \([0-9][0-9.]*\).*/\1/p' | head -1)"
+    current="$(runtime_version_of "$RUNTIME_BIN")"
     if [ -n "$current" ] && version_at_least "$current" "$version"; then
+      pin_runtime "$RUNTIME_BIN"
       printf 'envoy install: using envoy %s from %s\n' "$current" "$RUNTIME_BIN"
       expose_runtime
       return 0
     fi
   fi
-  install_runtime "$version"
-}
 
-expose_runtime() {
-  if ! command -v envoy >/dev/null 2>&1; then
-    mkdir -p "$HOME/.local/bin"
-    ln -sf "$RUNTIME_BIN" "$HOME/.local/bin/envoy"
+  if command -v envoy >/dev/null 2>&1; then
+    current="$(runtime_version_of "$(command -v envoy)")"
+    if [ -n "$current" ] && version_at_least "$current" "$version"; then
+      pin_runtime "$(command -v envoy)"
+      printf 'envoy install: using envoy %s from %s (on PATH)\n' "$current" "$(command -v envoy)"
+      return 0
+    fi
+    printf 'envoy install: envoy %s on PATH is older than %s; installing the private runtime\n' "${current:-unknown}" "$version" >&2
   fi
+
+  install_runtime "$version"
 }
 
 find_dsh() {
@@ -257,6 +330,7 @@ find_dsh() {
   fi
   # DeepSeek Harness Desktop ships its CLI inside the app bundle and does not
   # put it on PATH, so a marketplace visitor has no `dsh` to type.
+  [ "$DETECT_DESKTOP_APP" = "1" ] || return 1
   for candidate in \
     "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
     "$HOME/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"; do
@@ -300,16 +374,23 @@ install_codex() {
   run codex plugin marketplace add "https://github.com/$REPO.git"
   run codex plugin add "envoy@envoy"
   printf 'envoy install: Codex prompt hook\n'
-  run envoy hook install --host codex
+  run "$(envoy_binary)" hook install --host codex
   printf 'Restart Codex so the plugin and hook load.\n'
   report_health
 }
 
+# Every host-facing step resolves the binary through here, so the plugin that
+# gets registered and the runtime that serves it are always the same one.
 envoy_binary() {
-  if command -v envoy >/dev/null 2>&1; then
+  pinned="$(pinned_runtime)"
+  if [ -n "$pinned" ]; then
+    printf '%s' "$pinned"
+  elif [ -x "$RUNTIME_BIN" ]; then
+    printf '%s' "$RUNTIME_BIN"
+  elif command -v envoy >/dev/null 2>&1; then
     command -v envoy
   else
-    printf '%s' "$RUNTIME_BIN"
+    die "no envoy runtime found; run the installer without a host argument first"
   fi
 }
 
@@ -390,8 +471,27 @@ ENVOY_SKILL
   printf 'Point the host at %s, then restart it.\n' "$dest"
 }
 
+install_auto() {
+  ensure_runtime
+  installed=0
+  if find_dsh >/dev/null 2>&1; then install_dsh; installed=1; fi
+  if command -v claude >/dev/null 2>&1; then install_claude_code; installed=1; fi
+  if command -v codex >/dev/null 2>&1; then install_codex; installed=1; fi
+  if [ "$installed" = "0" ]; then
+    printf 'envoy install: no host CLI detected; writing the MCP entry instead\n' >&2
+    install_mcp
+  fi
+  report_health
+}
+
 host="${1:-}"
 case "$host" in
+  "")
+    install_auto
+    ;;
+  auto)
+    install_auto
+    ;;
   dsh)
     ensure_runtime
     install_dsh
@@ -415,14 +515,17 @@ case "$host" in
     report_health
     ;;
   all)
-    ensure_runtime
-    installed=0
-    if find_dsh >/dev/null 2>&1; then install_dsh; installed=1; fi
-    if command -v claude >/dev/null 2>&1; then install_claude_code; installed=1; fi
-    if command -v codex >/dev/null 2>&1; then install_codex; installed=1; fi
-    if [ "$installed" = "0" ]; then install_mcp; installed=1; fi
-    report_health
-    [ "$installed" = "1" ] || die "no host CLI found (dsh, claude, codex)"
+    install_auto
+    ;;
+  path)
+    pinned="$(pinned_runtime)"
+    if [ -n "$pinned" ]; then
+      printf '%s\n' "$pinned"
+    elif [ -x "$RUNTIME_BIN" ]; then
+      printf '%s\n' "$RUNTIME_BIN"
+    else
+      die "no runtime installed yet; run install.sh first"
+    fi
     ;;
   -h|--help|help)
     usage

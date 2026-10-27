@@ -69,3 +69,74 @@ def test_present_binary_is_not_installed(monkeypatch):
 
     assert browser.ensure_browser_ready() is True
     assert calls == []
+
+
+def test_read_judges_capability_instead_of_downloading(monkeypatch):
+    """A read must not spend the host's tool deadline on a bootstrap download."""
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: False)
+    monkeypatch.setattr(browser.subprocess, "run", lambda argv, **kw: calls.append(argv) or _FakeResult())
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.delenv("ENVOY_AUTO_BROWSER_SETUP", raising=False)
+    monkeypatch.delenv("ENVOY_DISABLE_AUTO_BROWSER_SETUP", raising=False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    def _factory():
+        raise AssertionError("the browser must not launch when it is not installed")
+
+    with __import__("pytest").raises(browser.BrowserRuntimeUnavailable) as caught:
+        browser.read_page("https://example.com/a", playwright_factory=_factory, max_work_seconds=30)
+
+    assert caught.value.setup_required is True
+    assert "envoy browser setup" in str(caught.value)
+    assert calls == []
+
+
+def test_read_download_is_bounded_when_opted_in(monkeypatch):
+    """Opting in still caps the download well below the read deadline."""
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: False)
+
+    def _install(argv, **kw):
+        calls.append([argv, kw.get("timeout")])
+        return _FakeResult()
+
+    monkeypatch.setattr(browser.subprocess, "run", _install)
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.setenv("ENVOY_AUTO_BROWSER_SETUP", "1")
+    monkeypatch.delenv("ENVOY_DISABLE_AUTO_BROWSER_SETUP", raising=False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    def _factory():
+        raise AssertionError("never launched")
+
+    with __import__("pytest").raises(browser.BrowserRuntimeUnavailable):
+        browser.read_page("https://example.com/a", playwright_factory=_factory, max_work_seconds=30)
+
+    assert len(calls) == 1
+    assert 0 < calls[0][1] <= browser._READ_SETUP_BUDGET_SECONDS
+    assert calls[0][1] <= 30
+
+
+def test_zero_setup_budget_skips_download(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: False)
+    monkeypatch.setattr(browser.subprocess, "run", lambda argv, **kw: calls.append(argv) or _FakeResult())
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    assert browser.ensure_browser_ready(timeout_seconds=0, auto_setup=True) is False
+    assert calls == []
+
+
+def test_explicit_no_auto_setup_skips_download(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(browser, "_chromium_executable_exists", lambda: False)
+    monkeypatch.setattr(browser.subprocess, "run", lambda argv, **kw: calls.append(argv) or _FakeResult())
+    monkeypatch.setattr(browser, "_AUTO_BROWSER_SETUP_ATTEMPTED", False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    assert browser.ensure_browser_ready(auto_setup=False) is False
+    assert calls == []

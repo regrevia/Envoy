@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
 import urllib.parse
 from pathlib import Path
 
-from . import authflow
+from . import authflow, process_control
 
 _LOGIN_HINTS = (
     "登录",
@@ -97,23 +96,9 @@ def _write_state(action_id: str, payload: dict) -> None:
 
 
 def _pid_alive(pid: object) -> bool:
-    try:
-        value = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if value <= 0:
-        return False
-    try:
-        os.kill(value, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        # Windows raises WinError 87 instead of ProcessLookupError for a pid
-        # that is already gone.
-        return False
-    return True
+    # One portable probe: on Windows the Unix answer would terminate the
+    # process it was asked about (see process_control).
+    return process_control.pid_alive(pid)
 
 
 def start(
@@ -223,17 +208,7 @@ def stop(action_id: str) -> dict:
 
     current = read_state(action_id)
     pid = current.get("pid")
-    stopped = False
-    if _pid_alive(pid):
-        try:
-            os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
-            stopped = True
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                os.kill(int(pid), signal.SIGTERM)
-                stopped = True
-            except (ProcessLookupError, PermissionError, TypeError, ValueError):
-                stopped = False
+    stopped = process_control.stop_process(pid)
     _write_state(
         action_id,
         {**current, "status": "canceled", "updated_at": time.time(), "pid": None},
