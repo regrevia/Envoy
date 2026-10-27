@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
 
-不确定宿主是哪个：把最后一段换成 `auto`，脚本会识别已装的 Claude Code / Codex / DSH，都没有就写 MCP 条目（`mcp`、`skill` 也可以单独装）。只想先看它要做什么，命令前加 `ENVOY_DRY_RUN=1`。Windows PowerShell 用 `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex`（默认 auto，指定宿主时下载后 `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`）。
+不确定宿主是哪个：把最后一段换成 `auto`，脚本会识别已装的 Claude Code / Codex / DSH，都没有就写 MCP 条目（`mcp`、`skill` 也可以单独装）。只想先看它要做什么，命令前加 `ENVOY_DRY_RUN=1`。从镜像或本地目录安装时，把下载根换成 `ENVOY_RELEASES_BASE`、清单地址换成 `ENVOY_MANIFEST_URL`（目录按 `v<版本>/` 放产物与 `SHA256SUMS`），默认值不变。Windows PowerShell 用 `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex`（默认 auto，指定宿主时下载后 `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`）。
 
 装完两条自检：
 
@@ -191,7 +191,7 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
 
-Not sure which host you have: use `auto` instead — it detects an installed Claude Code / Codex / DSH and falls back to an MCP entry (`mcp` and `skill` also install on their own). Add `ENVOY_DRY_RUN=1` to see what it would do first. On Windows PowerShell: `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex` (auto by default; for one host download it and run `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`).
+Not sure which host you have: use `auto` instead — it detects an installed Claude Code / Codex / DSH and falls back to an MCP entry (`mcp` and `skill` also install on their own). Add `ENVOY_DRY_RUN=1` to see what it would do first. To install from a mirror or a local directory, point `ENVOY_RELEASES_BASE` at the download root and `ENVOY_MANIFEST_URL` at the manifest (layout: `v<version>/` with the artifacts and `SHA256SUMS`); the defaults are unchanged. On Windows PowerShell: `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex` (auto by default; for one host download it and run `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`).
 
 Two checks after installing:
 
