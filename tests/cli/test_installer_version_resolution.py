@@ -71,3 +71,10 @@ def test_release_root_is_overridable_on_both_sides(sh: str, ps1: str):
     # A fork changes the repository once and every URL follows.
     assert '${ENVOY_REPO:-regrevia/Envoy}' in sh
     assert "$env:ENVOY_REPO" in ps1
+
+
+def test_the_claude_code_marketplace_follows_the_repo_override(sh: str, ps1: str) -> None:
+    assert 'claude plugin marketplace add "$REPO"' in sh
+    assert '$Script:Repo' in ps1
+    assert 'claude plugin marketplace add "regrevia/Envoy"' not in sh
+    assert '"marketplace", "add", "regrevia/Envoy"' not in ps1

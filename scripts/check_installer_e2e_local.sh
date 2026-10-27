@@ -157,6 +157,35 @@ else
   fail "MCP dry run" "$(printf '%s' "$output" | tail -5)"
 fi
 
+# The two host-CLI dispatches are the one-click path: their plan must name the
+# marketplace source, follow ENVOY_REPO, and still write nothing on a dry run.
+for target in claude-code codex; do
+  home="$work/home-$target"
+  mkdir -p "$home"
+  if output="$(env -i HOME="$home" PATH="$PATH" \
+    ENVOY_VERSION="$version" ENVOY_DRY_RUN=1 ENVOY_SKIP_UV_INSTALL=1 \
+    ENVOY_REPO=acme/Envoy \
+    ENVOY_MANIFEST_URL="http://127.0.0.1:$port/release-manifest.json" \
+    ENVOY_RELEASES_BASE="http://127.0.0.1:$port/releases/download" \
+    sh "$INSTALL" "$target" 2>&1)"; then
+    case "$target:$output" in
+      claude-code:*"claude plugin marketplace add acme/Envoy"*)
+        pass "the Claude Code plan follows ENVOY_REPO" ;;
+      codex:*"codex plugin marketplace add https://github.com/acme/Envoy.git"*)
+        pass "the Codex plan follows ENVOY_REPO" ;;
+      *)
+        fail "$target plan" "$(printf '%s' "$output" | tail -4)" ;;
+    esac
+    if [ -z "$(find "$home" -type f 2>/dev/null)" ]; then
+      pass "$target dry run writes nothing"
+    else
+      fail "$target side effect" "$(find "$home" -type f | tr '\n' ' ')"
+    fi
+  else
+    fail "$target dry run" "$(printf '%s' "$output" | tail -5)"
+  fi
+done
+
 # The same mirror with a wrong digest must stop the installation.
 cp "$DELIVERY/SHA256SUMS" "$serve/releases/download/v$version/SHA256SUMS"
 python3 - "$serve/releases/download/v$version/SHA256SUMS" <<'ENVOY_TAMPER'

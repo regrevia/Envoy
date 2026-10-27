@@ -322,7 +322,7 @@ function Install-Dsh {
 function Install-ClaudeCode {
     if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Stop-Install "the claude CLI is not on PATH; install Claude Code first" }
     Write-Host "envoy install: Claude Code plugin"
-    Invoke-Step "claude" @("plugin", "marketplace", "add", "regrevia/Envoy")
+    Invoke-Step "claude" @("plugin", "marketplace", "add", "$Script:Repo")
     Invoke-Step "claude" @("plugin", "install", "envoy@envoy")
     Write-Host "Restart Claude Code, or run /plugin to confirm Envoy is enabled."
     Confirm-Health

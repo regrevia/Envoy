@@ -392,7 +392,7 @@ install_dsh() {
 install_claude_code() {
   command -v claude >/dev/null 2>&1 || die "the claude CLI is not on PATH; install Claude Code first"
   printf 'envoy install: Claude Code plugin\n'
-  run claude plugin marketplace add "regrevia/Envoy"
+  run claude plugin marketplace add "$REPO"
   run claude plugin install "envoy@envoy"
   printf 'Restart Claude Code, or run /plugin to confirm Envoy is enabled.\n'
   report_health
