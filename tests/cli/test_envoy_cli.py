@@ -1429,7 +1429,7 @@ def test_pdf_url_extracts_text_with_page_locators(monkeypatch):
     pdf.save()
     pdf_bytes = output.getvalue()
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache: {
+    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache, **_kwargs: {
         "url": "https://example.org/guide.pdf",
         "data": pdf_bytes,
         "mime_type": "application/pdf",
@@ -2864,7 +2864,7 @@ def test_long_pdf_expands_by_page_without_losing_page_locator(tmp_path, monkeypa
     pdf_bytes = output.getvalue()
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache: {
+    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache, **_kwargs: {
         "url": "https://example.org/guide.pdf",
         "data": pdf_bytes,
         "mime_type": "application/pdf",
@@ -2906,7 +2906,7 @@ def test_scanned_pdf_reports_ocr_capability_gap(monkeypatch):
     pdf.showPage()
     pdf.save()
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache: {
+    monkeypatch.setattr(reader, "_fetch_pdf_source", lambda _url, _max_bytes, _cache, **_kwargs: {
         "url": "https://example.org/scanned.pdf",
         "data": output.getvalue(),
         "mime_type": "application/pdf",
