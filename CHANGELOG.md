@@ -11,6 +11,9 @@
 - 固定单一 runtime：安装时把所用的 `envoy` 绝对路径写进 `~/.envoy/runtime-path`，
   之后一律用它。PATH 里更早出现的旧 `envoy` 不会再悄悄盖掉新装的那份
   （离线用例 `scripts/check_installer_offline.sh` 覆盖）。
+- 一键安装的仓库源可覆盖：`ENVOY_REPO=<owner>/Envoy` 同时改下载地址、Claude Code
+  插件市场源与 Codex 市场源；镜像或 fork 装出来的就是那份代码，不会悄悄装成上游
+  （环回干跑 `scripts/check_installer_e2e_local.sh` 覆盖两条一键分支）。
 - 浏览器只在安装期准备一次：读网页时缺浏览器直接快速失败并给出
   `envoy browser setup`，不再在宿主的 300 秒工具时限里下 900 秒的 Chromium。
 - Windows：新增 `process_control.py`，探活用 `OpenProcess` / `GetExitCodeProcess`，
@@ -33,6 +36,10 @@
 - One pinned runtime: install records the absolute `envoy` path in
   `~/.envoy/runtime-path` and every later command uses it, so an older `envoy`
   earlier in `PATH` cannot silently win (`scripts/check_installer_offline.sh`).
+- The one-click installer takes its repository from `ENVOY_REPO=<owner>/Envoy`,
+  which now redirects the download base, the Claude Code marketplace source and
+  the Codex marketplace source together, so a mirror or fork installs that copy
+  instead of silently installing upstream (`scripts/check_installer_e2e_local.sh`).
 - The browser is provisioned once at install time: a read that finds no browser
   fails fast with `envoy browser setup` instead of downloading Chromium for up
   to 900 s inside a 300 s host tool deadline.
