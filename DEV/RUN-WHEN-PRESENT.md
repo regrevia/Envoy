@@ -2,7 +2,7 @@
 
 这一份是给「有人在旁边、能联网、能开 GUI」的那一次跑用的。**不要在无人值守时
 自动执行**：里面有真实网页、真实 ASR / OCR 模型下载、Windows 与 Linux 真机安装。
-本轮（0.1.24）这些全部是 `not_run`，`EXPERIMENT-PLAN.json` 里 32 条也全是
+本轮（0.1.24）这些全部是 `not_run`，`EXPERIMENT-PLAN.json` 里 35 条也全是
 `not_run`。
 
 ## 0. 准备
@@ -56,7 +56,16 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 where envoy            # 期望命中 ~\.envoy\bin\envoy.cmd
 ```
 
-对应 `EXPERIMENT-PLAN.json` 的 `I01`–`I10`。
+对应 `EXPERIMENT-PLAN.json` 的 `I01`–`I10`。一键安装那三条（`I11` Claude Code、`I12` Codex、`I13` 镜像源）在同一段里做，先干跑看计划：
+
+```sh
+ENVOY_DRY_RUN=1 sh integrations/install.sh claude-code
+ENVOY_DRY_RUN=1 sh integrations/install.sh codex
+ENVOY_DRY_RUN=1 sh integrations/install.sh dsh
+ENVOY_DRY_RUN=1 ENVOY_REPO=acme/Envoy sh integrations/install.sh claude-code
+```
+
+干跑应只打印要执行的宿主命令、不写文件；真装以那个计划为准。
 
 ## 2. 浏览器与读路径（真实下载，允许慢）
 
@@ -106,7 +115,7 @@ envoy read /path/to/long.pdf --pages 10-25 --json
 ## 7. 先干跑一遍实验计划（不联网、不执行）
 
 ```sh
-python3 dry_run_experiments.py --check     # 期望 plan ok: 35 entries (not_run 32); holdout pending_sample
+python3 dry_run_experiments.py --check     # 期望 plan ok: 35 entries (not_run 35); holdout pending_sample
 python3 dry_run_experiments.py --list
 python3 dry_run_experiments.py --render V02  # 打印该条的确切命令与待填占位符
 ```
@@ -132,7 +141,7 @@ python3 freeze_holdout.py --check holdout.json      # 期望 holdout ok: ... (12
 
 ```sh
 cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
-python3 record_experiment.py --json                       # 先看现在是 32 条 not_run、holdout 状态
+python3 record_experiment.py --json                       # 先看现在是 35 条 not_run、holdout 状态
 python3 record_experiment.py --id V02 --status passed \
     --evidence "900s budget: 412/600 chunks, gap 188, 214s wall" \
     --observed '{"processed":412,"total":600,"wall_seconds":214}'        # 不带 --write = 干跑
