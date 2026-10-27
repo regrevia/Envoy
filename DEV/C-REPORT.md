@@ -22,7 +22,7 @@
 | C13 | 公网守卫判定一次到位：`_public_url_rejection` 返回 public / policy / dns 三值并按 host 缓存，读路径只解析一次域名、由同一个结论决定报错码与文案（此前用 bool 再补查一次，两次解析可能不一致）；`_host_lookup_failed` 删除 | `packages/envoy-cli/src/envoy_cli/reader.py`、`browser.py`、`tests/cli/test_url_guard_determinism.py` | `unit_checked`（5 用例，全程不打真 DNS；受影响 13 个测试文件 321 passed） |
 | C14 | 实测结果写回工具 `record_experiment.py`：把一条结果连同 `evidence`/`observed_at` 写进计划，拒绝无证据的通过/失败、拒绝把已跑条目改回 `not_run`（除非 `--force`），计划级 `status` 随条目重算；不带 `--write` 只干跑 | `scripts/record_experiment.py`、交付目录同名额、`tests/cli/test_record_experiment.py` | `unit_checked`（8 用例，含未知 id、无证据、降级拦截、干跑不动字节、聚合状态、坏计划先拒） |
 | C15 | 下载摘要校验不再静默跳过 | `integrations/install.sh`（`verify_checksum`）、`scripts/check_installer_offline.sh` | `implemented` + `unit_checked`（离线用例 `10/10`；`pytest tests/test_install_script.py` 9 passed，另 2 例受本机 Xcode 许可限制、旧提交同样失败）；POSIX 侧取不到 `SHA256SUMS` 或无 `shasum`/`sha256sum` 时各打一行说明，取到但缺该文件条目直接 `die`；`install.ps1` 侧同样的两种情形也各走一条（不可达→警告继续、缺条目→失败），两平台语义一致 |
-| C16 | 安装源可覆盖，并用环回镜像做端到端验证 | `integrations/install.sh`（`ENVOY_RELEASES_BASE` / `ENVOY_MANIFEST_URL`，两平台；`install.ps1` 同款 `$Script:ReleasesBase`）、`scripts/check_installer_e2e_local.sh`、`tests/cli/test_installer_version_resolution.py`、`tests/cli/test_installer_ps1_static.py`、`tests/cli/test_install_docs.py` | `implemented` + `unit_checked`（离线用例 `10/10`；环回 e2e `3/3`；ps1 静态 4 passed；安装相关 `pytest` 25 passed（另 2 例 Xcode 许可阻塞），另 2 例同前）；四处下载统一走 `$RELEASES_BASE`，宿主机库 `ENVOY_REPO` 一处覆盖全部默认 URL，默认仍是公开路径，镜像/本地目录按 `v<版本>/` 布局即可服务；e2e 在 127.0.0.1 上完整跑「解析版本 → 下载 → 校验 → 解包」，篡改摘要后确认安装失败 |
+| C16 | 安装源可覆盖（含 Claude Code 市场源），并用环回镜像做端到端验证 | `integrations/install.sh`（`ENVOY_RELEASES_BASE` / `ENVOY_MANIFEST_URL`，两平台；`install.ps1` 同款 `$Script:ReleasesBase`）、`scripts/check_installer_e2e_local.sh`、`tests/cli/test_installer_version_resolution.py`、`tests/cli/test_installer_ps1_static.py`、`tests/cli/test_install_docs.py` | `implemented` + `unit_checked`（离线用例 `10/10`；环回 e2e `3/3`；ps1 静态 4 passed；安装相关 `pytest` 25 passed（另 2 例 Xcode 许可阻塞），另 2 例同前）；四处下载统一走 `$RELEASES_BASE`，宿主机库 `ENVOY_REPO` 一处覆盖全部默认 URL，默认仍是公开路径，镜像/本地目录按 `v<版本>/` 布局即可服务；e2e 在 127.0.0.1 上完整跑「解析版本 → 下载 → 校验 → 解包」，篡改摘要后确认安装失败 |
 
 ## 2. 通过的检查（本轮真跑）
 
@@ -31,7 +31,7 @@
 - `tests/cli/test_process_control.py`：**14 passed**（含注入 `nt` 平台的 Windows 分支）。
 - `tests/cli/test_browser_auto_setup.py`：**8 passed**。
 - `sh scripts/check_installer_offline.sh`：**10/10**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」「下载根可覆盖」）。
-- `sh scripts/check_installer_e2e_local.sh`：**8/8 通过（含 dry-run 只报计划不落盘、DSH 包 URL 走同一根、mcp 分支）**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
+- `sh scripts/check_installer_e2e_local.sh`：**12/12 通过（含 dry-run 只报计划不落盘、DSH 包 URL 走同一根、mcp 分支，以及 `claude-code`/`codex` 两条一键安装分支：计划里的 marketplace 源跟随 `ENVOY_REPO`、干跑不写文件）**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
 - `tests/cli/test_install_docs.py`：**4 passed**（README 中/英的一行命令 URL 必须来自 `install.sh` 的 `ENVOY_REPO` 默认；命令里的每个 target 都得在 `case` 里存在；用户可见 target 都得在文档出现——`all` 因此补进 README）。
 - `tests/cli/test_installer_ps1_static.py`：**4 passed**（`$Script:` 变量先赋值后使用、括号配平、镜像钩子各只有一处；本机无 PowerShell，故只做静态面）。
 - 安装/守卫/进程四文件定点回归（`test_install_state`、`test_browser_auto_setup`、`test_process_control`、`test_url_guard_determinism`）：**36 passed in 0.64s**。
