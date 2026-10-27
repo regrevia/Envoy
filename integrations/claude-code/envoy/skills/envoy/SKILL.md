@@ -321,6 +321,11 @@ runtime refuses and stays headless, then waits for the human within the
 request's `max_work_seconds` budget (180 seconds by default).
 No host browser automation tool is required.
 
+A long recording needs more of that budget than a page does. A one-hour video
+or podcast spends minutes on subtitles or transcription, so pass
+`budget.max_work_seconds` in the same call (300 for a short episode, up to 900
+for a long one) rather than re-reading after a budget timeout.
+
 When a page needs the user's own session, the block arrives as data instead of
 prose: the error's `details.needs_user_action` carries `requires_human: true`,
 names the `kind` (`login_or_verification`, or `cookies_required` when a site only
