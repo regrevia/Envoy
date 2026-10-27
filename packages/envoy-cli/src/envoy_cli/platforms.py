@@ -150,7 +150,7 @@ _INSTAGRAM_ITEM_RE = re.compile(r"^/(?:p|reel|reels|tv)/[^/]+", re.IGNORECASE)
 _VIMEO_VIDEO_RE = re.compile(r"/\d+/?")
 
 
-_UNSUPPORTED_HOSTS = {"linkedin.com"}
+_UNSUPPORTED_HOSTS = {"linkedin.com", "apnews.com"}
 _DOUYIN_READ_HOSTS = {"douyin.com", "m.douyin.com", "iesdouyin.com"}
 
 # Hosts whose public pages Envoy has read on this machine, or that have an
@@ -244,6 +244,8 @@ _SUPPORTED_HOSTS = {
     "youku.com",
     "v.youku.com",
     "framatube.org",
+    "npr.org",
+    "cnbc.com",
     "qbitai.com",
     "dev.to",
     "zenn.dev",

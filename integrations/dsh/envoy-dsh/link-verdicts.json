@@ -47,6 +47,7 @@
       "caixin.com",
       "channels.weixin.qq.com",
       "cls.cn",
+      "cnbc.com",
       "cnblogs.com",
       "commons.wikimedia.org",
       "danluu.com",
@@ -89,6 +90,7 @@
       "news.ycombinator.com",
       "notion.so",
       "npmjs.com",
+      "npr.org",
       "oschina.net",
       "pingwest.com",
       "pinterest.com",
@@ -134,6 +136,7 @@
       "live.douyin.com"
     ],
     "hosts": [
+      "apnews.com",
       "linkedin.com"
     ],
     "path_rules": [
