@@ -28,6 +28,11 @@ of restarting.
 Measured on 123 live links across those platforms: **80% usable as source
 material** — that is 93% of the links that answered at all — with **0 failures**
 and every gap named.
+
+Same 60 turns per arm, with and without the bundle: **finishes reading 22% → 92%**,
+**times out 68% → 0**, **answer quotes a real fact from the source 23% → 82%**.
+That A/B is exploratory (different caps, no human correctness review); the per-read
+behaviour is what the tests assert.
 The harness is in `docs/experiments/link-compatibility.md`; rerun it with
 `scripts/acceptance/link_coverage.py`.
 
