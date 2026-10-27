@@ -1,5 +1,28 @@
 # 更新日志 / Changelog
 
+## 0.1.19 - 2026-10-27
+
+### 中文
+
+- 新增 3 个可读站点：`gitlab.com`（README 7961 字）、`douban.com` 小组话题（1253 字，
+  `static_http`）、`ximalaya.com` 专辑页（504 字，需浏览器）。
+- 验收语料 97 → 100 行，预检剔 1 条死链，分母 99：可用 `76/99 = 76.8%`；剔掉 13 条本机
+  出口不可达的行后，可达口径 `76/86 = 88.4%`；同口径 96 行子集 `75/96 = 78.1%`。
+- `social` 与 `audio` 两个家族第一次出现可用行（此前各自 0 可用）。
+- 关闭弹窗逻辑补上欧洲同意横幅：`.cmp-container`、`#onetrust-banner-sdk`、
+  `.qc-cmp2-container`、`[aria-label*="consent" i]`。
+
+### English
+
+- Three new readable hosts: `gitlab.com` (README, 7961 chars), `douban.com` group topics
+  (1253 chars via `static_http`) and `ximalaya.com` album pages (504 chars via the browser).
+- Acceptance corpus 97 → 100 rows with one dead link removed (denominator 99): usable
+  `76/99 = 76.8%`; with the 13 locally unreachable rows excluded, `76/86 = 88.4%`; the
+  same-scope 96-row subset is `75/96 = 78.1%`.
+- The `social` and `audio` families now have usable rows for the first time.
+- The overlay dismissal script also closes European consent banners: `.cmp-container`,
+  `#onetrust-banner-sdk`, `.qc-cmp2-container` and `[aria-label*="consent" i]`.
+
 ## 0.1.18 - 2026-10-27
 
 ### 中文
