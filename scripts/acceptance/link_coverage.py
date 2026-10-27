@@ -134,6 +134,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("spa", "airtable-share", "https://airtable.com/"),
     ("spa", "google-sheets", "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"),
     # -- feed ------------------------------------------------------------
+    ("feed", "arstechnica-rss", "https://feeds.arstechnica.com/arstechnica/index"),
+    ("feed", "verge-rss", "https://www.theverge.com/rss/index.xml"),
     ("feed", "hn-rss", "https://news.ycombinator.com/rss"),
     ("feed", "github-atom", "https://github.com/psf/requests/releases.atom"),
     ("feed", "ruanyf-atom", "https://www.ruanyifeng.com/blog/atom.xml"),

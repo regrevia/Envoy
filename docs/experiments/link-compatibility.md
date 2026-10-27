@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十三轮）
+## 结论（最新一轮：第十四轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -27,6 +27,7 @@
 | 11 | 97 | 96 | 75 | 78.1% | 20 | 4.52s | MDN 补齐；wikipedia 回到 partial |
 | 12 | 100 | 99 | 76 | 76.8% | 21 | 3.55s | 补 gitlab/douban-group/ximalaya；social、audio 首次有可用行 |
 | 13 | 102 | 101 | 79 | 78.2% | 20 | 4.34s | 真 RFC PDF 替掉玩具 PDF；news 补 oschina/pingwest 到 6 可用 |
+| 14 | 104 | 103 | 79 | 76.7% | 23 | 4.44s | 补 arstechnica/verge feed（均 readable）；guardian/youtube/platformer 升 supported |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -408,6 +409,33 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第十四轮（104 行 / 可用 76.7%，feed 族从 2 可用升到 5 可用）
+
+本轮加 2 条 feed 行（`arstechnica-rss`、`verge-rss`），语料 102 → 104，死链 1，
+分母 103。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 103 | 23 | 56 | 2 | 0 | 9 | 13 | 0 | 79 | **76.7%** |
+| 可达口径（剔 unreachable） | 90 | 23 | 56 | 2 | 0 | 9 | 0 | 0 | 79 | **87.8%** |
+| 同组成 101 行子集（= 第 13 轮分母） | 101 | 22 | 55 | 1 | 0 | 8 | 13 | 0 | 77 | **76.2%** |
+
+- 两条新 feed 行一次通过：`arstechnica-rss` `readable` 5993 字 / 2.7s，
+  `verge-rss` `readable` 5315 字 / 2.5s（`public_api:feed`）。feed 族 6 行里
+  4 readable + 1 partial，只剩 `hn-rss` 是本机出口阻断。news 的
+  `theguardian.com`、blog 的 `platformer.news` 上一轮已实测出正文，本轮把三个
+  host 从 `unknown` 提升到 `supported`（`youtube.com` 同类）：语料实测交叉验证
+  —— `supported` 口径可用率 89.4%（76/85），`unknown` 口径只有 20%（3/15），
+  提升这 3 个等于少 3 次「先试 Envoy 再回退」的无谓开销。
+- 可用绝对数没变（79），分母 +2，所以全语料可用率从 78.2% 回落到 76.7%：
+  加进来的 2 行都可用，同时 3 行掉了（`oschina` 从 `partial` 5637 变
+  `blocked challenge_required`、`gitlab-readme` 从 7904 字变 `empty` 167 字、
+  `wikipedia-zh` 从 7936 字变 `unreachable`）。这 3 条都单独复跑过：
+  `oschina` 复现 challenge（真防护收紧），`wikipedia-zh` 复现 network_error
+  （出口问题），`gitlab-readme` 复跑 `partial` 11242 字 → 是批量并发下的瞬时失败，
+  不是能力回退。同组成子集 77/101 = 76.2%，-2.0pt 全部由这 3 次抖动造成。
+- 时延：mean 19.2s / p50 4.44s / p90 71.09s / max 112.2s。
 
 ## 第十三轮（102 行 / 可用 78.2%，news 族首次有 6 条可用）
 

@@ -17,6 +17,7 @@ test('readSupportVerdict classifies the three policies', () => {
     ['https://www.douyin.com/note/7300000000000000000', 'supported'],
     ['https://mp.weixin.qq.com/s/abcdefg', 'supported'],
     ['https://example.com/a.pdf', 'supported'],
+    ['https://feeds.arstechnica.com/arstechnica/index', 'supported'],
     ['https://x.com/someone/status/1234567890', 'unsupported'],
     ['https://twitter.com/someone/status/1234567890', 'unsupported'],
     ['https://www.instagram.com/p/CxYzAbCdEfG/', 'unsupported'],

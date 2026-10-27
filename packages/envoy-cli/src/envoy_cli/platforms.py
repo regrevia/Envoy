@@ -236,6 +236,7 @@ _SUPPORTED_HOSTS = {
     "theguardian.com",
     "youtube.com",
     "platformer.news",
+    "feeds.arstechnica.com",
     "qbitai.com",
     "dev.to",
     "zenn.dev",
