@@ -220,6 +220,20 @@ _SUPPORTED_HOSTS = {
     "pinterest.com",
     "figma.com",
     "api.github.com",
+    # Round-4/5: both answered with full article text over static HTTP on the
+    # first try (cnblogs 13k chars, douban book 6.7k), so stop hedging.
+    "cnblogs.com",
+    "book.douban.com",
+    "ithome.com",
+    "ifanr.com",
+    "pingwest.com",
+    "qbitai.com",
+    "dev.to",
+    "zenn.dev",
+    "qiita.com",
+    "lwn.net",
+    "brendangregg.com",
+    "techcrunch.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (

@@ -50,7 +50,9 @@ def test_platform_page_browser_fallback_reads_content_without_assuming_video(
         "source": {"url": source_url},
     }))
 
-    assert response.result.value == "ready"
+    # A 34-character platform page is not a complete read: thin platform pages
+    # report partial so a browser/JS shell is never sold as the whole post.
+    assert response.result.value == "partial"
     assert "Public post text" in " ".join(
         block.content.text for block in response.blocks if block.content.type == "text"
     )

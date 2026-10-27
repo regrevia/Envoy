@@ -228,3 +228,101 @@ python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
 78 字节空壳（`{"result":2,...}`），`unsplash` 仍 58s 后被 Anubis 挡下，`tiktok` 675 字
 `partial`（第三方嵌入壳），`figma-community` 556 字 `readable`、`pinterest` 267 字
 `readable`（与第三轮一致，这也是把它们写进 `_SUPPORTED_HOSTS` 的依据）。
+
+## 第五轮（两个中文站转正 + 两条诚实话）
+
+命令（原始 JSON `/tmp/accept/round5.json`，73 条语料）：
+
+```bash
+python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
+  --out /tmp/accept/round5.json --envoy /tmp/envoy-live
+```
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | usable | usable_rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `no_risk`（=`all`） | 72 | 15 | 33 | 5 | 5 | 14 | 48 | 66.7% |
+
+死链 1 条（`amazon` 预检 404，按规则移出分母）；`--include-risk-hosts` 未带，抖音两条不在分母里。
+延迟 `n=72 mean 28.8s p50 10.8s p90 77.5s max 100.8s`，比第四轮快 4.6s（跨轮环境抖动，
+不作为能力指标）。
+
+**新增三条中文站语料全部可用**（家族 `cn-platform` 由 8 条增到 11 条）：
+
+| 新增 | 结果 | 字数 | 耗时 | reader |
+| --- | --- | --- | --- | --- |
+| `douban-book`（`book.douban.com/subject/1084336/`） | `partial` | 6794 | 2.7s | `static_http` |
+| `cnblogs-article`（`cnblogs.com/rossiXYZ/p/15553994.html`） | `partial` | 7983 | 1.4s | `static_http` |
+| `juejin-post`（`juejin.cn/post/6844903967407734797`） | `readable` | 3258 | 0.8s | `public_api:juejin` |
+
+单跑（独立预算）时 `cnblogs` 两篇分别是 13260 / 13153 字，批跑预算收紧后落在 7983 字，
+两者都是 `partial` 而不是空壳。依据这两篇与豆瓣读书页，`book.douban.com`、`cnblogs.com`
+进了 `_SUPPORTED_HOSTS`（路由器不再对它们说 `unknown`），`link-verdicts.json` 同步重生成
+（`python3 scripts/export_link_verdicts.py`，`--check` 通过）。
+
+配对（第四/五轮都 live 且可达，n=54）：`usable 45 → 45（83.3% → 83.3%）`，
+`readable 14 → 14（25.9% → 25.9%）`——**零净变化**，三处互换都是环境抖动而非能力变化：
+
+| 链接 | 第四轮 | 第五轮 | 说明 |
+| --- | --- | --- | --- |
+| `youtube` | `blocked 0` | `partial 427` | 字幕端仍拒（无 deno），这次拿到 427 字页面描述 |
+| `tiktok` | `partial 675` | `blocked 0` | 第三方嵌入壳时有时无 |
+| `instagram-reel` | `blocked 0` | `empty 9` | 9 字是 `ready` + `<200` 字的验收假象，非真读取 |
+
+### 本轮同时修掉的两条“不诚实”
+
+1. **薄平台页曾经报 `ready`**：平台页正文短于 300 字（`_THIN_PLATFORM_PAGE_CHARS`）时只写
+   `details.thin_platform_page` 但结果仍是 `ready`，于是「只有标题 + 空段落」的微信壳页
+   以 76 字被算成完整。现在 `thin_platform_page` 参与 `result` 判定 → `partial`，
+   回归测试 `tests/cli/test_platforms.py::test_platform_page_browser_fallback_reads_content_without_assuming_video`
+   与 `tests/cli/test_login_wall.py::test_thin_platform_page_is_partial_not_ready`。
+2. **DNS 解析失败曾被当成「不是公网 URL」**：`_is_public_http_url` 对 loopback/私网和
+   DNS 失败都返回 `False`，于是 `gist.github.com` 那次解析抖动被报成
+   `source_unavailable / Only public HTTP(S) URLs are allowed`（策略拒绝），而实际是网络不可达。
+   现在先单独判断解析：失败报 `network_error` + “DNS lookup failed”，策略拒绝保持原文案；
+   验收脚本按 `dns` 标记把它归到 `unreachable`，不再污染可读性分母。
+
+回归：`pytest tests/cli` → **667 passed / 4 failed（已知 `reportlab` PDF 环境缺依赖）/ 1 deselected**；
+`tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
+137 passed；`export_link_verdicts.py --check` 干净。
+
+## 第六轮（薄页判据与 DNS 区分的实测）
+
+命令同第五轮，语料 73 条（本轮尚未含 4 条 `cn-media` 新行）：
+
+```bash
+python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
+  --out /tmp/accept/round6.json --envoy /tmp/envoy-live
+```
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | usable_rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `no_risk` | 72 | 15 | 32 | 4 | 6 | 14 | 1 | 47 | 65.3% |
+
+配对（第五/六轮都 live 且可达，n=56）：`usable 47 → 46（83.9% → 82.1%）`，
+`readable 15 → 14（26.8% → 25.0%）`。四处翻转：
+
+| 链接 | 第五轮 | 第六轮 | 说明 |
+| --- | --- | --- | --- |
+| `youtube-youtu.be` | `readable 2949` | `failed` 240.0s | 撞 `--timeout 240` 上限，纯环境/预算 |
+| `youtube` | `partial 427` | `blocked 0` | 字幕端拒绝，与第五轮相反 |
+| `tiktok` | `blocked 0` | `partial 517` | 与第五轮相反，再次说明第三方嵌入壳不稳 |
+| `instagram-reel` | `empty 9` | `blocked 0` | 两者都不是可用读取 |
+
+净变化 -1 全部来自那条 240s 超时，不是能力回退；把超时行排除后配对 `n=55 usable 46 → 46`。
+
+薄页判据这一轮**没有**改变任何行的 verdict：语料里唯一的薄平台页是 kuaishou
+（`empty`，78 字），它走的是分享 API 的 JSON 分支，没进薄页逻辑——这条在下面单独修掉。
+`empty_content` 与 `network_error` 的区分在本轮生效：`gist` 稳定报 `network_error`
+（`DNS lookup failed`），不再被当成策略拒绝。
+
+### 再补一条：JSON 状态桩不再算完成
+
+`kuaishou-share` / `kuaishou-video` 的 78 字是分享接口的
+`{"result":2,"error_msg":null,"request_id":"…"}`，此前以 `result=ready`、
+`mime_type=application/json` 交付，等于把「接口说失败」当成正文。现在 `_parse_text_source`
+对 JSON 载荷做内容判定：没有任何 ≥40 字字符串的文档按 `empty_content` 处理，
+报「The endpoint returned a JSON status stub instead of readable content」。
+真实 API JSON（GitHub、掘金等）不受影响，回归
+`tests/cli/test_login_wall.py::test_json_status_stub_is_not_a_complete_read`。
+
+回归：`pytest tests/cli` → **668 passed / 4 failed（已知 `reportlab` 环境缺依赖）/ 1 deselected**。
