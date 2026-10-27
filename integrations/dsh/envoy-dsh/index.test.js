@@ -24,7 +24,7 @@ test('readSupportVerdict classifies the three policies', () => {
     ['https://live.douyin.com/123456', 'unsupported'],
     ['https://www.douyin.com/live/123456', 'unsupported'],
     ['https://t.me/+abcdefg', 'unsupported'],
-    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'unknown'],
+    ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'supported'],
     ['https://www.xiaohongshu.com/explore/abcdefg', 'unknown'],
     ['https://www.douyin.com/user/MS4wLjABAAAA', 'unknown'],
     ['https://example.com/a', 'unknown'],

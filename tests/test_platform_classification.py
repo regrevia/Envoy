@@ -124,7 +124,6 @@ VERDICT_CASES = [
     ("https://t.me/joinchat/AbCdEfGh", "unsupported"),
     ("https://t.me/c/1234567890/42", "unsupported"),
     # Unknown: readable-looking but unproven, so Envoy is still tried first.
-    ("https://www.youtube.com/watch?v=abc123", "unknown"),
     ("https://vimeo.com/123456", "supported"),
     ("https://vimeo.com/channels/staffpicks", "unknown"),
     ("https://vimeo.com/123456/abc", "unknown"),
@@ -156,6 +155,9 @@ VERDICT_CASES = [
     ("https://www.douban.com/group/topic/30678422/", "supported"),
     ("https://gitlab.com/gitlab-org/gitlab/-/blob/master/README.md", "supported"),
     ("https://www.oschina.net/news", "supported"),
+    ("https://www.theguardian.com/international", "supported"),
+    ("https://www.youtube.com/watch?v=aircAruvnKk", "supported"),
+    ("https://platformer.news/", "supported"),
     ("https://www.jiemian.com/", "supported"),
     ("https://www.cls.cn/", "supported"),
     ("https://www.yicai.com/", "supported"),

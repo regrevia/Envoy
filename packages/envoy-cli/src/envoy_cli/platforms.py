@@ -231,6 +231,11 @@ _SUPPORTED_HOSTS = {
     "ithome.com",
     "ifanr.com",
     "pingwest.com",
+    # Round-13: these stayed `unknown` while their corpus rows returned article
+    # text, so the router was hedging on links it can actually read.
+    "theguardian.com",
+    "youtube.com",
+    "platformer.news",
     "qbitai.com",
     "dev.to",
     "zenn.dev",
