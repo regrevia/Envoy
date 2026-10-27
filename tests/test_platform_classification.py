@@ -146,6 +146,7 @@ VERDICT_CASES = [
     ("https://lwn.net/", "supported"),
     ("https://www.brendangregg.com/blog/index.html", "supported"),
     ("https://techcrunch.com/", "supported"),
+    ("https://www.ted.com/talks/chimamanda_ngozi_adichie_the_danger_of_a_single_story", "supported"),
     ("https://www.jiemian.com/", "supported"),
     ("https://www.cls.cn/", "supported"),
     ("https://www.yicai.com/", "supported"),

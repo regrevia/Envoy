@@ -234,6 +234,7 @@ _SUPPORTED_HOSTS = {
     "lwn.net",
     "brendangregg.com",
     "techcrunch.com",
+    "ted.com",
     "jiemian.com",
     "cls.cn",
     "yicai.com",
