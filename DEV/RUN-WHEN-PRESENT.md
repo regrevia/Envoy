@@ -123,9 +123,28 @@ sh -c 'printf %s "{\"request_id\":\"D11\",\"material_id\":\"$ENVOY_MATERIAL_ID\"
 
 ## 5. 发行作业（可选，需要权限）
 
-打一个 tag 触发一次真实 Actions，检查 `dist/SHA256SUMS` 是否含 5 个产物 + 清单 + 校验和
-（wheel / Skill ZIP / DSH TGZ / install.sh / install.ps1 / release-manifest.json），
-并确认没有 `NPM_TOKEN` 时 npm 步骤是跳过而不是失败。
+**这一节只有拿到明确同意才做。** 关键一点：`packages/envoy-*/pyproject.toml` 现在就是
+`0.1.24`，而 `origin` 上没有 `v0.1.24` tag——所以 **`git push origin main` 本身就是发布动作**：
+`.github/workflows/auto-release.yml` 在同一个 SHA 的 CI 通过后会自己打 tag、跑
+`.github/workflows/release.yml`、建 Release 并（有 `NPM_TOKEN` 时）发 npm 包。想先只推代码不发布，
+必须先把 pyproject 版本改回已发布的 `0.1.23`，或者关掉 auto-release。
+
+同意后按这个顺序：
+
+```sh
+git status --porcelain                # 必须为空；脏的工作树会在 CI 前就被自己拦住
+git log --oneline origin/main..main | head -1   # 确认最上面是要发的提交
+git push origin main
+gh run list --workflow=auto-release.yml --limit 3   # 看它是否因版本变化而入列
+```
+
+然后盯三件事：
+
+1. 同一 SHA 的 `ci.yml` 必须先绿（工作流会拒绝给 CI 已失败的 SHA 打 tag）；
+2. Release 资产应是从该 tag 重建的五个产物 + `release-manifest.json` + `SHA256SUMS`，
+   与本地 `../envoy-delivery/0.1.24/` **不是同一批字节**（本地包是本地构建，tag 触发的是 CI 构建）——
+   两者都校验过再决定以哪个为准，别混用；
+3. 预览候选 `../0.1.24-preview/` 不上传、不挂 Release，它只是本地摸手感用的。
 
 ## 6. 记录与升级
 
