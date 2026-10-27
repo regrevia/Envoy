@@ -129,12 +129,14 @@ python3 dry_run_experiments.py --render V02  # 打印该条的确切命令与待
 
 ```sh
 cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
-python3 freeze_holdout.py --input candidates.txt --size 12 --id H12-2026-10-28 --out holdout.json
+python3 freeze_holdout.py --input candidates.txt --size 12 --id H12-2026-10-28 \
+  --out holdout.json --apply-plan EXPERIMENT-PLAN.json
 python3 freeze_holdout.py --check holdout.json      # 期望 holdout ok: ... (12 rows, ...)
+python3 dry_run_experiments.py --check              # 期望 ...; holdout frozen
 ```
 
-冻结后把 `holdout.json` 的 `sha256` 与 `rows` 抄进 `EXPERIMENT-PLAN.json` 的 `holdout`，状态改
-`frozen` 再开跑；跑过之后不得重抽，也不得删行。若发现要换样本，唯一正当理由是候选本身失效
+`--apply-plan` 把 `sha256` 与 `rows` 直接写进计划的 `holdout` 并把状态改成 `frozen`，不要手抄；
+计划里已有冻结留出集时它会拒写（`--force` 才覆盖）。跑过之后不得重抽，也不得删行。若发现要换样本，唯一正当理由是候选本身失效
 （404/需要登录），换行要在报告里逐行说明原因，而不是 `--force` 重抽。
 
 ## 9. 把一条结果写回计划（唯一允许的写法）

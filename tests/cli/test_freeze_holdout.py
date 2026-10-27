@@ -84,3 +84,49 @@ def test_non_url_candidate_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / "candidates.txt"
     source.write_text("https://example.com/ok\nnot a url\n")
     assert module.main(["--input", str(source), "--out", str(tmp_path / "h.json")]) == 1
+
+
+def write_plan(tmp_path: Path) -> Path:
+    plan = {
+        "schema": "envoy.experiment-plan/1",
+        "entries": [],
+        "holdout": {"id": "H12", "status": "pending_sample", "size": 12, "note": "keep me"},
+    }
+    path = tmp_path / "EXPERIMENT-PLAN.json"
+    path.write_text(json.dumps(plan, indent=2) + "\n")
+    return path
+
+
+def test_apply_plan_records_the_frozen_rows(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)
+    out = tmp_path / "holdout.json"
+    code = module.main(
+        ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
+    )
+    assert code == 0
+    recorded = json.loads(plan.read_text())["holdout"]
+    frozen = json.loads(out.read_text())
+    assert recorded["status"] == "frozen"
+    assert recorded["rows"] == frozen["rows"]
+    assert recorded["sha256"] == frozen["sha256"]
+    assert recorded["size"] == 12
+    assert recorded["note"] == "keep me"
+
+
+def test_apply_plan_refuses_to_replace_a_frozen_holdout(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)
+    frozen = {"status": "frozen", "sha256": "ab" * 32, "rows": ["https://example.com/old"]}
+    data = json.loads(plan.read_text())
+    data["holdout"].update(frozen)
+    plan.write_text(json.dumps(data, indent=2) + "\n")
+    out = tmp_path / "holdout.json"
+    assert module.main(
+        ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
+    ) == 1
+    assert json.loads(plan.read_text())["holdout"]["sha256"] == "ab" * 32

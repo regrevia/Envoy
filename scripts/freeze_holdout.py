@@ -13,6 +13,8 @@ Usage:
     python scripts/freeze_holdout.py --input candidates.txt --size 12 \
         --id H12-2026-10-28 --out holdout.json
     python scripts/freeze_holdout.py --check holdout.json
+    python scripts/freeze_holdout.py --input candidates.txt --out holdout.json \
+        --apply-plan EXPERIMENT-PLAN.json
 """
 
 from __future__ import annotations
@@ -106,6 +108,35 @@ def check(path: Path) -> list[str]:
     return problems
 
 
+def apply_plan(plan_path: Path, data: dict, *, force: bool = False) -> None:
+    """Record a frozen holdout in the experiment plan, keeping its prose."""
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FrozenFileError(f"cannot read {plan_path}: {exc}") from exc
+    holdout = plan.get("holdout")
+    if not isinstance(holdout, dict):
+        raise FrozenFileError(f"{plan_path} has no holdout block")
+    if holdout.get("status") == "frozen" and not force:
+        raise FrozenFileError(
+            f"{plan_path} already records a frozen holdout "
+            f"({str(holdout.get('sha256'))[:12]}); pass --force to replace it"
+        )
+    updated = dict(holdout)
+    updated.update(
+        {
+            "id": data["id"],
+            "status": "frozen",
+            "size": data["size"],
+            "sha256": data["sha256"],
+            "rows": data["rows"],
+        }
+    )
+    updated.pop("frozen_at", None)
+    plan["holdout"] = updated
+    plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Freeze or verify an Envoy holdout sample.")
     parser.add_argument("--input", type=Path, help="candidate URL list, one per line")
@@ -115,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", default="envoy-holdout", help="sampling seed")
     parser.add_argument("--force", action="store_true", help="overwrite an existing frozen file")
     parser.add_argument("--check", type=Path, help="verify an existing frozen file")
+    parser.add_argument(
+        "--apply-plan", type=Path, help="record the frozen rows in an EXPERIMENT-PLAN.json"
+    )
     args = parser.parse_args(argv)
 
     if args.check:
@@ -142,6 +176,13 @@ def main(argv: list[str] | None = None) -> int:
     data = build(rows, holdout_id=args.id, seed=args.seed, size=args.size)
     args.out.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"froze {len(rows)} rows -> {args.out} (sha256 {data['sha256'][:12]})")
+    if args.apply_plan:
+        try:
+            apply_plan(args.apply_plan, data, force=args.force)
+        except FrozenFileError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"recorded the frozen rows in {args.apply_plan} (status frozen)")
     return 0
 
 
