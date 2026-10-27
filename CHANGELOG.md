@@ -66,6 +66,9 @@
   `runtime.install`。
 - 安装收尾：`install.sh` 与 `install.ps1` 装完打印浏览器状态和安装状态，非 `pinned`
   时点名 PATH 实际指向哪里；Windows 安装用法并入 `INSTALL.md`。
+- 读取判定稳定：同一个链接是「不是公网地址」还是「域名解析不出来」，现在由
+  一次解析给出结论并在本次读取内复用，不再解析两次——两次之间 DNS 抖一下，
+  报错码就可能从 `source_unavailable` 翻成 `network_error`（或反过来）。
 
 - 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
   连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
@@ -93,6 +96,10 @@
 - Installer epilogue: `install.sh` and `install.ps1` now print the browser state
   and the install state, naming where `PATH` actually points when it is not the
   pinned runtime; the Windows usage lives in `INSTALL.md`.
+- Stable URL verdict: whether a link is a non-public address or a host name that
+  does not resolve is now decided by one lookup and reused for the whole read
+  attempt. Two lookups moments apart could disagree and flip the reported code
+  between `source_unavailable` and `network_error`.
 
 - Fast fail: connect-level failures (refused, connect timeout, unusable proxy) are
   no longer retried three times on the same exit; each retry paid a fresh connect

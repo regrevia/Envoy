@@ -19,6 +19,7 @@
 | C10 | 留出集冻结工具 `freeze_holdout.py`：候选列表按种子抽样、去重排序、写 sha256 与行数组；默认拒写已有文件，`--check` 校验留出集未被替换 | `scripts/freeze_holdout.py`、交付目录同名额 | `unit_checked`（6 用例，含重复候选、篡改行、`--force` 拒写） |
 | C11 | 实验计划干跑工具 `dry_run_experiments.py`：校验 32 条条目（id 唯一/状态词表/需求词表/占位符/留出集状态），渲染单条命令且不执行任何网络动作 | `scripts/dry_run_experiments.py`、交付目录同名额 | `unit_checked`（6 用例，含重复 id、未知状态、未知需求、冻结留出集缺 rows） |
 | C12 | 发布链路离线契约：`release.yml` 必须按标签取版本、四项门禁先跑、五个产物都构建、清单在产物之后 `SHA256SUMS` 之前生成、缺 `NPM_TOKEN` 只跳过不掩盖失败；两个安装脚本不得出现字面版本号，资产 URL 一律由运行时解析的版本拼 | `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py` | `unit_checked`（6 + 5 用例；字面版本号零命中） |
+| C13 | 公网守卫判定一次到位：`_public_url_rejection` 返回 public / policy / dns 三值并按 host 缓存，读路径只解析一次域名、由同一个结论决定报错码与文案（此前用 bool 再补查一次，两次解析可能不一致）；`_host_lookup_failed` 删除 | `packages/envoy-cli/src/envoy_cli/reader.py`、`browser.py`、`tests/cli/test_url_guard_determinism.py` | `unit_checked`（5 用例，全程不打真 DNS；受影响 13 个测试文件 321 passed） |
 
 ## 2. 通过的检查（本轮真跑）
 
@@ -28,7 +29,8 @@
 - `tests/cli/test_browser_auto_setup.py`：**9 passed**。
 - `sh scripts/check_installer_offline.sh`：**7/7**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」）。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
-- `tests/cli/test_verify_delivery.py`：**5 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (11 checks)**。
+- `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
+- `tests/cli/test_verify_delivery.py`：**6 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (11 checks)**。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
 - `build_envoy_dsh_plugin.py --check`、`sync_host_skills.py --check`：均为 current。

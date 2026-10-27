@@ -296,6 +296,9 @@ python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
    `source_unavailable / Only public HTTP(S) URLs are allowed`（策略拒绝），而实际是网络不可达。
    现在先单独判断解析：失败报 `network_error` + “DNS lookup failed”，策略拒绝保持原文案；
    验收脚本按 `dns` 标记把它归到 `unreachable`，不再污染可读性分母。
+   后续收紧：判定改为一次解析给出 public / policy / dns 三值并缓存，读路径不再解析第二次，
+   否则两次解析可能不一致、报错码仍会翻；回归
+   `tests/cli/test_url_guard_determinism.py`（5 用例，全程不打真 DNS）。
 
 回归：`pytest tests/cli` → **667 passed / 4 failed（已知 `reportlab` PDF 环境缺依赖）/ 1 deselected**；
 `tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
