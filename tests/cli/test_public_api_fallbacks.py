@@ -553,3 +553,40 @@ def test_connection_error_without_proxy_is_not_retried(monkeypatch):
 
     assert fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7") is None
     assert len(calls) == 1
+
+
+def test_vimeo_page_answers_from_its_oembed_endpoint(monkeypatch):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _json(
+            {
+                "title": "The New Vimeo Player",
+                "description": "A short <b>demo</b> clip.",
+                "author_name": "Vimeo",
+                "duration": 62,
+            }
+        )
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    result = fallbacks.public_api_fallback("https://vimeo.com/76979871?s=1")
+
+    assert result is not None
+    assert result["backend"] == "vimeo"
+    assert result["title"] == "The New Vimeo Player"
+    assert result["url"] == "https://vimeo.com/76979871"
+    assert "demo clip" in result["text"]
+    assert "作者：Vimeo" in result["text"]
+    assert "时长：1:02" in result["text"]
+    assert "api/oembed.json" in seen[0]
+    assert "vimeo.com%2F76979871" in seen[0]
+
+
+def test_vimeo_page_without_metadata_text_does_not_win(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json({"author_name": "Someone"})
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+
+    assert fallbacks.public_api_fallback("https://vimeo.com/76979871") is None

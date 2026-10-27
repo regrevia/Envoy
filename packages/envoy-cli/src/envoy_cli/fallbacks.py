@@ -49,6 +49,22 @@ _DOUBAN = re.compile(
 _DOUBAN_REFERER = {"Referer": "https://m.douban.com/"}
 _JUEJIN = re.compile(r"^https?://juejin\.cn/post/(?P<id>\d{19})(?:[/?#].*)?$")
 _SSPAI = re.compile(r"^https?://sspai\.com/post/(?P<id>\d+)/?(?:[?#].*)?$")
+_VIMEO = re.compile(r"^https?://(?:www\.)?vimeo\.com/(?P<id>\d+)(?:[/?#].*)?$")
+
+# Every endpoint-only backend and one URL it must answer. The tuple is also the
+# place to check parity: a backend here whose host is not marked supported in
+# ``platforms.read_support_verdict`` is unreachable code, because the router
+# never sends such a URL down the public-API path.
+SITE_BACKENDS: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("stackexchange", _STACKOVERFLOW, "https://stackoverflow.com/questions/111102"),
+    ("npm", _NPM, "https://www.npmjs.com/package/httpx"),
+    ("hackernews", _HACKER_NEWS, "https://news.ycombinator.com/item?id=1"),
+    ("bilibili", _BILIBILI, "https://www.bilibili.com/video/BV1GJ411x7h7"),
+    ("douban", _DOUBAN, "https://movie.douban.com/subject/1292052/"),
+    ("juejin", _JUEJIN, "https://juejin.cn/post/7000000000000000000"),
+    ("sspai", _SSPAI, "https://sspai.com/post/117529"),
+    ("vimeo", _VIMEO, "https://vimeo.com/76979871"),
+)
 
 
 class _PlainText(HTMLParser):
@@ -454,6 +470,34 @@ def _sspai(client: httpx.Client, article_id: str, budget: float) -> dict | None:
     return _result("sspai", title, "\n".join(parts), page_url, min_chars=80)
 
 
+def _vimeo(client: httpx.Client, video_id: str, budget: float) -> dict | None:
+    """Answer a Vimeo page from its public oEmbed endpoint (metadata only)."""
+
+    endpoint = (
+        "https://vimeo.com/api/oembed.json?url="
+        + quote(f"https://vimeo.com/{video_id}", safe="")
+    )
+    payload = _get_json(client, endpoint, budget=min(budget, _HTTP_TIMEOUT + 2))
+    if not isinstance(payload, dict):
+        return None
+    title = _plain(payload.get("title"))
+    lines = [line for line in (
+        title,
+        _plain(payload.get("description")),
+        f"作者：{_plain(payload.get('author_name'))}" if payload.get("author_name") else "",
+        f"时长：{_seconds(payload.get('duration'))}" if payload.get("duration") else "",
+    ) if line]
+    if not title or not lines:
+        return None
+    return _result(
+        "vimeo",
+        title=title,
+        text="\n".join(lines),
+        url=f"https://vimeo.com/{video_id}",
+        min_chars=40,
+    )
+
+
 def public_api_fallback(
     url: str, *, goal: str = "", max_work_seconds: int = 20
 ) -> dict | None:
@@ -469,7 +513,17 @@ def public_api_fallback(
     douban = _DOUBAN.match(url)
     juejin = _JUEJIN.match(url)
     sspai = _SSPAI.match(url)
-    if not (stackoverflow or npm or hacker_news or bilibili or douban or juejin or sspai):
+    vimeo = _VIMEO.match(url)
+    if not (
+        stackoverflow
+        or npm
+        or hacker_news
+        or bilibili
+        or douban
+        or juejin
+        or sspai
+        or vimeo
+    ):
         return None
     deadline = time.monotonic() + max(1, int(max_work_seconds))
     try:
@@ -487,6 +541,8 @@ def public_api_fallback(
                 return _juejin(client, juejin.group("id"), budget)
             if sspai:
                 return _sspai(client, sspai.group("id"), budget)
+            if vimeo:
+                return _vimeo(client, vimeo.group("id"), budget)
             if bilibili.group("bvid"):
                 return _bilibili(client, bilibili.group("bvid"), budget)
             resolved = _resolve_b23(client, bilibili.group("short"), budget)

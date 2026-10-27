@@ -125,7 +125,9 @@ VERDICT_CASES = [
     ("https://t.me/c/1234567890/42", "unsupported"),
     # Unknown: readable-looking but unproven, so Envoy is still tried first.
     ("https://www.youtube.com/watch?v=abc123", "unknown"),
-    ("https://vimeo.com/123456", "unknown"),
+    ("https://vimeo.com/123456", "supported"),
+    ("https://vimeo.com/channels/staffpicks", "unknown"),
+    ("https://vimeo.com/123456/abc", "unknown"),
     ("https://www.dailymotion.com/video/x8abc", "unknown"),
     ("https://www.xiaohongshu.com/explore/65abc123", "unknown"),
     ("https://xhslink.com/a/abc123", "unknown"),

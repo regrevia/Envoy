@@ -147,6 +147,8 @@ _DOUYIN_NOTE_RE = re.compile(r"^/note/", re.IGNORECASE)
 _TME_PRIVATE_RE = re.compile(r"^/(?:\+|joinchat/|c/)", re.IGNORECASE)
 _X_STATUS_RE = re.compile(r"^/[^/]+/status/\d+", re.IGNORECASE)
 _INSTAGRAM_ITEM_RE = re.compile(r"^/(?:p|reel|reels|tv)/[^/]+", re.IGNORECASE)
+_VIMEO_VIDEO_RE = re.compile(r"/\d+/?")
+
 
 _UNSUPPORTED_HOSTS = {"linkedin.com"}
 _DOUYIN_READ_HOSTS = {"douyin.com", "m.douyin.com", "iesdouyin.com"}
@@ -208,6 +210,11 @@ _SUPPORTED_HOSTS = {
     "gutenberg.org",
     "simonwillison.net",
     "danluu.com",
+    # Endpoint-only platforms: the page itself is JS or a login wall, but a
+    # documented public endpoint answers it (see fallbacks.SITE_BACKENDS).
+    "news.ycombinator.com",
+    "juejin.cn",
+    "vimeo.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (
@@ -264,6 +271,10 @@ def read_support_verdict(value: str) -> str:
         if _DOUYIN_VIDEO_RE.match(path) or _DOUYIN_NOTE_RE.match(path):
             return "supported"
         return "unknown"
+    if host == "vimeo.com":
+        # Only /<video id> is answerable (oEmbed metadata); channels, albums
+        # and showcases need the logged-in app shell.
+        return "supported" if _VIMEO_VIDEO_RE.fullmatch(path) else "unknown"
     if host in _SUPPORTED_HOSTS or host.endswith(_SUPPORTED_HOST_SUFFIXES):
         return "supported"
     if lowered_path.endswith(_SUPPORTED_FILE_SUFFIXES):
