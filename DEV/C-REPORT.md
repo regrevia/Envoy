@@ -32,6 +32,7 @@
 - `tests/cli/test_browser_auto_setup.py`：**9 passed**。
 - `sh scripts/check_installer_offline.sh`：**10/10**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」「下载根可覆盖」）。
 - `sh scripts/check_installer_e2e_local.sh`：**3/3 通过**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
+- `tests/cli/test_installer_ps1_static.py`：**4 passed**（`$Script:` 变量先赋值后使用、括号配平、镜像钩子各只有一处；本机无 PowerShell，故只做静态面）。
 - 安装/守卫/进程四文件定点回归（`test_install_state`、`test_browser_auto_setup`、`test_process_control`、`test_url_guard_determinism`）：**36 passed in 0.64s**。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
