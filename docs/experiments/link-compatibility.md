@@ -411,6 +411,15 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
 
+### 口径说明：语料声明数与报告行数不一致的原因
+
+`scripts/acceptance/link_coverage.py` 的语料用 `(family, label)` 声明，报告按 URL 去重
+（`select_entries()` 里 `seen_urls`，先出现者胜）。因此语料声明 123 行时，报告行数少于声明数是
+**结构性**的，不是丢数据：截至第十五轮有 9 组同 URL 重复（如 `blog/medium` 与
+`platforms/medium-post`、`video/youtube` 与 `platforms/youtube-watch`），每组只保留先出现的一条，
+另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
+两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
+
 ## 第十五轮（107 行 / 可用 78.3%，4 条新行全部可用，forum 与 audio 两族同时改善）
 
 本轮加 4 条行：feed 系 `simplecast-podcast`（audio 族）、`devto`、`discourse-mozilla`、
