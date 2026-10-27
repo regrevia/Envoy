@@ -106,7 +106,7 @@ envoy read /path/to/long.pdf --pages 10-25 --json
 ## 7. 先干跑一遍实验计划（不联网、不执行）
 
 ```sh
-python3 dry_run_experiments.py --check     # 期望 plan ok: 32 entries (not_run 32); holdout pending_sample
+python3 dry_run_experiments.py --check     # 期望 plan ok: 35 entries (not_run 32); holdout pending_sample
 python3 dry_run_experiments.py --list
 python3 dry_run_experiments.py --render V02  # 打印该条的确切命令与待填占位符
 ```
