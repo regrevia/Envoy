@@ -420,6 +420,10 @@ export function readSupportVerdict(url) {
   } catch {
     return 'unknown'
   }
+  if (parsed.protocol && parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    // mailto:, tel:, file:, ftp:, data: and app intents never turn into text.
+    return 'unsupported'
+  }
   let host = (parsed.hostname || '').toLowerCase()
   const path = parsed.pathname || ''
   if (!host) return 'unknown'
