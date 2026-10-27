@@ -2025,14 +2025,21 @@ def _attach_browser_video_evidence(
                     consumed_tokens=_estimated_tokens(page_text),
                 )
 
+            processed_from = float(request.scope.start_seconds or 0.0)
             confidence, speech_seconds, speech_ratio = _transcript_confidence(
-                transcript_segments, duration
+                transcript_segments,
+                duration,
+                processed_from=processed_from,
+                processed_until=asr_processed_until,
             )
             if confidence == "low" and transcript_source == "asr":
+                scored_span = max(
+                    float(asr_processed_until or duration or 0) - processed_from, 0.0
+                )
                 unresolved.append(
                     "The audio is mostly music or noise: "
                     f"{len(transcript_segments)} short speech segment(s) cover "
-                    f"{speech_ratio:.1%} of this {float(duration or 0):.0f}s clip, "
+                    f"{speech_ratio:.1%} of the {scored_span:.0f}s transcribed so far, "
                     "so the transcript may be unreliable"
                 )
             video_coverage = video_coverage.model_copy(update={
@@ -5596,9 +5603,14 @@ def _video_subtitle_response(
     speech_confidence = "normal"
     speech_seconds = 0.0
     speech_ratio = 0.0
+    processed_from = float(requested_start or 0.0)
+    processed_until = extracted.get("processed_until_seconds")
     if is_asr:
         speech_confidence, speech_seconds, speech_ratio = _transcript_confidence(
-            spans, extracted.get("duration")
+            spans,
+            extracted.get("duration"),
+            processed_from=processed_from,
+            processed_until=processed_until,
         )
     if requested_start is not None and requested_end is not None:
         source_unresolved.append(
@@ -5686,10 +5698,14 @@ def _video_subtitle_response(
             "No transcript cues intersect the requested video time range"
         )
     if is_asr and speech_confidence == "low":
+        scored_span = max(
+            float(processed_until or extracted.get("duration") or 0) - processed_from,
+            0.0,
+        )
         video_unresolved.append(
             "The audio is mostly music or noise: "
-            f"{len(spans)} short speech segment(s) cover {speech_ratio:.1%} of this "
-            f"{float(extracted.get('duration') or 0):.0f}s clip, so the transcript "
+            f"{len(spans)} short speech segment(s) cover {speech_ratio:.1%} of the "
+            f"{scored_span:.0f}s transcribed so far, so the transcript "
             "may be unreliable"
         )
     return ReadResponse(
@@ -5819,6 +5835,15 @@ def _read_video_asr(request: ReadRequest, source_url: str) -> ReadResponse:
             raise MediaBudgetExceeded("Media download exhausted max_work_seconds before ASR")
         if remaining_work < 1:
             raise MediaBudgetExceeded("Media download exhausted max_work_seconds before ASR")
+        # The checkpoint must follow the resolved video, not the temp directory
+        # the audio was downloaded into: a re-signed URL serving the same media
+        # resumes, a different revision starts fresh.
+        video_id = str(downloaded.get("video_id") or "")
+        asr_source_revision = (
+            f"video:{video_id}:{downloaded.get('duration')}:{downloaded.get('downloaded_bytes')}"
+            if video_id
+            else None
+        )
         asr_result = transcribe_audio_file(
             downloaded["path"],
             model_name=status["asr_model"],
@@ -5826,6 +5851,7 @@ def _read_video_asr(request: ReadRequest, source_url: str) -> ReadResponse:
             max_work_seconds=max(int(remaining_work), 1),
             start_seconds=request.scope.start_seconds or 0,
             end_seconds=request.scope.end_seconds or downloaded.get("duration"),
+            source_revision=asr_source_revision,
         )
     cues = asr_result.get("segments") if isinstance(asr_result.get("segments"), list) else []
     if not cues:
@@ -7991,13 +8017,22 @@ def _login_user_action(
 def _transcript_confidence(
     segments: list[dict],
     duration_seconds: float | None,
+    *,
+    processed_from: float | None = None,
+    processed_until: float | None = None,
 ) -> tuple[str, float, float]:
-    """Judge whether a transcript covers enough of the clip to be quotable.
+    """Judge whether a transcript covers enough of what was transcribed.
 
     Whisper will emit a stray line for a music track, and presenting that as the
     transcript of an official music video is worse than saying the audio is
     music. Coverage is the only signal available consistently across models:
     real speech fills a usable share of a clip, a hallucinated line does not.
+
+    The denominator is the audio span the ASR pass actually reached
+    (``processed_from``..``processed_until``), not the whole file: a partial
+    pass that stopped after 40s of a 1-hour video must not look like a 1%
+    coverage failure. Without a processed span the full duration is used, so
+    callers that only know the clip length keep the old behaviour.
     """
 
     speech_seconds = 0.0
@@ -8013,9 +8048,22 @@ def _transcript_confidence(
         duration = float(duration_seconds or 0)
     except (TypeError, ValueError):
         duration = 0.0
-    if duration <= 30:
-        return "normal", speech_seconds, speech_seconds / duration if duration else 0.0
-    ratio = speech_seconds / duration
+    try:
+        span_start = float(processed_from or 0.0)
+    except (TypeError, ValueError):
+        span_start = 0.0
+    try:
+        span_end = float(processed_until) if processed_until is not None else duration
+    except (TypeError, ValueError):
+        span_end = duration
+    span = span_end - span_start
+    if span <= 0:
+        # No usable processed span (unknown range or a single point): fall back
+        # to the whole clip rather than dividing by zero.
+        span = duration
+    if span <= 30:
+        return "normal", speech_seconds, speech_seconds / span if span else 0.0
+    ratio = speech_seconds / span
     if ratio < 0.02 or (len(segments) <= 2 and speech_seconds < 8):
         return "low", speech_seconds, ratio
     return "normal", speech_seconds, ratio
