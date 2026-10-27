@@ -15,6 +15,7 @@
 | C6 | 离线安装用例脚本 | `scripts/check_installer_offline.sh` | 7/7 通过 |
 | C7 | `envoy doctor` 新增 `runtime` 段：pin 状态（pinned / unpinned / stale_pin / shadowed）+ 每条一句修复动作，`--json` 同步给 `runtime.install` | `install_state.py`、`cli.py`、`INSTALL.md` | `unit_checked`（9 用例 + doctor 回归 12 用例） |
 | C8 | 安装脚本收尾打印浏览器状态与安装状态（非 pinned 点名 PATH 指向），POSIX 与 Windows 两份对齐 | `install.sh`、`install.ps1` | `unit_checked`（7/7 离线用例，含 shadowed 分支） |
+| C9 | 新增装前校验器 `verify_delivery.py`：离线核对摘要/清单/wheel 渠道与依赖/tgz 版本/Skill 包/两个安装脚本的版本解析契约，一条命令替代手工比对 | `scripts/verify_delivery.py`、交付目录同名额 | `unit_checked`（5 用例，含摘要篡改、`+preview` 拒收、缺依赖拒收） |
 
 ## 2. 通过的检查（本轮真跑）
 
@@ -24,6 +25,7 @@
 - `tests/cli/test_browser_auto_setup.py`：**9 passed**。
 - `sh scripts/check_installer_offline.sh`：**7/7**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」）。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
+- `tests/cli/test_verify_delivery.py`：**5 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (11 checks)**。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
 - `build_envoy_dsh_plugin.py --check`、`sync_host_skills.py --check`：均为 current。
