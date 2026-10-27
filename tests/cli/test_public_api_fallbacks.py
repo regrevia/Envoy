@@ -5,8 +5,16 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from envoy_cli import fallbacks
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_proxy(monkeypatch):
+    """Keep every test off the machine's real proxy unless it says otherwise."""
+
+    monkeypatch.setattr(fallbacks, "_proxy_url", lambda: None)
 
 
 def _serve(handler):
@@ -478,3 +486,70 @@ def test_sspai_missing_article_is_none(monkeypatch):
         _serve(lambda request: _json({"error": 1000, "msg": "文章数据不存在", "data": None})),
     )
     assert fallbacks.public_api_fallback("https://sspai.com/post/999999999") is None
+
+
+def test_connection_error_retries_through_proxy(monkeypatch):
+    calls: list[str] = []
+    proxied: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        raise httpx.ConnectTimeout("direct route blocked", request=request)
+
+    def proxied_handler(request: httpx.Request) -> httpx.Response:
+        proxied.append(str(request.url))
+        return _json(
+            {
+                "code": 0,
+                "data": {
+                    "bvid": "BV1GJ411x7h7",
+                    "title": "Retried",
+                    "owner": {"name": "UP"},
+                    "stat": {"view": 1, "danmaku": 0},
+                    "pages": [{"page": 1, "part": "Only", "duration": 60}],
+                },
+            }
+        )
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    monkeypatch.setattr(
+        fallbacks, "_proxy_url", lambda: "http://proxy.invalid:8080"
+    )
+    monkeypatch.setattr(fallbacks, "_proxy_client", lambda proxy: _serve(proxied_handler)())
+
+    result = fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7")
+
+    assert result is not None and result["title"] == "Retried"
+    assert len(calls) == 1 and len(proxied) == 1
+
+
+def test_http_status_error_does_not_retry(monkeypatch):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(403, json={"msg": "forbidden"})
+
+    def no_proxy(proxy: str):  # pragma: no cover
+        raise AssertionError("a 403 must not be retried through a proxy")
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    monkeypatch.setattr(fallbacks, "_proxy_url", lambda: "http://proxy.invalid:8080")
+    monkeypatch.setattr(fallbacks, "_proxy_client", no_proxy)
+
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7") is None
+    assert len(calls) == 1
+
+
+def test_connection_error_without_proxy_is_not_retried(monkeypatch):
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        raise httpx.ConnectError("offline", request=request)
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    monkeypatch.setattr(fallbacks, "_proxy_url", lambda: None)
+
+    assert fallbacks.public_api_fallback("https://www.bilibili.com/video/BV1GJ411x7h7") is None
+    assert len(calls) == 1

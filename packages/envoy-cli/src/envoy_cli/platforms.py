@@ -183,6 +183,31 @@ _SUPPORTED_HOSTS = {
     "developer.mozilla.org",
     "arxiv.org",
     "export.arxiv.org",
+    # Promoted from the link-coverage corpus: each of these was read end to end
+    # (>= 200 chars of body text) at least once by this build, so a reader that
+    # has it can say "supported" instead of "unknown". See
+    # docs/experiments/link-compatibility.md for the run that produced it.
+    "sspai.com",
+    "ifanr.com",
+    "geekpark.net",
+    "youtu.be",
+    "docs.google.com",
+    "docs.python.org",
+    "kubernetes.io",
+    "doc.rust-lang.org",
+    "stackoverflow.com",
+    "pypi.org",
+    "npmjs.com",
+    "lobste.rs",
+    "meta.discourse.org",
+    "movie.douban.com",
+    "notion.so",
+    "airtable.com",
+    "w3.org",
+    "rfc-editor.org",
+    "gutenberg.org",
+    "simonwillison.net",
+    "danluu.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (
