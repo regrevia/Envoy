@@ -31,6 +31,7 @@
 | 15 | 107 | 106 | 83 | 78.3% | 25 | 4.24s | 补 4 条 feed/forum 行全部可用；dev.to/discourse.mozilla/arduino 升 supported |
 | 16 | 109 | 108 | 84 | 77.8% | 25 | 3.45s | 补 youku/peertube 视频行（均可用）；youku 进媒体预算表 |
 | 17 | 111 | 110 | 87 | 79.1% | 26 | 3.45s | 补 npr/cnbc 新闻行（均 partial）；apnews 标 unsupported |
+| 18 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 连接级失败不再重试（p90 77.25s→25.81s）；substack 出口抖动掉出可用 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -421,6 +422,32 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 `platforms/medium-post`、`video/youtube` 与 `platforms/youtube-watch`），每组只保留先出现的一条，
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
+
+## 第十八轮（110 行 / 可用 78.2%，失败路径快速失败把 p90 从 77.25s 压到 25.81s）
+
+本轮不加语料，只改失败路径：连接级失败（拒绝连接 / 连接超时 / 代理不可用）不再
+在同一个出口上重试三次。原先 `_fetch_html_via` 对 `httpx.TransportError` 一视同仁，
+3 次尝试 × 20s 连接超时 = 60s 花在同一个不通的出口上，`proxy_plan()` 的第二个出口
+再各付一次超时，于是单行 77s。现在这类错误立刻上抛，出口仍按计划逐个尝试。
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 110 | 26 | 60 | 1 | 8 | 15 | 0 | 86 | **78.2%** |
+| 可达口径（剔 unreachable） | 95 | 26 | 60 | 1 | 8 | 0 | 0 | 86 | **90.5%** |
+| 同组成 108 行子集（= 第十七轮口径） | 108 | 26 | 58 | 1 | 8 | 15 | 0 | 84 | **77.8%** |
+
+- 时延：mean **10.6s**（上轮 15.8s）/ p50 3.74s / p90 **25.81s**（上轮 77.25s）/
+  max **70.7s**（上轮 108.9s）。单点复测 `reuters.com/technology/`：77.4s → 25.9s，
+  错误码与结论不变（`network_error`）。
+- 可用行 87 → 86 记作出口抖动，不是本轮改动的效果：`substack` 上轮 partial
+  2405 字（3.0s），本轮 blocked/network_error（44.3s），是本轮唯一一条
+  可用 → 不可用的翻转；`unsplash` 仅在 blocked 内部换错误码
+  （challenge_required → network_error，67.1s → 52.0s）。`substack` 那 44.3s 里
+  静态抓取先失败、再走浏览器，与本轮「连接级失败不重试」路径不同，是出口本身
+  这一小时不可用。
+- 语义边界（写进测试 `tests/cli/test_fetch_fast_fail.py`）：只有「一个字节都没拿到」
+  的连接级错误跳过重试；`ReadTimeout` 这类读到一半的失败仍保留 3 次尝试；
+  `proxy_plan()` 里的每个出口各试一次，不会因为第一个出口失败就放弃第二个。
 
 ## 第十七轮（110 行 / 可用 79.1%，新闻族补 npr 与 cnbc）
 
