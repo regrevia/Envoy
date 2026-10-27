@@ -4811,6 +4811,34 @@ def _render_feed_text(url: str, text: str) -> str | None:
     return FEED_SEPARATOR.join([lines[0], "\n".join(lines[1:])])
 
 
+def _json_payload_has_content(text: str) -> bool:
+    """True when a JSON document carries prose, not just an API status stub.
+
+    Platform share endpoints often answer with ``{"result":2,"error_msg":null}``
+    plus an id. That is a machine envelope, not content, so it must not be
+    delivered as a complete read.
+    """
+
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return len(text.strip()) >= 200
+
+    def _strings(value, depth: int = 0):
+        if depth > 4:
+            return
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from _strings(item, depth + 1)
+        elif isinstance(value, (list, tuple)):
+            for item in value[:50]:
+                yield from _strings(item, depth + 1)
+
+    return any(len(item.strip()) >= 40 for item in _strings(payload))
+
+
 def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
     data = source["data"]
     text = data.decode(str(source.get("encoding") or "utf-8"), errors="replace")
@@ -4820,6 +4848,12 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
         text = feed_text
     if not text:
         raise PublicPageError("The text document is empty", ErrorCode.EMPTY_CONTENT)
+    mime_type = str(source.get("mime_type") or "").lower()
+    if mime_type.endswith("json") and not _json_payload_has_content(text):
+        raise PublicPageError(
+            "The endpoint returned a JSON status stub instead of readable content",
+            ErrorCode.EMPTY_CONTENT,
+        )
     source_truncated = len(text) > MAX_TEXT_CHARS
     text = text[:MAX_TEXT_CHARS]
     title = Path(urlparse(source["url"]).path).name or "Text document"

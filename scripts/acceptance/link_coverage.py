@@ -177,12 +177,17 @@ CORPUS: list[tuple[str, str, str]] = [
     ("cn-platform", "douban-book", "https://book.douban.com/subject/1084336/"),
     ("cn-platform", "cnblogs-article", "https://www.cnblogs.com/rossiXYZ/p/15553994.html"),
     ("cn-platform", "juejin-post", "https://juejin.cn/post/6844903967407734797"),
+    ("cn-media", "ithome-home", "https://www.ithome.com/"),
+    ("cn-media", "ifanr-home", "https://www.ifanr.com/"),
+    ("cn-media", "pingwest-home", "https://www.pingwest.com/"),
+    ("cn-media", "qbitai-home", "https://www.qbitai.com/"),
 ]
 
 #: Families a report table shows, in a stable order.
 FAMILY_ORDER = [
     "reference", "news", "blog", "code", "forum", "social", "video", "audio",
-    "image", "document", "spa", "feed", "api", "web", "cn-platform", "platforms",
+    "image", "document", "spa", "feed", "api", "web", "cn-platform", "cn-media",
+    "platforms",
 ]
 
 #: Error strings that mean "no HTTP answer at all" (browser/proxy/DNS layer).

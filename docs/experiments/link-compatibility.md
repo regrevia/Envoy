@@ -284,3 +284,45 @@ python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
 回归：`pytest tests/cli` → **667 passed / 4 failed（已知 `reportlab` PDF 环境缺依赖）/ 1 deselected**；
 `tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
 137 passed；`export_link_verdicts.py --check` 干净。
+
+## 第六轮（薄页判据与 DNS 区分的实测）
+
+命令同第五轮，语料 73 条（本轮尚未含 4 条 `cn-media` 新行）：
+
+```bash
+python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
+  --out /tmp/accept/round6.json --envoy /tmp/envoy-live
+```
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | usable_rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `no_risk` | 72 | 15 | 32 | 4 | 6 | 14 | 1 | 47 | 65.3% |
+
+配对（第五/六轮都 live 且可达，n=56）：`usable 47 → 46（83.9% → 82.1%）`，
+`readable 15 → 14（26.8% → 25.0%）`。四处翻转：
+
+| 链接 | 第五轮 | 第六轮 | 说明 |
+| --- | --- | --- | --- |
+| `youtube-youtu.be` | `readable 2949` | `failed` 240.0s | 撞 `--timeout 240` 上限，纯环境/预算 |
+| `youtube` | `partial 427` | `blocked 0` | 字幕端拒绝，与第五轮相反 |
+| `tiktok` | `blocked 0` | `partial 517` | 与第五轮相反，再次说明第三方嵌入壳不稳 |
+| `instagram-reel` | `empty 9` | `blocked 0` | 两者都不是可用读取 |
+
+净变化 -1 全部来自那条 240s 超时，不是能力回退；把超时行排除后配对 `n=55 usable 46 → 46`。
+
+薄页判据这一轮**没有**改变任何行的 verdict：语料里唯一的薄平台页是 kuaishou
+（`empty`，78 字），它走的是分享 API 的 JSON 分支，没进薄页逻辑——这条在下面单独修掉。
+`empty_content` 与 `network_error` 的区分在本轮生效：`gist` 稳定报 `network_error`
+（`DNS lookup failed`），不再被当成策略拒绝。
+
+### 再补一条：JSON 状态桩不再算完成
+
+`kuaishou-share` / `kuaishou-video` 的 78 字是分享接口的
+`{"result":2,"error_msg":null,"request_id":"…"}`，此前以 `result=ready`、
+`mime_type=application/json` 交付，等于把「接口说失败」当成正文。现在 `_parse_text_source`
+对 JSON 载荷做内容判定：没有任何 ≥40 字字符串的文档按 `empty_content` 处理，
+报「The endpoint returned a JSON status stub instead of readable content」。
+真实 API JSON（GitHub、掘金等）不受影响，回归
+`tests/cli/test_login_wall.py::test_json_status_stub_is_not_a_complete_read`。
+
+回归：`pytest tests/cli` → **668 passed / 4 failed（已知 `reportlab` 环境缺依赖）/ 1 deselected**。

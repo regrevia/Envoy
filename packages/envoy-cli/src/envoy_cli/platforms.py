@@ -224,6 +224,10 @@ _SUPPORTED_HOSTS = {
     # first try (cnblogs 13k chars, douban book 6.7k), so stop hedging.
     "cnblogs.com",
     "book.douban.com",
+    "ithome.com",
+    "ifanr.com",
+    "pingwest.com",
+    "qbitai.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (

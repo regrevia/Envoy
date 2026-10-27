@@ -125,3 +125,31 @@ def test_loopback_url_keeps_the_policy_message():
     response = reader._read_public_page_once(request)
     assert response.errors[0].code.value == "source_unavailable"
     assert "Only public HTTP(S) URLs are allowed" in response.errors[0].message
+
+
+def test_json_status_stub_is_not_a_complete_read():
+    """A share API answering {"result":2,...} is a stub, not the post."""
+    import pytest as _pytest
+
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    request = ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "json-stub",
+        "source": {"url": "https://www.kuaishou.com/f/X-1WVMwQuRjthjtv"},
+        "goal": "what is this post",
+        "budget": {"max_work_seconds": 30},
+    })
+    stub = b'{"result":2,"error_msg":null,"request_id":"793075897050316594"}'
+    with _pytest.raises(reader.PublicPageError) as excinfo:
+        reader._parse_text_source(
+            request,
+            {
+                "url": "https://www.kuaishou.com/f/X-1WVMwQuRjthjtv",
+                "data": stub,
+                "mime_type": "application/json",
+                "encoding": "utf-8",
+            },
+        )
+    assert excinfo.value.code.value == "empty_content"
+    assert "status stub" in str(excinfo.value)
