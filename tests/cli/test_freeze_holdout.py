@@ -130,3 +130,35 @@ def test_apply_plan_refuses_to_replace_a_frozen_holdout(tmp_path: Path) -> None:
         ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
     ) == 1
     assert json.loads(plan.read_text())["holdout"]["sha256"] == "ab" * 32
+
+
+def test_check_accepts_a_plan_that_matches_the_frozen_file(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)
+    out = tmp_path / "holdout.json"
+    assert module.main(
+        ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
+    ) == 0
+    assert module.main(["--check", str(out), "--plan", str(plan)]) == 0
+
+
+def test_check_rejects_a_plan_that_was_edited_by_hand(tmp_path: Path, capsys) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)
+    out = tmp_path / "holdout.json"
+    assert module.main(
+        ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
+    ) == 0
+    data = json.loads(plan.read_text())
+    data["holdout"]["sha256"] = "cd" * 32
+    data["holdout"]["rows"] = data["holdout"]["rows"][:-1]
+    plan.write_text(json.dumps(data, indent=2) + "\n")
+    capsys.readouterr()
+    assert module.main(["--check", str(out), "--plan", str(plan)]) == 1
+    output = capsys.readouterr().out
+    assert "sha256 does not match" in output
+    assert "rows do not match" in output

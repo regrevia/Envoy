@@ -137,6 +137,23 @@ def apply_plan(plan_path: Path, data: dict, *, force: bool = False) -> None:
     plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def plan_mismatches(plan: dict, data: dict) -> list[str]:
+    """Return how the plan's recorded holdout disagrees with the frozen file."""
+    holdout = plan.get("holdout")
+    if not isinstance(holdout, dict):
+        return ["the plan has no holdout block"]
+    problems: list[str] = []
+    if holdout.get("status") != "frozen":
+        problems.append(f"plan holdout status is {holdout.get('status')!r}, expected 'frozen'")
+    if holdout.get("sha256") != data.get("sha256"):
+        problems.append("plan holdout sha256 does not match the frozen file")
+    if holdout.get("rows") != data.get("rows"):
+        problems.append("plan holdout rows do not match the frozen file")
+    if holdout.get("size") != data.get("size"):
+        problems.append("plan holdout size does not match the frozen file")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Freeze or verify an Envoy holdout sample.")
     parser.add_argument("--input", type=Path, help="candidate URL list, one per line")
@@ -146,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", default="envoy-holdout", help="sampling seed")
     parser.add_argument("--force", action="store_true", help="overwrite an existing frozen file")
     parser.add_argument("--check", type=Path, help="verify an existing frozen file")
+    parser.add_argument("--plan", type=Path, help="with --check: require the plan to match the file")
     parser.add_argument(
         "--apply-plan", type=Path, help="record the frozen rows in an EXPERIMENT-PLAN.json"
     )
@@ -158,6 +176,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"FAIL {problem}")
             return 1
         data = json.loads(args.check.read_text(encoding="utf-8"))
+        if args.plan:
+            try:
+                plan = json.loads(args.plan.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"FAIL cannot read {args.plan}: {exc}")
+                return 1
+            blocked = plan_mismatches(plan, data)
+            if blocked:
+                for problem in blocked:
+                    print(f"FAIL {problem}")
+                return 1
         print(f"holdout ok: {data.get('id')} ({data.get('size')} rows, {data.get('sha256')[:12]})")
         return 0
 

@@ -131,7 +131,7 @@ python3 dry_run_experiments.py --render V02  # 打印该条的确切命令与待
 cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
 python3 freeze_holdout.py --input candidates.txt --size 12 --id H12-2026-10-28 \
   --out holdout.json --apply-plan EXPERIMENT-PLAN.json
-python3 freeze_holdout.py --check holdout.json      # 期望 holdout ok: ... (12 rows, ...)
+python3 freeze_holdout.py --check holdout.json --plan EXPERIMENT-PLAN.json  # 期望 holdout ok: ... (12 rows, ...)
 python3 dry_run_experiments.py --check              # 期望 ...; holdout frozen
 ```
 
