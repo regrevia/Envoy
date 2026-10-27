@@ -70,6 +70,13 @@ def test_classify_ready_but_short_is_empty(lc):
     assert lc.classify(text_response("ready", ""))["verdict"] == "empty"
 
 
+def test_classify_short_page_delivered_in_full_is_usable(lc):
+    # example.com is 170 characters; the reader delivered all of it, so it is a
+    # short page, not an empty one.
+    assert lc.classify(text_response("ready", "e" * 170))["verdict"] == "readable"
+    assert lc.classify(text_response("partial", "e" * 120))["verdict"] == "partial"
+
+
 def test_classify_partial_needs_text_to_be_useful(lc):
     assert lc.classify(text_response("partial", "z" * 400))["verdict"] == "partial"
     assert lc.classify(text_response("partial", "z"))["verdict"] == "empty"

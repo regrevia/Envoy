@@ -32,7 +32,7 @@
 | 16 | 109 | 108 | 84 | 77.8% | 25 | 3.45s | 补 youku/peertube 视频行（均可用）；youku 进媒体预算表 |
 | 17 | 111 | 110 | 87 | 79.1% | 26 | 3.45s | 补 npr/cnbc 新闻行（均 partial）；apnews 标 unsupported |
 | 18 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 连接级失败不再重试（p90 77.25s→25.81s）；substack 出口抖动掉出可用 |
-| 19 | 128 | 113 | 91 | 80.5% | 26 | 4.26s | 非 http(s)/x.com/微信首页判 unsupported（宿主直接走原生）；新增 apple-podcast、spotify-episode、agent-docs 三个可用行 |
+| 19 | 128 | 113 | 92 | 81.4% | 27 | 4.26s | 非 http(s)/x.com/微信首页判 unsupported（宿主直接走原生）；新增 apple-podcast、spotify-episode、agent-docs 三个可用行 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -441,9 +441,14 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
    三个 host 也进了 `_SUPPORTED_HOSTS`。
 
 本轮：语料 128 行，实跑 113 行（跳过 12 行风控 host、1 行 dead、2 行 URL 去重），
-可用 **91 = 80.5%**（第十八轮 86/110 = 78.2%）；延迟 mean 11.7s / p50 4.26s /
+可用 **92 = 81.4%**（第十八轮 86/110 = 78.2%）；延迟 mean 11.7s / p50 4.26s /
 p90 32.98s / max 57.5s（第十八轮 10.6 / 3.74 / 25.81 / 70.7；p90 回升是
 unsplash、hn-rss 这一批出口抖动撞上浏览器两次尝试，不是新代码回退）。
+
+另修一处度量缺陷：`classify()` 原先用 200 字硬下限判 usable，`example.com`
+（整页 170 字、reader 全量交付）因此被记成 `empty`。现在只要「交付 ≥40 字且
+`total_chars` 不超过交付量的 2 倍」（即整页就这么短），就按短页计 usable；
+仍保留 `total_chars >= 1000` 判 `truncated` 的分支。本轮据此从 91 修正到 92。
 
 验证：`tests/test_platform_classification.py` 163 个断言、`index.test.js` 9 个断言全过；
 `scripts/export_link_verdicts.py --check` 干净；`scripts/dev_test.sh` 仅剩既有的
