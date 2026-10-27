@@ -31,6 +31,8 @@ def write_wheel(path: Path, version: str = VERSION, deps: bool = True) -> None:
         metadata += "Requires-Dist: httpx<1,>=0.28\nRequires-Dist: pyyaml\n"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(f"envoy_cli-{version}.dist-info/METADATA", metadata)
+        archive.writestr("envoy_cli/__init__.py", "")
+        archive.writestr("envoy_core/__init__.py", "")
 
 
 def write_tgz(path: Path, version: str = VERSION) -> None:
@@ -120,6 +122,24 @@ def run(directory: Path, *extra: str) -> tuple[int, str]:
     with redirect_stdout(buffer):
         code = module.main(["--dir", str(directory), *extra])
     return code, buffer.getvalue()
+
+
+def test_a_wheel_without_its_packages_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path
+    build_delivery(directory)
+    wheel = directory / f"envoy_cli-{VERSION}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"envoy_cli-{VERSION}.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: envoy-cli\nVersion: {VERSION}\nRequires-Dist: httpx\n",
+        )
+    manifest = json.loads((directory / "release-manifest.json").read_text())
+    manifest["artifacts"][0]["sha256"] = sha256(wheel.read_bytes()).hexdigest()
+    (directory / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    refresh_checksums(directory, manifest)
+    code, output = run(directory)
+    assert code == 1, output
+    assert "cannot import offline" in output, output
 
 
 def test_good_delivery_passes(tmp_path: Path) -> None:

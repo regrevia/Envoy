@@ -84,6 +84,16 @@ def parse_sums(path: Path) -> dict[str, str]:
     return entries
 
 
+MODULES = ("envoy_cli/", "envoy_core/")
+
+
+def wheel_modules(path: Path) -> list[str]:
+    """Top-level importable packages carried by the wheel."""
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+    return [module for module in MODULES if any(n.startswith(module) for n in names)]
+
+
 def wheel_metadata(path: Path) -> tuple[str, list[str]]:
     with zipfile.ZipFile(path) as archive:
         for name in archive.namelist():
@@ -254,6 +264,8 @@ def verify(directory: Path, *, allow_preview: bool = False) -> Result:
                 result.fail("wheel", f"METADATA version {inner_version} != file name {wheel_version}")
             elif not any(r.lower().startswith("httpx") for r in requires):
                 result.fail("wheel", "wheel does not declare httpx, an offline install would fail")
+            elif missing := [m for m in MODULES if m not in wheel_modules(directory / wheel_name)]:
+                result.fail("wheel", f"wheel cannot import offline, missing {', '.join(missing)}")
             elif preview:
                 result.ok(f"wheel is a local preview build ({inner_version}, {len(requires)} deps)")
             else:
