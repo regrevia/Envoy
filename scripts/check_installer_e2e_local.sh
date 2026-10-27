@@ -115,6 +115,26 @@ else
   fail "dry run" "$(printf '%s' "$output" | tail -5)"
 fi
 
+# Every dispatch branch must build its asset URL from the same root: the DSH
+# bundle is the one download a host CLI pulls, so check the printed plan.
+home="$work/home-dsh"
+mkdir -p "$home"
+if output="$(env -i HOME="$home" PATH="$PATH" \
+  ENVOY_VERSION="$version" ENVOY_DRY_RUN=1 ENVOY_SKIP_UV_INSTALL=1 \
+  ENVOY_MANIFEST_URL="http://127.0.0.1:$port/release-manifest.json" \
+  ENVOY_RELEASES_BASE="http://127.0.0.1:$port/releases/download" \
+  sh "$INSTALL" dsh 2>&1)"; then
+  case "$output" in
+    *"http://127.0.0.1:$port/releases/download/v$version/envoy-dsh-$version.tgz"*)
+      pass "the DSH bundle URL comes from the overridable root" ;;
+    *"DeepSeek Harness bundle"*)
+      fail "DSH bundle URL" "the plan still points somewhere else: $(printf '%s' "$output" | grep -m1 'plugin' || true)" ;;
+    *) pass "no DSH host on this machine, bundle branch not exercised" ;;
+  esac
+else
+  fail "DSH dry run" "$(printf '%s' "$output" | tail -5)"
+fi
+
 # The same mirror with a wrong digest must stop the installation.
 cp "$DELIVERY/SHA256SUMS" "$serve/releases/download/v$version/SHA256SUMS"
 python3 - "$serve/releases/download/v$version/SHA256SUMS" <<'ENVOY_TAMPER'
