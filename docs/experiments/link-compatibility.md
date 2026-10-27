@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十五轮）
+## 结论（最新一轮：第十六轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -29,6 +29,7 @@
 | 13 | 102 | 101 | 79 | 78.2% | 20 | 4.34s | 真 RFC PDF 替掉玩具 PDF；news 补 oschina/pingwest 到 6 可用 |
 | 14 | 104 | 103 | 79 | 76.7% | 23 | 4.44s | 补 arstechnica/verge feed（均 readable）；guardian/youtube/platformer 升 supported |
 | 15 | 107 | 106 | 83 | 78.3% | 25 | 4.24s | 补 4 条 feed/forum 行全部可用；dev.to/discourse.mozilla/arduino 升 supported |
+| 16 | 109 | 108 | 84 | 77.8% | 25 | 3.45s | 补 youku/peertube 视频行（均可用）；youku 进媒体预算表 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -419,6 +420,25 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 `platforms/medium-post`、`video/youtube` 与 `platforms/youtube-watch`），每组只保留先出现的一条，
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
+
+## 第十六轮（108 行 / 可用 77.8%，视频族补 youku 与 peertube）
+
+本轮加 2 条视频行：`youku`（国内长视频）与 `peertube`（联邦视频，走 `public_api:feed_alternate`）。
+报告 109 行声明、死链 1、分母 108。
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 108 | 25 | 59 | 1 | 9 | 14 | 0 | 84 | **77.8%** |
+| 可达口径（剔 unreachable） | 94 | 25 | 59 | 1 | 9 | 0 | 0 | 84 | **89.4%** |
+| 同组成 106 行子集（= 第十五轮口径） | 106 | 24 | 58 | 1 | 8 | 14 | 0 | 82 | **77.4%** |
+
+- 2 条新行全部可用：`peertube` readable 2918 字 / 2.6s，`youku` partial 1065 字 / 2.2s。
+  视频族 5 行 → 7 行，且 `youku.com` / `v.youku.com` 同时进入媒体预算表
+  （`_MEDIA_SOURCE_HOSTS`），长视频走 300s 预算而不是通用 180s。
+- 抖动：`wikipedia` 回到 partial 7992 字（上一轮是出口问题），
+  `ted-talk` readable 502 → unreachable、`tiktok` partial 517 → blocked，
+  两条都是同一出口/反爬波动，复跑口径下不算能力变化。
+- 时延：mean 19.6s / p50 3.45s / p90 77.22s / max 102.9s。
 
 ## 第十五轮（107 行 / 可用 78.3%，4 条新行全部可用，forum 与 audio 两族同时改善）
 
