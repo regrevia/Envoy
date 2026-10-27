@@ -86,6 +86,9 @@
   计可用，`total_chars >= 1000` 的截断分支保留。
 - Skill：长视频 / 播客要在同一次调用里显式抬高 `budget.max_work_seconds`
   （短集 300、长录音到 900），而不是超时后重读一遍。
+- 实验记录：`record_experiment.py` 把一条实测结果连同证据行和观测数字写进
+  `EXPERIMENT-PLAN.json`；没有证据的「通过 / 失败」写不进去，跑过的条目也不会
+  被悄悄改回 `not_run`，计划级状态跟着条目重算。不带 `--write` 只干跑。
 
 ### English
 
@@ -122,6 +125,12 @@
 - Skill: a long video or podcast should raise `budget.max_work_seconds` in the
   same call (300 for a short episode, up to 900 for a long recording) instead of
   re-reading after the budget timeout.
+
+- Experiment record: `record_experiment.py` writes one measured result, its
+  evidence line and the observed numbers into `EXPERIMENT-PLAN.json`. A
+  pass or fail without evidence is refused, an entry that already ran cannot
+  be quietly turned back into `not_run`, and the plan-level status is
+  recomputed from the entries. Without `--write` it only prints the change.
 
 ## 0.1.21 - 2026-10-27
 

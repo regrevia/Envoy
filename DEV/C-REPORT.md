@@ -20,6 +20,7 @@
 | C11 | 实验计划干跑工具 `dry_run_experiments.py`：校验 32 条条目（id 唯一/状态词表/需求词表/占位符/留出集状态），渲染单条命令且不执行任何网络动作 | `scripts/dry_run_experiments.py`、交付目录同名额 | `unit_checked`（6 用例，含重复 id、未知状态、未知需求、冻结留出集缺 rows） |
 | C12 | 发布链路离线契约：`release.yml` 必须按标签取版本、四项门禁先跑、五个产物都构建、清单在产物之后 `SHA256SUMS` 之前生成、缺 `NPM_TOKEN` 只跳过不掩盖失败；两个安装脚本不得出现字面版本号，资产 URL 一律由运行时解析的版本拼 | `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py` | `unit_checked`（6 + 5 用例；字面版本号零命中） |
 | C13 | 公网守卫判定一次到位：`_public_url_rejection` 返回 public / policy / dns 三值并按 host 缓存，读路径只解析一次域名、由同一个结论决定报错码与文案（此前用 bool 再补查一次，两次解析可能不一致）；`_host_lookup_failed` 删除 | `packages/envoy-cli/src/envoy_cli/reader.py`、`browser.py`、`tests/cli/test_url_guard_determinism.py` | `unit_checked`（5 用例，全程不打真 DNS；受影响 13 个测试文件 321 passed） |
+| C14 | 实测结果写回工具 `record_experiment.py`：把一条结果连同 `evidence`/`observed_at` 写进计划，拒绝无证据的通过/失败、拒绝把已跑条目改回 `not_run`（除非 `--force`），计划级 `status` 随条目重算；不带 `--write` 只干跑 | `scripts/record_experiment.py`、交付目录同名额、`tests/cli/test_record_experiment.py` | `unit_checked`（8 用例，含未知 id、无证据、降级拦截、干跑不动字节、聚合状态、坏计划先拒） |
 
 ## 2. 通过的检查（本轮真跑）
 
@@ -30,6 +31,7 @@
 - `sh scripts/check_installer_offline.sh`：**7/7**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」）。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
+- `tests/cli/test_record_experiment.py`：**8 passed**；对真实计划跑 `record_experiment.py --json` → `plan not_run: 32 entries; not_run 32; holdout pending_sample`（不改文件）。
 - `tests/cli/test_verify_delivery.py`：**6 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (11 checks)**。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
