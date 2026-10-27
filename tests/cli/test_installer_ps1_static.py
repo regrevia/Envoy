@@ -50,6 +50,8 @@ def test_the_mirror_hooks_exist_once_each(text: str):
     # Once as the condition, once as the value; no second place to drift.
     assert text.count("$env:ENVOY_RELEASES_BASE") == 2
     assert text.count("$env:ENVOY_MANIFEST_URL") == 2
+    assert text.count("$env:ENVOY_REPO") == 2
     # Both defaults point at the public host, so an unset variable changes nothing.
     assert "https://github.com/$($Script:Repo)/releases/download" in text
     assert "https://raw.githubusercontent.com/$($Script:Repo)/main/" in text
+    assert '"regrevia/Envoy"' in text

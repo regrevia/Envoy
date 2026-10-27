@@ -68,3 +68,6 @@ def test_release_root_is_overridable_on_both_sides(sh: str, ps1: str):
     assert "$env:ENVOY_RELEASES_BASE" in ps1 and "$env:ENVOY_MANIFEST_URL" in ps1
     assert ps1.count('$($Script:ReleasesBase)/v$') >= 4
     assert "https://github.com/$($Script:Repo)/releases/download" in ps1
+    # A fork changes the repository once and every URL follows.
+    assert '${ENVOY_REPO:-regrevia/Envoy}' in sh
+    assert "$env:ENVOY_REPO" in ps1

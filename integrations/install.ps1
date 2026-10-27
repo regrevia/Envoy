@@ -28,7 +28,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Script:Repo = "regrevia/Envoy"
+# One place for both default URLs and the push host, so a fork only sets ENVOY_REPO.
+$Script:Repo = if ($env:ENVOY_REPO) { $env:ENVOY_REPO } else { "regrevia/Envoy" }
 $Script:ManifestUrl = if ($env:ENVOY_MANIFEST_URL) { $env:ENVOY_MANIFEST_URL } else {
     "https://raw.githubusercontent.com/$($Script:Repo)/main/integrations/release-manifest.json"
 }

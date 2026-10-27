@@ -28,7 +28,9 @@
 #   ENVOY_DRY_RUN=1      print the commands instead of running them
 set -eu
 
-REPO="regrevia/Envoy"
+# The repository is the one place both default URLs and the plugin marketplaces
+# come from, so a fork only has to set ENVOY_REPO.
+REPO="${ENVOY_REPO:-regrevia/Envoy}"
 MANIFEST_URL="${ENVOY_MANIFEST_URL:-https://raw.githubusercontent.com/$REPO/main/integrations/release-manifest.json}"
 # Overridable so a mirror (or a loopback checkout) can serve the same layout
 # as releases/download without touching anything else in this script.

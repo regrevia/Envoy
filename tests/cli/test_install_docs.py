@@ -30,7 +30,7 @@ def sh() -> str:
 
 
 def _sh_repo(sh: str) -> str:
-    match = re.search(r'^REPO="([^"]+)"', sh, re.MULTILINE)
+    match = re.search(r'^REPO="\$\{ENVOY_REPO:-([^}]+)\}"', sh, re.MULTILINE)
     assert match, "install.sh should default REPO to the public repository"
     return match.group(1)
 
