@@ -590,3 +590,30 @@ def test_vimeo_page_without_metadata_text_does_not_win(monkeypatch):
     monkeypatch.setattr(fallbacks, "_client", _serve(handler))
 
     assert fallbacks.public_api_fallback("https://vimeo.com/76979871") is None
+
+
+def test_fallback_title_block_is_not_split_into_characters(monkeypatch):
+    """_clean_text takes a list; a bare string used to be joined per character."""
+
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    from envoy_cli import reader
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json({"title": "The New Vimeo Player", "duration": 62})
+
+    monkeypatch.setattr(fallbacks, "_client", _serve(handler))
+    url = "https://vimeo.com/76979871"
+    fallback = fallbacks.public_api_fallback(url)
+    request = ReadRequest.model_validate(
+        {
+            "protocol_version": "envoy.read/1",
+            "request_id": "title-1",
+            "source": {"url": url},
+            "goal": "what is this",
+        }
+    )
+
+    response = reader._public_api_fallback_response(request, url, fallback)
+
+    assert response.blocks[0].content.text == "The New Vimeo Player"

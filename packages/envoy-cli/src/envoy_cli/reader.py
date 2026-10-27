@@ -6522,7 +6522,7 @@ def _public_api_fallback_response(
     reader produced it so the evidence stays traceable.
     """
 
-    title = _clean_text(str(fallback.get("title") or "")) or source_url
+    title = _clean_text([str(fallback.get("title") or "")]) or source_url
     backend = str(fallback.get("backend") or "public_api")
     text = str(fallback.get("text") or "").strip()
     char_budget = _response_char_budget(request)
