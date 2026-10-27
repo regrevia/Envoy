@@ -72,6 +72,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("reference", "wikipedia", "https://en.wikipedia.org/wiki/Transformer_(deep_learning_architecture)"),
     ("reference", "mdn", "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API"),
     ("reference", "python-docs", "https://docs.python.org/3/library/asyncio.html"),
+    ("reference", "mdn-http", "https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview"),
     ("reference", "rust-book", "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"),
     ("reference", "kubernetes", "https://kubernetes.io/docs/concepts/workloads/pods/"),
     ("reference", "gutenberg", "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm"),
