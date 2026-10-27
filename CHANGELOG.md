@@ -1,5 +1,57 @@
 # 更新日志 / Changelog
 
+## 0.1.24 - 2026-10-28
+
+### 中文
+
+- 一键安装：`install.sh`（macOS / Linux）与新增的 `install.ps1`（Windows）都能在
+  一条命令里装好 runtime、装好浏览器、认好宿主（Claude Code / Codex / DSH），
+  再把 MCP 条目接到对应配置。没检测到宿主 CLI 时改为写 MCP 条目，不再假装装上了
+  Skill。
+- 固定单一 runtime：安装时把所用的 `envoy` 绝对路径写进 `~/.envoy/runtime-path`，
+  之后一律用它。PATH 里更早出现的旧 `envoy` 不会再悄悄盖掉新装的那份
+  （离线用例 `scripts/check_installer_offline.sh` 覆盖）。
+- 浏览器只在安装期准备一次：读网页时缺浏览器直接快速失败并给出
+  `envoy browser setup`，不再在宿主的 300 秒工具时限里下 900 秒的 Chromium。
+- Windows：新增 `process_control.py`，探活用 `OpenProcess` / `GetExitCodeProcess`，
+  停进程用 `taskkill /PID /T /F`，不再调用 Windows 上不存在的 `os.killpg` /
+  `signal.SIGTERM`；取消 auth 会话也走同一条路径。
+- 本地 PDF：本地 PDF 不再走视频请求，按页解析并按页提交断点；下载与逐页解析
+  共用一个剩余时限，预算不够时明确给出 paused / resumable 而不是超时。
+- 长视频 / 播客：ASR 断点按音频内容摘要命名，换一个临时目录仍能接着跑；`collect`
+  的子请求拿到剩余预算，不会各自从头计时。
+- 发行包：`SHA256SUMS` 与 `release-manifest.json` 现在覆盖 DSH bundle
+  （`envoy-dsh-<version>.tgz`）与两个安装脚本；正式发行工作流新增 npm 发布步骤
+  （未配置 `NPM_TOKEN` 时跳过并说明）。
+
+### English
+
+- One-command install: `install.sh` (macOS / Linux) and the new `install.ps1`
+  (Windows) provision the runtime, the browser, and the detected host
+  (Claude Code / Codex / DSH), then wire the MCP entry. With no host CLI
+  detected they write the MCP entry instead of pretending a Skill was installed.
+- One pinned runtime: install records the absolute `envoy` path in
+  `~/.envoy/runtime-path` and every later command uses it, so an older `envoy`
+  earlier in `PATH` cannot silently win (`scripts/check_installer_offline.sh`).
+- The browser is provisioned once at install time: a read that finds no browser
+  fails fast with `envoy browser setup` instead of downloading Chromium for up
+  to 900 s inside a 300 s host tool deadline.
+- Windows: new `process_control.py` probes with `OpenProcess` /
+  `GetExitCodeProcess` and stops with `taskkill /PID /T /F` instead of the
+  Unix-only `os.killpg` / `signal.SIGTERM`; auth-session cancel uses the same
+  path.
+- Local PDF: a local PDF is parsed as a document (never as video), committed one
+  page at a time, and download plus per-page parsing share one remaining
+  deadline, so an exhausted budget reports paused / resumable instead of a
+  timeout.
+- Long video / podcast: ASR checkpoints are named by the audio content digest,
+  so a re-read from a different temp directory resumes instead of starting
+  over; `collect` passes its remaining budget to child reads.
+- Release assets: `SHA256SUMS` and `release-manifest.json` now cover the DSH
+  bundle (`envoy-dsh-<version>.tgz`) and both installers, and the release
+  workflow publishes the npm bundle (skipping with a note when `NPM_TOKEN` is
+  absent).
+
 ## Unreleased
 
 ### 中文

@@ -33,3 +33,6 @@ Check/
 Thumbs.db
 .idea/
 .vscode/
+
+# Release build output
+dist/

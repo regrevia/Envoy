@@ -1,7 +1,7 @@
 # Envoy 安装 / Install
 
 Envoy 由三部分组成：Skill 指令、本地 CLI runtime、宿主 MCP 连接。当前开发版
-`0.1.23`，发行说明以 `CHANGELOG.md` 为准。
+`0.1.24`，发行说明以 `CHANGELOG.md` 为准。
 
 装哪个宿主都只需要一条命令：脚本先确认 `PATH` 上有够新的 `envoy`（已装且够新
 就复用），再装该宿主的插件。**不需要先手动装 CLI**，也不需要先跑
@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 ```bash
 dsh plugin --profile web add envoy-dsh
 # 或装发行包，不经过 npm
-dsh plugin --profile web add https://github.com/regrevia/Envoy/releases/download/v0.1.23/envoy-dsh-0.1.23.tgz
+dsh plugin --profile web add https://github.com/regrevia/Envoy/releases/download/v0.1.24/envoy-dsh-0.1.24.tgz
 ```
 
 桌面版把 CLI 装在应用包内，用脚本时它会自己找到。
@@ -80,12 +80,12 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 `~/.envoy/skill/envoy`（`ENVOY_SKILL_DIR` 可改目标）。要手工来一遍：
 
 ```bash
-gh release download v0.1.23 --repo regrevia/Envoy --dir envoy-v0.1.23
-cd envoy-v0.1.23
-uv tool install --python 3.11 ./envoy_cli-0.1.23-py3-none-any.whl
+gh release download v0.1.24 --repo regrevia/Envoy --dir envoy-v0.1.24
+cd envoy-v0.1.24
+uv tool install --python 3.11 ./envoy_cli-0.1.24-py3-none-any.whl
 ```
 
-也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.23)
+也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.24)
 页面上直接下载 wheel 与 `SHA256SUMS` 手工核对。下载慢或装依赖超时，给
 `install.sh` 设 `ENVOY_PYPI_INDEX_URL` 指向可用镜像即可。
 
@@ -119,7 +119,7 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","so
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 
 # 单独换 wheel
-uv tool install --force --python 3.11 ./envoy_cli-0.1.23-py3-none-any.whl
+uv tool install --force --python 3.11 ./envoy_cli-0.1.24-py3-none-any.whl
 
 # 卸载
 claude plugin uninstall envoy

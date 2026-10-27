@@ -51,6 +51,15 @@ jobs:
               if actual != expected:
                   raise SystemExit(f"{path}: version {actual} does not match tag {expected}")
           PY
+      - name: 校验同源版本与清单 / Verify declarations agree
+        run: |
+          python scripts/check_versions.py --check
+          python scripts/check_release_manifest.py --check
+          python scripts/build_envoy_dsh_plugin.py --check
+          python scripts/sync_host_skills.py --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: 构建可安装产物 / Build installable assets
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
@@ -58,8 +67,15 @@ jobs:
           python -m pip install --upgrade pip
           python scripts/build_envoy_cli_wheel.py --output-dir dist --channel release
           python scripts/package_envoy_skill.py --output dist/envoy-skill.zip --version "${RELEASE_TAG#v}" --json
-          python scripts/check_release_manifest.py --emit dist/release-manifest.json
+          npm pack --pack-destination dist integrations/dsh/envoy-dsh
           cp integrations/install.sh dist/install.sh
+          cp integrations/install.ps1 dist/install.ps1
+      # The manifest hashes every file already in dist/, so it is written after
+      # all assets exist and before SHA256SUMS, which then also covers the
+      # manifest and both installers a host downloads first.
+      - name: 生成清单与校验和 / Emit manifest and checksums
+        run: |
+          python scripts/check_release_manifest.py --emit dist/release-manifest.json
           python - <<'PY'
           import hashlib
           from pathlib import Path
@@ -70,13 +86,18 @@ jobs:
               for path in assets
           ]
           Path("dist/SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="ascii")
+          print("\n".join(lines))
           PY
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: 构建插件市场包 / Build marketplace bundle
+      - name: 发布 npm 包 / Publish the npm bundle
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm pack --pack-destination dist integrations/dsh/envoy-dsh
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_TOKEN is not configured; the bundle is attached to the release but not published to npm"
+            exit 0
+          fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm publish dist/envoy-dsh-*.tgz --access public
       - name: Publish GitHub Release (Chinese first, English below)
         env:
           GH_TOKEN: ${{ github.token }}
