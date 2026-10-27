@@ -153,12 +153,23 @@ else
   bad "no host fallback: $out"
 fi
 
+# --- case: release download root is overridable (mirror / loopback) ---------
+case_start
+if grep -q 'RELEASES_BASE="${ENVOY_RELEASES_BASE:-' "$INSTALL" \
+  && [ "$(grep -c -F -- '$RELEASES_BASE/v$' "$INSTALL")" -ge 4 ] \
+  && ! grep -q 'https://github.com/\$REPO/releases/download/v\$' "$INSTALL"; then
+  ok "every release download goes through the overridable base"
+else
+  bad "some release download still hardcodes the public host"
+fi
+
 # --- case: a reachable SHA256SUMS must never be silently skipped -----------
 case_start
 if grep -q 'checksum unavailable for %s' "$INSTALL" \
   && grep -q 'SHA256SUMS has no entry for' "$INSTALL" \
   && grep -q 'checksum skipped for %s' "$INSTALL" \
-  && grep -q 'checksum unavailable for \$FileName' "$ROOT/integrations/install.ps1"; then
+  && grep -q 'checksum unavailable for \$FileName' "$ROOT/integrations/install.ps1" \
+  && grep -q 'ENVOY_RELEASES_BASE' "$INSTALL"; then
   ok "checksum verification names each outcome on both platforms"
 else
   bad "checksum verification still skips silently"

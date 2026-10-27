@@ -93,6 +93,11 @@
   `shasum`/`sha256sum` 时各打一行说明；清单拿到了却没有该文件条目就直接失败，
   不再像以前那样静默跳过；`install.ps1` 侧也改成同样的两条分支，两平台对
   「不可达」与「缺条目」给一样的反应。
+- 安装源可覆盖：`ENVOY_RELEASES_BASE` 与 `ENVOY_MANIFEST_URL` 让镜像或本地目录
+  按同样布局（`v<版本>/` + 清单）提供安装包，默认值仍是公开路径，`install.sh` 的
+  四处下载全部走同一个根。`scripts/check_installer_e2e_local.sh` 在 127.0.0.1 上
+  起一个镜像，完整跑「解析版本 → 下载 → 校验摘要 → 解包」，并把摘要改错验证它会
+  真的停下：不进公网、不装运行时 wheel。
 
 ### English
 
@@ -141,6 +146,11 @@
   reachable list that lacks the file's entry fails instead of being skipped, so
   POSIX and Windows now react the same way to an unreachable list and to a
   list missing the entry.
+- The release root is overridable: `ENVOY_RELEASES_BASE` and
+  `ENVOY_MANIFEST_URL` let a mirror or a local directory serve the same
+  layout, defaulting to the public paths. `scripts/check_installer_e2e_local.sh`
+  serves the release over 127.0.0.1 and runs version resolution, download,
+  checksum verification and unpacking end to end, plus a tampered digest case.
 
 ## 0.1.21 - 2026-10-27
 

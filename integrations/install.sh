@@ -21,11 +21,18 @@
 #   ENVOY_SETUP_BROWSER  1 (default) downloads Chromium at install time; 0 skips
 #   ENVOY_DETECT_DESKTOP_APP 1 (default) also finds the DeepSeek Harness app bundle
 #   DSH_PROFILE          Harness profile for the DSH bundle (default: web)
+#   ENVOY_MANIFEST_URL   release manifest to read (default: raw.githubusercontent main)
+#   ENVOY_RELEASES_BASE  download root holding v<version>/ (default: GitHub releases)
+#                        both exist so a mirror or a loopback checkout can serve the
+#                        same layout; the defaults are the public paths
 #   ENVOY_DRY_RUN=1      print the commands instead of running them
 set -eu
 
 REPO="regrevia/Envoy"
-MANIFEST_URL="https://raw.githubusercontent.com/$REPO/main/integrations/release-manifest.json"
+MANIFEST_URL="${ENVOY_MANIFEST_URL:-https://raw.githubusercontent.com/$REPO/main/integrations/release-manifest.json}"
+# Overridable so a mirror (or a loopback checkout) can serve the same layout
+# as releases/download without touching anything else in this script.
+RELEASES_BASE="${ENVOY_RELEASES_BASE:-https://github.com/$REPO/releases/download}"
 RUNTIME_HOME="${ENVOY_HOME:-$HOME/.local/share/envoy-dsh/runtime}"
 RUNTIME_BIN="$RUNTIME_HOME/bin/envoy"
 RUNTIME_PIN="${ENVOY_RUNTIME_PIN:-$HOME/.envoy/runtime-path}"
@@ -97,7 +104,7 @@ version_at_least() {
 verify_checksum() {
   file="$1"
   name="$2"
-  sums_url="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/SHA256SUMS"
+  sums_url="$RELEASES_BASE/v$RUNTIME_VERSION/SHA256SUMS"
   if ! sums="$(curl -fsSL "$sums_url" 2>/dev/null)"; then
     printf 'envoy install: checksum unavailable for %s (SHA256SUMS not reachable); continuing unverified\n' "$name"
     return 0
@@ -173,7 +180,7 @@ pinned_runtime() {
 install_runtime() {
   version="$1"
   wheel="envoy_cli-$version-py3-none-any.whl"
-  url="https://github.com/$REPO/releases/download/v$version/$wheel"
+  url="$RELEASES_BASE/v$version/$wheel"
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
@@ -361,7 +368,7 @@ install_dsh() {
   printf 'envoy install: DeepSeek Harness bundle (profile %s)\n' "$DSH_PROFILE"
   # The published npm package trails the repo, and a release tarball carries the
   # same files without waiting for a publish, so try the tarball first.
-  tarball="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/envoy-dsh-$RUNTIME_VERSION.tgz"
+  tarball="$RELEASES_BASE/v$RUNTIME_VERSION/envoy-dsh-$RUNTIME_VERSION.tgz"
   if [ "$DRY_RUN" = "1" ]; then
     run "$dsh_bin" plugin --profile "$DSH_PROFILE" add "$tarball"
   elif curl -fsSL -o /dev/null --range 0-0 "$tarball" 2>/dev/null; then
@@ -465,7 +472,7 @@ ENVOY_MCP
 # For hosts that read a plain skill directory rather than a plugin package.
 install_skill() {
   dest="${ENVOY_SKILL_DIR:-$HOME/.envoy/skill/envoy}"
-  url="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/envoy-skill.zip"
+  url="$RELEASES_BASE/v$RUNTIME_VERSION/envoy-skill.zip"
   printf 'envoy install: skill -> %s\n' "$dest"
   if [ "$DRY_RUN" = "1" ]; then
     printf '  + download %s\n  + extract to %s\n' "$url" "$dest"
