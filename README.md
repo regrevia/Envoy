@@ -10,13 +10,39 @@
 </p>
 
 <p align="center">
-  <a href="integrations/skills/envoy/INSTALL.md">安装 Envoy</a> ·
+  <a href="#安装">安装 Envoy</a> ·
   <a href="https://github.com/regrevia/Envoy/releases">下载发行版</a> ·
   <a href="https://github.com/regrevia/Envoy/issues/new/choose">反馈问题</a> ·
   <a href="#english">English</a>
 </p>
 
 给 AI 一个链接，Envoy 把它变成带来源定位的材料，AI 再用它写你要的东西：Wiki、摘要、报告、脚本。网页、公众号、PDF、小红书图文、B 站视频、本地视频都行。
+
+## 安装
+
+三个宿主各一行。安装脚本只要求 `curl`：uv 和 Python 3.11 它自己装，装好会打印 `envoy install: runtime … protocol … browser …`。
+
+```sh
+# Claude Code
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
+
+# Codex
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+
+# DeepSeek Harness
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+```
+
+不确定宿主是哪个：把最后一段换成 `auto`，脚本会识别已装的 Claude Code / Codex / DSH，都没有就写 MCP 条目（`mcp`、`skill` 也可以单独装）。只想先看它要做什么，命令前加 `ENVOY_DRY_RUN=1`。Windows PowerShell 用 `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex`（默认 auto，指定宿主时下载后 `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`）。
+
+装完两条自检：
+
+```sh
+envoy doctor --json     # runtime.install.status 应为 pinned：固定唯一 runtime，旧 PATH 上的 envoy 不会抢占
+envoy browser setup     # 准备首次读网页用的浏览器；没准备时读路径会直接报缺能力，不会干等下载
+```
+
+升级就是重跑同一行；卸载、企业镜像、各宿主插件目录见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)。
 
 ## 能做什么
 
@@ -149,6 +175,32 @@ docker compose up -d --build
 </p>
 
 Give your AI a link and Envoy turns it into material with source locators; the AI then writes whatever you asked for: a wiki, a summary, a report, a script. Web pages, WeChat posts, PDFs, Xiaohongshu image posts, Bilibili videos, local video files.
+
+### Install
+
+One line per host. The installer only needs `curl`: it installs uv and Python 3.11 itself and prints `envoy install: runtime … protocol … browser …` when done.
+
+```sh
+# Claude Code
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
+
+# Codex
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+
+# DeepSeek Harness
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+```
+
+Not sure which host you have: use `auto` instead — it detects an installed Claude Code / Codex / DSH and falls back to an MCP entry (`mcp` and `skill` also install on their own). Add `ENVOY_DRY_RUN=1` to see what it would do first. On Windows PowerShell: `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex` (auto by default; for one host download it and run `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`).
+
+Two checks after installing:
+
+```sh
+envoy doctor --json     # runtime.install.status should be pinned: one runtime, an older envoy on PATH cannot win
+envoy browser setup     # browser for the first read; without it a read fails fast as a missing capability
+```
+
+Upgrading means running the same line again. Uninstall, mirrors, and each host's plugin directory: [INSTALL.md](integrations/skills/envoy/INSTALL.md).
 
 ### What it does
 

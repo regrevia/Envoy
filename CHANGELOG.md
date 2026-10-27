@@ -54,6 +54,10 @@
 
 ## Unreleased
 
+### 文档
+
+- README（中/英）新增「安装」段：Claude Code / Codex / DSH 各一行 `install.sh` 命令、`auto` 识别、`ENVOY_DRY_RUN` 预演、Windows `install.ps1`，以及装后 `envoy doctor --json` 与 `envoy browser setup` 两条自检。
+
 ### 中文
 
 - 安装后自检：`envoy doctor` 新增 `runtime` 一行，显示当前运行的 `envoy` 是否就是
