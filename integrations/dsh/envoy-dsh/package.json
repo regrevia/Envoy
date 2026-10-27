@@ -1,6 +1,6 @@
 {
   "name": "envoy-dsh",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "DeepSeek Harness bundle for Envoy: multimodal link in, AI-ready material out - Markdown, wiki, knowledge base. The same Envoy skill also ships for Codex and Claude Code.",
   "type": "module",
   "license": "Apache-2.0",

@@ -234,6 +234,13 @@ _SUPPORTED_HOSTS = {
     "lwn.net",
     "brendangregg.com",
     "techcrunch.com",
+    "jiemian.com",
+    "cls.cn",
+    "yicai.com",
+    "caixin.com",
+    "wallstreetcn.com",
+    "ruanyifeng.com",
+    "commons.wikimedia.org",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (
