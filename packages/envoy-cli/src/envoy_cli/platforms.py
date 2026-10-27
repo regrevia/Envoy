@@ -273,6 +273,9 @@ _SUPPORTED_HOSTS = {
     "engadget.com",
     "php.net",
     "theverge.com",
+    "huxiu.com",
+    "leiphone.com",
+    "runoob.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (
