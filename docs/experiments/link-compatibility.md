@@ -326,3 +326,48 @@ python3 scripts/acceptance/link_coverage.py --jobs 3 --timeout 240 \
 `tests/cli/test_login_wall.py::test_json_status_stub_is_not_a_complete_read`。
 
 回归：`pytest tests/cli` → **668 passed / 4 failed（已知 `reportlab` 环境缺依赖）/ 1 deselected**。
+
+## 第七轮（新增 10 条可用行，同语料子集 65.3% → 68.1%）
+
+本轮语料从 77 行扩展到 83 行：4 条 `cn-media`（虎嗅式国内媒体首页）+ 6 条静态 HTML
+开发/技术媒体。命令同前，`--jobs 3 --timeout 240`。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | usable_rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 全语料 | 82（1 条 dead） | 18 | 41 | 2 | 0 | 9 | 12 | 0 | 59 | 72.0% |
+| 旧 72 行子集 | 72 | 17 | 32 | 2 | 0 | 9 | 12 | 0 | 49 | **68.1%** |
+
+旧子集与第六轮**同分母同组成**，可直接比：`usable 47 → 49（65.3% → 68.1%，+2.8pp）`，
+`readable 15 → 17`（旧子集）。新增 10 行全部可用（3 种 `partial` + 1 `readable` 的国内媒体，
+6 条 `partial` 技术媒体），因此全语料 72.0% 里有一部分来自语料构成变化，必须两组数字一起看。
+
+延迟同时明显变好（旧子集 n=72）：mean `32.9 → 24.9s`，p50 `7.29 → 6.19s`，
+p90 `77.48 → 77.25s`，max `240.0 → 109.0s`——第六轮那条 240s 超时消失，本轮零超时。
+
+新增行实测：
+
+| 行 | 家族 | 结果 | 字数 | 耗时 | 通道 |
+| --- | --- | --- | --- | --- | --- |
+| `ithome-home` | cn-media | partial | 7645 | 1.1s | static_http |
+| `ifanr-home` | cn-media | partial | 6189 | 1.1s | static_http |
+| `pingwest-home` | cn-media | readable | 792 | 3.3s | static_http |
+| `qbitai-home` | cn-media | partial | 2134 | 1.3s | static_http |
+| `devto-home` | blog | partial | 6441 | 20.6s | static_http |
+| `zenn-home` | blog | partial | 567 | 3.0s | static_http |
+| `qiita-home` | blog | partial | 3275 | 2.7s | static_http |
+| `brendangregg-blog` | blog | partial | 7947 | 3.0s | static_http |
+| `lwn-home` | news | partial | 7981 | 1.8s | static_http |
+| `techcrunch-home` | news | partial | 7133 | 4.6s | static_http |
+
+非可用行（22 条）现在全部落在三类可解释原因上：
+12 条 `network_error`（本机到 BBC/Reuters/NYT/Guardian/Medium/HN/Reddit/Mastodon/Bluesky/
+SoundCloud/archive.org 出口不通，不是策略拒绝）、
+9 条 `blocked`（YouTube 字幕端 `challenge_required`、Vimeo 与 TikTok `missing_capability`、
+X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou 两条 `empty_content`）、
+2 条 `empty`（`example.com` 170 字、`w3c-pdf` 23 字，都是页面本身没有正文）。
+
+第六轮记录的两处翻转已经回落：`youtube-youtu.be` 不再撞超时（本轮可用），
+`tiktok` 又回到 `blocked`。第三方嵌入壳在多次测量间不稳定，单轮翻转不作为能力结论。
+
+回归：`pytest tests/cli` → 669 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected**；
+分类+路由+语料脚本 **143 passed**；DSH 插件 `npm test` **9 passed**。

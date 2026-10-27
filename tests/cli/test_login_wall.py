@@ -153,3 +153,26 @@ def test_json_status_stub_is_not_a_complete_read():
         )
     assert excinfo.value.code.value == "empty_content"
     assert "status stub" in str(excinfo.value)
+
+
+def test_real_api_json_is_still_content():
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    request = ReadRequest.model_validate({
+        "protocol_version": "envoy.read/1",
+        "request_id": "json-ok",
+        "source": {"url": "https://api.github.com/repos/regrevia/Envoy"},
+        "goal": "what is this repo",
+        "budget": {"max_work_seconds": 30},
+    })
+    body = b'{"full_name":"regrevia/Envoy","description":"Read public URLs as evidence for agent hosts."}'
+    response = reader._parse_text_source(
+        request,
+        {
+            "url": "https://api.github.com/repos/regrevia/Envoy",
+            "data": body,
+            "mime_type": "application/json",
+            "encoding": "utf-8",
+        },
+    )
+    assert response.result.value == "ready"
