@@ -4,20 +4,22 @@
 
 ### 中文
 
-- 新增 13 个可读站点，全部有实测正文（`static_http` 通道）：技术/开发媒体 `dev.to`、`zenn.dev`、`qiita.com`、`lwn.net`、`brendangregg.com`、`techcrunch.com`；国内媒体 `ithome.com`、`ifanr.com`、`pingwest.com`、`qbitai.com`；财经媒体 `jiemian.com`、`cls.cn`、`yicai.com`、`caixin.com`、`wallstreetcn.com`；个人博客 `ruanyifeng.com` 与图库 `commons.wikimedia.org`。
+- 新增 17 个可读站点，全部有实测正文（`static_http` 通道）：技术/开发媒体 `dev.to`、`zenn.dev`、`qiita.com`、`lwn.net`、`brendangregg.com`、`techcrunch.com`；国内媒体 `ithome.com`、`ifanr.com`、`pingwest.com`、`qbitai.com`；财经媒体 `jiemian.com`、`cls.cn`、`yicai.com`、`caixin.com`、`wallstreetcn.com`；个人博客 `ruanyifeng.com` 与图库 `commons.wikimedia.org`。
 - JSON 状态桩不再冒充正文：接口只回一个 `{"status": ...}` 的空壳（快手分享链 63 字）以前被当成 `ready` + `extraction=complete` 交付，现在按 `empty_content` 拒绝，宿主不会再收到「读完了但什么都没有」。
 - 平台页只剩几百字外壳时标 `details.thin_platform_page=true`，让宿主知道拿到的是壳而不是全文；同时修正一条把该语义写错的测试。
 - DNS 解析失败不再被 URL 守卫吞成「不支持」，统一返回 `network_error` 与 `reader=url_guard`，不再把出口问题伪装成能力问题。
-- 验收语料扩到 83 行并重跑：同分母同组成的旧 72 行子集可用率 `65.3% → 68.1%`（+2 行），全语料 `59/82 = 72.0%`；零超时，p50 延迟 `7.29s → 6.19s`。
+- 视频/播客链接在 MCP 侧拿到更长的默认时间预算（300s，调用方显式给的 `budget` 仍然优先），长视频字幕/ASR 不再在 180s 处被判超时；普通网页保持原默认，不吃这条预算。
+- 验收语料扩到 83 行并重跑：同分母同组成的旧 72 行子集可用率 `65.3% → 68.1%`（+2 行），全语料 `59/82 = 72.0%`，随后补 7 条新行后全语料 `66/89 = 74.2%`；零超时，p50 延迟 `7.29s → 4.43s`。
 - 新增回归测试：真实 JSON API 响应仍算正文（`api.github.com` 不回退），JSON 状态桩判定 `empty_content`。
 
 ### English
 
-- Thirteen new readable hosts, each verified with real extracted text over the `static_http` path: developer media `dev.to`, `zenn.dev`, `qiita.com`, `lwn.net`, `brendangregg.com`, `techcrunch.com`; Chinese outlets `ithome.com`, `ifanr.com`, `pingwest.com`, `qbitai.com`; finance media `jiemian.com`, `cls.cn`, `yicai.com`, `caixin.com`, `wallstreetcn.com`; the `ruanyifeng.com` blog and `commons.wikimedia.org`.
+- Seventeen new readable hosts, each verified with real extracted text over the `static_http` path: developer media `dev.to`, `zenn.dev`, `qiita.com`, `lwn.net`, `brendangregg.com`, `techcrunch.com`; Chinese outlets `ithome.com`, `ifanr.com`, `pingwest.com`, `qbitai.com`; finance media `jiemian.com`, `cls.cn`, `yicai.com`, `caixin.com`, `wallstreetcn.com`; the `ruanyifeng.com` blog and `commons.wikimedia.org`.
 - A JSON status stub no longer passes as content: an endpoint returning only `{"status": ...}` (a 63-character Kuaishou share response) used to be delivered as `ready` with `extraction=complete`; it is now rejected as `empty_content` instead of handing the host an empty successful read.
 - Platform pages reduced to a few hundred characters now set `details.thin_platform_page=true`, so the host knows it received a shell rather than the article, and a test that encoded the old semantics was corrected.
 - DNS resolution failures are no longer swallowed by the URL guard as "unsupported"; they return `network_error` with `reader=url_guard`, so an egress problem is not reported as a capability problem.
-- The acceptance corpus grew to 83 rows: the identical 72-row subset moved `65.3% → 68.1%` usable (+2 rows) and the full corpus reports `59/82 = 72.0%`, with no timeouts and p50 latency `7.29s → 6.19s`.
+- Video and podcast URLs now get a longer default work budget on the MCP side (300s, and an explicit caller `budget` still wins), so long-video subtitles/ASR stop timing out at 180s; ordinary web pages keep the old default and never inherit the media allowance.
+- The acceptance corpus grew to 83 rows: the identical 72-row subset moved `65.3% → 68.1%` usable (+2 rows) and the full corpus reports `59/82 = 72.0%`, reaching `66/89 = 74.2%` after seven more rows, with no timeouts and p50 latency `7.29s → 4.43s`.
 - New regression tests cover a real JSON API response still counting as content (`api.github.com` no longer falls back) and a JSON status stub being rejected as `empty_content`.
 
 ## 0.1.15 - 2026-10-27

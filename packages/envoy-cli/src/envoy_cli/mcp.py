@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import uuid
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Iterable, TextIO
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse
@@ -1473,6 +1474,60 @@ def _auth_payload(arguments: dict) -> dict:
     return payload
 
 
+# A long video or podcast needs more than the generic read allowance for
+# subtitle/ASR work, but only media hosts are granted the extra time: a one-hour
+# recording can take several minutes of transcription and would otherwise be
+# reported as a budget timeout.
+_MEDIA_SOURCE_HOSTS = (
+    "youtube.com",
+    "youtu.be",
+    "bilibili.com",
+    "b23.tv",
+    "vimeo.com",
+    "douyin.com",
+    "iesdouyin.com",
+    "tiktok.com",
+    "soundcloud.com",
+    "ximalaya.com",
+    "xiaoyuzhoufm.com",
+    "podcasts.apple.com",
+    "open.spotify.com",
+    "music.163.com",
+    "instagram.com",
+    "facebook.com",
+)
+_MEDIA_DEFAULT_WORK_SECONDS = 300
+
+
+def _media_source_host(url: Any) -> bool:
+    if not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url if "//" in url else f"//{url}")
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return any(host == suffix or host.endswith("." + suffix) for suffix in _MEDIA_SOURCE_HOSTS)
+
+
+def _default_budget_for(name: str, prepared: dict) -> None:
+    """Give a media read enough time when the caller did not choose a budget."""
+
+    if name != "envoy_read":
+        return
+    source = prepared.get("source")
+    url = source.get("url") if isinstance(source, dict) else None
+    if not _media_source_host(url):
+        return
+    budget = prepared.get("budget")
+    if budget is None:
+        prepared["budget"] = {"max_work_seconds": _MEDIA_DEFAULT_WORK_SECONDS}
+    elif isinstance(budget, dict) and budget.get("max_work_seconds") is None:
+        prepared["budget"] = {**budget, "max_work_seconds": _MEDIA_DEFAULT_WORK_SECONDS}
+
+
 def _server_arguments(name: str, arguments: dict) -> dict:
     """Complete a compact tool call into the full request model accepts.
 
@@ -1527,6 +1582,8 @@ def _server_arguments(name: str, arguments: dict) -> dict:
             merged = {"kind": "range", **flattened} if flattened else None
         if merged is not None:
             prepared["scope"] = merged
+    if name == "envoy_read":
+        _default_budget_for(name, prepared)
     return prepared
 
 

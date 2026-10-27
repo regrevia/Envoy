@@ -1685,3 +1685,32 @@ def test_local_source_path_normalizes_windows_file_urls(url, expected):
     from envoy_cli import mcp
 
     assert mcp._local_source_path({"source": {"url": url}}) == expected
+
+
+def test_mcp_bridge_gives_media_reads_more_time_by_default(monkeypatch):
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    media = mcp._server_arguments(
+        "envoy_read",
+        {"source": {"url": "https://www.youtube.com/watch?v=abc12345678"}, "goal": "g"},
+    )
+    assert media["budget"]["max_work_seconds"] == 300
+    assert ReadRequest.model_validate(media).budget.max_work_seconds == 300
+
+    # A caller-chosen budget is never overridden, only completed.
+    chosen = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://www.bilibili.com/video/BV1xx411c7mD"},
+            "goal": "g",
+            "budget": {"max_work_seconds": 45},
+        },
+    )
+    assert chosen["budget"]["max_work_seconds"] == 45
+
+    # A non-media page keeps the core default instead of the media allowance.
+    plain = mcp._server_arguments(
+        "envoy_read", {"source": {"url": "https://example.org/article"}, "goal": "g"}
+    )
+    assert "budget" not in plain
