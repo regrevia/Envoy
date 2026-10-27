@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT_DIR / "scripts" / "verify_delivery.py"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+TOOL = Path(__file__).resolve().parents[2] / "scripts" / "dry_run_experiments.py"
 VERSION = "0.1.24"
 
 
@@ -61,6 +62,7 @@ def write_plan(directory: Path, entries: list[dict] | None = None, status: str =
 
 def build_delivery(directory: Path) -> None:
     write_plan(directory)
+    (directory / "dry_run_experiments.py").write_text(TOOL.read_text(encoding="utf-8"))
     write_wheel(directory / f"envoy_cli-{VERSION}-py3-none-any.whl")
     write_tgz(directory / f"envoy-dsh-{VERSION}.tgz")
     write_skill(directory / "envoy-skill.zip")
@@ -243,3 +245,23 @@ def test_recorded_plan_with_evidence_passes(tmp_path: Path) -> None:
     code, output = run(tmp_path)
     assert code == 0, output
     assert "experiment-plan is valid (1 entries, 1 axes)" in output
+
+
+def test_plan_command_naming_a_flag_the_cli_never_had_fails(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    write_plan(tmp_path, [{"id": "D07", "status": "not_run", "command": "envoy read a.pdf --pages 10-25"}])
+    code, out = run(tmp_path)
+    assert code == 1
+    assert "experiment-plan-commands" in out
+    assert "--pages" in out
+
+
+def test_plan_command_on_the_real_cli_surface_passes(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    command = (
+        "sh -c 'printf %s \"{\\\"request_id\\\":\\\"V01\\\"}\" | envoy read --request-json -'"
+    )
+    write_plan(tmp_path, [{"id": "V01", "status": "not_run", "command": command}])
+    code, out = run(tmp_path)
+    assert code == 0
+    assert "commands match the CLI surface (1 checked)" in out

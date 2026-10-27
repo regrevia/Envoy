@@ -22,7 +22,7 @@ python scripts/check_release_manifest.py --check
 ```sh
 cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
 python3 verify_delivery.py --dir .
-# 期望最后一行：delivery ok: ... (12 checks)
+# 期望最后一行：delivery ok: ... (13 checks)
 ```
 
 `verify_delivery.py` 只读文件、不联网、不执行安装；它失败就不要往下装。其中一条会读 `EXPERIMENT-PLAN.json`：条目写 `passed`/`failed` 却没有 `evidence` 与 `observed_at`（或 `not_run` 却带着证据）时直接失败，所以别手改状态绕过 `record_experiment.py`。

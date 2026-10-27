@@ -168,6 +168,19 @@ def plan_problem(plan: dict) -> str:
     return ""
 
 
+def load_plan_tool(directory: Path):
+    """Import the shipped dry-run tool so the plan is checked against one CLI surface."""
+    import importlib.util
+
+    path = directory / "dry_run_experiments.py"
+    spec = importlib.util.spec_from_file_location("shipped_dry_run_experiments", path)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"cannot load {path.name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def verify(directory: Path, *, allow_preview: bool = False) -> Result:
     result = Result(directory)
 
@@ -336,6 +349,30 @@ def verify(directory: Path, *, allow_preview: bool = False) -> Result:
         else:
             entries = [e for axis in plan["axes"].values() for e in axis["entries"]]
             result.ok(f"experiment-plan is valid ({len(entries)} entries, {len(plan['axes'])} axes)")
+            # The plan tells a human what to run when they next have the machine to
+            # themselves, so a command naming a flag this CLI never had is a defect
+            # is only found when it is pasted, long after the release shipped.
+            try:
+                tool = load_plan_tool(directory)
+            except Exception as exc:  # noqa: BLE001 - any import failure is a ship defect
+                result.fail("experiment-plan-commands", f"cannot load dry_run_experiments.py: {exc}")
+            else:
+                commands = {
+                    str(entry["id"]): str(entry["command"])
+                    for entry in entries
+                    if str(entry.get("command", "")).strip()
+                }
+                problems = [
+                    problem
+                    for entry_id, command in commands.items()
+                    for problem in tool.cli_problems(entry_id, command)
+                ]
+                if problems:
+                    result.fail("experiment-plan-commands", "; ".join(problems[:3]))
+                else:
+                    result.ok(
+                        f"experiment-plan commands match the CLI surface ({len(commands)} checked)"
+                    )
 
     return result
 
