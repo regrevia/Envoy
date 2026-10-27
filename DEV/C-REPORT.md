@@ -38,7 +38,7 @@
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
 - `tests/cli/test_dry_run_experiments.py`：**8 passed**（新增「命令必须以可执行程序开头」，把 32 条计划里的散文步骤挪进 `notes`）。
-- `tests/cli/test_record_experiment.py`：**8 passed**；对真实计划跑 `record_experiment.py --json` → `plan not_run: 35 entries; not_run 32; holdout pending_sample`（不改文件）。
+- `tests/cli/test_record_experiment.py`：**8 passed**；对真实计划跑 `record_experiment.py --json` → `plan_status: not_run, entries: 35, not_run: 35, holdout: pending_sample`（不改文件）。
 - `tests/cli/test_verify_delivery.py`：**9 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (12 checks)**。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
