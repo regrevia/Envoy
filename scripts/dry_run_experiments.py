@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline dry-run reader for EXPERIMENT-PLAN.json.
 
-The plan's 32 entries can only be executed with a human present and a live
+The plan's entries can only be executed with a human present and a live
 network. This tool never executes them: it validates the plan, lists the
 entries and their status, and renders the exact command a run would use so the
 human can copy one out. Anything that still needs a value is printed as a
@@ -74,6 +74,46 @@ CLI_SURFACE = {
     "mcp": {"--toolset"},
 }
 ENVOY_CALL = re.compile(r"(?:^|[\s'\"])envoy\s+([A-Za-z0-9-]+)([^|;]*)")
+
+
+FROZEN_TOOL_SURFACE = {
+    "--input",
+    "--out",
+    "--id",
+    "--size",
+    "--seed",
+    "--force",
+    "--check",
+    "--plan",
+    "--apply-plan",
+}
+FROZEN_TOOL_FLAG = re.compile(r"(?<![\w-])--[A-Za-z0-9-]+")
+
+
+def holdout_problems(plan):
+    """Name every freeze/verify command that would die in argparse when pasted.
+
+    The holdout commands are the two steps a human runs first when they next
+    have the machine to themselves, so an unknown flag there costs the whole
+    session rather than one measurement.
+    """
+    holdout = plan.get("holdout")
+    if not isinstance(holdout, dict):
+        return []
+    problems = []
+    for field in ("freeze_command", "verify_command"):
+        command = str(holdout.get(field, "")).strip()
+        if not command:
+            continue
+        if "freeze_holdout.py" not in command:
+            problems.append(f"holdout {field} does not run freeze_holdout.py")
+        for flag in FROZEN_TOOL_FLAG.findall(command):
+            if flag not in FROZEN_TOOL_SURFACE:
+                problems.append(
+                    f"holdout {field} names unknown freeze_holdout.py flag {flag} "
+                    f"(known: {', '.join(sorted(FROZEN_TOOL_SURFACE))})"
+                )
+    return problems
 
 
 def cli_problems(entry_id, command):
@@ -230,6 +270,7 @@ def validate(plan: dict) -> list[str]:
                         f"{entry_id}: is a holdout dependent entry but its command "
                         "has no <public-*> placeholder"
                     )
+        problems.extend(holdout_problems(plan))
     return problems
 
 

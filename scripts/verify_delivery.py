@@ -391,11 +391,13 @@ def verify(directory: Path, *, allow_preview: bool = False) -> Result:
                     for entry_id, command in commands.items()
                     for problem in tool.cli_problems(entry_id, command)
                 ]
+                problems.extend(tool.holdout_problems(plan))
                 if problems:
                     result.fail("experiment-plan-commands", "; ".join(problems[:3]))
                 else:
                     result.ok(
-                        f"experiment-plan commands match the CLI surface ({len(commands)} checked)"
+                        f"experiment-plan commands match the CLI surface "
+                        f"({len(commands)} checked, holdout commands too)"
                     )
 
     return result

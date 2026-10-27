@@ -195,3 +195,24 @@ def test_a_quoted_placeholder_passes(tmp_path: Path) -> None:
     data = plan()
     data["axes"]["long-video"]["entries"][0]["command"] = "ENVOY_REPO='<owner>/Envoy' sh install.sh"
     assert module.validate(data) == []
+
+
+def test_holdout_command_naming_a_flag_the_tool_never_had_fails() -> None:
+    module = load_module()
+    data = plan()
+    data["holdout"]["freeze_command"] = "python3 freeze_holdout.py --input c.txt --rows 12"
+    problems = module.validate(data)
+    assert any("unknown freeze_holdout.py flag --rows" in problem for problem in problems)
+
+
+def test_holdout_commands_on_the_real_tool_surface_pass() -> None:
+    module = load_module()
+    data = plan()
+    data["holdout"]["freeze_command"] = (
+        "python3 freeze_holdout.py --input candidates.txt --size 12 --id H12 "
+        "--out holdout.json --apply-plan EXPERIMENT-PLAN.json"
+    )
+    data["holdout"]["verify_command"] = (
+        "python3 freeze_holdout.py --check holdout.json --plan EXPERIMENT-PLAN.json"
+    )
+    assert module.validate(data) == []
