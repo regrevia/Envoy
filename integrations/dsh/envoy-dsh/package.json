@@ -50,5 +50,13 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
+  },
+  "author": {
+    "name": "regrevia",
+    "url": "https://github.com/regrevia"
+  },
+  "homepage": "https://github.com/regrevia/Envoy/tree/main/integrations/dsh/envoy-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/regrevia/Envoy/issues"
   }
 }

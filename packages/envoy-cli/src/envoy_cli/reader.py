@@ -4284,6 +4284,21 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
     )
 
 
+def _is_connect_failure(error: Exception) -> bool:
+    """True when the failure happened before any byte of the response.
+
+    A refused or timed-out connection is not a transient read hiccup: sleeping
+    250ms and repeating it three times only multiplies the wall clock (each
+    attempt pays a fresh connect timeout). The one retry worth doing is the
+    other exit in `proxy_plan()`, which the caller already performs.
+    """
+
+    return isinstance(
+        error,
+        (httpx.ConnectTimeout, httpx.ConnectError, httpx.ProxyError, httpx.UnsupportedProtocol),
+    )
+
+
 def _fetch_html(
     source_url: str,
     max_bytes: int = MAX_HTML_BYTES,
@@ -4446,8 +4461,8 @@ def _fetch_html_via(
                             raise PublicPageError("The public page exceeds Envoy's size limit")
                     encoding = getattr(response, "encoding", None) or "utf-8"
                     return current_url, bytes(body).decode(encoding, errors="replace")
-            except httpx.TransportError:
-                if attempt + 1 >= MAX_FETCH_ATTEMPTS:
+            except httpx.TransportError as exc:
+                if _is_connect_failure(exc) or attempt + 1 >= MAX_FETCH_ATTEMPTS:
                     raise
                 time.sleep(0.25 * (attempt + 1))
             else:
@@ -4547,8 +4562,8 @@ def _fetch_pdf_source(
                             "data": data,
                             "mime_type": "application/pdf",
                         }
-                except httpx.TransportError:
-                    if attempt + 1 >= MAX_FETCH_ATTEMPTS:
+                except httpx.TransportError as exc:
+                    if _is_connect_failure(exc) or attempt + 1 >= MAX_FETCH_ATTEMPTS:
                         raise
                     time.sleep(0.25 * (attempt + 1))
                 else:

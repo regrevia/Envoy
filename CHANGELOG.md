@@ -1,5 +1,20 @@
 # 更新日志 / Changelog
 
+## Unreleased
+
+### 中文
+
+- 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
+  连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
+  实测不可达页面（reuters.com）单行从 `77.4 s` 降到 `25.9 s`，结论与错误码不变。
+
+### English
+
+- Fast fail: connect-level failures (refused, connect timeout, unusable proxy) are
+  no longer retried three times on the same exit; each retry paid a fresh connect
+  timeout. Planned exits are still tried in order. Measured on an unreachable page
+  (reuters.com): one row drops from `77.4 s` to `25.9 s` with the same verdict.
+
 ## 0.1.21 - 2026-10-27
 
 - 适配：`theguardian.com`、`youtube.com`、`platformer.news`、`feeds.arstechnica.com`、

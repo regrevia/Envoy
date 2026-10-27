@@ -47,6 +47,7 @@
       "caixin.com",
       "channels.weixin.qq.com",
       "cls.cn",
+      "cnbc.com",
       "cnblogs.com",
       "commons.wikimedia.org",
       "danluu.com",
@@ -62,6 +63,7 @@
       "feeds.simplecast.com",
       "figma.com",
       "forum.arduino.cc",
+      "framatube.org",
       "geekpark.net",
       "gist.github.com",
       "github.com",
@@ -88,6 +90,7 @@
       "news.ycombinator.com",
       "notion.so",
       "npmjs.com",
+      "npr.org",
       "oschina.net",
       "pingwest.com",
       "pinterest.com",
@@ -109,6 +112,7 @@
       "thepaper.cn",
       "tiktok.com",
       "v.douyin.com",
+      "v.youku.com",
       "vimeo.com",
       "vm.tiktok.com",
       "vt.tiktok.com",
@@ -119,6 +123,7 @@
       "xiaoyuzhoufm.com",
       "ximalaya.com",
       "yicai.com",
+      "youku.com",
       "youtu.be",
       "youtube.com",
       "zenn.dev",
@@ -131,6 +136,7 @@
       "live.douyin.com"
     ],
     "hosts": [
+      "apnews.com",
       "linkedin.com"
     ],
     "path_rules": [

@@ -80,6 +80,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("news", "bbc", "https://www.bbc.com/news"),
     ("news", "reuters-tech", "https://www.reuters.com/technology/"),
     ("news", "nytimes", "https://www.nytimes.com/section/technology"),
+    ("news", "npr", "https://www.npr.org/sections/technology/"),
+    ("news", "cnbc", "https://www.cnbc.com/technology/"),
     ("news", "guardian", "https://www.theguardian.com/international"),
     ("news", "pingwest", "https://www.pingwest.com/a/300000"),
     ("news", "oschina", "https://www.oschina.net/news"),
@@ -115,6 +117,8 @@ CORPUS: list[tuple[str, str, str]] = [
     # -- video -----------------------------------------------------------
     ("video", "youtube", "https://www.youtube.com/watch?v=aircAruvnKk"),
     ("video", "bilibili", "https://www.bilibili.com/video/BV1GJ411x7h7"),
+    ("video", "youku", "https://v.youku.com/v_show/id_XNTk1ODQ0MjAw.html"),
+    ("video", "peertube", "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d"),
     ("video", "vimeo", "https://vimeo.com/76979871"),
     ("video", "tiktok", "https://www.tiktok.com/@scout2015/video/6718335390845095173"),
     ("video", "ted-talk", "https://www.ted.com/talks/chimamanda_ngozi_adichie_the_danger_of_a_single_story"),
