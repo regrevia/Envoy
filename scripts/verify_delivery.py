@@ -142,6 +142,7 @@ def plan_problem(plan: dict) -> str:
     if not isinstance(axes, dict) or not axes:
         return "axes is empty"
     seen: set[str] = set()
+    every: list[dict] = []
     for axis_name, axis in axes.items():
         entries = axis.get("entries") if isinstance(axis, dict) else None
         if not isinstance(entries, list) or not entries:
@@ -153,6 +154,7 @@ def plan_problem(plan: dict) -> str:
             if entry_id in seen:
                 return f"duplicate entry id {entry_id!r}"
             seen.add(entry_id)
+            every.append(entry)
             status = entry.get("status")
             if status not in PLAN_STATUSES:
                 return f"{entry_id} has status {status!r}"
@@ -169,6 +171,18 @@ def plan_problem(plan: dict) -> str:
         if not isinstance(dependent, list):
             return "holdout.dependent_entries is not a list"
         unknown = [str(entry_id) for entry_id in dependent if str(entry_id) not in seen]
+        if holdout.get("status") != "frozen":
+            recorded = sorted(
+                str(entry.get("id"))
+                for entry in every
+                if str(entry.get("id")) in {str(d) for d in dependent}
+                and entry.get("status") in {"passed", "failed"}
+            )
+            if recorded:
+                return (
+                    f"holdout {holdout.get('id', '?')} is {holdout.get('status')!r} but "
+                    f"{', '.join(recorded)} already carry a result"
+                )
         if unknown:
             # A typo here silently ungates the measurement that was held back,
             # which is the one thing a holdout exists to prevent.

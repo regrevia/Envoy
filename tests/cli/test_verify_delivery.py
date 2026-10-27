@@ -296,3 +296,40 @@ def test_plan_gated_on_real_entries_passes(tmp_path: Path) -> None:
     path.write_text(json.dumps(plan, indent=2) + "\n")
     code, output = run(tmp_path)
     assert code == 0, output
+
+
+def _gated_plan(directory: Path, holdout_status: str, entry_status: str) -> None:
+    entry = {
+        "id": "V01",
+        "status": entry_status,
+        "evidence": "recorded",
+        "observed_at": "2026-10-28T06:00:00+08:00",
+    }
+    if entry_status == "not_run":
+        entry.pop("evidence")
+        entry.pop("observed_at")
+    write_plan(directory, [entry], status="not_run" if entry_status == "not_run" else "passed")
+    path = directory / "EXPERIMENT-PLAN.json"
+    plan = json.loads(path.read_text())
+    plan["holdout"] = {
+        "id": "H12",
+        "status": holdout_status,
+        "size": 12,
+        "dependent_entries": ["V01"],
+    }
+    path.write_text(json.dumps(plan, indent=2) + "\n")
+
+
+def test_plan_recording_a_gated_entry_before_the_holdout_is_frozen_fails(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    _gated_plan(tmp_path, "pending_sample", "passed")
+    code, output = run(tmp_path)
+    assert code == 1, output
+    assert "is 'pending_sample' but V01 already carry a result" in output
+
+
+def test_plan_recording_a_gated_entry_after_the_holdout_is_frozen_passes(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    _gated_plan(tmp_path, "frozen", "passed")
+    code, output = run(tmp_path)
+    assert code == 0, output
