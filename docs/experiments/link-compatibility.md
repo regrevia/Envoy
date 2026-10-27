@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十六轮）
+## 结论（最新一轮：第十七轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -30,6 +30,7 @@
 | 14 | 104 | 103 | 79 | 76.7% | 23 | 4.44s | 补 arstechnica/verge feed（均 readable）；guardian/youtube/platformer 升 supported |
 | 15 | 107 | 106 | 83 | 78.3% | 25 | 4.24s | 补 4 条 feed/forum 行全部可用；dev.to/discourse.mozilla/arduino 升 supported |
 | 16 | 109 | 108 | 84 | 77.8% | 25 | 3.45s | 补 youku/peertube 视频行（均可用）；youku 进媒体预算表 |
+| 17 | 111 | 110 | 87 | 79.1% | 26 | 3.45s | 补 npr/cnbc 新闻行（均 partial）；apnews 标 unsupported |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -420,6 +421,26 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 `platforms/medium-post`、`video/youtube` 与 `platforms/youtube-watch`），每组只保留先出现的一条，
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
+
+## 第十七轮（110 行 / 可用 79.1%，新闻族补 npr 与 cnbc）
+
+本轮加 2 条新闻行（此前 news 族 0 readable）：`npr` 与 `cnbc`；同时把
+`apnews.com` 标为 unsupported（实测 challenge_required，宿主侧应直接走原生而不是调工具）。
+
+| 口径 | 分母 | readable | partial | empty | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 110 | 26 | 61 | 1 | 9 | 13 | 0 | 87 | **79.1%** |
+| 可达口径（剔 unreachable） | 97 | 26 | 61 | 1 | 9 | 0 | 0 | 87 | **89.7%** |
+| 同组成 108 行子集（= 第十六轮口径） | 108 | 26 | 59 | 1 | 7 | 13 | 0 | 85 | **78.7%** |
+
+- 两条新行均 partial：`npr` 5253 字 / 20.3s、`cnbc` 4034 字 / 3.2s。
+  news 族 11 行从「0 readable + 5 partial + 1 blocked + 3 unreachable」变成
+  「0 readable + 7 partial + 1 blocked + 3 unreachable」，可用行 4 → 6。
+- `apnews.com` 进入 `_UNSUPPORTED_HOSTS`（与 `linkedin.com` 同列）：
+  实测每次都是 challenge_required，把它留在 supported 之外能让宿主侧
+  「先判 verdict 再决定要不要调工具」，省掉一次注定失败的调用。
+- 抖动：`ted-talk` unreachable → readable 502 字（前一轮是出口问题）。
+- 时延：mean 15.8s / p50 3.45s / p90 77.25s / max 108.9s。
 
 ## 第十六轮（108 行 / 可用 77.8%，视频族补 youku 与 peertube）
 
