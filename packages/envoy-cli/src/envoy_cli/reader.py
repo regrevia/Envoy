@@ -983,6 +983,13 @@ def _browser_read_failure_code(error) -> ErrorCode:
         return ErrorCode.NETWORK_ERROR
     if isinstance(error, TimeoutError) or type(error).__name__ == "TimeoutError":
         return ErrorCode.NETWORK_ERROR
+    # A browser driver failure (navigation reset, connection closed, target
+    # crashed) is an egress/transport problem, not a page asking for a sign-in.
+    # Labelling it `auth_required` told the model to run `envoy_auth` on a site
+    # that never presented a login wall.
+    message = str(error)
+    if "net::ERR" in message or "Page.goto" in message or "Target closed" in message:
+        return ErrorCode.NETWORK_ERROR
     return ErrorCode.AUTH_REQUIRED
 
 
