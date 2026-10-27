@@ -127,6 +127,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("audio", "soundcloud", "https://soundcloud.com/forss/flickermood"),
     ("social", "douban-group", "https://www.douban.com/group/topic/30678422/"),
     ("audio", "ximalaya-album", "https://www.ximalaya.com/album/316137"),
+    ("audio", "apple-podcast", "https://podcasts.apple.com/us/podcast/the-daily/id1200361736"),
+    ("audio", "spotify-episode", "https://open.spotify.com/episode/7makk4oTQel546B0PZlDM5"),
     # -- image -----------------------------------------------------------
     ("image", "pinterest", "https://www.pinterest.com/pin/1139481143253437748/"),
     ("image", "unsplash", "https://unsplash.com/s/photos/ocean"),
@@ -157,6 +159,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("web", "36kr", "https://36kr.com/"),
     ("web", "github-trending", "https://github.com/trending"),
     ("web", "w3.org", "https://www.w3.org/TR/html52/"),
+    ("web", "agent-docs", "https://docs.anthropic.com/en/docs/overview"),
     # -- platforms -------------------------------------------------------
     # One or two entries per platform that ordinary users paste into a chat.
     # Shared links (b23.tv / v.douyin.com) and platform public pages are kept
