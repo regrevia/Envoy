@@ -40,7 +40,7 @@
 - `tests/cli/test_dry_run_experiments.py`：**8 passed**（新增「命令必须以可执行程序开头」，把 32 条计划里的散文步骤挪进 `notes`）。
 - `tests/cli/test_record_experiment.py`：**8 passed**；对真实计划跑 `record_experiment.py --json` → `plan not_run: 32 entries; not_run 32; holdout pending_sample`（不改文件）。
 - `tests/cli/test_verify_delivery.py`：**9 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (12 checks)**。
-- `check_versions.py --check`：12 项声明一致（2 份文档也查）。
+- `check_versions.py --check`：11 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
 - `build_envoy_dsh_plugin.py --check`、`sync_host_skills.py --check`：均为 current。
 - 打包产物可用性：`uv run --offline --with <wheel> envoy --version` → `envoy-cli 0.1.24 (core 0.1.24)`；用交付 wheel 跑 `doctor --json` 得 `channel: release`、`source_dirty: false`、`runtime.install.status = unpinned`（空 `ENVOY_HOME`）。
