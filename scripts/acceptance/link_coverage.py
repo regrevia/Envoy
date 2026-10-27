@@ -102,6 +102,9 @@ CORPUS: list[tuple[str, str, str]] = [
     ("forum", "hackernews", "https://news.ycombinator.com/item?id=1"),
     ("forum", "reddit", "https://www.reddit.com/r/Python/comments/1c0v7q/"),
     ("forum", "discourse", "https://meta.discourse.org/t/what-is-discourse/1"),
+    ("forum", "devto", "https://dev.to/"),
+    ("forum", "discourse-mozilla", "https://discourse.mozilla.org/"),
+    ("forum", "arduino-forum", "https://forum.arduino.cc/"),
     ("forum", "lobsters", "https://lobste.rs/"),
     # -- social ----------------------------------------------------------
     ("social", "x-profile", "https://x.com/OpenAI"),

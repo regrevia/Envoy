@@ -161,6 +161,8 @@ VERDICT_CASES = [
     ("https://feeds.arstechnica.com/arstechnica/index", "supported"),
     ("https://www.theverge.com/rss/index.xml", "supported"),
     ("https://feeds.simplecast.com/54nAGcIl", "supported"),
+    ("https://discourse.mozilla.org/", "supported"),
+    ("https://forum.arduino.cc/", "supported"),
     ("https://www.jiemian.com/", "supported"),
     ("https://www.cls.cn/", "supported"),
     ("https://www.yicai.com/", "supported"),
