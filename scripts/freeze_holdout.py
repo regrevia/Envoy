@@ -122,6 +122,22 @@ def apply_plan(plan_path: Path, data: dict, *, force: bool = False) -> None:
             f"{plan_path} already records a frozen holdout "
             f"({str(holdout.get('sha256'))[:12]}); pass --force to replace it"
         )
+    # Freezing a different count or id than the plan was written for would
+    # quietly move the goalposts for the entries waiting on this holdout, so
+    # the mismatch is refused unless the operator says --force.
+    if not force:
+        planned_size = holdout.get("size")
+        if isinstance(planned_size, int) and planned_size != data["size"]:
+            raise FrozenFileError(
+                f"{plan_path} plans {planned_size} rows but the frozen file has "
+                f"{data['size']}; pass --force to change the plan's holdout size"
+            )
+        planned_id = holdout.get("id")
+        if planned_id and planned_id != data["id"]:
+            raise FrozenFileError(
+                f"{plan_path} is written for holdout {planned_id} but the frozen file is "
+                f"{data['id']}; pass --force to change the plan's holdout id"
+            )
     updated = dict(holdout)
     updated.update(
         {
@@ -143,6 +159,10 @@ def plan_mismatches(plan: dict, data: dict) -> list[str]:
     if not isinstance(holdout, dict):
         return ["the plan has no holdout block"]
     problems: list[str] = []
+    if holdout.get("id") != data.get("id"):
+        problems.append(
+            f"plan holdout id is {holdout.get('id')!r}, frozen file is {data.get('id')!r}"
+        )
     if holdout.get("status") != "frozen":
         problems.append(f"plan holdout status is {holdout.get('status')!r}, expected 'frozen'")
     if holdout.get("sha256") != data.get("sha256"):

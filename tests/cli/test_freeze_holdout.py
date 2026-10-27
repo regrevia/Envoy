@@ -162,3 +162,59 @@ def test_check_rejects_a_plan_that_was_edited_by_hand(tmp_path: Path, capsys) ->
     output = capsys.readouterr().out
     assert "sha256 does not match" in output
     assert "rows do not match" in output
+
+
+def test_apply_plan_refuses_to_freeze_a_different_size_than_planned(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)  # plans 12 rows
+    out = tmp_path / "holdout.json"
+    assert module.main(
+        ["--input", str(source), "--out", str(out), "--size", "8", "--apply-plan", str(plan)]
+    ) == 1
+    assert json.loads(plan.read_text())["holdout"]["status"] == "pending_sample"
+
+
+def test_apply_plan_refuses_to_freeze_under_a_different_id(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)  # written for H12
+    out = tmp_path / "holdout.json"
+    assert module.main(
+        ["--input", str(source), "--out", str(out), "--id", "H13", "--apply-plan", str(plan)]
+    ) == 1
+
+
+def test_apply_plan_accepts_the_mismatch_with_force(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    plan = write_plan(tmp_path)
+    out = tmp_path / "holdout.json"
+    code = module.main(
+        [
+            "--input", str(source), "--out", str(out), "--size", "8",
+            "--apply-plan", str(plan), "--force",
+        ]
+    )
+    assert code == 0
+    assert json.loads(plan.read_text())["holdout"]["size"] == 8
+
+
+def test_check_reports_a_plan_written_for_another_holdout(tmp_path: Path) -> None:
+    module = load_module()
+    source = tmp_path / "candidates.txt"
+    source.write_text(candidates())
+    out = tmp_path / "holdout.json"
+    assert module.main(["--input", str(source), "--out", str(out), "--size", "12"]) == 0
+    plan = write_plan(tmp_path)
+    frozen = json.loads(out.read_text())
+    data = json.loads(plan.read_text())
+    data["holdout"].update(
+        {"id": "H99", "status": "frozen", "size": 12,
+         "sha256": frozen["sha256"], "rows": frozen["rows"]}
+    )
+    plan.write_text(json.dumps(data, indent=2) + "\n")
+    assert module.main(["--check", str(out), "--plan", str(plan)]) == 1
