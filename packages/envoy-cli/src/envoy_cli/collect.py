@@ -15,10 +15,11 @@ from urllib.parse import urlparse
 import threading
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from envoy_core.schemas.read_v1 import ReadRequest
+from envoy_core.schemas.read_v1 import Budget, ReadRequest
 
 from . import collections as checkpoint
 from .reader import read_public_page
@@ -26,6 +27,52 @@ from .reader import read_public_page
 EXCERPT_LIMIT = 4000
 _TEXT_BLOCK_FIELDS = ("text", "value", "transcript", "content", "caption", "summary")
 _UNFINISHED_STATES = {"blocked", "failed", "partial", "skipped"}
+
+
+def _record_work_usage(
+    manifest: dict,
+    collection_id: str,
+    candidate: str,
+    seconds: float,
+) -> dict:
+    """Charge consumed work against the run budget under a stable operation id.
+
+    The id is derived from the run and the item, so replaying the same read
+    cannot double-charge the manifest, and the stage a given second belonged to
+    stays readable in ``applied_operations`` after a resume.
+    """
+    if seconds <= 0:
+        return manifest
+    stage = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:16]
+    run_id = str(manifest["run_id"])
+    usage = {"work_seconds": max(int(round(seconds)), 1)}
+    try:
+        return checkpoint.update_collection(
+            collection_id,
+            run_id=run_id,
+            expected_revision=int(manifest["manifest_revision"]),
+            operation_id=f"collect-work-{run_id}-{stage}",
+            action="record_usage",
+            usage=usage,
+        )
+    except checkpoint.CollectionError:
+        pass
+    # A long item outlives the lease heartbeat, which bumps the manifest
+    # revision while the read runs. Retry once against the latest revision so
+    # consumed work is not silently dropped; if the write still fails the run
+    # continues on the manifest it already had.
+    try:
+        fresh = checkpoint.get_collection(collection_id, run_id)
+        return checkpoint.update_collection(
+            collection_id,
+            run_id=run_id,
+            expected_revision=int(fresh["manifest_revision"]),
+            operation_id=f"collect-work-{run_id}-{stage}",
+            action="record_usage",
+            usage=usage,
+        )
+    except checkpoint.CollectionError:
+        return manifest
 
 
 def _sources_path(out: Path) -> Path:
@@ -455,15 +502,25 @@ def collect(
         raise checkpoint.CollectionError(
             "This collection run belongs to a different profile"
         )
+    work_started = time.monotonic()
+
+    def remaining_work() -> float:
+        """Seconds this run may still spend, discovery included."""
+        return float(max_work_seconds) - (time.monotonic() - work_started)
+
     sources_path = _sources_path(out)
     sources = _load_sources(sources_path)
     if not manifest.get("selected_candidate_ids"):
+        discovery_started = time.monotonic()
         manifest = _select_candidates(
             manifest,
             canonical,
             limit=limit,
             goal=goal,
-            max_work_seconds=max_work_seconds,
+            max_work_seconds=max(int(remaining_work()), 1),
+        )
+        manifest = _record_work_usage(
+            manifest, collection_id, "discovery", time.monotonic() - discovery_started
         )
     candidates = {
         str(item.get("candidate_id")): item
@@ -512,14 +569,26 @@ def collect(
             auth_pause["candidates"].append(candidate)
             skipped += 1
             continue
+        available = remaining_work()
+        if available < 1:
+            # Out of run budget: the untouched items stay selected so the next
+            # run resumes here instead of reading them with a fresh allowance.
+            break
         manifest = _set_state(manifest, candidate, "processing")
+        item_started = time.monotonic()
         try:
             with _LeaseHeartbeat(collection_id, run_id, candidate):
                 response = read_public_page(
                     ReadRequest(
                         request_id=f"collect-{collection_id}-{candidate[:24]}",
+                        idempotency_key=(
+                            f"collect:{collection_id}:{run_id}:{candidate}"
+                        )[:256],
                         source={"url": str(item.get("source_url") or "")},
                         goal=goal,
+                        # Never hand a child read the full allowance: it gets
+                        # what this run actually has left.
+                        budget=Budget(max_work_seconds=max(int(available), 1)),
                     )
                 )
         except Exception as exc:  # a single item must not sink the run
@@ -533,6 +602,10 @@ def collect(
             _save_sources(sources_path, sources)
             _write_markdown(out, _render(manifest, sources, platform=platform, profile_url=canonical))
             continue
+        finally:
+            manifest = _record_work_usage(
+                manifest, collection_id, candidate, time.monotonic() - item_started
+            )
         result = str(getattr(response.result, "value", response.result))
         if response.material_id:
             manifest = _record_evidence(manifest, candidate, response)
