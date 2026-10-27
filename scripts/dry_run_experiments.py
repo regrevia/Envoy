@@ -126,6 +126,15 @@ def validate(plan: dict) -> list[str]:
             for field in ("sha256", "rows"):
                 if not holdout.get(field):
                     problems.append(f"frozen holdout is missing {field}")
+        dependent = holdout.get("dependent_entries")
+        if dependent is not None:
+            if not isinstance(dependent, list):
+                problems.append("holdout dependent_entries must be a list of entry ids")
+            else:
+                known = {entry.get("id") for entry in rows}
+                for entry_id in dependent:
+                    if entry_id not in known:
+                        problems.append(f"holdout dependent entry {entry_id!r} is not in the plan")
     return problems
 
 

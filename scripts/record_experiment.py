@@ -74,6 +74,15 @@ def apply_result(
         text = (evidence or "").strip()
         if len(text) < 8:
             raise RecordError(f"{status} needs an evidence line that names what was observed")
+        holdout = plan.get("holdout")
+        dependent = holdout.get("dependent_entries") if isinstance(holdout, dict) else None
+        if isinstance(dependent, list):
+            if entry_id in dependent and holdout.get("status") != "frozen" and not force:
+                raise RecordError(
+                    f"{entry_id} measures the holdout sample, but the holdout is "
+                    f"{holdout.get('status')!r}; freeze it first (freeze_holdout.py "
+                    f"--apply-plan), or pass --force only if the sample really did not matter"
+                )
         entry["evidence"] = text
     if observed is not None:
         entry["observed"] = observed

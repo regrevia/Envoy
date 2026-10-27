@@ -112,3 +112,22 @@ def test_a_prefixed_command_is_accepted(tmp_path: Path) -> None:
     data = plan()
     data["axes"]["long-video"]["entries"][0]["command"] = "PATH=/usr/bin:/bin sh install.sh"
     assert module.validate(module.load_plan(write(tmp_path, data))) == []
+
+
+
+def test_a_dependent_entry_that_does_not_exist_is_reported(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["holdout"]["dependent_entries"] = ["V01", "X99"]
+    path = write(tmp_path, data)
+    assert module.main(["--plan", str(path), "--check"]) == 1
+    assert module.validate(data)
+
+
+def test_dependent_entries_that_exist_pass_the_check(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["holdout"]["dependent_entries"] = ["V01"]
+    path = write(tmp_path, data)
+    assert module.validate(data) == []
+    assert module.main(["--plan", str(path), "--check"]) == 0

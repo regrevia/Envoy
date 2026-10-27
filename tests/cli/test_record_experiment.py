@@ -175,3 +175,42 @@ def test_an_invalid_plan_is_refused_before_any_write(tmp_path, capsys):
     assert code == 1
     assert "unknown requirement" in capsys.readouterr().err
     assert path.read_bytes() == before
+
+
+def _holdout_plan(dependent: bool = True) -> dict:
+    plan = _plan()
+    plan["holdout"] = {
+        "status": "pending_sample",
+        "size": 12,
+        "dependent_entries": ["V01"] if dependent else [],
+    }
+    return plan
+
+
+def test_a_holdout_dependent_result_needs_a_frozen_holdout(tmp_path, capsys):
+    path = _write(tmp_path, _holdout_plan())
+    before = path.read_text(encoding="utf-8")
+    code = record_experiment.main(
+        ["--plan", str(path), "--id", "V01", "--status", "passed", "--evidence", "12 rows ok", "--write"]
+    )
+    assert code == 1
+    assert "measures the holdout sample" in capsys.readouterr().err
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_non_dependent_entry_records_without_a_frozen_holdout(tmp_path):
+    path = _write(tmp_path, _holdout_plan())
+    code = record_experiment.main(
+        ["--plan", str(path), "--id", "D01", "--status", "passed", "--evidence", "21 pages, 2 gaps", "--write"]
+    )
+    assert code == 0
+
+
+def test_a_frozen_holdout_unblocks_the_dependent_result(tmp_path):
+    plan = _holdout_plan()
+    plan["holdout"].update({"status": "frozen", "sha256": "ab" * 32, "rows": ["https://example.com/a"]})
+    path = _write(tmp_path, plan)
+    code = record_experiment.main(
+        ["--plan", str(path), "--id", "V01", "--status", "passed", "--evidence", "12/12 rows read", "--write"]
+    )
+    assert code == 0
