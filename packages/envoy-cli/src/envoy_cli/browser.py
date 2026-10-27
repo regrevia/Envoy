@@ -488,7 +488,7 @@ def _page_state(page) -> tuple[str, str, bool]:
     return title, text, challenge
 
 
-def _guard_route(route, dns_cache: dict[str, bool]) -> None:
+def _guard_route(route, dns_cache: dict[str, str]) -> None:
     from .reader import _is_public_http_url
 
     request_url = str(route.request.url)
@@ -501,7 +501,7 @@ def _guard_route(route, dns_cache: dict[str, bool]) -> None:
         route.abort("blockedbyclient")
 
 
-def _navigate(context, page, url: str, dns_cache: dict[str, bool], timeout_ms: int) -> None:
+def _navigate(context, page, url: str, dns_cache: dict[str, str], timeout_ms: int) -> None:
     context.route("**/*", lambda route: _guard_route(route, dns_cache))
     page.goto(url, wait_until="commit", timeout=timeout_ms)
     try:
@@ -779,7 +779,7 @@ def read_page(
 
     from .reader import _is_public_http_url
 
-    dns_cache: dict[str, bool] = {}
+    dns_cache: dict[str, str] = {}
     if not _is_public_http_url(source_url, dns_cache):
         raise BrowserReadError("Browser reading is limited to public HTTP(S) addresses")
 

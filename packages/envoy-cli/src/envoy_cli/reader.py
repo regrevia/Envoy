@@ -369,62 +369,64 @@ def extract_douyin_note_gallery(html: str, source_url: str) -> tuple[list[dict[s
     return parser.images, parser.total_count
 
 
-def _is_public_http_url(value: str, dns_cache: dict[str, bool] | None = None) -> bool:
-    try:
-        parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            return False
-        if parsed.username or parsed.password:
-            return False
-        host = parsed.hostname.rstrip(".").lower()
-        if host == "localhost" or host.endswith(".localhost"):
-            return False
-        try:
-            addresses = {ipaddress.ip_address(host)}
-        except ValueError:
-            if dns_cache is not None and host in dns_cache:
-                return dns_cache[host]
-            addresses = {
-                ipaddress.ip_address(item[4][0])
-                for item in socket.getaddrinfo(
-                    host,
-                    parsed.port or (443 if parsed.scheme == "https" else 80),
-                )
-            }
-            result = bool(addresses) and all(address.is_global for address in addresses)
-            if dns_cache is not None:
-                dns_cache[host] = result
-            return result
-        return bool(addresses) and all(address.is_global for address in addresses)
-    except (OSError, ValueError, TypeError):
-        return False
+PUBLIC_URL = "public"
+POLICY_REJECTION = "policy"
+DNS_FAILURE = "dns"
 
 
-def _host_lookup_failed(value: str) -> bool:
-    """True when the URL's host cannot be resolved at all.
+def _public_url_rejection(value: str, dns_cache: dict[str, str] | None = None) -> str | None:
+    """Why a URL must not be fetched, or ``None`` for a public HTTP(S) URL.
 
-    The public-URL guard also rejects loopback and private addresses, and both
-    failures used to share one "not a public URL" message. A DNS failure is a
-    reachability fact, not a policy decision, so it gets its own wording.
+    The verdict is one value rather than a bool because the read path has to
+    tell a policy refusal (loopback, private address, embedded credentials)
+    from a host name that simply does not resolve; those are different errors
+    and one of them is retryable. A host's verdict is cached as this reason,
+    so a read attempt resolves a name once and the error code cannot flip
+    between two lookups taken milliseconds apart.
     """
 
     try:
         parsed = urlparse(value)
-        host = (parsed.hostname or "").rstrip(".").lower()
-        if not host:
-            return False
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return POLICY_REJECTION
+        if parsed.username or parsed.password:
+            return POLICY_REJECTION
+        host = parsed.hostname.rstrip(".").lower()
+        if host == "localhost" or host.endswith(".localhost"):
+            return POLICY_REJECTION
         try:
-            ipaddress.ip_address(host)
-            return False
+            addresses = {ipaddress.ip_address(host)}
         except ValueError:
-            pass
-        socket.getaddrinfo(
-            host,
-            parsed.port or (443 if parsed.scheme == "https" else 80),
-        )
-    except (OSError, ValueError, TypeError):
-        return True
-    return False
+            if dns_cache is not None and host in dns_cache:
+                cached = dns_cache[host]
+                return None if cached == PUBLIC_URL else cached
+            try:
+                addresses = {
+                    ipaddress.ip_address(item[4][0])
+                    for item in socket.getaddrinfo(
+                        host,
+                        parsed.port or (443 if parsed.scheme == "https" else 80),
+                    )
+                }
+            except OSError:
+                if dns_cache is not None:
+                    dns_cache[host] = DNS_FAILURE
+                return DNS_FAILURE
+            verdict = PUBLIC_URL if _all_global(addresses) else POLICY_REJECTION
+            if dns_cache is not None:
+                dns_cache[host] = verdict
+            return None if verdict == PUBLIC_URL else verdict
+        return None if _all_global(addresses) else POLICY_REJECTION
+    except (ValueError, TypeError):
+        return POLICY_REJECTION
+
+
+def _all_global(addresses: set) -> bool:
+    return bool(addresses) and all(address.is_global for address in addresses)
+
+
+def _is_public_http_url(value: str, dns_cache: dict[str, str] | None = None) -> bool:
+    return _public_url_rejection(value, dns_cache) is None
 
 
 def _is_sensitive_query_key(key: str) -> bool:
@@ -548,7 +550,7 @@ def _is_probable_ui_image(image: dict) -> bool:
 def _safe_visual_candidates(
     images: list[dict],
     page_url: str,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
 ) -> tuple[list[dict], int]:
     selected = []
     seen_urls = set()
@@ -581,7 +583,7 @@ def _download_image_for_ocr(
     image_url: str,
     *,
     max_bytes: int,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
 ) -> tuple[Path, str]:
     if not _is_public_http_url(image_url, dns_cache):
         raise PublicPageError("OCR image URL is not a public HTTP(S) address")
@@ -931,7 +933,7 @@ def _challenge_suggests_egress_issue(title: str, text: str) -> bool:
 def _read_with_isolated_browser(
     request: ReadRequest,
     source_url: str,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
     only_proxy: bool = False,
 ):
     from . import browser
@@ -1094,7 +1096,7 @@ _PAGE_MEDIA_PROBE_DEADLINE_SECONDS = 15.0
 
 def _probe_page_media(
     url: str,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
     *,
     deadline: float | None = None,
 ) -> tuple[str, str, int] | None:
@@ -1189,7 +1191,7 @@ def _media_identity_key(identity: tuple[str, str, int] | None) -> tuple[str, str
 
 def _probe_page_media_identities(
     candidates: list[str],
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
     *,
     max_probe_bytes: int | None = None,
     deadline: float | None = None,
@@ -1250,7 +1252,7 @@ def _order_media_urls(
 
 def _rank_page_media_urls(
     candidates: list[str],
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
     *,
     max_probe_bytes: int | None = None,
     deadline: float | None = None,
@@ -1279,7 +1281,7 @@ def _rank_page_media_urls(
 
 def _choose_page_media_url(
     candidates: list[str],
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
 ) -> tuple[str | None, int]:
     """Choose one player source, grouping mirrors of the same file together."""
 
@@ -1291,7 +1293,7 @@ def _choose_page_media_url(
 
 def _select_browser_video_url(
     candidates: list[str],
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
 ) -> tuple[str | None, int]:
     rejected = 0
     accepted = []
@@ -4357,7 +4359,7 @@ def _is_connect_failure(error: Exception) -> bool:
 def _fetch_html(
     source_url: str,
     max_bytes: int = MAX_HTML_BYTES,
-    dns_cache: dict[str, bool] | None = None,
+    dns_cache: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     dns_cache = dns_cache if dns_cache is not None else {}
     last_error: Exception | None = None
@@ -4382,7 +4384,7 @@ def _fetch_html_via(
     client: httpx.Client,
     source_url: str,
     max_bytes: int,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
 ) -> tuple[str, str]:
     current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
@@ -4530,7 +4532,7 @@ def _fetch_html_via(
 def _fetch_source(
     source_url: str,
     max_bytes: int,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
 ) -> dict:
     current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
@@ -4610,7 +4612,7 @@ def _pdf_page_store(digest: str):
 def _fetch_pdf_source(
     source_url: str,
     max_bytes: int,
-    dns_cache: dict[str, bool],
+    dns_cache: dict[str, str],
     *,
     deadline: float | None = None,
 ) -> dict:
@@ -5069,7 +5071,7 @@ def _parse_pdf_source(
     )
 
 
-def _read_pdf_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
+def _read_pdf_source(request: ReadRequest, source_url: str, dns_cache: dict[str, str]) -> ReadResponse:
     try:
         deadline = _pdf_deadline(request)
     except MediaBudgetExceeded as exc:
@@ -5431,7 +5433,7 @@ def _requested_ocr_backend(request: ReadRequest) -> str:
     )
 
 
-def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, bool]) -> ReadResponse:
+def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[str, str]) -> ReadResponse:
     can_handoff_image = request.host_capabilities.image_input == ImageInputCapability.URI
     if not can_handoff_image and not request.ocr_profile:
         return _blocked(
@@ -7231,11 +7233,13 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
 @_serialize_read_request
 def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
-    dns_cache: dict[str, bool] = {}
+    dns_cache: dict[str, str] = {}
     browser_snapshot = None
     browser_snapshot_for_video = False
     if not _is_public_http_url(source_url, dns_cache):
-        if _host_lookup_failed(source_url):
+        # The guard's verdict is cached by host, so this call reuses the same
+        # lookup instead of resolving the name a second time.
+        if _public_url_rejection(source_url, dns_cache) == DNS_FAILURE:
             return _blocked(
                 request,
                 ErrorCode.NETWORK_ERROR,
