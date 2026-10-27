@@ -1,6 +1,6 @@
 {
   "name": "envoy-dsh",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "Any link in, the thing you wanted out: Markdown, wiki, knowledge base. Douyin/Bilibili/Xiaohongshu/Zhihu/PDF/podcast, measured 75% usable on 92 live links, 0 failures.",
   "type": "module",
   "license": "Apache-2.0",
@@ -50,5 +50,13 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
+  },
+  "author": {
+    "name": "regrevia",
+    "url": "https://github.com/regrevia"
+  },
+  "homepage": "https://github.com/regrevia/Envoy/tree/main/integrations/dsh/envoy-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/regrevia/Envoy/issues"
   }
 }
