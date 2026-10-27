@@ -64,7 +64,7 @@ def test_a_partial_checkpoint_resumes_at_its_last_chunk(media_home, monkeypatch)
     seen = {}
 
     def fake_worker(source, model_name, model_root, start, end, duration, timeout, started,
-                    *, checkpoint_path=None, prior_segments=None, resume_from=None):
+                    *, checkpoint_path=None, prior_segments=None, resume_from=None, **extra):
         seen.update(
             resume_from=resume_from,
             prior=prior_segments,
