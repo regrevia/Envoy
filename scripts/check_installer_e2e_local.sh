@@ -61,8 +61,9 @@ done
 [ -n "$ready" ] || { echo "loopback mirror did not come up" >&2; cat "$work/server.log" >&2; exit 1; }
 
 failures=0
-pass() { printf 'ok   %s\n' "$1"; }
-fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failures=$((failures + 1)); }
+checks=0
+pass() { checks=$((checks + 1)); printf 'ok   %s\n' "$1"; }
+fail() { checks=$((checks + 1)); printf 'FAIL %s: %s\n' "$1" "$2"; failures=$((failures + 1)); }
 
 run_install() {
   home="$1"
@@ -92,6 +93,28 @@ else
   fail "loopback install" "$(printf '%s' "$output" | tail -5)"
 fi
 
+# A dry run must describe the work without touching the mirror's payload.
+home="$work/home-dry"
+mkdir -p "$home"
+if output="$(env -i HOME="$home" PATH="$PATH" \
+  ENVOY_DRY_RUN=1 \
+  ENVOY_MANIFEST_URL="http://127.0.0.1:$port/release-manifest.json" \
+  ENVOY_RELEASES_BASE="http://127.0.0.1:$port/releases/download" \
+  ENVOY_SKILL_DIR="$work/skill-dry" \
+  sh "$INSTALL" skill 2>&1)"; then
+  case "$output" in
+    *download*envoy-skill.zip*) pass "dry run prints the download it would do" ;;
+    *) fail "dry run plan" "$(printf '%s' "$output" | tail -3)" ;;
+  esac
+  if [ ! -e "$work/skill-dry" ]; then
+    pass "dry run writes nothing"
+  else
+    fail "dry run side effect" "$work/skill-dry exists after a dry run"
+  fi
+else
+  fail "dry run" "$(printf '%s' "$output" | tail -5)"
+fi
+
 # The same mirror with a wrong digest must stop the installation.
 cp "$DELIVERY/SHA256SUMS" "$serve/releases/download/v$version/SHA256SUMS"
 python3 - "$serve/releases/download/v$version/SHA256SUMS" <<'ENVOY_TAMPER'
@@ -117,7 +140,7 @@ else
 fi
 
 if [ "$failures" -eq 0 ]; then
-  printf '\nloopback installer checks passed\n'
+  printf '\n%s loopback installer checks passed\n' "$checks"
   exit 0
 fi
 printf '\n%s loopback installer checks failed\n' "$failures" >&2
