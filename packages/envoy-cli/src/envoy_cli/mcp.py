@@ -40,7 +40,6 @@ from .collections import (
 )
 from .local_source import (
     classify_local_source,
-    local_pdf_max_bytes,
     local_read_request,
     read_local_pdf,
 )

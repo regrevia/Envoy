@@ -347,9 +347,11 @@ def test_expand_clears_the_pdf_delivery_gap(monkeypatch):
     }))
     assert response.result.value == "partial"
     details = response.coverage.modalities["text"].details
-    load = lambda mid: __import__("json").loads(
-        (reader._material_root() / f"{mid}.json").read_text(encoding="utf-8")
-    )
+    def load(mid):
+        return __import__("json").loads(
+            (reader._material_root() / f"{mid}.json").read_text(encoding="utf-8")
+        )
+
     stored_before = load(response.material_id)
     assert stored_before["delivery_gap"] is True
     assert stored_before["source_coverage_unresolved"] == []

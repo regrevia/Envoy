@@ -81,7 +81,7 @@ def test_local_byte_cap_ignores_an_explicit_zero_download_budget():
 
 
 def test_chinese_path_with_spaces_is_read_as_a_pdf(tmp_path):
-    from envoy_cli import local_source, mcp
+    from envoy_cli import local_source
 
     folder = tmp_path / "我的 文档"
     folder.mkdir()
