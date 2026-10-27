@@ -407,7 +407,14 @@ function Confirm-Health {
     }
     $version = if ($data.cli_version) { $data.cli_version } elseif ($data.version) { $data.version } else { "unknown" }
     $protocol = if ($data.protocol_version) { $data.protocol_version } else { "unknown" }
-    Write-Host "envoy install: runtime $version, protocol $protocol"
+    $browser = if ($data.runtime.browser.ready) { "ready" } else { "missing: envoy browser setup" }
+    Write-Host "envoy install: runtime $version, protocol $protocol, browser $browser"
+    $install = $data.runtime.install
+    if ($install -and $install.status -and $install.status -ne "pinned") {
+        $pinned = if ($install.pinned_runtime) { $install.pinned_runtime } else { "none" }
+        $onPath = if ($install.path_envoy) { $install.path_envoy } else { "none" }
+        Write-Host "envoy install: install state $($install.status): pinned $pinned, PATH runs $onPath; rerun install.ps1 if that is wrong" -ForegroundColor Yellow
+    }
 }
 
 function Install-Auto {

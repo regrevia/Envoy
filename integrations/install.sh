@@ -265,7 +265,15 @@ except Exception:
     raise SystemExit(0)
 version = data.get("cli_version") or data.get("version") or "unknown"
 protocol = data.get("protocol_version") or "unknown"
-print(f"envoy install: runtime {version}, protocol {protocol}")
+runtime = data.get("runtime") or {}
+browser = "ready" if (runtime.get("browser") or {}).get("ready") else "missing: envoy browser setup"
+install = runtime.get("install") or {}
+print(f"envoy install: runtime {version}, protocol {protocol}, browser {browser}")
+status = install.get("status")
+if status and status != "pinned":
+    pinned = install.get("pinned_runtime") or "none"
+    on_path = install.get("path_envoy") or "none"
+    print(f"envoy install: install state {status}: pinned {pinned}, PATH runs {on_path}; rerun install.sh if that is wrong")
 ' 2>/dev/null || printf 'envoy install: could not summarize envoy doctor output\n' >&2
 }
 

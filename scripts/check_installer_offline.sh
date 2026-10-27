@@ -25,7 +25,7 @@ fake_envoy() {
 #!/bin/sh
 case "\$1" in
   --version) echo "envoy $2" ;;
-  doctor) echo '{"cli_version": "$2", "protocol_version": "1"}' ;;
+  doctor) printf '{"cli_version":"%s","protocol_version":"1","runtime":{"browser":{"ready":false},"install":{"status":"%s","pinned_runtime":"%s","path_envoy":null}}}\n' "$2" "\${FAKE_INSTALL_STATUS:-pinned}" "$1" ;;
   browser) echo "browser setup (fake)" ;;
   *) echo "fake envoy \$*" ;;
 esac
@@ -89,6 +89,23 @@ if [ "$printed" = "$home/runtime/bin/envoy" ]; then
   ok "path prints the pinned binary"
 else
   bad "path printed '$printed'"
+fi
+
+# --- case: a finished MCP install reports runtime health ---------------------
+case_start
+home="$(new_home health)"
+fake_envoy "$WORK/fake-runtime/envoy" 0.1.23
+pybin="$WORK/pybin-health"
+mkdir -p "$pybin"
+ln -sf "$(command -v python3)" "$pybin/python3"
+if output="$(HOME="$home" ENVOY_VERSION=0.1.23 ENVOY_DRY_RUN=0 ENVOY_SETUP_BROWSER=0 \
+    ENVOY_RUNTIME_BIN="$WORK/fake-runtime/envoy" FAKE_INSTALL_STATUS=shadowed \
+    PATH="$pybin:/usr/bin:/bin" sh "$INSTALL" mcp 2>&1)" \
+  && printf '%s' "$output" | grep -q 'browser missing: envoy browser setup' \
+  && printf '%s' "$output" | grep -q 'install state shadowed'; then
+  ok "mcp install reports browser and install state"
+else
+  bad "mcp install health (out=$output)"
 fi
 
 # --- case: installing a runtime pins it and prints the browser step --------
