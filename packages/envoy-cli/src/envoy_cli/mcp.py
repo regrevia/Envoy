@@ -38,6 +38,12 @@ from .collections import (
     list_collections,
     update_collection,
 )
+from .local_source import (
+    classify_local_source,
+    local_pdf_max_bytes,
+    local_read_request,
+    read_local_pdf,
+)
 from .local_video import read_local_video
 from .media import media_runtime_status
 from .ocr import available_ocr_backends
@@ -1419,6 +1425,34 @@ def _local_file_blocked_payload(request_id: Any, path: str, reason: str, message
     }
 
 
+def _local_unsupported_payload(
+    request_id: Any,
+    path: str,
+    kind: str,
+    message: str,
+) -> dict:
+    """A local file Envoy has no reader for: name the boundary, upload nothing."""
+
+    return {
+        "protocol_version": "envoy.read/1",
+        "request_id": str(request_id or "mcp"),
+        "execution_state": "completed",
+        "result": "blocked",
+        "blocks": [],
+        "errors": [{
+            "code": "unsupported_source",
+            "message": message,
+            "details": {
+                "kind": "local_file",
+                "reason": "unsupported_local_type",
+                "detected_kind": kind,
+                "filename": Path(path).name,
+                "uploaded": False,
+            },
+        }],
+    }
+
+
 def _auth_payload(arguments: dict) -> dict:
     """Shape one envoy_auth call into a payload every host can render.
 
@@ -1779,13 +1813,33 @@ def handle_message(
                         "The local file exists but is not readable by Envoy's process",
                     )
                 else:
-                    response = read_local_video(
-                        LocalVideoReadRequest.model_validate(
-                            _local_video_arguments(arguments, local_path)
+                    explicit_kind = None
+                    requested_source = arguments.get("source")
+                    if isinstance(requested_source, dict):
+                        explicit_kind = str(requested_source.get("kind") or "").strip() or None
+                    decision = classify_local_source(local_path, explicit_kind=explicit_kind)
+                    if decision.kind == "pdf":
+                        response = read_local_pdf(
+                            local_read_request(arguments, str(decision.path), kind="document"),
+                            decision.path,
                         )
-                    )
-                    payload = _read_payload(response, compact=modern_request)
-                    fresh_read = True
+                    elif decision.kind == "video":
+                        response = read_local_video(
+                            LocalVideoReadRequest.model_validate(
+                                _local_video_arguments(arguments, local_path)
+                            )
+                        )
+                    else:
+                        response = None
+                        payload = _local_unsupported_payload(
+                            request_id,
+                            local_path,
+                            decision.kind,
+                            decision.message,
+                        )
+                    if response is not None:
+                        payload = _read_payload(response, compact=modern_request)
+                        fresh_read = True
             if fresh_read:
                 _remember_read(arguments, payload, modern_request)
         elif name == "envoy_read_local_video":

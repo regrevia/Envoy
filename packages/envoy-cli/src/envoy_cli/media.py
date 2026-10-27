@@ -1280,6 +1280,17 @@ def _whisper_worker(
                 device="cpu",
                 download_root=download_root,
             )
+            # Interface boundary (A4): this engine decodes the whole file into
+            # one float32 array (~230 MB per hour at 16 kHz) before any chunk is
+            # transcribed, so a long video needs the full PCM in memory even
+            # though the loop below only ever reads a window. A memory-bounded
+            # engine should instead accept a windowing source -- something like
+            # `read_audio_range(path, start_seconds, end_seconds) -> ndarray` --
+            # and decode lazily per chunk. Not implemented here: the GPU-less
+            # target cannot be measured in this pass, and swapping the decode
+            # path without a real acceptance run would risk the working engine.
+            # TODO(A4): pass a lazy window reader into the worker once the
+            # resource ceiling is measured; keep `load_audio` as the fallback.
             audio = whisper.load_audio(audio_path, sr=16_000)
             audio_duration = len(audio) / 16_000
             end_seconds = min(float(end_seconds), audio_duration)
@@ -1331,10 +1342,71 @@ def asr_checkpoint_dir() -> Path:
     return Path.home() / ".envoy" / "asr"
 
 
-def _asr_identity(source: Path, model_name: str, start: float, end: float) -> str:
-    stat = source.stat()
-    raw = f"{source}|{stat.st_size}|{int(stat.st_mtime)}|{model_name}|{start:.1f}|{end:.1f}"
+ASR_DECODE_CONFIG = (
+    "sr=16000,task=transcribe,temperature=0,fp16=False,condition_on_previous_text=False"
+)
+
+
+def _asr_source_digest(source: Path) -> str:
+    """Digest the bytes, never the path a download happened to land in.
+
+    A remote read downloads into a fresh temp directory each run, so an identity
+    built from the absolute path never matches and resume never happens. Reading
+    the file is cheaper than re-transcribing it and is bounded by the caller's
+    work budget.
+    """
+    digest = hashlib.sha256()
+    with source.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _asr_identity(
+    source: Path,
+    model_name: str,
+    start: float,
+    end: float,
+    *,
+    source_revision: str | None = None,
+) -> str:
+    """Name the work, not the file it currently lives in.
+
+    The checkpoint must survive a different temp path with identical bytes,
+    must miss when the source really changed, and must not be invalidated by a
+    re-signed URL that serves the same bytes. A trusted revision (video id or
+    content digest from the resolver) wins over hashing the file again.
+    """
+    trusted = str(source_revision or "").strip()
+    if trusted:
+        identity_source = f"revision:{trusted}"
+    else:
+        identity_source = f"content:{_asr_source_digest(Path(source))}"
+    raw = (
+        f"asr-checkpoint/v2|{identity_source}|model={model_name}"
+        f"|decode={ASR_DECODE_CONFIG}|range={float(start):.3f}-{float(end):.3f}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _merge_asr_segments(*groups: list[dict] | None) -> list[dict]:
+    """Merge by chunk identity so a resumed run cannot duplicate cues."""
+    merged: dict[tuple[float, float], dict] = {}
+    for group in groups:
+        for item in group or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start = round(float(item.get("start", item.get("start_seconds")) or 0), 3)
+                end = round(float(item.get("end", item.get("end_seconds")) or 0), 3)
+            except (TypeError, ValueError):
+                continue
+            key = (start, end)
+            if key not in merged or len(str(item.get("text") or "")) > len(
+                str(merged[key].get("text") or "")
+            ):
+                merged[key] = item
+    return [merged[key] for key in sorted(merged)]
 
 
 def _load_asr_checkpoint(path: Path) -> dict | None:
@@ -1370,6 +1442,8 @@ def _transcribe_with_worker(
     checkpoint_path: Path | None = None,
     prior_segments: list[dict] | None = None,
     resume_from: float | None = None,
+    prior_language: str = "",
+    checkpoint_identity: str = "",
 ) -> dict[str, Any]:
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
@@ -1387,30 +1461,40 @@ def _transcribe_with_worker(
     )
     process_started = False
     segments = []
-    language = ""
-    next_seconds = start
+    # A resumed run continues the language it had already confirmed, instead of
+    # letting the first new chunk override it or lose it on a re-timeout.
+    language = str(prior_language or "")
+    start_from = float(resume_from) if resume_from is not None else float(start)
+    confirmed = start_from
+    next_seconds = start_from
     completed = False
     failure = None
     carried = list(prior_segments or [])
 
     def persist(status: str) -> None:
+        nonlocal next_seconds
+        # The cursor only ever moves forward: a no-new-chunk round, a stalled
+        # worker or a second timeout must leave the previous progress intact.
+        next_seconds = max(next_seconds, confirmed)
         if checkpoint_path is None:
             return
-        _write_asr_checkpoint(
-            checkpoint_path,
-            {
-                "audio": str(source),
-                "model": str(model_name),
-                "start": start,
-                "end": end,
-                "duration_seconds": duration,
-                "next_seconds": next_seconds,
-                "language": language,
-                "segments": carried + segments,
-                "status": status,
-                "updated_at": time.time(),
-            },
-        )
+        if status != "complete" and next_seconds <= start_from and not segments:
+            return
+        payload = {
+            "audio": str(source),
+            "model": str(model_name),
+            "start": start,
+            "end": end,
+            "duration_seconds": duration,
+            "next_seconds": next_seconds,
+            "language": language,
+            "segments": _merge_asr_segments(carried, segments),
+            "status": status,
+            "updated_at": time.time(),
+        }
+        if checkpoint_identity:
+            payload["identity"] = checkpoint_identity
+        _write_asr_checkpoint(checkpoint_path, payload)
 
     try:
         process.start()
@@ -1434,14 +1518,18 @@ def _transcribe_with_worker(
             except EOFError:
                 break
             if event.get("event") == "chunk":
-                segments.extend(event.get("segments") or [])
+                # A chunk with no cues still means those seconds were listened
+                # to; recording it keeps a silent stretch from being redone.
+                segments = _merge_asr_segments(segments, event.get("segments") or [])
                 language = str(event.get("language") or language)
-                next_seconds = float(event.get("end_seconds") or next_seconds)
+                next_seconds = max(next_seconds, float(event.get("end_seconds") or next_seconds))
+                confirmed = max(confirmed, next_seconds)
                 persist("partial")
             elif event.get("event") == "complete":
                 completed = True
                 language = str(event.get("language") or language)
-                next_seconds = float(event.get("end_seconds") or next_seconds)
+                next_seconds = max(next_seconds, float(event.get("end_seconds") or next_seconds))
+                confirmed = max(confirmed, next_seconds)
                 persist("complete")
             elif event.get("event") == "failed":
                 failure = str(event.get("error") or "ASR failed")
@@ -1449,15 +1537,22 @@ def _transcribe_with_worker(
             process.join(5)
         elif not process.is_alive():
             process.join(1)
-        everything = carried + segments
-        if failure and not everything:
+        everything = _merge_asr_segments(carried, segments)
+        progressed = next_seconds > start_from
+        if failure and not everything and not progressed:
             raise MediaProcessingError(failure)
-        if not everything and not completed:
+        if not everything and not completed and not progressed:
             raise MediaBudgetExceeded(f"ASR produced no cues within max_work_seconds ({timeout})")
         if not completed:
             persist("partial")
+        if completed:
+            status = "success" if everything else "no_speech"
+        elif everything or progressed:
+            status = "partial"
+        else:
+            status = "no_speech"
         return {
-            "status": "success" if completed and everything else "partial" if everything else "no_speech",
+            "status": status,
             "language": language,
             "segments": everything,
             "next_seconds": next_seconds,
@@ -1484,6 +1579,7 @@ def transcribe_audio_file(
     max_work_seconds: int = 180,
     start_seconds: float = 0,
     end_seconds: float | None = None,
+    source_revision: str | None = None,
 ) -> dict[str, Any]:
     try:
         asr_installed = importlib.util.find_spec("whisper") is not None
@@ -1512,18 +1608,27 @@ def transcribe_audio_file(
     remaining = timeout - (time.monotonic() - started)
     if remaining <= 0:
         raise MediaBudgetExceeded("ASR work budget expired before its model slot was acquired")
-    checkpoint_path = asr_checkpoint_dir() / f"{_asr_identity(source, model_name, start, end)}.json"
+    identity = _asr_identity(source, model_name, start, end, source_revision=source_revision)
+    checkpoint_path = asr_checkpoint_dir() / f"{identity}.json"
     stored = _load_asr_checkpoint(checkpoint_path)
     carried: list[dict] = []
+    prior_language = ""
     resume_start = start
     if stored:
-        stored_segments = [item for item in (stored.get("segments") or []) if isinstance(item, dict)]
+        stored_identity = str(stored.get("identity") or "")
+        stored_segments = [
+            item for item in (stored.get("segments") or []) if isinstance(item, dict)
+        ]
         stored_end = float(stored.get("next_seconds") or start)
-        if stored.get("status") == "complete" and stored_end >= end - 0.01:
+        # A checkpoint written in another naming scheme (or staged under a
+        # different identity) is not this work and must not be resumed onto it.
+        same_work = not stored_identity or stored_identity == identity
+        if same_work and stored.get("status") == "complete" and stored_end >= end - 0.01:
+            merged = _merge_asr_segments(stored_segments)
             return {
-                "status": "success" if stored_segments else "no_speech",
+                "status": "success" if merged else "no_speech",
                 "language": str(stored.get("language") or ""),
-                "segments": stored_segments,
+                "segments": merged,
                 "next_seconds": stored_end,
                 "duration_seconds": duration,
                 "model": str(model_name),
@@ -1531,8 +1636,9 @@ def transcribe_audio_file(
                 "cached": True,
                 "checkpoint": str(checkpoint_path),
             }
-        if stored_segments and start <= stored_end <= end:
-            carried = stored_segments
+        if same_work and stored_segments and start <= stored_end <= end:
+            carried = _merge_asr_segments(stored_segments)
+            prior_language = str(stored.get("language") or "")
             resume_start = stored_end
     with asr_model_slot(model_root, max_wait_seconds=remaining):
         remaining = timeout - (time.monotonic() - started)
@@ -1550,6 +1656,8 @@ def transcribe_audio_file(
             checkpoint_path=checkpoint_path,
             prior_segments=carried,
             resume_from=resume_start,
+            prior_language=prior_language,
+            checkpoint_identity=identity,
         )
         result["cached"] = False
         result["checkpoint"] = str(checkpoint_path)
