@@ -42,7 +42,7 @@
 ## 3. 打包结果（release 渠道，C7/C8 之后重建）
 
 
-预览候选：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24-preview/`（`local-preview` 渠道，wheel 带 `+preview.g03cd533283e7.20261027185022`，5 产物 + 清单 + `SHA256SUMS` + `verify_delivery.py` + `PREVIEW-NOTES.md`），只给在场首测，不上传。
+预览候选：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24-preview/`（`local-preview` 渠道，wheel 带 `+preview.g318442e9cef4.20261027200612`，`doctor` 报 `channel local-preview`，5 产物 + 清单 + `SHA256SUMS` + `verify_delivery.py` + `PREVIEW-NOTES.md`），只给在场首测，不上传。
 | 文件 | 作用 |
 | --- | --- |
 | `envoy_cli-0.1.24-py3-none-any.whl` | runtime（CLI + 内嵌 core） |
