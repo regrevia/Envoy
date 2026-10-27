@@ -118,7 +118,7 @@ def single(pattern: re.Pattern[str], names: list[str], label: str) -> tuple[str,
     return name, match.group("version")
 
 
-def verify(directory: Path) -> Result:
+def verify(directory: Path, *, allow_preview: bool = False) -> Result:
     result = Result(directory)
 
     sums_path = directory / SUMS
@@ -199,9 +199,10 @@ def verify(directory: Path) -> Result:
     except ValueError as exc:
         result.fail("wheel", str(exc))
         return result
-    if "+" in wheel_version:
+    preview = "+" in wheel_version
+    if preview and not allow_preview:
         result.fail("wheel", f"not a release build: {wheel_version}")
-    elif version and wheel_version != version:
+    elif version and wheel_version.split("+", 1)[0] != version:
         result.fail("wheel", f"file version {wheel_version} != manifest {version}")
     else:
         try:
@@ -213,6 +214,8 @@ def verify(directory: Path) -> Result:
                 result.fail("wheel", f"METADATA version {inner_version} != file name {wheel_version}")
             elif not any(r.lower().startswith("httpx") for r in requires):
                 result.fail("wheel", "wheel does not declare httpx, an offline install would fail")
+            elif preview:
+                result.ok(f"wheel is a local preview build ({inner_version}, {len(requires)} deps)")
             else:
                 result.ok(f"wheel is a release build ({inner_version}, {len(requires)} deps)")
 
@@ -273,12 +276,17 @@ def verify(directory: Path) -> Result:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify a staged Envoy delivery directory.")
     parser.add_argument("--dir", default=".", help="delivery directory to check")
+    parser.add_argument(
+        "--allow-preview",
+        action="store_true",
+        help="accept a local-preview wheel (0.1.24+preview.g<rev>.<UTC>) instead of a release build",
+    )
     args = parser.parse_args(argv)
     directory = Path(args.dir).expanduser().resolve()
     if not directory.is_dir():
         print(f"not a directory: {directory}", file=sys.stderr)
         return 2
-    result = verify(directory)
+    result = verify(directory, allow_preview=args.allow_preview)
     if result.failures:
         print(f"\n{len(result.failures)} of {result.checks} checks failed in {directory}")
         return 1

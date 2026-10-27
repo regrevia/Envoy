@@ -82,11 +82,32 @@ def build_delivery(directory: Path) -> None:
     (directory / "SHA256SUMS").write_text("\n".join(lines) + "\n")
 
 
-def run(directory: Path) -> tuple[int, str]:
+def refresh_checksums(directory: Path, manifest: dict) -> None:
+    lines = [f"{a['sha256']}  {a['name']}" for a in manifest["artifacts"]]
+    lines.append(
+        f"{sha256((directory / 'release-manifest.json').read_bytes()).hexdigest()}  release-manifest.json"
+    )
+    (directory / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+
+
+def switch_to_preview_wheel(directory: Path) -> str:
+    (directory / f"envoy_cli-{VERSION}-py3-none-any.whl").unlink()
+    preview_version = f"{VERSION}+preview.gabc.20261028"
+    name = f"envoy_cli-{preview_version}-py3-none-any.whl"
+    write_wheel(directory / name, version=preview_version)
+    manifest = json.loads((directory / "release-manifest.json").read_text())
+    manifest["artifacts"][0]["name"] = name
+    manifest["artifacts"][0]["sha256"] = sha256((directory / name).read_bytes()).hexdigest()
+    (directory / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    refresh_checksums(directory, manifest)
+    return name
+
+
+def run(directory: Path, *extra: str) -> tuple[int, str]:
     module = load_module()
     buffer = io.StringIO()
     with redirect_stdout(buffer):
-        code = module.main(["--dir", str(directory)])
+        code = module.main(["--dir", str(directory), *extra])
     return code, buffer.getvalue()
 
 
@@ -108,29 +129,20 @@ def test_tampered_artifact_fails(tmp_path: Path) -> None:
     assert "digest mismatch" in output
 
 
-def test_preview_wheel_is_rejected(tmp_path: Path) -> None:
+def test_preview_wheel_is_rejected_by_default(tmp_path: Path) -> None:
     build_delivery(tmp_path)
-    old = tmp_path / f"envoy_cli-{VERSION}-py3-none-any.whl"
-    old.unlink()
-    preview = f"{VERSION}+preview.gabc.20261028"
-    write_wheel(tmp_path / f"envoy_cli-{preview}-py3-none-any.whl")
-    texts = {}
-    for name in ("release-manifest.json", "SHA256SUMS"):
-        texts[name] = (tmp_path / name).read_text()
-    manifest = json.loads(texts["release-manifest.json"])
-    manifest["artifacts"][0]["name"] = f"envoy_cli-{preview}-py3-none-any.whl"
-    manifest["artifacts"][0]["sha256"] = sha256(
-        (tmp_path / f"envoy_cli-{preview}-py3-none-any.whl").read_bytes()
-    ).hexdigest()
-    (tmp_path / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    lines = [f"{a['sha256']}  {a['name']}" for a in manifest["artifacts"]]
-    lines.append(
-        f"{sha256((tmp_path / 'release-manifest.json').read_bytes()).hexdigest()}  release-manifest.json"
-    )
-    (tmp_path / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+    switch_to_preview_wheel(tmp_path)
     code, output = run(tmp_path)
     assert code == 1, output
     assert "not a release build" in output
+
+
+def test_preview_wheel_passes_with_allow_preview(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    switch_to_preview_wheel(tmp_path)
+    code, output = run(tmp_path, "--allow-preview")
+    assert code == 0, output
+    assert "local preview build" in output
 
 
 def test_wheel_without_runtime_dependency_fails(tmp_path: Path) -> None:
