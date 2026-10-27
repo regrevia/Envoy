@@ -369,5 +369,5 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 第六轮记录的两处翻转已经回落：`youtube-youtu.be` 不再撞超时（本轮可用），
 `tiktok` 又回到 `blocked`。第三方嵌入壳在多次测量间不稳定，单轮翻转不作为能力结论。
 
-回归：`pytest tests/cli` → 669 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected**；
+回归：`pytest tests/cli` → **669 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected**；
 分类+路由+语料脚本 **143 passed**；DSH 插件 `npm test` **9 passed**。
