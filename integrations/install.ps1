@@ -134,7 +134,12 @@ function Confirm-Checksum {
     $sumsUrl = "https://github.com/$($Script:Repo)/releases/download/v$($Script:RuntimeVersion)/SHA256SUMS"
     $sums = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-sums-" + [guid]::NewGuid().ToString("N"))
     try {
-        Invoke-WebRequest -Uri $sumsUrl -OutFile $sums -UseBasicParsing -TimeoutSec 60
+        try {
+            Invoke-WebRequest -Uri $sumsUrl -OutFile $sums -UseBasicParsing -TimeoutSec 60
+        } catch {
+            Write-Warning "checksum unavailable for $FileName (SHA256SUMS not reachable); continuing unverified"
+            return
+        }
         $line = Get-Content -LiteralPath $sums | Where-Object { $_ -match [regex]::Escape($FileName) } | Select-Object -First 1
         if (-not $line) { Stop-Install "SHA256SUMS has no entry for $FileName" }
         $expected = ($line -split "\s+")[0].ToLowerInvariant()

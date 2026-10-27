@@ -157,8 +157,9 @@ fi
 case_start
 if grep -q 'checksum unavailable for %s' "$INSTALL" \
   && grep -q 'SHA256SUMS has no entry for' "$INSTALL" \
-  && grep -q 'checksum skipped for %s' "$INSTALL"; then
-  ok "checksum verification names each outcome instead of failing open silently"
+  && grep -q 'checksum skipped for %s' "$INSTALL" \
+  && grep -q 'checksum unavailable for \$FileName' "$ROOT/integrations/install.ps1"; then
+  ok "checksum verification names each outcome on both platforms"
 else
   bad "checksum verification still skips silently"
 fi
