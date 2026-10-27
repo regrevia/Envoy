@@ -4,7 +4,7 @@
 [`envoy-dsh/`](envoy-dsh/)。安装后由 DSH 插件管理器统一管理，既保留 Envoy
 原有能力，也把 Envoy 注册为 Agent Skill。
 
-当前插件版本：`0.1.20`（`dev` 分支上的开发版）；要求 CLI runtime `>= 0.1.20`，bundle 首次使用时自动装好。
+当前插件版本：`0.1.21`（`dev` 分支上的开发版）；要求 CLI runtime `>= 0.1.21`，bundle 首次使用时自动装好。
 版本、最低 runtime、协议版本、源码提交和产物校验值统一记录在
 [`integrations/release-manifest.json`](../release-manifest.json)。
 
@@ -44,7 +44,7 @@
 
 ## 前置条件
 
-1. 能跑起 DSH 插件管理器即可，runtime `>= 0.1.20` 由 bundle 首次使用时自动安装（不再需要 `envoy browser setup`）。参见
+1. 能跑起 DSH 插件管理器即可，runtime `>= 0.1.21` 由 bundle 首次使用时自动安装（不再需要 `envoy browser setup`）。参见
    [Envoy 安装指南](../skills/envoy/INSTALL.md)。没有 runtime 时，本插件会在
    `~/.local/share/envoy-dsh/runtime` 自备一份。
 2. 使用 DSH Desktop 的插件管理器安装本目录。
@@ -79,7 +79,7 @@ Envoy 默认无头读取。页面需要用户登录或验证时，工具返回
   `mcp__envoy__envoy_observe`；高级工具需重启为 `full` 后才出现；
 - 技能目录出现 `envoy`，加载后以
   `# Envoy Link Reader in DeepSeek Harness` 开头；
-- `envoy doctor --json` 的 `cli_version` 不低于 `0.1.20`；使用 `full` 时也可调用
+- `envoy doctor --json` 的 `cli_version` 不低于 `0.1.21`；使用 `full` 时也可调用
   `mcp__envoy__envoy_doctor`。
 
 ## 升级
