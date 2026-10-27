@@ -97,3 +97,18 @@ def test_frozen_holdout_needs_rows(tmp_path: Path) -> None:
     path = write(tmp_path, data)
     problems = module.validate(module.load_plan(path))
     assert any("missing rows" in problem for problem in problems)
+
+
+def test_a_prose_command_is_rejected(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "同一命令执行中 Ctrl-C，再执行同一命令"
+    problems = module.validate(module.load_plan(write(tmp_path, data)))
+    assert any("runnable program" in problem for problem in problems), problems
+
+
+def test_a_prefixed_command_is_accepted(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "PATH=/usr/bin:/bin sh install.sh"
+    assert module.validate(module.load_plan(write(tmp_path, data))) == []

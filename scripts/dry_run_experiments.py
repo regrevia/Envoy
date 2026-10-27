@@ -37,6 +37,7 @@ REQUIREMENTS = {
     "network_or_local",
 }
 PLACEHOLDER = re.compile(r"<[^<>]+>")
+RUNNABLE = re.compile(r"^(?:envoy|python3?|sh|bash|zsh|powershell|pwsh|uv|PATH=|HOME=|TMPDIR=|ENVOY_[A-Z0-9_]+=)")
 
 
 class PlanError(Exception):
@@ -95,6 +96,12 @@ def validate(plan: dict) -> list[str]:
         for field in ("command", "expected"):
             if not entry.get(field):
                 problems.append(f"{entry_id}: {field} is empty")
+        command = entry.get("command")
+        if command and not RUNNABLE.match(str(command)):
+            problems.append(
+                f"{entry_id}: command must start with a runnable program "
+                f"(envoy/sh/bash/powershell/uv or a VAR=value prefix), got {str(command)[:40]!r}"
+            )
         requires = entry.get("requires")
         if not isinstance(requires, str) or not requires.strip():
             problems.append(f"{entry_id}: requires is empty")
