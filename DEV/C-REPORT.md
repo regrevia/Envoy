@@ -1,6 +1,6 @@
 # C 线报告（安装 / 打包 / 跨平台）— 0.1.24
 
-基线 `main = fbdede5`（0.1.23）→ 0.1.24 交付提交（构建提交见 `release-manifest.json` 的 `source_commit`）。
+基线 0.1.23 发行版 → 0.1.24 交付提交（构建提交见 `release-manifest.json` 的 `source_commit`）。
 交付目录：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24/`。
 
 ## 1. 做了什么（按用户能感知的顺序）
@@ -12,7 +12,9 @@
 | C3 | 读路径缺浏览器快速失败为 `MISSING_CAPABILITY` 并给 `envoy browser setup`；重下载留在安装期/独立 setup，不进宿主 300 s 时限 | `browser.py`、`cli.py` | `unit_checked`（9 用例） |
 | C4 | 发行工作流补齐：先构建全部产物（含 DSH TGZ 与 `install.ps1`）再生成清单和 `SHA256SUMS`，新增 4 个 `--check` 门与 npm 发布步骤 | `.github/workflows/release.yml` | `packaged`（本机按同顺序复刻） |
 | C5 | 新增 Windows 安装脚本，与 POSIX 脚本行为对齐（pin、`envoy.cmd`、PATH、MCP 配置合并带备份） | `integrations/install.ps1` | `not_run`（本机无 `pwsh`） |
-| C6 | 离线安装用例脚本 | `scripts/check_installer_offline.sh` | 6/6 通过 |
+| C6 | 离线安装用例脚本 | `scripts/check_installer_offline.sh` | 7/7 通过 |
+| C7 | `envoy doctor` 新增 `runtime` 段：pin 状态（pinned / unpinned / stale_pin / shadowed）+ 每条一句修复动作，`--json` 同步给 `runtime.install` | `install_state.py`、`cli.py`、`INSTALL.md` | `unit_checked`（9 用例 + doctor 回归 12 用例） |
+| C8 | 安装脚本收尾打印浏览器状态与安装状态（非 pinned 点名 PATH 指向），POSIX 与 Windows 两份对齐 | `install.sh`、`install.ps1` | `unit_checked`（7/7 离线用例，含 shadowed 分支） |
 
 ## 2. 通过的检查（本轮真跑）
 
@@ -20,13 +22,14 @@
 - 媒体三件套（`test_video_media` + `test_media_asr_checkpoint` + `test_media_asr_resume`）：**37 passed in 3.99s**。
 - `tests/cli/test_process_control.py`：**14 passed**（含注入 `nt` 平台的 Windows 分支）。
 - `tests/cli/test_browser_auto_setup.py`：**9 passed**。
-- `sh scripts/check_installer_offline.sh`：**6/6**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」）。
+- `sh scripts/check_installer_offline.sh`：**7/7**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」）。
+- `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
 - `build_envoy_dsh_plugin.py --check`、`sync_host_skills.py --check`：均为 current。
-- 打包产物可用性：`uv run --offline --with <wheel> envoy --version` → `envoy-cli 0.1.24 (core 0.1.24)`；`envoy doctor --json` 能跑通并在 `envoy --version` 场景下正确报版本。
+- 打包产物可用性：`uv run --offline --with <wheel> envoy --version` → `envoy-cli 0.1.24 (core 0.1.24)`；用交付 wheel 跑 `doctor --json` 得 `channel: release`、`source_dirty: false`、`runtime.install.status = unpinned`（空 `ENVOY_HOME`）。
 
-## 3. 打包结果（release 渠道）
+## 3. 打包结果（release 渠道，C7/C8 之后重建）
 
 | 文件 | 作用 |
 | --- | --- |
@@ -41,7 +44,7 @@
 摘要一律以 `SHA256SUMS` 为准（`shasum -a 256 -c SHA256SUMS`）；
 构建用的源码提交记在 `release-manifest.json` 的 `source_commit`。本文不再复制哈希，避免文档与产物脱节。
 
-`SHA256SUMS` 覆盖上表 6 个文件；`release-manifest.json` 的 `artifacts` 覆盖 5 个
+`SHA256SUMS` 覆盖上表 6 个文件（5 产物 + 清单；校验和不含自身）；`release-manifest.json` 的 `artifacts` 覆盖 5 个
 （清单不含自身）。产物名与安装脚本拼的 URL 一致：`envoy_cli-<v>-py3-none-any.whl`、
 `envoy-dsh-<v>.tgz`、`envoy-skill.zip`。
 
