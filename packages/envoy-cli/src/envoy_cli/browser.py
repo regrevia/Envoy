@@ -212,7 +212,8 @@ _GENERIC_OVERLAY_SCRIPT = r"""
     '[class*="modal" i],[class*="popup" i],[class*="overlay" i],[class*="mask" i],' +
     '[class*="consent" i],[class*="cookie" i],[class*="gdpr" i],[class*="banner" i],' +
     '[class*="notice" i],[class*="subscribe" i],[class*="paywall" i],' +
-    '[class*="newsletter" i],[class*="download" i],[id*="cookie" i],[id*="consent" i]'
+    '[class*="newsletter" i],[class*="download" i],[id*="cookie" i],[id*="consent" i],' +
+    '[aria-label*="consent" i],.cmp-container,#onetrust-banner-sdk,.qc-cmp2-container'
   )];
   let clicked = 0;
   for (const candidate of candidates) {

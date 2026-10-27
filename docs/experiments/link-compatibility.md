@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十一轮）
+## 结论（最新一轮：第十二轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -25,6 +25,7 @@
 | 9 | 93 | 92 | 69 | 75.0% | 20 | 4.46s | 3 条新行全可用，零翻转 |
 | 10 | 96 | 95 | 74 | 77.9% | 20 | 4.50s | 4 条新行全可用；YouTube 字幕显形 |
 | 11 | 97 | 96 | 75 | 78.1% | 20 | 4.52s | MDN 补齐；wikipedia 回到 partial |
+| 12 | 100 | 99 | 76 | 76.8% | 21 | 3.55s | 补 gitlab/douban-group/ximalaya；social、audio 首次有可用行 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -406,6 +407,28 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第十二轮（100 行 / 可用 76.8%，补 social 与 audio 两个零可用族）
+
+语料 97 → 100 行（新增 `gitlab-readme`、`douban-group`、`ximalaya-album`），死链 1，分母 99。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 99 | 21 | 55 | 2 | 0 | 8 | 13 | 0 | 76 | **76.8%** |
+| 可达口径（剔 unreachable） | 86 | 21 | 55 | 2 | 0 | 8 | 0 | 0 | 76 | **88.4%** |
+| 旧 96 行子集（与第 11 轮同组成） | 96 | 21 | 54 | 2 | 0 | 7 | 12 | 0 | 75 | **78.1%** |
+
+- 新增三行全部可用：`douban-group` `readable` 1253 字 / 1.3s（`static_http`，**social 族
+  第一次有可用行**）；`ximalaya-album` `partial` 504 字 / 22.5s（`isolated_chromium`，
+  声量偏薄但真实；**audio 族第一次有可用行**）；`gitlab-readme` `partial` 7961 字 / 25.9s。
+- 语料扩到 100 行后全语料率从 78.1% 掉到 76.8%，纯粹是分母多了 3 行里含 2 个新族的历史
+  弱项（social 另有 3 行不可用、audio 的 soundcloud 仍不可达），不是能力退步——同 96 行
+  子集仍是 78.1%，与第 11 轮完全一致。
+- 三条翻转全是出口抖动：`guardian` `partial`(5960) → `unreachable`、`gist`
+  `partial`(7829) → `unreachable`、`unsplash` `unreachable` → `blocked`。这三条在本机
+  出口稳定时能达到 `partial`，本轮只是没连上，不作能力结论。
+- 时延：mean 22.0s / p50 3.55s / p90 77.28s / max 108.9s；p90 与 max 全部由
+  `unreachable` 行的 77s 出口超时定义，与历史各轮一致。
 
 ## 第十一轮（97 行 / 可用 78.1%，MDN 补齐，YouTube 字幕稳定）
 
