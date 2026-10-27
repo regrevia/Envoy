@@ -55,3 +55,13 @@ def test_the_mirror_hooks_exist_once_each(text: str):
     assert "https://github.com/$($Script:Repo)/releases/download" in text
     assert "https://raw.githubusercontent.com/$($Script:Repo)/main/" in text
     assert '"regrevia/Envoy"' in text
+
+
+def test_both_installers_dispatch_the_same_host_targets(text: str):
+    """A host added on one platform must not be missing on the other."""
+    shell = (PS1.parent / "install.sh").read_text(encoding="utf-8")
+    documented = {"dsh", "claude-code", "codex", "mcp", "skill", "all", "path"}
+    cases = set(re.findall(r'^\s*"([a-z-]*)"\s*\{', text, re.MULTILINE))
+    assert documented <= cases, (documented - cases)
+    assert "" in cases and "auto" in cases  # the no-argument default
+    assert "dsh|claude-code|codex|mcp|skill|all|path" in shell
