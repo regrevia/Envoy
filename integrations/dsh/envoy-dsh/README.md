@@ -25,8 +25,9 @@ you can quote, so the agent writes from what was actually said, not from the tit
 `envoy collect` checkpoints every item, so an interrupted run resumes instead
 of restarting.
 
-Measured on 92 live links across those platforms: **75% usable as source
-material** (20 fully readable, 49 partially, the gap named), **0 failures**.
+Measured on 123 live links across those platforms: **80% usable as source
+material** — that is 93% of the links that answered at all — with **0 failures**
+and every gap named.
 The harness is in `docs/experiments/link-compatibility.md`; rerun it with
 `scripts/acceptance/link_coverage.py`.
 
