@@ -237,6 +237,7 @@ _SUPPORTED_HOSTS = {
     "youtube.com",
     "platformer.news",
     "feeds.arstechnica.com",
+    "feeds.simplecast.com",
     "qbitai.com",
     "dev.to",
     "zenn.dev",
