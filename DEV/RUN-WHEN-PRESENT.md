@@ -28,6 +28,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 verify_delivery.py --dir .
 `verify_delivery.py` 只读文件、不联网、不执行安装；它失败就不要往下装。其中一条会读 `EXPERIMENT-PLAN.json`：条目写 `passed`/`failed` 却没有 `evidence` 与 `observed_at`（或 `not_run` 却带着证据）时直接失败，所以别手改状态绕过 `record_experiment.py`。
 需要手工核对摘要时仍是 `shasum -a 256 -c SHA256SUMS`。上面那行带 `PYTHONDONTWRITEBYTECODE=1`
 是为了别在包里留下 `__pycache__`：脚本会导入同目录的干跑/写回模块，默认会写字节码。
+包里的 `install.sh` / `install.ps1` 属于被哈希的产物：它们和 `envoy-dsh-*.tgz`、wheel 一起在
+`SHA256SUMS` 与 `release-manifest.json` 里。所以不要直接在包里改这两个脚本——改仓库、重新打包、
+再核对摘要；只改不参与哈希的文档与工具（本手册、`verify_delivery.py` 等）才可以直接替换。
 
 想先摸一遍再动发行包，`../0.1.24-preview/` 是同一份代码的 `local-preview` 渠道候选
 （wheel 名带 `+preview.g<rev>.<UTC>`），用 `python3 verify_delivery.py --dir . --allow-preview`
