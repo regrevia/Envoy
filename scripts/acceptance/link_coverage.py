@@ -80,6 +80,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("news", "reuters-tech", "https://www.reuters.com/technology/"),
     ("news", "nytimes", "https://www.nytimes.com/section/technology"),
     ("news", "guardian", "https://www.theguardian.com/international"),
+    ("news", "thepaper", "https://www.thepaper.cn/"),
     # -- blog ------------------------------------------------------------
     ("blog", "medium", "https://medium.com/@karpathy/a-recipe-for-training-neural-networks-9c4c9f7d4b6c"),
     ("blog", "substack", "https://platformer.news/"),
@@ -184,6 +185,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("cn-media", "ifanr-home", "https://www.ifanr.com/"),
     ("cn-media", "pingwest-home", "https://www.pingwest.com/"),
     ("cn-media", "qbitai-home", "https://www.qbitai.com/"),
+    ("cn-media", "solidot", "https://www.solidot.org/"),
+    ("cn-media", "guancha", "https://www.guancha.cn/"),
     ("cn-media", "jiemian-home", "https://www.jiemian.com/"),
     ("cn-media", "cls-home", "https://www.cls.cn/"),
     ("cn-media", "yicai-home", "https://www.yicai.com/"),
