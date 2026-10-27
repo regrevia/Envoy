@@ -13,7 +13,9 @@ wheel:
   runtime dependencies an offline install needs;
 * the DSH bundle's ``package.json`` version equals the manifest version;
 * the Skill zip contains ``SKILL.md``;
-* both installers mention the manifest version in their download URLs.
+* both installers mention the manifest version in their download URLs;
+* ``EXPERIMENT-PLAN.json`` is schema-valid and no entry claims a result it did
+  not record (a terminal status without evidence fails the delivery).
 
 Usage:
     python scripts/verify_delivery.py --dir <delivery-dir>
@@ -116,6 +118,44 @@ def single(pattern: re.Pattern[str], names: list[str], label: str) -> tuple[str,
     name, match = hits[0]
     assert match is not None
     return name, match.group("version")
+
+
+PLAN_SCHEMA = "envoy.experiment-plan/1"
+PLAN_STATUSES = {"not_run", "running", "passed", "failed", "blocked", "skipped"}
+
+
+def plan_problem(plan: dict) -> str:
+    """Return why an experiment plan is not ship-safe, or "" when it is."""
+    if plan.get("schema") != PLAN_SCHEMA:
+        return f"schema is {plan.get('schema')!r}, expected {PLAN_SCHEMA!r}"
+    axes = plan.get("axes")
+    if not isinstance(axes, dict) or not axes:
+        return "axes is empty"
+    seen: set[str] = set()
+    for axis_name, axis in axes.items():
+        entries = axis.get("entries") if isinstance(axis, dict) else None
+        if not isinstance(entries, list) or not entries:
+            return f"axis {axis_name!r} has no entries"
+        for entry in entries:
+            entry_id = str(entry.get("id", ""))
+            if not entry_id:
+                return f"axis {axis_name!r} has an entry without an id"
+            if entry_id in seen:
+                return f"duplicate entry id {entry_id!r}"
+            seen.add(entry_id)
+            status = entry.get("status")
+            if status not in PLAN_STATUSES:
+                return f"{entry_id} has status {status!r}"
+            if status in {"passed", "failed"}:
+                if not str(entry.get("evidence", "")).strip():
+                    return f"{entry_id} is {status} without an evidence line"
+                if not str(entry.get("observed_at", "")).strip():
+                    return f"{entry_id} is {status} without observed_at"
+            if status == "not_run" and entry.get("evidence"):
+                return f"{entry_id} is not_run but carries evidence"
+    if plan.get("status") not in PLAN_STATUSES:
+        return f"plan status is {plan.get('status')!r}"
+    return ""
 
 
 def verify(directory: Path, *, allow_preview: bool = False) -> Result:
@@ -269,6 +309,21 @@ def verify(directory: Path, *, allow_preview: bool = False) -> Result:
             result.fail(installer, f"missing contract pieces: {', '.join(missing)}")
         else:
             result.ok(f"{installer} resolves the version from the release manifest")
+
+    plan_path = directory / "EXPERIMENT-PLAN.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        result.fail("experiment-plan", str(exc))
+    except ValueError as exc:
+        result.fail("experiment-plan", f"not JSON: {exc}")
+    else:
+        problem = plan_problem(plan)
+        if problem:
+            result.fail("experiment-plan", problem)
+        else:
+            entries = [e for axis in plan["axes"].values() for e in axis["entries"]]
+            result.ok(f"experiment-plan is valid ({len(entries)} entries, {len(plan['axes'])} axes)")
 
     return result
 

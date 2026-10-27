@@ -31,7 +31,7 @@
 - `tests/cli/test_process_control.py`：**14 passed**（含注入 `nt` 平台的 Windows 分支）。
 - `tests/cli/test_browser_auto_setup.py`：**9 passed**。
 - `sh scripts/check_installer_offline.sh`：**10/10**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」「下载根可覆盖」）。
-- `sh scripts/check_installer_e2e_local.sh`：**6/6 通过（含 dry-run 只报计划不落盘、DSH 包 URL 走同一根）**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
+- `sh scripts/check_installer_e2e_local.sh`：**8/8 通过（含 dry-run 只报计划不落盘、DSH 包 URL 走同一根、mcp 分支）**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
 - `tests/cli/test_install_docs.py`：**4 passed**（README 中/英的一行命令 URL 必须来自 `install.sh` 的 `ENVOY_REPO` 默认；命令里的每个 target 都得在 `case` 里存在；用户可见 target 都得在文档出现——`all` 因此补进 README）。
 - `tests/cli/test_installer_ps1_static.py`：**4 passed**（`$Script:` 变量先赋值后使用、括号配平、镜像钩子各只有一处；本机无 PowerShell，故只做静态面）。
 - 安装/守卫/进程四文件定点回归（`test_install_state`、`test_browser_auto_setup`、`test_process_control`、`test_url_guard_determinism`）：**36 passed in 0.64s**。
@@ -39,8 +39,8 @@
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
 - `tests/cli/test_dry_run_experiments.py`：**8 passed**（新增「命令必须以可执行程序开头」，把 32 条计划里的散文步骤挪进 `notes`）。
 - `tests/cli/test_record_experiment.py`：**8 passed**；对真实计划跑 `record_experiment.py --json` → `plan not_run: 32 entries; not_run 32; holdout pending_sample`（不改文件）。
-- `tests/cli/test_verify_delivery.py`：**6 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (11 checks)**。
-- `check_versions.py --check`：11 项声明一致（2 份文档也查）。
+- `tests/cli/test_verify_delivery.py`：**9 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (12 checks)**。
+- `check_versions.py --check`：12 项声明一致（2 份文档也查）。
 - `check_release_manifest.py --check`：`Envoy 0.1.24, runtime >= 0.1.24`。
 - `build_envoy_dsh_plugin.py --check`、`sync_host_skills.py --check`：均为 current。
 - 打包产物可用性：`uv run --offline --with <wheel> envoy --version` → `envoy-cli 0.1.24 (core 0.1.24)`；用交付 wheel 跑 `doctor --json` 得 `channel: release`、`source_dirty: false`、`runtime.install.status = unpinned`（空 `ENVOY_HOME`）。

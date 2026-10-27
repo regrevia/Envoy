@@ -47,7 +47,18 @@ def write_skill(path: Path) -> None:
         archive.writestr("references/install.md", "x\n")
 
 
+def write_plan(directory: Path, entries: list[dict] | None = None, status: str = "not_run") -> None:
+    plan = {
+        "schema": "envoy.experiment-plan/1",
+        "version": VERSION,
+        "status": status,
+        "axes": {"long-video": {"entries": entries or [{"id": "V01", "status": "not_run"}]}},
+    }
+    (directory / "EXPERIMENT-PLAN.json").write_text(json.dumps(plan, indent=2) + "\n")
+
+
 def build_delivery(directory: Path) -> None:
+    write_plan(directory)
     write_wheel(directory / f"envoy_cli-{VERSION}-py3-none-any.whl")
     write_tgz(directory / f"envoy-dsh-{VERSION}.tgz")
     write_skill(directory / "envoy-skill.zip")
@@ -170,3 +181,45 @@ def test_missing_checksums_reports_failure(tmp_path: Path) -> None:
     code, output = run(tmp_path)
     assert code == 1
     assert "SHA256SUMS: missing" in output
+
+
+def test_plan_claiming_a_result_without_evidence_fails(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    write_plan(
+        tmp_path,
+        [{"id": "V01", "status": "passed"}],
+        status="passed",
+    )
+    code, output = run(tmp_path)
+    assert code == 1, output
+    assert "V01 is passed without an evidence line" in output
+
+
+def test_plan_with_duplicate_ids_fails(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    write_plan(
+        tmp_path,
+        [{"id": "V01", "status": "not_run"}, {"id": "V01", "status": "not_run"}],
+    )
+    code, output = run(tmp_path)
+    assert code == 1, output
+    assert "duplicate entry id 'V01'" in output
+
+
+def test_recorded_plan_with_evidence_passes(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    write_plan(
+        tmp_path,
+        [
+            {
+                "id": "V01",
+                "status": "passed",
+                "evidence": "envoy read <url> -> success, 412 words",
+                "observed_at": "2026-10-28T09:10:00+08:00",
+            }
+        ],
+        status="passed",
+    )
+    code, output = run(tmp_path)
+    assert code == 0, output
+    assert "experiment-plan is valid (1 entries, 1 axes)" in output
