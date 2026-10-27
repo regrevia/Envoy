@@ -163,6 +163,16 @@ def plan_problem(plan: dict) -> str:
                     return f"{entry_id} is {status} without observed_at"
             if status == "not_run" and entry.get("evidence"):
                 return f"{entry_id} is not_run but carries evidence"
+    holdout = plan.get("holdout")
+    if isinstance(holdout, dict):
+        dependent = holdout.get("dependent_entries") or []
+        if not isinstance(dependent, list):
+            return "holdout.dependent_entries is not a list"
+        unknown = [str(entry_id) for entry_id in dependent if str(entry_id) not in seen]
+        if unknown:
+            # A typo here silently ungates the measurement that was held back,
+            # which is the one thing a holdout exists to prevent.
+            return f"holdout.dependent_entries names unknown entries: {', '.join(unknown)}"
     if plan.get("status") not in PLAN_STATUSES:
         return f"plan status is {plan.get('status')!r}"
     return ""

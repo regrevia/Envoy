@@ -265,3 +265,34 @@ def test_plan_command_on_the_real_cli_surface_passes(tmp_path: Path) -> None:
     code, out = run(tmp_path)
     assert code == 0
     assert "commands match the CLI surface (1 checked)" in out
+
+
+def test_plan_gated_on_an_entry_that_does_not_exist_fails(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    path = tmp_path / "EXPERIMENT-PLAN.json"
+    plan = json.loads(path.read_text())
+    plan["holdout"] = {
+        "id": "H12",
+        "status": "pending_sample",
+        "size": 12,
+        "dependent_entries": ["V01", "V02"],
+    }
+    path.write_text(json.dumps(plan, indent=2) + "\n")
+    code, output = run(tmp_path)
+    assert code == 1, output
+    assert "names unknown entries: V02" in output
+
+
+def test_plan_gated_on_real_entries_passes(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    path = tmp_path / "EXPERIMENT-PLAN.json"
+    plan = json.loads(path.read_text())
+    plan["holdout"] = {
+        "id": "H12",
+        "status": "pending_sample",
+        "size": 12,
+        "dependent_entries": ["V01"],
+    }
+    path.write_text(json.dumps(plan, indent=2) + "\n")
+    code, output = run(tmp_path)
+    assert code == 0, output
