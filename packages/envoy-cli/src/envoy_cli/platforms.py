@@ -266,6 +266,9 @@ _SUPPORTED_HOSTS = {
     "wallstreetcn.com",
     "ruanyifeng.com",
     "commons.wikimedia.org",
+    "podcasts.apple.com",
+    "open.spotify.com",
+    "docs.anthropic.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (

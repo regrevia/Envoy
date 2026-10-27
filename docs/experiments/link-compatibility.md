@@ -32,7 +32,7 @@
 | 16 | 109 | 108 | 84 | 77.8% | 25 | 3.45s | 补 youku/peertube 视频行（均可用）；youku 进媒体预算表 |
 | 17 | 111 | 110 | 87 | 79.1% | 26 | 3.45s | 补 npr/cnbc 新闻行（均 partial）；apnews 标 unsupported |
 | 18 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 连接级失败不再重试（p90 77.25s→25.81s）；substack 出口抖动掉出可用 |
-| 19 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 语料未变；非 http(s) scheme、x.com、微信首页判 unsupported，宿主直接走原生 |
+| 19 | 128 | 113 | 91 | 80.5% | 26 | 4.26s | 非 http(s)/x.com/微信首页判 unsupported（宿主直接走原生）；新增 apple-podcast、spotify-episode、agent-docs 三个可用行 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -424,21 +424,30 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
-## 第十九轮（0 行新增；把「注定读不到」的链接挡在工具调用之前）
+## 第十九轮（113 行 / 可用 80.5%，判定前置挡掉注定读不到的链接，audio/web 各补一行）
 
-本轮不动语料，只把静态判定补严：宿主拿到 verdict 就不该对下列链接调工具。
+两件事：
 
-- 非 http(s) scheme：`mailto:` / `tel:` / `file:` / `ftp:` / `data:` / app intent。
-  Python 侧判 `unsupported`（之前 `mailto:` 无 host 走 `unknown`，`ftp://host/…`
-  会掉进文件后缀分支判 `supported`，两条都是错的）；JS 侧加 `parsed.protocol` 守卫。
-- `x.com` / `twitter.com` 整体进 `_UNSUPPORTED_HOSTS`：连续 5 轮（第十四至十八轮）
-  都是 `empty_content` 0 字，登录态外壳读不出内容，status 页此前已判 unsupported。
-- `mp.weixin.qq.com` 首页（path `/` 或空）判 unsupported：那是作者后台登录页；
-  `/s/<id>` 文章继续 supported，导出表里以 `^/?$` 路径规则表达。
+1. 静态判定补严，让宿主根本不调用工具。非 http(s) scheme（`mailto:` / `tel:` /
+   `file:` / `ftp:` / `data:` / app intent）判 unsupported：之前 `mailto:` 无 host
+   走 `unknown`，`ftp://host/…` 更会掉进文件后缀分支判 supported，两条都是错的。
+   `x.com` / `twitter.com` 整体进 `_UNSUPPORTED_HOSTS`（连续五轮 `empty_content`
+   0 字，登录态外壳；status 页此前已判 unsupported）。`mp.weixin.qq.com` 首页
+   （path 空或 `/`）判 unsupported，`/s/<id>` 文章继续 supported，导出表用 `^/?$`
+   路径规则表达。JS 侧补 `parsed.protocol` 守卫，其余全部走导出表。
+2. 语料补 3 行，选中原因都是「实测先过、再进语料」：`audio/apple-podcast`
+   （11946 字 / 2.7s）、`audio/spotify-episode`（1124 字 / 5.0s）、
+   `web/agent-docs`（docs.anthropic.com，3239 字 / 5.0s）；三行本轮全部可用，
+   三个 host 也进了 `_SUPPORTED_HOSTS`。
 
-验证：`tests/test_platform_classification.py` 与 `integrations/dsh/envoy-dsh/index.test.js`
-各加对应行（Python 160 个断言、JS 9 个断言全过）；`scripts/export_link_verdicts.py --check` 干净；
-`scripts/dev_test.sh` 仅剩既有的 douyin 相册顺序用例失败（HEAD 上同样失败）。
+本轮：语料 128 行，实跑 113 行（跳过 12 行风控 host、1 行 dead、2 行 URL 去重），
+可用 **91 = 80.5%**（第十八轮 86/110 = 78.2%）；延迟 mean 11.7s / p50 4.26s /
+p90 32.98s / max 57.5s（第十八轮 10.6 / 3.74 / 25.81 / 70.7；p90 回升是
+unsplash、hn-rss 这一批出口抖动撞上浏览器两次尝试，不是新代码回退）。
+
+验证：`tests/test_platform_classification.py` 163 个断言、`index.test.js` 9 个断言全过；
+`scripts/export_link_verdicts.py --check` 干净；`scripts/dev_test.sh` 仅剩既有的
+douyin 相册顺序用例失败（HEAD 上同样失败）。
 
 ## 第十八轮（110 行 / 可用 78.2%，失败路径快速失败把 p90 从 77.25s 压到 25.81s）
 
