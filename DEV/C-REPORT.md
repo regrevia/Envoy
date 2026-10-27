@@ -21,7 +21,7 @@
 | C12 | 发布链路离线契约：`release.yml` 必须按标签取版本、四项门禁先跑、五个产物都构建、清单在产物之后 `SHA256SUMS` 之前生成、缺 `NPM_TOKEN` 只跳过不掩盖失败；两个安装脚本不得出现字面版本号，资产 URL 一律由运行时解析的版本拼 | `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py` | `unit_checked`（6 + 5 用例；字面版本号零命中） |
 | C13 | 公网守卫判定一次到位：`_public_url_rejection` 返回 public / policy / dns 三值并按 host 缓存，读路径只解析一次域名、由同一个结论决定报错码与文案（此前用 bool 再补查一次，两次解析可能不一致）；`_host_lookup_failed` 删除 | `packages/envoy-cli/src/envoy_cli/reader.py`、`browser.py`、`tests/cli/test_url_guard_determinism.py` | `unit_checked`（5 用例，全程不打真 DNS；受影响 13 个测试文件 321 passed） |
 | C14 | 实测结果写回工具 `record_experiment.py`：把一条结果连同 `evidence`/`observed_at` 写进计划，拒绝无证据的通过/失败、拒绝把已跑条目改回 `not_run`（除非 `--force`），计划级 `status` 随条目重算；不带 `--write` 只干跑 | `scripts/record_experiment.py`、交付目录同名额、`tests/cli/test_record_experiment.py` | `unit_checked`（8 用例，含未知 id、无证据、降级拦截、干跑不动字节、聚合状态、坏计划先拒） |
-| C15 | 下载摘要校验不再静默跳过 | `integrations/install.sh`（`verify_checksum`）、`scripts/check_installer_offline.sh` | `implemented` + `unit_checked`（离线用例 `8/8`）；POSIX 侧取不到 `SHA256SUMS` 或无 `shasum`/`sha256sum` 时各打一行说明，取到但缺该文件条目直接 `die`；`install.ps1` 侧同样的两种情形也各走一条（不可达→警告继续、缺条目→失败），两平台语义一致 |
+| C15 | 下载摘要校验不再静默跳过 | `integrations/install.sh`（`verify_checksum`）、`scripts/check_installer_offline.sh` | `implemented` + `unit_checked`（离线用例 `8/8`；`pytest tests/test_install_script.py` 9 passed，另 2 例受本机 Xcode 许可限制、旧提交同样失败）；POSIX 侧取不到 `SHA256SUMS` 或无 `shasum`/`sha256sum` 时各打一行说明，取到但缺该文件条目直接 `die`；`install.ps1` 侧同样的两种情形也各走一条（不可达→警告继续、缺条目→失败），两平台语义一致 |
 
 ## 2. 通过的检查（本轮真跑）
 
