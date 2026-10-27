@@ -162,6 +162,23 @@ def test_tampered_artifact_fails(tmp_path: Path) -> None:
     assert "digest mismatch" in output
 
 
+def test_build_junk_in_the_pack_fails(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "verify_delivery.cpython-311.pyc").write_bytes(b"\x00")
+    code, output = run(tmp_path)
+    assert code == 1
+    assert "build junk in the delivery directory" in output
+    assert "__pycache__" in output
+
+
+def test_a_clean_pack_names_the_junk_check(tmp_path: Path) -> None:
+    build_delivery(tmp_path)
+    code, output = run(tmp_path)
+    assert code == 0, output
+    assert "no build junk is present" in output
+
+
 def test_preview_wheel_is_rejected_by_default(tmp_path: Path) -> None:
     build_delivery(tmp_path)
     switch_to_preview_wheel(tmp_path)

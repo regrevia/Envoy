@@ -276,10 +276,18 @@ def verify(directory: Path, *, allow_preview: bool = False) -> Result:
             and name not in DOC_FILES
             and name not in {SUMS, MANIFEST}
         )
+        junk = sorted(
+            str(path.relative_to(directory))
+            for path in list(directory.rglob("__pycache__")) + list(directory.rglob("*.pyc"))
+        )
         if undeclared:
             result.fail(MANIFEST, f"files in SHA256SUMS but not in manifest: {', '.join(undeclared)}")
+        elif junk:
+            # Running the tools from inside the pack imports their siblings and
+            # leaves bytecode behind; a candidate pack must not ship it.
+            result.fail(MANIFEST, f"build junk in the delivery directory: {', '.join(junk[:4])}")
         else:
-            result.ok("manifest covers every hashed artifact")
+            result.ok("manifest covers every hashed artifact, and no build junk is present")
 
     try:
         wheel_name, wheel_version = single(WHEEL_PATTERN, sorted(sums), "release wheel")
