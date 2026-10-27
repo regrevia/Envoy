@@ -38,6 +38,73 @@ REQUIREMENTS = {
 }
 PLACEHOLDER = re.compile(r"<[^<>]+>")
 RUNNABLE = re.compile(r"^(?:envoy|python3?|sh|bash|zsh|powershell|pwsh|uv|PATH=|HOME=|TMPDIR=|ENVOY_[A-Z0-9_]+=)")
+# Subcommands and flags envoy actually accepts, mirroring
+# packages/envoy-cli/src/envoy_cli/cli.py. A plan command naming a flag the CLI
+# never had reads like a runnable measurement but dies in argparse the moment a
+# human copies it out, so the dry run refuses it instead.
+CLI_SURFACE = {
+    "read": {"--request-json"},
+    "read-local-video": {"--request-json"},
+    "observe-visual": {"--request-json"},
+    "expand": {"--request-json"},
+    "replay": {"--request-json"},
+    "search": {"--request-json"},
+    "collection-checkpoint": {"--request-json"},
+    "discover": {"--cursor", "--limit", "--max-work-seconds", "--url"},
+    "collect": {
+        "--collection-id",
+        "--goal",
+        "--json",
+        "--limit",
+        "--list",
+        "--max-work-seconds",
+        "--out",
+        "--retry-blocked",
+        "--retry-reason",
+        "--run-id",
+        "--url",
+    },
+    "doctor": {"--json", "--verify-asr"},
+    "browser": {"--help"},
+    "asr": {"--help"},
+    "hook": {"--help"},
+    "ocr": {"--help"},
+    "cache": {"--help"},
+    "auth": {"--help"},
+    "mcp": {"--toolset"},
+}
+ENVOY_CALL = re.compile(r"(?:^|[\s'\"])envoy\s+([A-Za-z0-9-]+)([^|;]*)")
+
+
+def cli_problems(entry_id, command):
+    """Name every envoy subcommand/flag and unquoted placeholder a command gets wrong."""
+    problems = []
+    for match in ENVOY_CALL.finditer(command):
+        subcommand, rest = match.group(1), match.group(2)
+        flags = CLI_SURFACE.get(subcommand)
+        if flags is None:
+            problems.append(
+                f"{entry_id}: envoy {subcommand} is not a CLI subcommand "
+                f"(known: {', '.join(sorted(CLI_SURFACE))})"
+            )
+            continue
+        for token in rest.split():
+            if not token.startswith("--"):
+                continue
+            flag = token.split("=", 1)[0].rstrip("'\"")
+            if flag not in flags:
+                problems.append(
+                    f"{entry_id}: envoy {subcommand} has no {flag} flag "
+                    f"(known: {', '.join(sorted(flags))})"
+                )
+    for match in PLACEHOLDER.finditer(command):
+        before = command[match.start() - 1] if match.start() else ""
+        if before not in "\"'":
+            problems.append(
+                f"{entry_id}: placeholder {match.group(0)} must be quoted so the shell "
+                "does not read it as a redirect"
+            )
+    return problems
 
 
 class PlanError(Exception):
@@ -78,6 +145,16 @@ def validate(plan: dict) -> list[str]:
     if plan.get("status") not in STATUSES:
         problems.append(f"plan status {plan.get('status')!r} is not in {sorted(STATUSES)}")
 
+    for axis, block in plan["axes"].items():
+        if not isinstance(block, dict):
+            continue
+        count = block.get("count")
+        aligned = block.get("entries")
+        if count is not None and isinstance(aligned, list) and count != len(aligned):
+            problems.append(
+                f"axis {axis!r}: count says {count} but it has {len(aligned)} entries"
+            )
+
     seen: set[str] = set()
     try:
         rows = entries(plan)
@@ -97,6 +174,8 @@ def validate(plan: dict) -> list[str]:
             if not entry.get(field):
                 problems.append(f"{entry_id}: {field} is empty")
         command = entry.get("command")
+        if command:
+            problems.extend(cli_problems(str(entry_id), str(command)))
         if command and not RUNNABLE.match(str(command)):
             problems.append(
                 f"{entry_id}: command must start with a runnable program "

@@ -18,6 +18,13 @@ def load_module():
     return module
 
 
+def read_command(request_id: str = "V01", url: str = "<public-video-url>") -> str:
+    """The documented read form: request JSON on stdin, no invented CLI flags."""
+    body = {"request_id": request_id, "source": {"url": url}}
+    payload = json.dumps(body, separators=(",", ":")).replace('"', '\\"')
+    return "sh -c 'printf %s \"" + payload + "\" | envoy read --request-json -'"
+
+
 def plan(entries: list[dict] | None = None, holdout_status: str = "pending_sample") -> dict:
     return {
         "schema": "envoy.experiment-plan/1",
@@ -32,7 +39,7 @@ def plan(entries: list[dict] | None = None, holdout_status: str = "pending_sampl
                         "id": "V01",
                         "axis": "long-video",
                         "title": "baseline",
-                        "command": "envoy read <public-video-url> --json",
+                        "command": read_command(),
                         "expected": "transcript non-empty",
                         "requires": "user_present,network",
                         "status": "not_run",
@@ -143,6 +150,48 @@ def test_a_public_url_entry_missing_from_dependent_entries_is_reported() -> None
 def test_a_dependent_entry_without_a_placeholder_is_reported() -> None:
     module = load_module()
     data = plan()
-    data["axes"]["long-video"]["entries"][0]["command"] = "envoy read https://example.com/v --json"
+    data["axes"]["long-video"]["entries"][0]["command"] = read_command(url="https://example.com/v")
     data["holdout"]["dependent_entries"] = ["V01"]
     assert any("has no <public-" in problem for problem in module.validate(data))
+
+
+def test_axis_count_must_match_its_entries(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["count"] = 2
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    problems = module.validate(module.load_plan(path))
+    assert any("count says 2" in problem for problem in problems)
+
+
+def test_a_flag_the_cli_never_had_is_reported(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "envoy read /path/big.pdf --pages 10-25 --json"
+    problems = module.validate(data)
+    assert any("has no --pages flag" in problem for problem in problems)
+    assert any("has no --json flag" in problem for problem in problems)
+
+
+def test_an_unknown_subcommand_is_reported() -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "envoy transcribe <public-video-url>"
+    problems = module.validate(data)
+    assert any("is not a CLI subcommand" in problem for problem in problems)
+
+
+def test_an_unquoted_placeholder_is_reported() -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "ENVOY_REPO=<owner>/Envoy sh install.sh"
+    problems = module.validate(data)
+    assert any("must be quoted" in problem for problem in problems)
+
+
+def test_a_quoted_placeholder_passes(tmp_path: Path) -> None:
+    module = load_module()
+    data = plan()
+    data["axes"]["long-video"]["entries"][0]["command"] = "ENVOY_REPO='<owner>/Envoy' sh install.sh"
+    assert module.validate(data) == []

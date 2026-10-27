@@ -17,7 +17,7 @@
 | C8 | 安装脚本收尾打印浏览器状态与安装状态（非 pinned 点名 PATH 指向），POSIX 与 Windows 两份对齐 | `install.sh`、`install.ps1` | `unit_checked`（10/10 离线用例，含 shadowed 分支） |
 | C9 | 新增装前校验器 `verify_delivery.py`：离线核对摘要/清单/wheel 渠道、依赖与包内模块/tgz 版本/Skill 包/两个安装脚本的版本解析契约，一条命令替代手工比对 | `scripts/verify_delivery.py`、交付目录同名额 | `unit_checked`（10 用例，含摘要篡改、`+preview` 默认拒收/`--allow-preview` 放行、缺依赖拒收） |
 | C10 | 留出集冻结工具 `freeze_holdout.py`：候选列表按种子抽样、去重排序、写 sha256 与行数组；默认拒写已有文件，`--check` 校验留出集未被替换；`--apply-plan` 把冻结结果直接写回计划（已有冻结留出集时拒写）；`--check --plan` 抓出手改过的计划；`holdout.dependent_entries` 列出量这个词条的条目 | `scripts/freeze_holdout.py`、交付目录同名额 | `unit_checked`（10 用例，含重复候选、篡改行、`--force` 拒写） |
-| C11 | 实验计划干跑工具 `dry_run_experiments.py`：校验 35 条条目（id 唯一/状态词表/需求词表/占位符/留出集状态），渲染单条命令且不执行任何网络动作 | `scripts/dry_run_experiments.py`、交付目录同名额 | `unit_checked`（12 用例，含重复 id、未知状态、未知需求、冻结留出集缺 rows、散文命令被拒、依赖条目 id 不存在、读公网 URL 的条目必须列进依赖集） |
+| C11 | 实验计划干跑工具 `dry_run_experiments.py`：校验 35 条条目（id 唯一/状态词表/需求词表/占位符/留出集状态/轴 count 与条目数一致），并按真实 CLI 表面校验 `envoy` 子命令与参数——计划里出现 `--pages`/`--json` 这类 CLI 没有的开关会直接报错，占位符未加引号也报错；渲染单条命令且不执行任何网络动作 | `scripts/dry_run_experiments.py`、交付目录同名额 | `unit_checked`（17 用例，含重复 id、未知状态、未知需求、冻结留出集缺 rows、散文命令被拒、依赖条目 id 不存在、读公网 URL 的条目必须列进依赖集、轴 count 不符、CLI 无此参数、未知子命令、占位符未加引号） |
 | C12 | 发布链路离线契约：`release.yml` 必须按标签取版本、四项门禁先跑、五个产物都构建、清单在产物之后 `SHA256SUMS` 之前生成、缺 `NPM_TOKEN` 只跳过不掩盖失败；两个安装脚本不得出现字面版本号，资产 URL 一律由运行时解析的版本拼 | `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py` | `unit_checked`（6 + 5 用例；字面版本号零命中） |
 | C13 | 公网守卫判定一次到位：`_public_url_rejection` 返回 public / policy / dns 三值并按 host 缓存，读路径只解析一次域名、由同一个结论决定报错码与文案（此前用 bool 再补查一次，两次解析可能不一致）；`_host_lookup_failed` 删除 | `packages/envoy-cli/src/envoy_cli/reader.py`、`browser.py`、`tests/cli/test_url_guard_determinism.py` | `unit_checked`（5 用例，全程不打真 DNS；受影响 13 个测试文件 321 passed） |
 | C14 | 实测结果写回工具 `record_experiment.py`：把一条结果连同 `evidence`/`observed_at` 写进计划，拒绝无证据的通过/失败、拒绝把已跑条目改回 `not_run`（除非 `--force`），留出集未冻结时拒绝记 `holdout.dependent_entries` 里的条目，计划级 `status` 随条目重算；不带 `--write` 只干跑 | `scripts/record_experiment.py`、交付目录同名额、`tests/cli/test_record_experiment.py` | `unit_checked`（8 用例，含未知 id、无证据、降级拦截、干跑不动字节、聚合状态、坏计划先拒） |
@@ -38,7 +38,7 @@
 - 安装/守卫/进程四文件定点回归（`test_install_state`、`test_browser_auto_setup`、`test_process_control`、`test_url_guard_determinism`）：**36 passed in 0.64s**。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
-- `tests/cli/test_dry_run_experiments.py`：**12 passed**；`test_record_experiment.py` **11 passed**；`test_freeze_holdout.py` **10 passed**（三文件 33 passed）（新增「命令必须以可执行程序开头」，把 35 条计划里的散文步骤挪进 `notes`）。
+- `tests/cli/test_dry_run_experiments.py`：**17 passed**；`test_record_experiment.py` **11 passed**；`test_freeze_holdout.py` **10 passed**（三文件 33 passed）（新增「命令必须以可执行程序开头」，把 35 条计划里的散文步骤挪进 `notes`）。
 - `tests/cli/test_record_experiment.py`：**11 passed**；对真实计划跑 `record_experiment.py --json` → `plan_status: not_run, entries: 35, not_run: 35, holdout: pending_sample`（不改文件）。
 - `tests/cli/test_verify_delivery.py`：**10 passed**；对真实交付目录跑 `python scripts/verify_delivery.py --dir …` → **delivery ok (12 checks)**。
 - `check_versions.py --check`：11 项声明一致（2 份文档也查）。
@@ -85,3 +85,22 @@ implemented / unit_checked / packaged / not_run）+ `DEVELOPMENT-REPORT.md` +
 （人 + 网络在场时的执行顺序）。
 
 - `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py`：**6 passed / 7 passed**（新增 Claude Code 市场源跟随 `ENVOY_REPO`）（可离线重跑，ruff clean）。
+
+## 计划命令与真实 CLI 对齐（2026-10-28）
+
+交付目录里的 `EXPERIMENT-PLAN.json` 之前有 21 条 `envoy read <url> --json` /
+`--budget-json` / `--pages` 形态的命令：`read` 只接受 `--request-json <路径|->`，
+其余开关不存在，拷出去就是 argparse 报错。现已全部改成生产形态：
+
+- 19 条 `read` 条目 → `sh -c 'printf %s "{…}" | envoy read --request-json -'`，
+  预算写在请求体 `budget.max_work_seconds` / `budget.max_download_bytes`；
+- D07（分批读同一份 PDF）与 D11（读完最后页 `delivery_gap=false`）改成
+  「预算分段再读 + read→expand 到 `next_offset=null`」，因为读接口没有页范围参数，
+  原写法表达的观察点无法从 CLI 触达，`expected`/`notes` 写明这一点；
+- `axes.install.count` 由 10 改成 13（与条目数一致），并新增校验
+  `count == len(entries)`，防止计数与条目再次漂移；
+- V10 的 `<id>`、I13 的 `<owner>/Envoy` 补引号，避免被 shell 当重定向。
+
+验证：桩 `envoy`（离线、只 `json.loads` stdin）跑通 22 条 `envoy`/`sh -c` 命令；
+两个交付目录 `dry_run_experiments.py --check` 均 `plan ok: 35 entries (not_run 35);
+holdout pending_sample`，`shasum -a 256 -c SHA256SUMS` 均通过，两份计划逐字节相同。

@@ -84,17 +84,26 @@ envoy doctor --json          # 期望 browser.ready=true
 `next_action`。长视频务必显式抬预算，不要超时后重读：
 
 ```sh
-envoy read <public-video-url> --budget-json '{"max_work_seconds":900}' --json
+sh -c 'printf %s "{\"request_id\":\"V02\",\"source\":{\"url\":\"<public-video-url>\"},\"budget\":{\"max_work_seconds\":900}}" | envoy read --request-json -'
 ```
+
+`read` 只吃 `--request-json <路径|->`，预算写在请求体 `budget.max_work_seconds` 里；
+计划里每条命令都是这个形态，可直接复制（`python3 dry_run_experiments.py --render V02`）。
 
 中断类（V03、V04、V06、V08）要真按 Ctrl-C 或真改源，只记录观察到的事实。
 
 ## 4. 长 PDF（D01–D12）
 
 ```sh
-envoy read /path/to/long.pdf --budget-json '{"max_work_seconds":900}' --json
-envoy read /path/to/long.pdf --pages 10-25 --json
+sh -c 'printf %s "{\"request_id\":\"D02\",\"source\":{\"url\":\"/path/to/long.pdf\"},\"budget\":{\"max_work_seconds\":900}}" | envoy read --request-json -'
+# 再读一次同一份文件：只解析未提交页，已提交页命中缓存
+sh -c 'printf %s "{\"request_id\":\"D06\",\"source\":{\"url\":\"/path/to/long.pdf\"},\"budget\":{\"max_work_seconds\":900}}" | envoy read --request-json -'
+# 取后续页：用 read 拿 material_id，再反复 expand 到 next_offset=null
+sh -c 'printf %s "{\"request_id\":\"D11\",\"material_id\":\"$ENVOY_MATERIAL_ID\",\"max_chars\":100000}" | envoy expand --request-json -'
 ```
+
+读接口没有显式页范围参数（`--pages` 不存在），页级进度只能靠预算分段与页游标验证；
+`--json` 也不存在，输出默认就是 JSON。
 
 重点看：`processed` 单调、重启后只解析未提交页、`parse_error` 页保留缺口、
 最后一页之后 `delivery_gap=false`。

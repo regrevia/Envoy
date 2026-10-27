@@ -9,6 +9,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import record_experiment  # noqa: E402
 
+def read_command(request_id: str = "V01", url: str = "<public-video-url>") -> str:
+    body = {"request_id": request_id, "source": {"url": url}}
+    payload = json.dumps(body, separators=(",", ":")).replace('"', '\\"')
+    return "sh -c 'printf %s \"" + payload + "\" | envoy read --request-json -'"
+
 
 def _plan() -> dict:
     return {
@@ -22,7 +27,7 @@ def _plan() -> dict:
                         "id": "V01",
                         "axis": "video",
                         "title": "short clip",
-                        "command": "envoy read <url>",
+                        "command": read_command(url="<url>"),
                         "expected": "one commit",
                         "requires": "user_present,network",
                         "status": "not_run",
@@ -36,7 +41,7 @@ def _plan() -> dict:
                         "id": "D01",
                         "axis": "pdf",
                         "title": "small pdf",
-                        "command": "envoy read <path>",
+                        "command": read_command(url="<path>"),
                         "expected": "text",
                         "requires": "network_or_local",
                         "status": "not_run",
@@ -184,7 +189,7 @@ def _holdout_plan(dependent: bool = True) -> dict:
     for axis in plan["axes"].values():
         for entry in axis["entries"]:
             if entry["id"] == "V01":
-                entry["command"] = "envoy read <public-video-url> --json"
+                entry["command"] = read_command()
     plan["holdout"] = {
         "status": "pending_sample",
         "size": 12,
