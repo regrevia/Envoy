@@ -35,7 +35,7 @@
 - `sh scripts/check_installer_offline.sh`：**10/10**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」「下载根可覆盖」）。
 - `sh scripts/check_installer_e2e_local.sh`：**14/14 通过（含 dry-run 只报计划不落盘、mcp 分支、`claude-code`/`codex` 两条一键安装分支：marketplace 源跟随 `ENVOY_REPO` 且干跑不写文件，以及 DSH 真主机分支：包地址走同一根且干跑不调宿主 CLI）**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
 - `tests/cli/test_install_docs.py`：**4 passed**（README 中/英的一行命令 URL 必须来自 `install.sh` 的 `ENVOY_REPO` 默认；命令里的每个 target 都得在 `case` 里存在；用户可见 target 都得在文档出现——`all` 因此补进 README）。
-- `tests/cli/test_installer_ps1_static.py`：**4 passed**（`$Script:` 变量先赋值后使用、括号配平、镜像钩子各只有一处；本机无 PowerShell，故只做静态面）。
+- `tests/cli/test_installer_ps1_static.py`：**5 passed**（`$Script:` 变量先赋值后使用、括号配平、镜像钩子各只有一处、两平台宿主分派目标一致；本机无 PowerShell，故只做静态面）。
 - 安装/守卫/进程四文件定点回归（`test_install_state`、`test_browser_auto_setup`、`test_process_control`、`test_url_guard_determinism`）：**36 passed in 0.64s**。
 - `tests/cli/test_install_state.py`：**9 passed**；含 doctor 断言的四个测试文件 `-k doctor`：**12 passed**。
 - `tests/cli/test_url_guard_determinism.py`：**5 passed**（解析不可达域名只查 1 次、私网地址只查 1 次、共享缓存命中不再查、DNS 失败不被误记成 policy、字面量与坏 scheme 零解析）；受影响 13 个测试文件 **321 passed**。
@@ -128,3 +128,6 @@ holdout pending_sample`、`SHA256SUMS` 通过；离线安装检查 10/10、本�
 计划自己引用的 `dry_run` 三条命令（`--check/--list/--render`）现在也对照
 `dry_run_experiments.py` 自己的解析器校验：手改计划示例命令、写了个不存在的开关，
 `--check` 与打包校验都会指出来（`TOOL_FLAGS` 由真实 parser 派生，不另抄一份）。
+
+两平台安装脚本的宿主分派目标现在有静态一致性用例兜底：`install.ps1` 的 switch 目标必须覆盖
+`install.sh` 用法行里的 `dsh|claude-code|codex|mcp|skill|all|path`，某一边新增宿主却漏掉另一边会直接失败。
