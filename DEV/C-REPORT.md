@@ -83,4 +83,4 @@ implemented / unit_checked / packaged / not_run）+ `DEVELOPMENT-REPORT.md` +
 `EXPERIMENT-PLAN.json`（32 条实验，全部 `not_run`）+ `RUN-WHEN-PRESENT.md`
 （人 + 网络在场时的执行顺序）。
 
-- `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py`：**6 passed / 5 passed**（可离线重跑，ruff clean）。
+- `tests/cli/test_release_workflow.py`、`tests/cli/test_installer_version_resolution.py`：**6 passed / 7 passed**（新增 Claude Code 市场源跟随 `ENVOY_REPO`）（可离线重跑，ruff clean）。
