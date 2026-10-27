@@ -34,6 +34,7 @@
 | 18 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 连接级失败不再重试（p90 77.25s→25.81s）；substack 出口抖动掉出可用 |
 | 19 | 128 | 113 | 92 | 81.4% | 27 | 4.26s | 非 http(s)/x.com/微信首页判 unsupported（宿主直接走原生）；新增 apple-podcast、spotify-episode、agent-docs 三个可用行 |
 | 20 | 133 | 118 | 96 | 81.4% | 29 | 4.65s | 新增 infoq/engadget/theverge/php-manual/sspai-post 五行全部可用；gutenberg、guardian 出口抖动掉出 |
+| 21 | 138 | 123 | 99 | 80.5% | 29 | 6.52s | 新增 huxiu/leiphone/geekpark/python-zh/runoob 五行全部可用；mdn、mdn-http、verge-rss 出口抖动掉出（同组成 94/118 = 79.7%，两轮稳定口径 92/118 = 78.0%） |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -454,6 +455,43 @@ unsplash、hn-rss 这一批出口抖动撞上浏览器两次尝试，不是新�
 验证：`tests/test_platform_classification.py` 163 个断言、`index.test.js` 9 个断言全过；
 `scripts/export_link_verdicts.py --check` 干净；`scripts/dev_test.sh` 仅剩既有的
 douyin 相册顺序用例失败（HEAD 上同样失败）。
+
+## 第二十一轮（123 行 / 可用 99 = 80.5%，绝对可用行 +3，比例被出口抖动压了 1.7 个点）
+
+再把一批「本机出口能过、reader 真出正文」的行补进 cn-media / reference 两族：
+
+| 行 | 族 | 探测结果 |
+|---|---|---|
+| `huxiu-home` | cn-media | 381 字 / 10.7s（static_http，短页整页交付） |
+| `leiphone-home` | cn-media | 4646 字 / 3.1s |
+| `geekpark-home` | cn-media | 5268 字 / 45.8s（isolated_chromium） |
+| `python-zh-asyncio` | reference | 2061 字 / 3.5s（docs.python.org 中文文档） |
+| `runoob-python3` | reference | 6224 字 / 1.9s |
+
+`huxiu.com`、`leiphone.com`、`runoob.com` 进 `_SUPPORTED_HOSTS`（`geekpark.net`、
+`docs.python.org` 本就在表内），Python 196 断言、JS 9 断言全过。
+
+本轮数字要分三个口径看，因为出口抖动比代码变化大：
+
+| 口径 | 分母 | usable | 可用率 |
+|---|---|---|---|
+| 全语料（本轮实跑） | 123 | 99 | **80.5%** |
+| 可达口径（剔 unreachable） | 107 | 99 | **92.5%** |
+| 同组成 118 行子集（= 第二十轮口径） | 118 | 94 | 79.7% |
+| 两轮稳定口径（第 20、21 轮都可用） | 118 | 92 | 78.0% |
+| 两轮并集口径（任一轮可用） | 118 | 98 | 83.1% |
+
+- 新增 5 行全部可用（+5）；`mdn`、`mdn-http`、`verge-rss` 三行由可用转
+  `network_error`（-3）；`substack`、`gutenberg` 由不可达转 partial（+2）。
+  净 +4 可用行、分母 +5，于是比例 81.4% → 80.5% —— 这是出口，不是回退。
+- 时延 mean **14.5s** / p50 **6.52s** / p90 **30.15s** / max **104.2s**；p50 从 4.65s
+  涨到 6.52s 主要是 cn-media 三行浏览器渲染（geekpark 45.8s）与 mdn/verge 的
+  连接超时重试摊进来的。
+- 两轮稳定口径 92/118 = 78.0% 才是「代码层面确实读到正文」的下界；并集 83.1%
+  是上界。两者都记下来，避免用单轮数字讲趋势。
+
+验证：`scripts/export_link_verdicts.py --check` 干净；`scripts/dev_test.sh` 仅剩既有的
+douyin 相册顺序用例失败。
 
 ## 第二十轮（118 行 / 可用 96 = 81.4%，news 与 web 两族各补实测可读行）
 
