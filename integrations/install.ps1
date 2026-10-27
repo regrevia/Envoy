@@ -29,7 +29,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Script:Repo = "regrevia/Envoy"
-$Script:ManifestUrl = "https://raw.githubusercontent.com/$($Script:Repo)/main/integrations/release-manifest.json"
+$Script:ManifestUrl = if ($env:ENVOY_MANIFEST_URL) { $env:ENVOY_MANIFEST_URL } else {
+    "https://raw.githubusercontent.com/$($Script:Repo)/main/integrations/release-manifest.json"
+}
+# The release root is a single value so a mirror can serve the same layout;
+# the default is the public GitHub path, unchanged.
+$Script:ReleasesBase = if ($env:ENVOY_RELEASES_BASE) { $env:ENVOY_RELEASES_BASE } else {
+    "https://github.com/$($Script:Repo)/releases/download"
+}
 $Script:RuntimeHome = if ($env:ENVOY_HOME) { $env:ENVOY_HOME } else { Join-Path $env:LOCALAPPDATA "envoy-dsh\runtime" }
 $Script:RuntimeBin = Join-Path $Script:RuntimeHome "Scripts\envoy.exe"
 $Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else { Join-Path $HOME ".envoy\runtime-path" }
@@ -131,7 +138,7 @@ function Get-EnvoyBinary {
 
 function Confirm-Checksum {
     param([string]$Path, [string]$FileName)
-    $sumsUrl = "https://github.com/$($Script:Repo)/releases/download/v$($Script:RuntimeVersion)/SHA256SUMS"
+    $sumsUrl = "$($Script:ReleasesBase)/v$($Script:RuntimeVersion)/SHA256SUMS"
     $sums = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-sums-" + [guid]::NewGuid().ToString("N"))
     try {
         try {
@@ -185,7 +192,7 @@ function Set-ExposedRuntime {
 function Install-Runtime {
     param([string]$Version)
     $wheel = "envoy_cli-$Version-py3-none-any.whl"
-    $url = "https://github.com/$($Script:Repo)/releases/download/v$Version/$wheel"
+    $url = "$($Script:ReleasesBase)/v$Version/$wheel"
     Write-Host "envoy install: runtime $Version -> $($Script:RuntimeHome)"
     if ($Script:DryRun) {
         Write-Host ("  + venv {0}" -f $Script:RuntimeHome)
@@ -305,7 +312,7 @@ function Install-Dsh {
     $dsh = Find-Dsh
     if (-not $dsh) { Stop-Install "the dsh CLI was not found; install DeepSeek Harness Desktop, or set DSH_CLI to its dsh binary" }
     Write-Host "envoy install: DeepSeek Harness bundle (profile $($Script:DshProfile))"
-    $tarball = "https://github.com/$($Script:Repo)/releases/download/v$($Script:RuntimeVersion)/envoy-dsh-$($Script:RuntimeVersion).tgz"
+    $tarball = "$($Script:ReleasesBase)/v$($Script:RuntimeVersion)/envoy-dsh-$($Script:RuntimeVersion).tgz"
     Invoke-Step $dsh @("plugin", "--profile", $Script:DshProfile, "add", $tarball)
     Write-Host "Restart DeepSeek Harness so the bundle mounts."
     Confirm-Health
@@ -380,7 +387,7 @@ function Install-Mcp {
 
 function Install-Skill {
     $dest = if ($env:ENVOY_SKILL_DIR) { $env:ENVOY_SKILL_DIR } else { Join-Path $HOME ".envoy\skill\envoy" }
-    $url = "https://github.com/$($Script:Repo)/releases/download/v$($Script:RuntimeVersion)/envoy-skill.zip"
+    $url = "$($Script:ReleasesBase)/v$($Script:RuntimeVersion)/envoy-skill.zip"
     Write-Host "envoy install: skill -> $dest"
     if ($Script:DryRun) {
         Write-Host ("  + download {0}" -f $url)

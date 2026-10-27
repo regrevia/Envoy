@@ -44,7 +44,8 @@ def test_both_installers_build_asset_urls_from_the_resolved_version(sh: str, ps1
     # public path; Windows builds the GitHub URL directly.
     assert '$RELEASES_BASE/v$RUNTIME_VERSION/' in sh
     assert 'ENVOY_RELEASES_BASE:-https://github.com/$REPO/releases/download' in sh
-    assert 'releases/download/v$($Script:RuntimeVersion)/' in ps1
+    assert '$($Script:ReleasesBase)/v$($Script:RuntimeVersion)/' in ps1
+    assert 'releases/download\"\n}' in ps1 or 'releases/download' in ps1
 
 
 def test_the_manifest_url_and_the_asset_host_come_from_one_repo_variable(sh: str, ps1: str):
@@ -59,8 +60,11 @@ def test_version_override_is_honoured_on_both_sides(sh: str, ps1: str):
     assert "ENVOY_VERSION" in ps1
 
 
-def test_posix_release_root_is_overridable_without_changing_the_default(sh: str):
+def test_release_root_is_overridable_on_both_sides(sh: str, ps1: str):
     # A mirror or a loopback checkout must be able to serve v<version>/ assets
     # and the manifest, and the untouched default must stay the public host.
     assert "ENVOY_MANIFEST_URL:-https://raw.githubusercontent.com/$REPO/main/" in sh
     assert sh.count("$RELEASES_BASE/v$") >= 4
+    assert "$env:ENVOY_RELEASES_BASE" in ps1 and "$env:ENVOY_MANIFEST_URL" in ps1
+    assert ps1.count('$($Script:ReleasesBase)/v$') >= 4
+    assert "https://github.com/$($Script:Repo)/releases/download" in ps1

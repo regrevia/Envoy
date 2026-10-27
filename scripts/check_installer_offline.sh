@@ -163,6 +163,16 @@ else
   bad "some release download still hardcodes the public host"
 fi
 
+# --- case: both installers accept a mirror release root --------------------
+case_start
+if grep -q 'ENVOY_RELEASES_BASE' "$INSTALL" \
+  && grep -q '\$Script:ReleasesBase' "$ROOT/integrations/install.ps1" \
+  && grep -q 'ENVOY_MANIFEST_URL' "$ROOT/integrations/install.ps1"; then
+  ok "both installers let a mirror serve the release"
+else
+  bad "one installer still hardcodes the public release host"
+fi
+
 # --- case: a reachable SHA256SUMS must never be silently skipped -----------
 case_start
 if grep -q 'checksum unavailable for %s' "$INSTALL" \

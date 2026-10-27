@@ -94,8 +94,8 @@
   不再像以前那样静默跳过；`install.ps1` 侧也改成同样的两条分支，两平台对
   「不可达」与「缺条目」给一样的反应。
 - 安装源可覆盖：`ENVOY_RELEASES_BASE` 与 `ENVOY_MANIFEST_URL` 让镜像或本地目录
-  按同样布局（`v<版本>/` + 清单）提供安装包，默认值仍是公开路径，`install.sh` 的
-  四处下载全部走同一个根。`scripts/check_installer_e2e_local.sh` 在 127.0.0.1 上
+  按同样布局（`v<版本>/` + 清单）提供安装包，默认值仍是公开路径，`install.sh` 与 `install.ps1` 的
+  四处下载全部走同一个根（Windows 侧同名变量）。`scripts/check_installer_e2e_local.sh` 在 127.0.0.1 上
   起一个镜像，完整跑「解析版本 → 下载 → 校验摘要 → 解包」，并把摘要改错验证它会
   真的停下：不进公网、不装运行时 wheel。
 
