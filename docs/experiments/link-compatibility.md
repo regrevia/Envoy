@@ -32,6 +32,7 @@
 | 16 | 109 | 108 | 84 | 77.8% | 25 | 3.45s | 补 youku/peertube 视频行（均可用）；youku 进媒体预算表 |
 | 17 | 111 | 110 | 87 | 79.1% | 26 | 3.45s | 补 npr/cnbc 新闻行（均 partial）；apnews 标 unsupported |
 | 18 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 连接级失败不再重试（p90 77.25s→25.81s）；substack 出口抖动掉出可用 |
+| 19 | 111 | 110 | 86 | 78.2% | 26 | 3.74s | 语料未变；非 http(s) scheme、x.com、微信首页判 unsupported，宿主直接走原生 |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -422,6 +423,22 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 `platforms/medium-post`、`video/youtube` 与 `platforms/youtube-watch`），每组只保留先出现的一条，
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
+
+## 第十九轮（0 行新增；把「注定读不到」的链接挡在工具调用之前）
+
+本轮不动语料，只把静态判定补严：宿主拿到 verdict 就不该对下列链接调工具。
+
+- 非 http(s) scheme：`mailto:` / `tel:` / `file:` / `ftp:` / `data:` / app intent。
+  Python 侧判 `unsupported`（之前 `mailto:` 无 host 走 `unknown`，`ftp://host/…`
+  会掉进文件后缀分支判 `supported`，两条都是错的）；JS 侧加 `parsed.protocol` 守卫。
+- `x.com` / `twitter.com` 整体进 `_UNSUPPORTED_HOSTS`：连续 5 轮（第十四至十八轮）
+  都是 `empty_content` 0 字，登录态外壳读不出内容，status 页此前已判 unsupported。
+- `mp.weixin.qq.com` 首页（path `/` 或空）判 unsupported：那是作者后台登录页；
+  `/s/<id>` 文章继续 supported，导出表里以 `^/?$` 路径规则表达。
+
+验证：`tests/test_platform_classification.py` 与 `integrations/dsh/envoy-dsh/index.test.js`
+各加对应行（Python 160 个断言、JS 9 个断言全过）；`scripts/export_link_verdicts.py --check` 干净；
+`scripts/dev_test.sh` 仅剩既有的 douyin 相册顺序用例失败（HEAD 上同样失败）。
 
 ## 第十八轮（110 行 / 可用 78.2%，失败路径快速失败把 p90 从 77.25s 压到 25.81s）
 
