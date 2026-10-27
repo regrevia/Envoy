@@ -841,6 +841,39 @@ EGRESS_CHALLENGE_MARKERS = (
 )
 
 
+LOGIN_WALL_MARKERS = (
+    "log in to continue",
+    "sign in to continue",
+    "you must be logged in",
+    "sign up for instagram",
+    "log in to instagram",
+    "post isn't available",
+    "this post isn't available",
+    "create an account to continue",
+    "join to view",
+    "登录后查看",
+    "登录后继续",
+    "请先登录",
+    "扫码登录",
+)
+LOGIN_WALL_MAX_CHARS = 600
+
+
+def _looks_like_login_wall(title: str, text: str) -> bool:
+    """A short page that is a sign-in prompt rather than the source itself.
+
+    Pointing a reader at a login wall yields a plausible-looking excerpt that is
+    entirely about logging in. Counting that as partial text would inflate
+    coverage with text the human already knows; the honest answer is "this page
+    wants a session".
+    """
+
+    if len(text.strip()) > LOGIN_WALL_MAX_CHARS:
+        return False
+    haystack = f"{title}\n{text}".lower()
+    return any(marker in haystack for marker in LOGIN_WALL_MARKERS)
+
+
 def _looks_like_machine_error_payload(text: str) -> bool:
     """True when a browser-read "page" is really a JSON error envelope.
 
@@ -7487,6 +7520,14 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             )
             else []
         )
+        if _looks_like_login_wall(title, text):
+            return _blocked(
+                request,
+                ErrorCode.AUTH_REQUIRED,
+                "The source returned a sign-in wall instead of its content",
+                action_required=True,
+                details={"reader": "isolated_chromium" if browser_snapshot else "static_http"},
+            )
         image_note_unknown_total = image_note_page and image_note_total is None
         thin_platform_page = (
             len(text.strip()) < _THIN_PLATFORM_PAGE_CHARS

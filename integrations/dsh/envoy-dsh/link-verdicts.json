@@ -37,6 +37,7 @@
     "hosts": [
       "36kr.com",
       "airtable.com",
+      "api.github.com",
       "arxiv.org",
       "b23.tv",
       "bili2233.cn",
@@ -48,6 +49,7 @@
       "docs.google.com",
       "docs.python.org",
       "export.arxiv.org",
+      "figma.com",
       "geekpark.net",
       "gist.github.com",
       "github.com",
@@ -69,6 +71,7 @@
       "news.ycombinator.com",
       "notion.so",
       "npmjs.com",
+      "pinterest.com",
       "pypi.org",
       "raw.githubusercontent.com",
       "rfc-editor.org",

@@ -215,6 +215,11 @@ _SUPPORTED_HOSTS = {
     "news.ycombinator.com",
     "juejin.cn",
     "vimeo.com",
+    # Hosts that answered with readable text in the round-3 link corpus while
+    # the router still said "unknown"; accepted so it stops hedging on them.
+    "pinterest.com",
+    "figma.com",
+    "api.github.com",
 }
 _SUPPORTED_HOST_SUFFIXES = (".wikipedia.org",)
 _SUPPORTED_FILE_SUFFIXES = (
