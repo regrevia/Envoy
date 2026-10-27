@@ -145,12 +145,12 @@ _DOUYIN_LIVE_HOSTS = {"live.douyin.com"}
 _DOUYIN_LIVE_RE = re.compile(r"^/live(?:/|$)", re.IGNORECASE)
 _DOUYIN_NOTE_RE = re.compile(r"^/note/", re.IGNORECASE)
 _TME_PRIVATE_RE = re.compile(r"^/(?:\+|joinchat/|c/)", re.IGNORECASE)
-_X_STATUS_RE = re.compile(r"^/[^/]+/status/\d+", re.IGNORECASE)
 _INSTAGRAM_ITEM_RE = re.compile(r"^/(?:p|reel|reels|tv)/[^/]+", re.IGNORECASE)
+_WECHAT_HOME_RE = re.compile(r"^/?$")
 _VIMEO_VIDEO_RE = re.compile(r"/\d+/?")
 
 
-_UNSUPPORTED_HOSTS = {"linkedin.com", "apnews.com"}
+_UNSUPPORTED_HOSTS = {"linkedin.com", "apnews.com", "x.com", "twitter.com"}
 _DOUYIN_READ_HOSTS = {"douyin.com", "m.douyin.com", "iesdouyin.com"}
 
 # Hosts whose public pages Envoy has read on this machine, or that have an
@@ -302,6 +302,11 @@ def read_support_verdict(value: str) -> str:
     host = (parsed.hostname or "").lower()
     path = parsed.path or ""
     lowered_path = path.lower()
+    if parsed.scheme and parsed.scheme.lower() not in {"http", "https"}:
+        # mailto:, tel:, file:, ftp:, data: and app intents are not pages: no
+        # amount of fetching turns them into text, so the host should never
+        # spend a tool call on them.
+        return "unsupported"
     if not host:
         return "unknown"
     if host.startswith("www."):
@@ -314,14 +319,16 @@ def read_support_verdict(value: str) -> str:
         return "unsupported"
     if host in {"t.me", "telegram.me"} and _TME_PRIVATE_RE.match(path):
         return "unsupported"
-    if host in {"x.com", "twitter.com"} and _X_STATUS_RE.match(path):
-        return "unsupported"
     if host == "instagram.com" and _INSTAGRAM_ITEM_RE.match(path):
         return "unsupported"
     if host in _DOUYIN_READ_HOSTS:
         if _DOUYIN_VIDEO_RE.match(path) or _DOUYIN_NOTE_RE.match(path):
             return "supported"
         return "unknown"
+    if host == "mp.weixin.qq.com" and _WECHAT_HOME_RE.match(path):
+        # The platform home page is a login shell for authors; article URLs
+        # (/s/<id>) remain supported below.
+        return "unsupported"
     if host == "vimeo.com":
         # Only /<video id> is answerable (oEmbed metadata); channels, albums
         # and showcases need the logged-in app shell.

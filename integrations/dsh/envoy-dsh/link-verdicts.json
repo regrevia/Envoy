@@ -137,7 +137,9 @@
     ],
     "hosts": [
       "apnews.com",
-      "linkedin.com"
+      "linkedin.com",
+      "twitter.com",
+      "x.com"
     ],
     "path_rules": [
       {
@@ -149,16 +151,15 @@
       },
       {
         "hosts": [
-          "twitter.com",
-          "x.com"
-        ],
-        "path": "^/[^/]+/status/\\d+"
-      },
-      {
-        "hosts": [
           "instagram.com"
         ],
         "path": "^/(?:p|reel|reels|tv)/[^/]+"
+      },
+      {
+        "hosts": [
+          "mp.weixin.qq.com"
+        ],
+        "path": "^/?$"
       }
     ]
   },
