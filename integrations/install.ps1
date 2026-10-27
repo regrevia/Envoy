@@ -16,8 +16,9 @@
 #   DSH_PROFILE         Harness profile for the DSH bundle (default: web)
 #   ENVOY_DRY_RUN=1     print the commands instead of running them
 #
-# Verified on Windows 11 x64 by hand before release; the offline cases in
-# scripts/check_installer_offline.sh cover the POSIX script only today.
+# Not yet exercised on a real Windows host in this repo: install.ps1 is written to
+# the same contract as install.sh, but scripts/check_installer_offline.sh covers
+# the POSIX script only. COMPATIBILITY.md records the Windows row as untested.
 
 [CmdletBinding()]
 param(

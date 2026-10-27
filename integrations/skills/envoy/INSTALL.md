@@ -35,6 +35,27 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 `envoy doctor --json` 并打印版本；哪一步失败会停在那一步并给出原因。装完重启
 宿主。想先看脚本会做什么：加 `ENVOY_DRY_RUN=1`，只打印命令不执行。
 
+## Windows / PowerShell
+
+```powershell
+# 装它能认出来的所有宿主；也可以把 all 换成 claude-code / codex / dsh / mcp / skill
+irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex
+
+# 显式给目标、或先看脚本会做什么
+powershell -ExecutionPolicy Bypass -File install.ps1 claude-code
+$env:ENVOY_DRY_RUN = "1"; powershell -ExecutionPolicy Bypass -File install.ps1 dsh
+```
+
+`install.ps1` 与 `install.sh` 同一套约定：装一个私有 runtime 并把它的绝对路径写进
+`%USERPROFILE%\.envoy\runtime-path`，在 `%USERPROFILE%\.envoy\bin` 放一个 `envoy.cmd` 转发到
+那份 runtime（不改系统级 PATH），再装宿主插件、准备一次浏览器。只装 MCP 条目的
+宿主（Claude Desktop / Cursor / Windsurf）会写用户级配置，改动前自动备份。
+Windows 路径本身还没在真机上跑过，结果以 `COMPATIBILITY.md` 的平台矩阵为准。
+
+装完随时可跑 `envoy doctor` 自查：第一行 `runtime` 显示当前跑的是不是安装时
+固定下来的那份 `envoy`；显示 `shadowed` 说明 PATH 里另有旧 `envoy`，按提示重跑
+安装脚本即可。
+
 ## 手动安装 / Manual
 
 ### DeepSeek Harness

@@ -1,5 +1,21 @@
 # 更新日志 / Changelog
 
+## Unreleased
+
+### 中文
+
+- `envoy doctor` 新增 `runtime` 一行：显示当前运行的 `envoy` 是否就是安装时固定在
+  `~/.envoy/runtime-path` 的那份。未固定、固定文件已消失、或 PATH 里另有旧 `envoy`
+  （`shadowed`）都直接点名，并给一条重跑安装脚本的动作。`doctor --json` 同步给出
+  `runtime.install`。
+
+### English
+
+- `envoy doctor` now reports the install state of the runtime: whether the running
+  `envoy` is the binary pinned at `~/.envoy/runtime-path`, and names the unpinned,
+  stale-pin, and shadowed-by-PATH cases with one action each. `doctor --json` carries
+  the same data under `runtime.install`.
+
 ## 0.1.24 - 2026-10-28
 
 ### 中文

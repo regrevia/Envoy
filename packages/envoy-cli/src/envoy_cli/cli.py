@@ -19,6 +19,7 @@ from envoy_core.schemas.read_v1 import (
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from . import cache as cache_storage
+from . import install_state
 from . import storage as state_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_status, render_hook_status
@@ -646,6 +647,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         runtime = media_runtime_status(verify_asr=args.verify_asr)
         runtime["browser"] = browser_runtime.browser_runtime_status()
         runtime["ocr"] = available_ocr_backends()
+        runtime["install"] = install_state.install_report()
         result = {
             "tool": "envoy",
             "cli_version": __version__,
@@ -894,6 +896,18 @@ def entrypoint() -> None:
 
 def _doctor_text(runtime: dict) -> str:
     lines = ["Envoy Skill ready"]
+    install = runtime.get("install") or {}
+    status = install.get("status")
+    if status == install_state.STATUS_PINNED:
+        lines.append(f"runtime    pinned: {install.get('pinned_runtime')}")
+    elif status == install_state.STATUS_SHADOWED:
+        lines.append(
+            f"runtime    pinned {install.get('pinned_runtime')}; "
+            f"PATH runs {install.get('path_envoy') or 'another envoy'}"
+        )
+        lines.append(f"           {install.get('next_action')}")
+    elif install.get("next_action"):
+        lines.append(f"runtime    {status.replace('_', ' ')}: {install.get('next_action')}")
     if runtime.get("asr_installed"):
         state = (
             "verified"
