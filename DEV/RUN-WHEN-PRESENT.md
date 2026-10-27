@@ -32,6 +32,19 @@ python3 verify_delivery.py --dir .
 （wheel 名带 `+preview.g<rev>.<UTC>`），用 `python3 verify_delivery.py --dir . --allow-preview`
 校验，装法见那目录的 `PREVIEW-NOTES.md`；它不替代发行包验证，也不上传。
 
+## 0.5 只有半小时时的最小路径
+
+时间不够跑全表时，按这个顺序做，信息量最大（每一步都能单独停）：
+
+1. `sh scripts/check_installer_e2e_local.sh` → 期望 14/14（不联网，先确认安装派发本身没坏）；
+2. §1a + §1b：macOS 干净装一次 `dsh`，看最后一行 runtime / protocol / browser 是否齐；
+3. §8 先冻结留出集（`H12-2026-10-28`，12 行候选）——V01/V03/V04/V06/V07/V08 都等它，
+   不先冻结就只能记 I 轴与 D 轴的部分条目；
+4. §3 跑 V01 一条真实长视频，§4 跑 D01 一条真实长 PDF，各记一次 `record_experiment.py`；
+5. 每次写回后看新增的 `progress <完成>/<总数>` 行：`long-pdf 0/12` 这类数字就是本次还差多少。
+
+剩下的（Windows/Linux 真机、浏览器 OAuth、OCR 语种、失败重试路径）留到时间宽裕的一次。
+
 ## 1. 安装（先 macOS，后 Windows / Linux）
 
 按顺序做，每步留一行记录：退出码、`cat ~/.envoy/runtime-path`、识别到的宿主、
