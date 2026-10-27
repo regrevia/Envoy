@@ -1,5 +1,14 @@
 # 更新日志 / Changelog
 
+## 0.1.21 - 2026-10-27
+
+- 适配：`theguardian.com`、`youtube.com`、`platformer.news`、`feeds.arstechnica.com`、
+  `feeds.simplecast.com`、`dev.to`、`discourse.mozilla.org`、`forum.arduino.cc`
+  提升为 supported（均以实测出正文为前提）。
+- 适配：语料新增 6 行 feed / forum / audio，第 15 轮 107 行口径可用 83（78.3%），
+  可达口径 90.2%，同组成子集 77.5%。
+- 文档：`docs/experiments/link-compatibility.md` 补第 14、15 轮（含三口径与抖动披露）。
+
 ## 0.1.20 - 2026-10-27
 
 ### 中文

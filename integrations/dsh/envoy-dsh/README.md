@@ -17,12 +17,18 @@ server.
 
 ## One link in, AI-ready material out
 
-Paste a Douyin or Bilibili video or 图文 share link and Envoy returns
-source-linked material — transcript, timestamps, frames, a `material_id` you
-can quote — enough for the agent to write Markdown, a wiki page, or a
-knowledge-base entry from what was actually said, not from the title. Articles,
-PDFs, and audio links take the same path. For a whole feed, `envoy collect`
-checkpoints every item, so an interrupted run resumes instead of restarting.
+Whatever you are looking at, hand it over and get the thing you wanted out:
+Markdown, a wiki page, a knowledge-base entry. Douyin, Bilibili, Xiaohongshu,
+Zhihu, WeChat posts, articles, PDFs and podcasts all take the same path. A read
+returns a source-linked transcript with timestamps, frames, and a `material_id`
+you can quote, so the agent writes from what was actually said, not from the title. For a whole feed,
+`envoy collect` checkpoints every item, so an interrupted run resumes instead
+of restarting.
+
+Measured on 92 live links across those platforms: **75% usable as source
+material** (20 fully readable, 49 partially, the gap named), **0 failures**.
+The harness is in `docs/experiments/link-compatibility.md`; rerun it with
+`scripts/acceptance/link_coverage.py`.
 
 The same Envoy skill ships for Codex and Claude Code; this package is the
 DeepSeek Harness build, and the deliverables are the same Markdown, wiki, or

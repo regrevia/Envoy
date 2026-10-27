@@ -39,7 +39,7 @@
           - >-
             PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH;
             RT="$HOME/.local/share/envoy-dsh/runtime"; RTBIN="$RT/bin/envoy";
-            V="${ENVOY_DSH_VERSION:-0.1.20}"; REQ="${ENVOY_DSH_REQUIRED_RUNTIME:-$V}";
+            V="${ENVOY_DSH_VERSION:-0.1.21}"; REQ="${ENVOY_DSH_REQUIRED_RUNTIME:-$V}";
             BIN=""; EXTERNAL=0;
             if [ -n "${ENVOY_BIN:-}" ]; then BIN="$ENVOY_BIN"; EXTERNAL=1;
             elif command -v envoy >/dev/null 2>&1; then BIN="$(command -v envoy)"; EXTERNAL=1;
