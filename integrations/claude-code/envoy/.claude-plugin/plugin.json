@@ -1,6 +1,6 @@
 {
   "name": "envoy",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
   "author": {
     "name": "regrevia",
