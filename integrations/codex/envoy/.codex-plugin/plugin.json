@@ -1,6 +1,6 @@
 {
   "name": "envoy",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
   "skills": "./skills/",
   "author": {

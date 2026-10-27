@@ -1,5 +1,19 @@
 # 更新日志 / Changelog
 
+## 0.1.17 - 2026-10-27
+
+### 中文
+
+- 新增可读站点 `ted.com`（演讲页，`static_http`，实测 502 字 / 1.5s）；`ruanyifeng.com` 的 Atom 源与 `ithome.com` 的 RSS 经 `public_api:feed` 通道读取成功，语料补 3 行后全部可用。
+- 修复错误归类：浏览器导航失败（`net::ERR_CONNECTION_CLOSED`、目标被关闭这类传输层错误）以前会被报成 `auth_required`，让模型对一个根本没出登录框的站点去跑 `envoy_auth`；现在统一报 `network_error`。
+- 验收语料 90 → 93 行，预检剔 1 条死链，分母 92：可用 `69/92 = 75.0%`（可读 20 + 部分 49），零超时，p50 `4.46s`；与上一轮同口径的 89 行子集 `66/92` 之外无任何一条行发生判定翻转。
+
+### English
+
+- `ted.com` talk pages are now readable (`static_http`, 502 chars in 1.5s), and the `ruanyifeng.com` Atom feed plus the `ithome.com` RSS both read through `public_api:feed`; three new corpus rows, all usable.
+- Fixed a misclassification: a browser navigation failure (`net::ERR_CONNECTION_CLOSED`, closed target and similar transport errors) used to be reported as `auth_required`, which sent the model to `envoy_auth` for a site that never showed a sign-in wall. It now reports `network_error`.
+- The acceptance corpus grew from 90 to 93 rows with one dead link removed, so the denominator is 92: usable `69/92 = 75.0%` (20 readable + 49 partial), zero timeouts, p50 `4.46s`, and not a single verdict flip among the 89 rows shared with the previous round.
+
 ## 0.1.16 - 2026-10-27
 
 ### 中文
