@@ -29,7 +29,7 @@
 - 定向回归 19 个文件：**298 passed in 34.57s**（exit 0）。
 - 媒体三件套（`test_video_media` + `test_media_asr_checkpoint` + `test_media_asr_resume`）：**37 passed in 3.99s**。
 - `tests/cli/test_process_control.py`：**14 passed**（含注入 `nt` 平台的 Windows 分支）。
-- `tests/cli/test_browser_auto_setup.py`：**9 passed**。
+- `tests/cli/test_browser_auto_setup.py`：**8 passed**。
 - `sh scripts/check_installer_offline.sh`：**10/10**（含「旧 PATH 不覆盖 pin」「无宿主回落 MCP」「收尾报 browser 与 install state」「下载根可覆盖」）。
 - `sh scripts/check_installer_e2e_local.sh`：**8/8 通过（含 dry-run 只报计划不落盘、DSH 包 URL 走同一根、mcp 分支）**（环回镜像：校验通过解包、摘要不符中止；不进公网、不装 wheel）。
 - `tests/cli/test_install_docs.py`：**4 passed**（README 中/英的一行命令 URL 必须来自 `install.sh` 的 `ENVOY_REPO` 默认；命令里的每个 target 都得在 `case` 里存在；用户可见 target 都得在文档出现——`all` 因此补进 README）。
