@@ -841,6 +841,39 @@ EGRESS_CHALLENGE_MARKERS = (
 )
 
 
+LOGIN_WALL_MARKERS = (
+    "log in to continue",
+    "sign in to continue",
+    "you must be logged in",
+    "sign up for instagram",
+    "log in to instagram",
+    "post isn't available",
+    "this post isn't available",
+    "create an account to continue",
+    "join to view",
+    "登录后查看",
+    "登录后继续",
+    "请先登录",
+    "扫码登录",
+)
+LOGIN_WALL_MAX_CHARS = 600
+
+
+def _looks_like_login_wall(title: str, text: str) -> bool:
+    """A short page that is a sign-in prompt rather than the source itself.
+
+    Pointing a reader at a login wall yields a plausible-looking excerpt that is
+    entirely about logging in. Counting that as partial text would inflate
+    coverage with text the human already knows; the honest answer is "this page
+    wants a session".
+    """
+
+    if len(text.strip()) > LOGIN_WALL_MAX_CHARS:
+        return False
+    haystack = f"{title}\n{text}".lower()
+    return any(marker in haystack for marker in LOGIN_WALL_MARKERS)
+
+
 def _looks_like_machine_error_payload(text: str) -> bool:
     """True when a browser-read "page" is really a JSON error envelope.
 
@@ -6455,6 +6488,13 @@ def _fallback_min_chars(fallback: dict) -> int:
 
 
 _FEED_ALTERNATE_PAGE_CHARS = 300
+
+# Douyin renders its caption from a signed JSON call after the shell loads, so the
+# same URL answers with the caption one run and with the bare shell the next. When a
+# video page comes back with only shell text, the page itself is still readable; one
+# more browser pass is the difference between a caption and an empty answer.
+_SHORT_VIDEO_RETRY_HOSTS = frozenset({"douyin.com", "www.douyin.com", "m.douyin.com"})
+_SHORT_VIDEO_RETRY_CHARS = 400
 _ALTERNATE_LINK = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
 _ALTERNATE_ATTR = re.compile(r"""([a-zA-Z:-]+)\s*=\s*["']([^"']*)["']""")
 
@@ -6515,7 +6555,7 @@ def _public_api_fallback_response(
     reader produced it so the evidence stays traceable.
     """
 
-    title = _clean_text(str(fallback.get("title") or "")) or source_url
+    title = _clean_text([str(fallback.get("title") or "")]) or source_url
     backend = str(fallback.get("backend") or "public_api")
     text = str(fallback.get("text") or "").strip()
     char_budget = _response_char_budget(request)
@@ -6890,6 +6930,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     try:
         browser_error = None
         browser_attempted = browser_snapshot is not None
+        platform_retry_used = False
         browser_used = browser_snapshot is not None
         if browser_snapshot is not None:
             final_url, html = browser_snapshot.url, browser_snapshot.html
@@ -6982,6 +7023,22 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 "The source page no longer exists or is not publicly viewable; "
                 "the platform returned its own error page instead of content.",
                 details={"diagnosis": "source_not_found"},
+            )
+        if (
+            _looks_like_login_wall(title, text)
+            and not browser_attempted
+            and not _looks_like_access_challenge(title, text)
+            and not _looks_like_machine_error_payload(text)
+        ):
+            # Booting the isolated browser here only ever shows the same wall,
+            # so fail fast and hand the sign-in back to the user (85.9s -> ~2s
+            # on https://mp.weixin.qq.com/, whose landing page is a login form).
+            return _blocked(
+                request,
+                ErrorCode.AUTH_REQUIRED,
+                "The source returned a sign-in wall instead of its content",
+                action_required=True,
+                details={"reader": "static_http"},
             )
         if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
             if not browser_attempted:
@@ -7097,6 +7154,35 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     ErrorCode.EMPTY_CONTENT,
                     f"No readable public HTML text was found.{detail}",
                 )
+        short_video_host = (urlparse(final_url).hostname or "").lower()
+        if (
+            platform_retry_used is False
+            and short_video_host in _SHORT_VIDEO_RETRY_HOSTS
+            and not request.scope.include_visual
+            and len(text.strip()) < _SHORT_VIDEO_RETRY_CHARS
+            and not parser.images
+        ):
+            platform_retry_used = True
+            retry_page, retry_error = _read_with_isolated_browser(
+                request,
+                final_url,
+                dns_cache,
+            )
+            if retry_page is not None:
+                browser_used = True
+                final_url, html = retry_page.url, retry_page.html
+                browser_snapshot = retry_page
+                browser_snapshot_for_video = _browser_page_has_video(
+                    retry_page,
+                    request.source.kind.value,
+                )
+                parser = _PageParser()
+                parser.feed(html)
+                title = _clean_text(parser.title_parts) or final_url
+                source_text_truncated = _source_text_was_truncated(parser.text_parts)
+                text = _clean_text(parser.text_parts)
+            elif retry_error is not None and browser_error is None:
+                browser_error = retry_error
         safe_source_url = _redact_url(final_url)
         image_note_page = (
             urlparse(final_url).hostname in {"douyin.com", "www.douyin.com"}
@@ -7450,6 +7536,14 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             )
             else []
         )
+        if _looks_like_login_wall(title, text):
+            return _blocked(
+                request,
+                ErrorCode.AUTH_REQUIRED,
+                "The source returned a sign-in wall instead of its content",
+                action_required=True,
+                details={"reader": "isolated_chromium" if browser_snapshot else "static_http"},
+            )
         image_note_unknown_total = image_note_page and image_note_total is None
         thin_platform_page = (
             len(text.strip()) < _THIN_PLATFORM_PAGE_CHARS

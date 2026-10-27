@@ -1,5 +1,25 @@
 # 更新日志 / Changelog
 
+## 0.1.15 - 2026-10-27
+
+### 中文
+
+- 登录墙不再被当成正文卖：Instagram reel、`mp.weixin.qq.com` 这类只回一屏「请登录 / Post isn't available」的链接，现在统一报 `blocked`、`auth_required`、`action_required: true`，并带 `envoy_auth` 的扫码入口；不再返回 `partial` 让宿主以为读到了内容。
+- 静态 HTML 里就已经是登录墙的短页不再启浏览器，直接失败交回登录动作（`mp.weixin.qq.com/` 实测 85.9s → 29s）；带「安全验证」字样的挑战页仍先让浏览器解一次人机校验，避免误杀能过的站。
+- 新增两个公开 API 回退：Hacker News 走 Firebase item API（`reader=public_api:hackernews`，正文 + 评论 2481 字）、Vimeo 走 oEmbed（标题/作者/缩略图，`backend=vimeo`）。
+- `pinterest.com`、`figma.com`、`api.github.com` 三个站有实测可读结果，写进支持清单；`link-verdicts.json` 同步，JS/Python 判定一致性继续由 CI 守住。
+- 修掉回退正文标题被拆成一字一行的问题（`_clean_text` 收到字符串被按字符遍历）。
+- 抖音短链在只剩 400 字以内空壳时多给一次浏览器重试；验收语料第 3→4 轮配对（n=56）可用率 82.1% → 80.4%，下降的 1 条正是上面两处登录墙改判，没有真实的读取回退。
+
+### English
+
+- Sign-in walls are no longer sold as content: links that only return "log in to continue" / "Post isn't available" (Instagram reels, `mp.weixin.qq.com`) now report `blocked` with `auth_required` and `action_required: true`, plus the `envoy_auth` handoff, instead of a misleading `partial`.
+- A static short page that is already a wall no longer boots the browser (85.9s → 29s on `mp.weixin.qq.com/`); "security verification" challenges still get one browser pass so real pages are not misjudged.
+- Two new public-API fallbacks: Hacker News via the Firebase item API (`reader=public_api:hackernews`, 2481 chars incl. comments) and Vimeo via oEmbed (`backend=vimeo`).
+- `pinterest.com`, `figma.com`, `api.github.com` join the supported hosts on measured reads; `link-verdicts.json` is regenerated and CI keeps the JS/Python verdicts identical.
+- Fixes fallback titles being split one character per line (`_clean_text` iterating a string).
+- Douyin short links get one more browser retry while the static shell stays under 400 chars; acceptance rounds 3→4 paired (n=56) usable 82.1% → 80.4%, where the single lost row is one of the two sign-in-wall corrections above.
+
 ## 0.1.14 - 2026-10-26
 
 ### 中文
