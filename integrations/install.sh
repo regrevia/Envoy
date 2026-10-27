@@ -166,6 +166,10 @@ runtime_version_of() {
 }
 
 pin_runtime() {
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '  + pin %s\n' "$1"
+    return 0
+  fi
   mkdir -p "$(dirname "$RUNTIME_PIN")"
   printf '%s\n' "$1" > "$RUNTIME_PIN"
 }
@@ -234,6 +238,9 @@ install_runtime() {
 # The two plugin hosts spawn a bare `envoy`; expose the pinned runtime on PATH
 # without touching an existing install (a user may have their own envoy).
 expose_runtime() {
+  if [ "$DRY_RUN" = "1" ]; then
+    return 0
+  fi
   if ! command -v envoy >/dev/null 2>&1; then
     mkdir -p "$HOME/.local/bin"
     ln -sf "$(envoy_binary)" "$HOME/.local/bin/envoy"

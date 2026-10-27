@@ -135,6 +135,28 @@ else
   fail "DSH dry run" "$(printf '%s' "$output" | tail -5)"
 fi
 
+# A dry run must not leave a pinned runtime behind: pinning happens inside
+# ensure_runtime, before any host install, so every branch has to stay clean.
+home="$work/home-mcp"
+mkdir -p "$home"
+if output="$(env -i HOME="$home" PATH="$PATH" \
+  ENVOY_VERSION="$version" ENVOY_DRY_RUN=1 ENVOY_SKIP_UV_INSTALL=1 \
+  ENVOY_MANIFEST_URL="http://127.0.0.1:$port/release-manifest.json" \
+  ENVOY_RELEASES_BASE="http://127.0.0.1:$port/releases/download" \
+  sh "$INSTALL" mcp 2>&1)"; then
+  case "$output" in
+    *'add {"envoy"'*) pass "the MCP entry is planned for every detected host" ;;
+    *) fail "MCP dry run" "$(printf '%s' "$output" | tail -5)" ;;
+  esac
+  if [ -e "$home/.envoy/runtime-path" ] || [ -e "$home/.envoy/mcp.json" ]; then
+    fail "MCP dry run wrote state" "$(find "$home" -type f | tr '\n' ' ')"
+  else
+    pass "nothing at all is written by a dry run"
+  fi
+else
+  fail "MCP dry run" "$(printf '%s' "$output" | tail -5)"
+fi
+
 # The same mirror with a wrong digest must stop the installation.
 cp "$DELIVERY/SHA256SUMS" "$serve/releases/download/v$version/SHA256SUMS"
 python3 - "$serve/releases/download/v$version/SHA256SUMS" <<'ENVOY_TAMPER'

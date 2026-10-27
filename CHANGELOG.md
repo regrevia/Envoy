@@ -74,6 +74,8 @@
   `ENVOY_MANIFEST_URL`），镜像/本地目录按 `v<版本>/` 放产物与 `SHA256SUMS` 即可，默认仍是公开路径。
   `scripts/check_installer_e2e_local.sh` 在 `127.0.0.1` 上真跑一遍「解析版本 → 下载 → 校验摘要 → 解包」，
   再确认 `ENVOY_DRY_RUN=1` 只打印计划不落盘、篡改摘要会中止安装。
+- 预演不落盘：`ENVOY_DRY_RUN=1` 原来会在 `ensure_runtime` 里把选中的 `envoy` 真的 pin 到
+  `~/.envoy/runtime-path`；预演现在连这一步都只打印 `  + pin …`，`mcp` 分支也不再写模板文件。
 - 安装可换仓库：`install.sh` 与 `install.ps1` 的清单地址、发布根、插件市场地址都由 `ENVOY_REPO` 推出
   （默认 `regrevia/Envoy`），fork 或内网镜像仓库不必再改脚本；README 中/英同步说明。
 - 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
