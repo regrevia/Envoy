@@ -186,6 +186,32 @@ for target in claude-code codex; do
   fi
 done
 
+# A machine that really has the dsh CLI must get the bundle from the same
+# overridable root, and a dry run must not call it.
+mkdir -p "$work/bin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$work/dsh-calls" > "$work/bin/dsh"
+chmod +x "$work/bin/dsh"
+home="$work/home-dsh-cli"
+mkdir -p "$home"
+if output="$(env -i HOME="$home" PATH="$work/bin:$PATH" \
+  ENVOY_VERSION="$version" ENVOY_DRY_RUN=1 ENVOY_SKIP_UV_INSTALL=1 \
+  ENVOY_MANIFEST_URL="http://127.0.0.1:$port/release-manifest.json" \
+  ENVOY_RELEASES_BASE="http://127.0.0.1:$port/releases/download" \
+  sh "$INSTALL" dsh 2>&1)"; then
+  case "$output" in
+    *"http://127.0.0.1:$port/releases/download/v$version/envoy-dsh-$version.tgz"*)
+      pass "the DSH bundle is added from the overridable root" ;;
+    *) fail "DSH bundle plan" "$(printf '%s' "$output" | tail -4)" ;;
+  esac
+  if [ ! -s "$work/dsh-calls" ]; then
+    pass "the DSH dry run does not call the host CLI"
+  else
+    fail "DSH dry run called the host" "$(cat "$work/dsh-calls")"
+  fi
+else
+  fail "DSH host dry run" "$(printf '%s' "$output" | tail -5)"
+fi
+
 # The same mirror with a wrong digest must stop the installation.
 cp "$DELIVERY/SHA256SUMS" "$serve/releases/download/v$version/SHA256SUMS"
 python3 - "$serve/releases/download/v$version/SHA256SUMS" <<'ENVOY_TAMPER'

@@ -11,7 +11,7 @@
 cd <repo>
 git log --oneline -3        # 确认在 0.1.24 交付提交上（见 release-manifest.json 的 source_commit）
 sh scripts/check_installer_offline.sh        # 期望 10/10
-sh scripts/check_installer_e2e_local.sh      # 期望 12/12（环回镜像，不进公网）
+sh scripts/check_installer_e2e_local.sh      # 期望 14/14（环回镜像，不进公网）
 python scripts/check_versions.py --check
 python scripts/check_release_manifest.py --check
 ```
