@@ -3,7 +3,7 @@
 把「Envoy 能读多少链接」从印象变成可复现的数字。语料、预检、指标、两次运行全部在
 `scripts/acceptance/link_coverage.py` 里，报告只是它输出的 JSON 的整理。
 
-## 结论（最新一轮：第十轮）
+## 结论（最新一轮：第十一轮）
 
 数字全部来自 `scripts/acceptance/link_coverage.py` 的一次真实运行（`/tmp/accept/round9.json`，
 `envoy 0.1.17`）。语料已扩到 93 条，预检剔 1 条死链，分母 **92**。
@@ -24,6 +24,7 @@
 | 8 | 90 | 89 | 66 | 74.2% | 18 | 4.43s | 7 条新行全可用 |
 | 9 | 93 | 92 | 69 | 75.0% | 20 | 4.46s | 3 条新行全可用，零翻转 |
 | 10 | 96 | 95 | 74 | 77.9% | 20 | 4.50s | 4 条新行全可用；YouTube 字幕显形 |
+| 11 | 97 | 96 | 75 | 78.1% | 20 | 4.52s | MDN 补齐；wikipedia 回到 partial |
 
 旧 82 行子集（第 7、8 轮同分母同组成）：`59/82 = 72.0%` 持平；第 6 轮同子集为 65.3%，
 即这两轮为真实提升 `+6.7pp`，其中第 7 轮 `+2.8pp`、第 8 轮 `0`（本轮只有加法）。
@@ -405,6 +406,22 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 回归：`pytest tests/cli` → 685 passed / 4 failed（已知 `reportlab` 缺依赖）/ 1 deselected；
   `pytest tests/test_platform_classification.py tests/test_link_routing_hooks.py tests/test_link_coverage_script.py`
   → 156 passed；插件 `npm test` → 9 passed。
+
+## 第十一轮（97 行 / 可用 78.1%，MDN 补齐，YouTube 字幕稳定）
+
+补齐 MDN 那行，语料 96 → 97 行，死链 1，分母 96。
+
+| 口径 | 分母 | readable | partial | empty | truncated | blocked | unreachable | failed | usable | 可用率 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 全语料 | 96 | 20 | 55 | 2 | 0 | 7 | 12 | 0 | 75 | **78.1%** |
+| 旧 95 行子集（与第 10 轮同组成） | 95 | 20 | 54 | 2 | 0 | 7 | 12 | 0 | 74 | **77.9%** |
+
+- `mdn-http` 7540 字 / 1.9s（`partial`，`static_http`）：MDN 是文档站里最难的一类（侧栏+导航
+  噪声多），能读但截断，属正常结果。
+- 三条翻转继续证明「翻转=出口」：`wikipedia` 回到 `partial`(7992)，说明第 10 轮那次
+  `unreachable` 是抖动；`unsplash` `blocked` → `unreachable`；`tiktok` `partial`(517) → `blocked`。
+  短视频站两轮之间在「拿到 500 字摘要」和「被拦」之间摆动，不作能力结论。
+- YouTube 本轮仍 `partial`，与第 10 轮一致：字幕通道稳定，之前的 `blocked` 是通路问题。
 
 ## 第十轮（YouTube 字幕通道打通，全语料 77.9%）
 

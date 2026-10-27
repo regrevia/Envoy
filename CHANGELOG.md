@@ -1,5 +1,32 @@
 # 更新日志 / Changelog
 
+## 0.1.18 - 2026-10-27
+
+### 中文
+
+- 新增 5 个可读站点：`solidot.org`、`guancha.cn`、`thepaper.cn`、`developer.mozilla.org`、
+  `docs.python.org`（实测 7942 / 7938 / 785 / 7540 / 3708 字，全部 `static_http`，`< 2.1s`）。
+- 验收语料 93 → 97 行，预检剔 1 条死链，分母 96：可用 `75/96 = 78.1%`（可读 20 + 部分 55），
+  零超时；同口径 95 行子集 `74/95 = 77.9%`。
+- YouTube 字幕通道两次运行稳定返回 `video_subtitles`（`manual_subtitles`，2.2 万字原文、
+  单次返回 1.1 万字，可继续 `envoy_expand`），此前 `challenge_required` 是本机出口问题。
+- 修复 CI 静态检查：`mcp.py` 里重复的 `urlparse` 导入触发 ruff `F811`，0.1.16/0.1.17 两次
+  `main` 的静态检查因此失败，现已修掉并恢复绿灯。
+
+### English
+
+- Five new readable hosts: `solidot.org`, `guancha.cn`, `thepaper.cn`, `developer.mozilla.org`
+  and `docs.python.org` (7942 / 7938 / 785 / 7540 / 3708 chars respectively, all `static_http`,
+  under 2.1s).
+- Acceptance corpus 93 → 97 rows with one dead link removed (denominator 96): usable
+  `75/96 = 78.1%` (20 readable + 55 partial), zero timeouts; the same-scope 95-row subset is
+  `74/95 = 77.9%`.
+- YouTube subtitles came back consistently across two runs as `video_subtitles`
+  (`manual_subtitles`, 22k chars available, 11k returned with continuation), so the earlier
+  `challenge_required` was a local egress problem rather than a capability gap.
+- Fixed the CI static check: a duplicated `urlparse` import in `mcp.py` tripped ruff `F811` and
+  failed the static-check job on `main` for both 0.1.16 and 0.1.17; the import is gone and CI is green.
+
 ## 0.1.17 - 2026-10-27
 
 ### 中文
