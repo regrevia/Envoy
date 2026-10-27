@@ -6455,6 +6455,13 @@ def _fallback_min_chars(fallback: dict) -> int:
 
 
 _FEED_ALTERNATE_PAGE_CHARS = 300
+
+# Douyin renders its caption from a signed JSON call after the shell loads, so the
+# same URL answers with the caption one run and with the bare shell the next. When a
+# video page comes back with only shell text, the page itself is still readable; one
+# more browser pass is the difference between a caption and an empty answer.
+_SHORT_VIDEO_RETRY_HOSTS = frozenset({"douyin.com", "www.douyin.com", "m.douyin.com"})
+_SHORT_VIDEO_RETRY_CHARS = 400
 _ALTERNATE_LINK = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
 _ALTERNATE_ATTR = re.compile(r"""([a-zA-Z:-]+)\s*=\s*["']([^"']*)["']""")
 
@@ -6890,6 +6897,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     try:
         browser_error = None
         browser_attempted = browser_snapshot is not None
+        platform_retry_used = False
         browser_used = browser_snapshot is not None
         if browser_snapshot is not None:
             final_url, html = browser_snapshot.url, browser_snapshot.html
@@ -7097,6 +7105,35 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     ErrorCode.EMPTY_CONTENT,
                     f"No readable public HTML text was found.{detail}",
                 )
+        short_video_host = (urlparse(final_url).hostname or "").lower()
+        if (
+            platform_retry_used is False
+            and short_video_host in _SHORT_VIDEO_RETRY_HOSTS
+            and not request.scope.include_visual
+            and len(text.strip()) < _SHORT_VIDEO_RETRY_CHARS
+            and not parser.images
+        ):
+            platform_retry_used = True
+            retry_page, retry_error = _read_with_isolated_browser(
+                request,
+                final_url,
+                dns_cache,
+            )
+            if retry_page is not None:
+                browser_used = True
+                final_url, html = retry_page.url, retry_page.html
+                browser_snapshot = retry_page
+                browser_snapshot_for_video = _browser_page_has_video(
+                    retry_page,
+                    request.source.kind.value,
+                )
+                parser = _PageParser()
+                parser.feed(html)
+                title = _clean_text(parser.title_parts) or final_url
+                source_text_truncated = _source_text_was_truncated(parser.text_parts)
+                text = _clean_text(parser.text_parts)
+            elif retry_error is not None and browser_error is None:
+                browser_error = retry_error
         safe_source_url = _redact_url(final_url)
         image_note_page = (
             urlparse(final_url).hostname in {"douyin.com", "www.douyin.com"}
