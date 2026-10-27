@@ -7,6 +7,7 @@ effects), and the fact that the script is valid POSIX sh.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -98,11 +99,16 @@ def test_skill_target_unpacks_the_release_zip(tmp_path):
 
     with zipfile.ZipFile(skill_zip, "w") as archive:
         archive.writestr("SKILL.md", "---\nname: envoy\n---\n")
-    # Serve the wheel URL check and the zip download without the network.
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_text(
+        "%s  envoy-skill.zip\n" % hashlib.sha256(skill_zip.read_bytes()).hexdigest()
+    )
+    # Serve the zip download and the checksum list without the network.
     curl_stub = bin_dir / "curl"
     curl_stub.write_text(
         "#!/bin/sh\n"
-        'case "$*" in *envoy-skill.zip*) cp %s "$3" ;; esac\nexit 0\n' % skill_zip
+        'case "$*" in *SHA256SUMS*) cat %s ;; *envoy-skill.zip*) cp %s "$3" ;; esac\n'
+        "exit 0\n" % (sums, skill_zip)
     )
     curl_stub.chmod(0o755)
     env.pop("ENVOY_DRY_RUN", None)
@@ -216,3 +222,27 @@ def test_unknown_host_prints_usage(tmp_path):
     result = _run(["nope"], env)
     assert result.returncode == 2
     assert "usage: install.sh" in result.stderr
+
+
+def test_checksum_list_without_the_artifact_fails(tmp_path):
+    """A reachable SHA256SUMS that lacks the file must fail, not skip silently."""
+    bin_dir, env = _stubs(tmp_path)
+    sums = tmp_path / "SHA256SUMS-other"
+    sums.write_text("%s  some-other-file.zip\n" % ("0" * 64))
+    curl_stub = bin_dir / "curl"
+    curl_stub.write_text(
+        "#!/bin/sh\ncase \"$*\" in *SHA256SUMS*) cat %s ;; esac\nexit 0\n" % sums
+    )
+    curl_stub.chmod(0o755)
+    env.pop("ENVOY_DRY_RUN", None)
+    result = _run(["skill"], env)
+    assert result.returncode != 0
+    assert "has no entry for envoy-skill.zip" in result.stderr
+
+
+def test_unreachable_checksum_list_is_announced(tmp_path):
+    """No SHA256SUMS at all must say so and still finish on the dry-run path."""
+    bin_dir, env = _stubs(tmp_path)
+    result = _run(["skill"], env)
+    assert result.returncode == 0, result.stderr
+    assert "envoy doctor --json" in result.stdout
