@@ -77,9 +77,16 @@ uv run --offline --python 3.11 --with pytest pytest -q tests/test_install_script
   `envoy-skill.zip` 31128 B、`install.sh` 24549 B、`install.ps1` 29687 B、`release-manifest.json`、
   `SHA256SUMS`）。交付目录 `/Users/apple/Desktop/2026/envoy-delivery/0.1.26/`，
   `verify_delivery.py --dir .` = 13 checks ok，`shasum -a 256 -c SHA256SUMS` 6/6 OK。
-- npm 仍是 0.1.23：工作流已尝试发布，日志明确 `NPM_TOKEN is not configured; the bundle is
-  attached to the release but not published to npm`，`gh secret list` 为空 —— 需要仓库里有 npm
-  token 才能补发 0.1.24/0.1.25/0.1.26，本机没有凭据。
+- npm 已补齐：`envoy-dsh@0.1.26` 已发布（`dist-tags.latest = 0.1.26`，packument 里版本由 6 个
+  变 7 个）。发出来的 tarball `sha256 e161fcd6…` 与交付目录里那份**逐字节相同**；解包后
+  `package/launch.cjs` 与仓库一致、`cordis.patch.yml` 里的 payload 解码后也与它一致，
+  `repository.url` 指回本仓库，市场探针能认。发版用的是本机 Keychain 里的 automation token
+  （`dsh-npm`），仓库 secret 仍然空着 —— 所以流水线不会自动发 npm，要么补 `NPM_TOKEN`，要么
+  以后都走本机 `dsh-npm publish`。0.1.24/0.1.25 没有补发，`latest` 直接跳 0.1.23 → 0.1.26。
+- 插件市场：条目已在（`data/plugins/regrevia__Envoy--integrations-dsh-envoy-dsh.yml`，无版本号
+  字段），线上 `plugins.json` 目前还是 `version 0.1.23 / downloads 473`（构建日期 2026-10-27）。
+  按站点机制，npm 版本只在带 probe 的 nightly 构建回填，白天的 push 构建不探测，所以卡片徽章
+  要到次日 10:23 之后才变 0.1.26，不需要手动 dispatch。
 - 全量校验（0.1.26 源码）：`pytest -q tests/cli` 876 passed（带 `reportlab`）；
   `pytest -q tests/test_install_script.py tests/cli/test_installer_ps1_static.py`
   14 通过 + 2 条环境缺口（见上）；`ruff check .` 全部通过；`check_versions.py --check`
