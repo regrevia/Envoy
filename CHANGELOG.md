@@ -20,6 +20,9 @@
   `page_unreachable`（Hacker News 薄条目从 45 秒报错变成 18 秒读到 187 字）。
 - 文档链接直接读成正文：`.docx` / `.pptx` / `.epub` / `.odt` 用标准库解包取文本，
   安装体积不变；普通 `.zip` 不会被误当文档（实测 docx 链接 8952 字、EPUB 11412 字）。
+- 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
+  `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
+  全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
 - 需要登录时可以把认证交给用户，默认关闭：`envoy auth handoff on|status|off`（或
   一次性 `ENVOY_CREDENTIAL_HANDOFF=1`）。关着时 `envoy_auth` 不出现在工具列表里，
   读到的登录墙只给「用户在终端自己登录」一条路，已导入的会话也不会被自动使用。
@@ -55,6 +58,10 @@
   the standard library only, so the install stays the same size; a plain `.zip` is not
   mistaken for a document (measured: 8952 characters from a .docx link, 11412 from an
   EPUB).
+- Spreadsheets and rich text now read too: `.xlsx`/`.xlsm`/`.ods` come back as
+  `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
+  `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
+  Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
 - Sign-in can be handed to the user, and it ships off: `envoy auth handoff on|status|off`
   (or `ENVOY_CREDENTIAL_HANDOFF=1` for one shell). While it is off `envoy_auth` is not
   advertised, a blocked read offers only the terminal sign-in, and a stored session is

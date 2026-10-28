@@ -165,7 +165,9 @@ SAFE_VIDEO_QUERY_KEYS = {
 TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst")
 # ZIP container documents. They are parsed with the standard library only, so
 # reading a .docx or .epub link costs nothing at install time.
-OFFICE_SUFFIXES = (".docx", ".docm", ".pptx", ".pptm", ".epub", ".odt")
+OFFICE_SUFFIXES = (
+    ".docx", ".docm", ".pptx", ".pptm", ".epub", ".odt", ".xlsx", ".xlsm", ".ods",
+)
 OFFICE_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
@@ -175,7 +177,21 @@ OFFICE_CONTENT_TYPES = {
     "application/vnd.ms-powerpoint.presentation.macroenabled.12",
     "application/epub+zip",
     "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+    "application/vnd.ms-excel.sheet.macroenabled.12",
     "application/zip",
+}
+RTF_SUFFIXES = (".rtf",)
+RTF_CONTENT_TYPES = {"application/rtf", "text/rtf", "application/x-rtf"}
+# Legacy binary Office files are OLE2 containers we do not parse; they get a
+# clear "save it as .docx/.xlsx" answer instead of a generic HTML error.
+LEGACY_OFFICE_SUFFIXES = (".doc", ".xls", ".ppt")
+LEGACY_OFFICE_CONTENT_TYPES = {
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
 }
 _MAX_OFFICE_UNCOMPRESSED = 64 * 1024 * 1024
 _MAX_OFFICE_ENTRIES = 4000
@@ -4675,9 +4691,13 @@ def _fetch_html_via(
                     text_path = urlparse(current_url).path.lower()
                     is_text_content = (
                         content_type in TEXT_CONTENT_TYPES
+                        or content_type in RTF_CONTENT_TYPES
                         or (
-                            content_type == "application/octet-stream"
-                            and text_path.endswith(TEXT_SUFFIXES)
+                            content_type in {"", "application/octet-stream"}
+                            and (
+                                text_path.endswith(TEXT_SUFFIXES)
+                                or text_path.endswith(RTF_SUFFIXES)
+                            )
                         )
                     )
                     if is_text_content:
@@ -4700,6 +4720,14 @@ def _fetch_html_via(
                             "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
                             "encoding": charset,
                         })
+                    if content_type in LEGACY_OFFICE_CONTENT_TYPES or text_path.endswith(
+                        LEGACY_OFFICE_SUFFIXES
+                    ):
+                        raise PublicPageError(
+                            "This is a legacy binary Office file (.doc/.xls/.ppt). "
+                            "Save or export it as .docx/.xlsx and read that link instead",
+                            ErrorCode.UNSUPPORTED_SOURCE,
+                        )
                     if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
                         raise PublicPageError(
                             f"Static reader only accepts HTML pages, received {content_type}",
@@ -5546,6 +5574,117 @@ def _json_payload_has_content(text: str) -> bool:
     return any(len(item.strip()) >= 40 for item in _strings(payload))
 
 
+_RTF_SKIP_DESTINATIONS = {
+    "fonttbl",
+    "colortbl",
+    "stylesheet",
+    "info",
+    "pict",
+    "object",
+    "header",
+    "footer",
+    "headerl",
+    "headerr",
+    "footerl",
+    "footerr",
+    "listtable",
+    "listoverridetable",
+    "rsidtbl",
+    "generator",
+    "xmlnstbl",
+    "themedata",
+    "colorschememapping",
+    "latentstyles",
+    "datastore",
+    "filetbl",
+    "revtbl",
+}
+
+
+def _rtf_to_text(data: bytes) -> str:
+    """Plain text of an RTF file, with no dependency beyond the standard library."""
+
+    raw = data.decode("latin-1", errors="replace")
+    output: list[str] = []
+    depth = 0
+    skip_at: list[int] = []
+    index = 0
+    length = len(raw)
+    while index < length:
+        char = raw[index]
+        if char == "{":
+            depth += 1
+            match = re.match(r"\{\\([a-zA-Z]+)", raw[index:])
+            if match and match.group(1).lower() in _RTF_SKIP_DESTINATIONS:
+                skip_at.append(depth)
+            index += 1
+            continue
+        if char == "}":
+            if skip_at and skip_at[-1] == depth:
+                skip_at.pop()
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        if char == "\\":
+            match = re.match(r"\\'([0-9a-fA-F]{2})", raw[index:])
+            if match:
+                if not skip_at:
+                    output.append(
+                        bytes([int(match.group(1), 16)]).decode("cp1252", errors="replace")
+                    )
+                index += len(match.group(0))
+                continue
+            match = re.match(r"\\u(-?\d+)\s?", raw[index:])
+            if match:
+                if not skip_at:
+                    code = int(match.group(1))
+                    output.append(chr(code + 65536 if code < 0 else code))
+                index += len(match.group(0))
+                # A \u run is followed by a fallback character for old readers.
+                if index < length and raw[index] not in "\\{}":
+                    index += 1
+                continue
+            match = re.match(r"\\([a-zA-Z]+)(-?\d+)?\s?", raw[index:])
+            if match:
+                if not skip_at:
+                    word = match.group(1).lower()
+                    if word in {"par", "line", "row", "sect", "page"}:
+                        output.append("\n")
+                    elif word in {"tab", "cell"}:
+                        output.append("\t")
+                    elif word in {"emdash", "endash"}:
+                        output.append("\u2014" if word == "emdash" else "\u2013")
+                    elif word in {"lquote", "rquote", "ldblquote", "rdblquote"}:
+                        output.append(
+                            {
+                                "lquote": "\u2018",
+                                "rquote": "\u2019",
+                                "ldblquote": "\u201c",
+                                "rdblquote": "\u201d",
+                            }[word]
+                        )
+                index += len(match.group(0))
+                continue
+            if raw[index:index + 2] in {"\\{", "\\}", "\\\\"}:
+                if not skip_at:
+                    output.append(raw[index + 1])
+                index += 2
+                continue
+            index += 1
+            continue
+        if char in "{}":
+            index += 1
+            continue
+        if not skip_at:
+            output.append(char)
+        index += 1
+    text = "".join(output)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _office_unescape(value: str) -> str:
     return html.unescape(value)
 
@@ -5566,9 +5705,10 @@ def _office_run_text(blob: str, tag: str) -> str:
 def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, str]:
     """Text of a ZIP container document, from the standard library only.
 
-    Returns ``(kind, text)`` where kind is one of ``docx``, ``pptx``, ``epub`` or
-    ``odt``. Unknown or oversized containers raise ``PublicPageError`` so the
-    read reports a clear reason instead of dumping binary bytes.
+    Returns ``(kind, text)`` where kind is one of ``docx``, ``pptx``, ``epub``,
+    ``odt``, ``xlsx`` or ``ods``. Unknown or oversized containers raise
+    ``PublicPageError`` so the read reports a clear reason instead of dumping
+    binary bytes.
     """
 
     suffix = Path(name).suffix.lower()
@@ -5581,6 +5721,10 @@ def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, 
         "application/vnd.ms-powerpoint.presentation.macroenabled.12": "pptx",
         "application/epub+zip": "epub",
         "application/vnd.oasis.opendocument.text": "odt",
+        "application/vnd.oasis.opendocument.spreadsheet": "ods",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.template": "xlsx",
+        "application/vnd.ms-excel.sheet.macroenabled.12": "xlsx",
     }
     by_suffix = {
         ".docx": "docx",
@@ -5589,6 +5733,9 @@ def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, 
         ".pptm": "pptx",
         ".epub": "epub",
         ".odt": "odt",
+        ".xlsx": "xlsx",
+        ".xlsm": "xlsx",
+        ".ods": "ods",
     }
     kind = by_type.get(mime_type) or by_suffix.get(suffix)
     if kind is None:
@@ -5627,7 +5774,140 @@ def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, 
                     lines.append(text.strip())
             return "\n\n".join(lines)
 
-        if kind == "docx":
+        if kind == "xlsx":
+            shared: list[str] = []
+            if "xl/sharedStrings.xml" in names:
+                for match in re.finditer(
+                    r"<si\b[^>]*>(.*?)</si>",
+                    read("xl/sharedStrings.xml"),
+                    re.DOTALL | re.IGNORECASE,
+                ):
+                    shared.append(_office_run_text(match.group(1), "t"))
+            rels: dict[str, str] = {}
+            if "xl/_rels/workbook.xml.rels" in names:
+                for match in re.finditer(
+                    r"<Relationship\b[^>]*>", read("xl/_rels/workbook.xml.rels")
+                ):
+                    attrs = match.group(0)
+                    rid = re.search(r'\bId="([^"]+)"', attrs)
+                    target = re.search(r'\bTarget="([^"]+)"', attrs)
+                    if not rid or not target:
+                        continue
+                    part = target.group(1).lstrip("/")
+                    rels[rid.group(1)] = part if part.startswith("xl/") else f"xl/{part}"
+            sheets: list[tuple[str, str]] = []
+            if "xl/workbook.xml" in names:
+                for match in re.finditer(r"<sheet\b[^>]*>", read("xl/workbook.xml")):
+                    attrs = match.group(0)
+                    label = re.search(r'\bname="([^"]*)"', attrs)
+                    rid = re.search(r'\br:id="([^"]+)"', attrs) or re.search(
+                        r'\brelationshipId="([^"]+)"', attrs
+                    )
+                    part = rels.get(rid.group(1)) if rid else None
+                    if part and part in names:
+                        sheets.append((label.group(1) if label else "", part))
+            if not sheets:
+                sheets = [
+                    (f"Sheet {index}", sheet_name)
+                    for index, sheet_name in enumerate(
+                        sorted(
+                            name_in_zip
+                            for name_in_zip in names
+                            if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name_in_zip)
+                        ),
+                        start=1,
+                    )
+                ]
+            if not sheets:
+                raise PublicPageError("The spreadsheet has no worksheets")
+            chunks: list[str] = []
+            for label, part in sheets[:200]:
+                rows: list[str] = []
+                for row_match in re.finditer(
+                    r"<row\b[^>]*>(.*?)</row>", read(part), re.DOTALL | re.IGNORECASE
+                ):
+                    cells: list[str] = []
+                    for cell in re.finditer(
+                        r"<c\b([^>]*?)(?:/>|>(.*?)</c>)",
+                        row_match.group(1),
+                        re.DOTALL | re.IGNORECASE,
+                    ):
+                        cell_attrs = cell.group(1) or ""
+                        inner = cell.group(2) or ""
+                        cell_type = re.search(r'\bt="([^"]+)"', cell_attrs)
+                        value = re.search(r"<v\b[^>]*>(.*?)</v>", inner, re.DOTALL | re.IGNORECASE)
+                        text_cell = ""
+                        if cell_type and cell_type.group(1) == "s" and value:
+                            try:
+                                text_cell = shared[int(value.group(1))]
+                            except (ValueError, IndexError):
+                                text_cell = ""
+                        elif cell_type and cell_type.group(1) == "inlineStr":
+                            text_cell = _office_run_text(inner, "t")
+                        elif value:
+                            text_cell = _office_unescape(value.group(1))
+                        cells.append(re.sub(r"\s+", " ", text_cell).strip())
+                    line = " | ".join(cells).strip()
+                    if line.strip(" |"):
+                        rows.append(line)
+                if rows:
+                    chunks.append(f"{label}\n\n" + "\n".join(rows))
+            if not chunks:
+                raise PublicPageError("The spreadsheet has no readable cells")
+            text = "\n\n".join(chunks)
+        elif kind == "ods":
+            if "content.xml" not in names:
+                raise PublicPageError("The OpenDocument sheet has no content part")
+            content = read("content.xml")
+            chunks = []
+            for table in re.finditer(
+                r"<table:table\b([^>]*)>(.*?)</table:table>",
+                content,
+                re.DOTALL | re.IGNORECASE,
+            ):
+                attrs, body = table.group(1), table.group(2)
+                label = re.search(r'table:name="([^"]*)"', attrs)
+                rows = []
+                for row in re.finditer(
+                    r"<table:table-row\b[^>]*>(.*?)</table:table-row>",
+                    body,
+                    re.DOTALL | re.IGNORECASE,
+                ):
+                    cells = []
+                    for cell in re.finditer(
+                        r"<table:table-cell\b([^>]*?)(?:/>|>(.*?)</table:table-cell>)",
+                        row.group(1),
+                        re.DOTALL | re.IGNORECASE,
+                    ):
+                        cell_attrs = cell.group(1) or ""
+                        cell_body = cell.group(2) or ""
+                        paragraphs = re.findall(
+                            r"<text:p\b[^>]*>(.*?)</text:p>",
+                            cell_body,
+                            re.DOTALL | re.IGNORECASE,
+                        )
+                        value = " ".join(
+                            _office_unescape(re.sub(r"<[^>]+>", "", part)).strip()
+                            for part in paragraphs
+                            if part.strip()
+                        )
+                        if not value:
+                            numeric = re.search(r'office:value="([^"]*)"', cell_attrs)
+                            value = numeric.group(1) if numeric else ""
+                        repeat = re.search(r'table:number-columns-repeated="(\d+)"', cell_attrs)
+                        times = min(int(repeat.group(1)), 50) if repeat else 1
+                        cells.extend([re.sub(r"\s+", " ", value).strip()] * times)
+                    while cells and not cells[-1]:
+                        cells.pop()
+                    line = " | ".join(cells).strip()
+                    if line.strip(" |"):
+                        rows.append(line)
+                if rows:
+                    chunks.append(f"{label.group(1) if label else 'Sheet'}\n\n" + "\n".join(rows))
+            if not chunks:
+                raise PublicPageError("The spreadsheet has no readable cells")
+            text = "\n\n".join(chunks)
+        elif kind == "docx":
             if "word/document.xml" not in names:
                 raise PublicPageError("The Word document has no body part")
             text = paragraphs(read("word/document.xml"), "w:p", "w:t")
@@ -5719,7 +5999,7 @@ def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, 
 
 
 def _parse_office_source(request: ReadRequest, source: dict) -> ReadResponse:
-    """Read a .docx/.pptx/.epub/.odt link as text."""
+    """Read a .docx/.pptx/.epub/.odt/.xlsx/.ods link as text."""
 
     url = str(source.get("url") or "")
     kind, text = _office_document_text(
@@ -5737,8 +6017,18 @@ def _parse_office_source(request: ReadRequest, source: dict) -> ReadResponse:
 
 def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
     data = source["data"]
-    text = data.decode(str(source.get("encoding") or "utf-8"), errors="replace")
-    text = re.sub(r"\n{3,}", "\n\n", text.replace("\r\n", "\n").replace("\r", "\n")).strip()
+    source_url = str(source.get("url") or "")
+    mime = str(source.get("mime_type") or "").lower()
+    is_rtf = mime in RTF_CONTENT_TYPES or urlparse(source_url).path.lower().endswith(
+        RTF_SUFFIXES
+    )
+    if is_rtf:
+        text = _rtf_to_text(data)
+    else:
+        text = data.decode(str(source.get("encoding") or "utf-8"), errors="replace")
+        text = re.sub(
+            r"\n{3,}", "\n\n", text.replace("\r\n", "\n").replace("\r", "\n")
+        ).strip()
     feed_text = _render_feed_text(source["url"], text)
     if feed_text:
         text = feed_text
@@ -5865,6 +6155,7 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
                 unresolved=unresolved,
                 details={
                     "mime_type": source["mime_type"],
+                    **({"reader": "document:rtf", "document_format": "rtf"} if is_rtf else {}),
                     "total_chars": len(text),
                     "returned_chars": len(returned_text),
                     "continuation_available": can_continue,

@@ -176,3 +176,126 @@ def test_a_document_link_without_a_zip_body_is_not_mistaken(monkeypatch):
         reader._fetch_html("https://example.com/report.docx", 1024 * 1024, {})
 
     assert excinfo.value.code == reader.ErrorCode.UNSUPPORTED_SOURCE
+
+
+def _xlsx(sheet_name: str, rows: list[list[str]]) -> bytes:
+    """Minimal workbook: shared strings, one sheet, and the rels that link them."""
+
+    ordered = [value for row in rows for value in row]
+    shared = {value: index for index, value in enumerate(dict.fromkeys(ordered))}
+    body = "".join(
+        f'<row r="{number}">'
+        + "".join(
+            f'<c r="{chr(ord("A") + index)}{number}" t="s"><v>{shared[value]}</v></c>'
+            for index, value in enumerate(row)
+        )
+        + "</row>"
+        for number, row in enumerate(rows, start=1)
+    )
+    strings = "".join(f"<si><t>{value}</t></si>" for value in shared)
+    return _zip({
+        "[Content_Types].xml": "<Types/>",
+        "xl/sharedStrings.xml": f"<sst>{strings}</sst>",
+        "xl/workbook.xml": (
+            f'<workbook><sheets><sheet name="{sheet_name}" sheetId="1" r:id="rId1"/>'
+            "</sheets></workbook>"
+        ),
+        "xl/_rels/workbook.xml.rels": (
+            '<Relationships><Relationship Id="rId1" '
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        ),
+        "xl/worksheets/sheet1.xml": f"<worksheet><sheetData>{body}</sheetData></worksheet>",
+    })
+
+
+def test_an_excel_workbook_is_read_as_rows():
+    data = _xlsx("Data", [["Name", "Score"], ["alice", "3"]])
+
+    response = _read(
+        "https://example.com/report.xlsx",
+        data,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    assert response.result == reader.ReadResult.READY
+    assert "Data" in _text(response)
+    assert "Name | Score" in _text(response)
+    assert "alice | 3" in _text(response)
+    assert response.coverage.modalities["text"].details["document_format"] == "xlsx"
+
+
+def test_an_ods_sheet_is_read_as_rows():
+    content = (
+        '<office:document-content xmlns:office="o" xmlns:table="t" xmlns:text="x">'
+        "<office:body><office:spreadsheet>"
+        '<table:table table:name="预算">'
+        "<table:table-row>"
+        '<table:table-cell office:value-type="string"><text:p>项目</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="string"><text:p>金额</text:p></table:table-cell>'
+        "</table:table-row>"
+        "<table:table-row>"
+        '<table:table-cell office:value-type="string"><text:p>服务器</text:p></table:table-cell>'
+        '<table:table-cell office:value-type="float" office:value="1200"/>'
+        "</table:table-row>"
+        "</table:table></office:spreadsheet></office:body></office:document-content>"
+    )
+    data = _zip({"content.xml": content})
+
+    response = _read(
+        "https://example.com/budget.ods",
+        data,
+        "application/vnd.oasis.opendocument.spreadsheet",
+    )
+
+    assert response.result == reader.ReadResult.READY
+    assert "预算" in _text(response)
+    assert "项目 | 金额" in _text(response)
+    assert "服务器 | 1200" in _text(response)
+
+
+def test_an_rtf_link_is_read_as_text(monkeypatch):
+    rtf = (
+        "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Helvetica;}}"
+        "\\f0 Hello \\b world\\b0\\par Second paragraph\\par}"
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "application/rtf"}, content=rtf.encode("latin-1")
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(reader.DetectedText) as excinfo:
+        reader._fetch_html("https://example.com/notes.rtf", 1024 * 1024, {})
+
+    response = reader._parse_text_source(
+        _request("https://example.com/notes.rtf"), excinfo.value.source
+    )
+    assert "Hello world" in _text(response)
+    assert "Second paragraph" in _text(response)
+
+
+def test_a_legacy_doc_link_says_which_format_to_use(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "application/msword"}, content=b"\xd0\xcf\x11\xe0"
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(reader.PublicPageError) as excinfo:
+        reader._fetch_html("https://example.com/old.doc", 1024 * 1024, {})
+
+    assert excinfo.value.code == reader.ErrorCode.UNSUPPORTED_SOURCE
+    assert ".docx" in str(excinfo.value)

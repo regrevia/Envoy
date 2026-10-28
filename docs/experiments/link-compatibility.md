@@ -429,6 +429,29 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十四轮（表格文档与 RTF：.xlsx / .xlsm / .ods / .rtf）
+
+上一轮把 ZIP 容器文档读成正文，这一轮补两块同样是「点开链接就该有字」的形态：
+表格和富文本。仍然只用标准库，安装体积不变。
+
+| 链接 | 实测 |
+|---|---|
+| `https://go.microsoft.com/fwlink/?LinkID=521962`（Financial Sample.xlsx） | `partial` / 返回 11351 字（全篇 96109 字）/ `document_format: xlsx`，15 列真实财务数据 |
+
+- `.xlsx/.xlsm`：`xl/sharedStrings.xml` 取字符串池，`workbook.xml` + `workbook.xml.rels`
+  按工作簿顺序定位每个 sheet，逐行 `<row>`/`<c>` 还原成「A | B | C」文本；`t="inlineStr"`
+  与数值单元格同样处理，找不到 rels 时退回 `xl/worksheets/sheetN.xml` 字典序。
+- `.ods`：`content.xml` 里按 `<table:table>`/`<table:table-row>`/`<table:table-cell>`
+  取文本，`office:value` 补空单元格，`table:number-columns-repeated` 最多展开 50 列。
+- `.rtf`：自带一个控制字解析器（跳过 `fonttbl/colortbl/stylesheet/info/pict` 等目的地组，
+  认 `\par \line \tab \cell`、`\'hh`、`\uN` 与转义括号），中文按 `\u` 还原；
+  `coverage.details` 标 `reader: document:rtf`。
+- 旧的二进制 `.doc/.xls/.ppt` 不再给一句「只认 HTML」：检测到 `application/msword`
+  等类型或这些后缀时，直接说明「请另存为 .docx/.xlsx 再读」（`unsupported_source`）。
+- 单测 12 条（原 8 条 + xlsx 行、ods 行、rtf 抓取与解析、旧格式提示），全部离线。
+  `.ods` 与 `.rtf` 只到 `unit_checked`：本机没有稳定的公开样本链接，合成样本走的是
+  与真实链接相同的检测/解包/文本管线。
+
 ## 第二十三轮（文档链接：.docx / .pptx / .epub / .odt 直接读成正文）
 
 这一轮补的是链接另一类常见形态：不少站点（学校、政府、出版社、GitHub raw）直接发
