@@ -10,7 +10,6 @@ import io
 import zipfile
 
 import httpx
-import pytest
 
 from envoy_cli import reader
 from envoy_core.schemas.read_v1 import ReadRequest
