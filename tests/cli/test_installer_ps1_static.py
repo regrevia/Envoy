@@ -111,6 +111,25 @@ def test_user_path_write_preserves_expand_type(text: str):
     assert "function Join-PathValue" in text
 
 
+def test_uv_branch_verifies_the_checksum_like_the_python_branch(text: str):
+    """The uv path used to hand the URL straight to uv, skipping SHA256SUMS."""
+    if "} else {" not in text:
+        return
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    # Each install branch that downloads must call Confirm-Checksum.
+    assert runtime.count("Confirm-Checksum") >= 2, "both uv and python branches must verify"
+
+
+def test_download_keeps_the_real_wheel_filename(text: str):
+    """pip/uv reject a wheel whose filename was decorated to make it unique."""
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    # Uniqueness must come from a temp directory, not from renaming the file.
+    assert "envoy-dl-" in runtime
+    assert '"envoy-" + [guid]' not in runtime
+
+
 def test_shim_uses_the_oem_code_page_not_utf8(text: str):
     """cmd.exe parses .cmd in the OEM code page; Encoding.Default is UTF-8 in PS7."""
     assert "OEMCodePage" in text

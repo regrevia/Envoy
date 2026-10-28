@@ -280,7 +280,20 @@ function Install-Runtime {
             if (Test-Path -LiteralPath $Script:RuntimeHome) { Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force }
             Invoke-Step $uv.Source @("venv", "--quiet", "--python", "3.11", $Script:RuntimeHome)
         }
-        Invoke-Step $uv.Source @("pip", "install", "--quiet", "--python", (Join-Path $Script:RuntimeHome "Scripts\python.exe"), $url)
+        # Download and verify before installing, so the uv path gets the same
+        # SHA256SUMS gate as the python path (it previously piped the URL straight
+        # to uv, which never checked the digest). The unique part is a directory:
+        # renaming the file breaks the wheel filename pip/uv parse.
+        $tmpUvDir = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-dl-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $tmpUvDir -Force | Out-Null
+        $tmpUv = Join-Path $tmpUvDir $wheel
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmpUv -UseBasicParsing -TimeoutSec 300
+            Confirm-Checksum $tmpUv $wheel
+            Invoke-Step $uv.Source @("pip", "install", "--quiet", "--python", (Join-Path $Script:RuntimeHome "Scripts\python.exe"), $tmpUv)
+        } finally {
+            Remove-Item -LiteralPath $tmpUvDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     } else {
         $python = Get-Command python -ErrorAction SilentlyContinue
         if (-not $python) { Stop-Install "neither uv nor python is available; install Python 3.11+ (or uv) and re-run" }
@@ -288,11 +301,16 @@ function Install-Runtime {
             if (Test-Path -LiteralPath $Script:RuntimeHome) { Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force }
             Invoke-Step $python.Source @("-m", "venv", $Script:RuntimeHome)
         }
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) $wheel
-        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 300
-        Confirm-Checksum $tmp $wheel
-        Invoke-Step (Join-Path $Script:RuntimeHome "Scripts\python.exe") @("-m", "pip", "install", "--quiet", "--upgrade", $tmp)
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-dl-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        $tmp = Join-Path $tmpDir $wheel
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 300
+            Confirm-Checksum $tmp $wheel
+            Invoke-Step (Join-Path $Script:RuntimeHome "Scripts\python.exe") @("-m", "pip", "install", "--quiet", "--upgrade", $tmp)
+        } finally {
+            Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     if (-not (Test-Path -LiteralPath $Script:RuntimeBin)) { Stop-Install "runtime install finished without $($Script:RuntimeBin)" }
     Set-PinnedRuntime $Script:RuntimeBin
