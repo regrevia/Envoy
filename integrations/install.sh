@@ -1,29 +1,56 @@
 #!/bin/sh
 # Envoy one-command installer for the three agent hosts.
 #
-#   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+#   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
 #   curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
 #
-# It does two things: put an up-to-date `envoy` on PATH (reusing one that is
-# already new enough), then register the plugin the named host needs. Each host
-# keeps its own README for the manual path; this script exists so a marketplace
-# visitor has one line to paste instead of a runtime step followed by two
-# plugin commands.
+# It does three things: install one private runtime, register the host plugin,
+# then provision the browser once so the first link does not wait for a download.
+# With no argument it installs every host it can detect, so the same line works
+# for Claude Code, Codex and DeepSeek Harness.
+#
+# The runtime is pinned to one absolute path (`envoy path` prints it) instead of
+# trusting whatever `envoy` PATH happens to resolve to: a stale PATH binary could
+# otherwise win and the plugin would spawn an older runtime for months.
 #
 # Environment overrides:
-#   ENVOY_VERSION   runtime version to install (default: release manifest)
-#   ENVOY_HOME      private runtime root (default: ~/.local/share/envoy-dsh/runtime)
-#   DSH_PROFILE     Harness profile for the DSH bundle (default: web)
-#   ENVOY_DRY_RUN=1 print the commands instead of running them
+#   ENVOY_VERSION        runtime version to install (default: release manifest)
+#   ENVOY_HOME           private runtime root (default: ~/.local/share/envoy-dsh/runtime)
+#   ENVOY_RUNTIME_BIN    explicit runtime to reuse instead of installing one
+#   ENVOY_PROFILE       minimal | standard | full (default: full, the recommended one)
+#                       minimal: runtime only, ~180 MB
+#                       standard: runtime + Chromium, ~860 MB
+#                       full: runtime + Chromium + Whisper base, no later downloads
+#   ENVOY_SETUP_BROWSER override the profile's browser step: 1 download, 0 skip
+#   ENVOY_SETUP_MEDIA   override the profile's speech-recognition step: 1 setup, 0 skip
+#   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base)
+#   ENVOY_DETECT_DESKTOP_APP 1 (default) also finds the DeepSeek Harness app bundle
+#   DSH_PROFILE          Harness profile for the DSH bundle (default: web)
+#   ENVOY_MANIFEST_URL   release manifest to read (default: raw.githubusercontent main)
+#   ENVOY_RELEASES_BASE  download root holding v<version>/ (default: GitHub releases)
+#                        both exist so a mirror or a loopback checkout can serve the
+#                        same layout; the defaults are the public paths
+#   ENVOY_DRY_RUN=1      print the commands instead of running them
 set -eu
 
-REPO="regrevia/Envoy"
-MANIFEST_URL="https://raw.githubusercontent.com/$REPO/main/integrations/release-manifest.json"
+# The repository is the one place both default URLs and the plugin marketplaces
+# come from, so a fork only has to set ENVOY_REPO.
+REPO="${ENVOY_REPO:-regrevia/Envoy}"
+MANIFEST_URL="${ENVOY_MANIFEST_URL:-https://raw.githubusercontent.com/$REPO/main/integrations/release-manifest.json}"
+# Overridable so a mirror (or a loopback checkout) can serve the same layout
+# as releases/download without touching anything else in this script.
+RELEASES_BASE="${ENVOY_RELEASES_BASE:-https://github.com/$REPO/releases/download}"
 RUNTIME_HOME="${ENVOY_HOME:-$HOME/.local/share/envoy-dsh/runtime}"
 RUNTIME_BIN="$RUNTIME_HOME/bin/envoy"
+RUNTIME_PIN="${ENVOY_RUNTIME_PIN:-$HOME/.envoy/runtime-path}"
 DSH_PROFILE="${DSH_PROFILE:-web}"
 DRY_RUN="${ENVOY_DRY_RUN:-0}"
+PROFILE="${ENVOY_PROFILE:-full}"
+SETUP_BROWSER="${ENVOY_SETUP_BROWSER:-}"
+SETUP_MEDIA="${ENVOY_SETUP_MEDIA:-}"
+ASR_MODEL="${ENVOY_ASR_MODEL:-base}"
+DETECT_DESKTOP_APP="${ENVOY_DETECT_DESKTOP_APP:-1}"
 
 die() {
   printf 'envoy install: %s\n' "$1" >&2
@@ -40,14 +67,27 @@ run() {
 
 usage() {
   cat <<'EOF'
-usage: install.sh <dsh|claude-code|codex|mcp|skill|all>
+usage: install.sh [--profile minimal|standard|full] [dsh|claude-code|codex|mcp|skill|all|path]
 
+  (no argument) every host detected on this machine, full profile
+
+  --profile minimal   runtime only, about 180 MB; nothing is downloaded later
+                      until you ask for it
+  --profile standard  runtime + Chromium, about 860 MB; reads rendered pages
+                      and video pages, no speech recognition
+  --profile full      runtime + Chromium + Whisper base model (recommended);
+                      every capability this host exposes works offline after
+                      install, nothing downloads on first use
+
+  ENVOY_PROFILE sets the same thing without the flag; ENVOY_SETUP_BROWSER and
+  ENVOY_SETUP_MEDIA override one step of the chosen profile.
   dsh          install the DeepSeek Harness bundle from npm
   claude-code  add this repository as a marketplace, then install the plugin
   codex        same, plus the user-level prompt hook Codex needs
   mcp          add the envoy MCP server to Claude Desktop, Cursor or Windsurf
   skill        unpack the skill into ~/.envoy/skill/envoy for hosts without plugins
   all          every host whose CLI is on PATH, falling back to the MCP entry
+  path         print the runtime path the installer pinned (nothing is changed)
 EOF
 }
 
@@ -86,15 +126,21 @@ version_at_least() {
 verify_checksum() {
   file="$1"
   name="$2"
-  sums_url="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/SHA256SUMS"
-  sums="$(curl -fsSL "$sums_url" 2>/dev/null)" || return 0
+  sums_url="$RELEASES_BASE/v$RUNTIME_VERSION/SHA256SUMS"
+  if ! sums="$(curl -fsSL "$sums_url" 2>/dev/null)"; then
+    printf 'envoy install: checksum unavailable for %s (SHA256SUMS not reachable); continuing unverified\n' "$name"
+    return 0
+  fi
   expected="$(printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1; exit}')"
-  [ -n "$expected" ] || return 0
+  if [ -z "$expected" ]; then
+    die "SHA256SUMS has no entry for $name; delete it and re-run"
+  fi
   if command -v shasum >/dev/null 2>&1; then
     actual="$(shasum -a 256 "$file" | awk '{print $1}')"
   elif command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$file" | awk '{print $1}')"
   else
+    printf 'envoy install: checksum skipped for %s (no shasum or sha256sum on this machine)\n' "$name"
     return 0
   fi
   if [ "$expected" != "$actual" ]; then
@@ -132,10 +178,35 @@ ensure_uv() {
   return 1
 }
 
+runtime_version_of() {
+  if [ ! -x "$1" ]; then
+    return 0
+  fi
+  "$1" --version 2>/dev/null | sed -n 's/.* \([0-9][0-9.]*\).*/\1/p' | head -1
+}
+
+pin_runtime() {
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '  + pin %s\n' "$1"
+    return 0
+  fi
+  mkdir -p "$(dirname "$RUNTIME_PIN")"
+  printf '%s\n' "$1" > "$RUNTIME_PIN"
+}
+
+pinned_runtime() {
+  if [ -f "$RUNTIME_PIN" ]; then
+    candidate="$(head -1 "$RUNTIME_PIN" 2>/dev/null)"
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s' "$candidate"
+    fi
+  fi
+}
+
 install_runtime() {
   version="$1"
   wheel="envoy_cli-$version-py3-none-any.whl"
-  url="https://github.com/$REPO/releases/download/v$version/$wheel"
+  url="$RELEASES_BASE/v$version/$wheel"
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
@@ -144,6 +215,7 @@ install_runtime() {
     printf '  + venv %s\n' "$RUNTIME_HOME"
     printf '  + download %s\n' "$url"
     printf '  + pip install %s\n' "$wheel"
+    printf '  + pin %s -> %s\n' "$RUNTIME_BIN" "$RUNTIME_PIN"
     return 0
   fi
 
@@ -177,14 +249,72 @@ install_runtime() {
 
   # The DSH bundle keeps its runtime private; the two plugin hosts spawn a bare
   # `envoy`, so expose it on PATH without touching an existing install.
+  pin_runtime "$RUNTIME_BIN"
+  expose_runtime
+}
+
+# The two plugin hosts spawn a bare `envoy`; expose the pinned runtime on PATH
+# without touching an existing install (a user may have their own envoy).
+expose_runtime() {
+  if [ "$DRY_RUN" = "1" ]; then
+    return 0
+  fi
   if ! command -v envoy >/dev/null 2>&1; then
     mkdir -p "$HOME/.local/bin"
-    ln -sf "$RUNTIME_BIN" "$HOME/.local/bin/envoy"
+    ln -sf "$(envoy_binary)" "$HOME/.local/bin/envoy"
     case ":$PATH:" in
       *":$HOME/.local/bin:"*) ;;
       *) printf '\nexport PATH="$HOME/.local/bin:$PATH"\n  (add the line above to your shell profile)\n' >&2 ;;
     esac
   fi
+}
+
+# Three profiles, one axis: how much of the optional surface is provisioned up
+# front. The default is the complete one, because a capability that silently
+# fails on first use costs the user more than the download it would have taken
+# at install time.
+apply_profile() {
+  case "$PROFILE" in
+    minimal|standard|full) ;;
+    *) die "unknown profile '$PROFILE'; expected minimal, standard or full" ;;
+  esac
+  if [ -z "$SETUP_BROWSER" ]; then
+    case "$PROFILE" in
+      minimal) SETUP_BROWSER=0 ;;
+      *) SETUP_BROWSER=1 ;;
+    esac
+  fi
+  if [ -z "$SETUP_MEDIA" ]; then
+    case "$PROFILE" in
+      full) SETUP_MEDIA=1 ;;
+      *) SETUP_MEDIA=0 ;;
+    esac
+  fi
+}
+
+# Chromium takes a minute or two and belongs to install time, not to the user's
+# first link: a read that downloads it would sit inside the host's tool deadline
+# and surface as a failed page instead of a one-time setup step.
+provision_browser() {
+  if [ "$SETUP_BROWSER" != "1" ]; then
+    printf 'envoy install: skipped browser setup (profile %s); run `envoy browser setup` before the first link\n' "$PROFILE"
+    return 0
+  fi
+  printf 'envoy install: browser runtime (one-time, about 1-2 minutes)\n'
+  run "$1" browser setup || printf 'envoy install: browser setup did not finish; run `envoy browser setup` later\n' >&2
+}
+
+# Speech recognition is the only base capability whose weights are not in the
+# wheel: install-time is where they belong, so `full` never downloads on the
+# first audio or subtitle-less video.
+provision_media() {
+  if [ "$SETUP_MEDIA" != "1" ]; then
+    printf 'envoy install: skipped speech recognition (profile %s); run `envoy asr install --model %s` if you need audio transcription\n' "$PROFILE" "$ASR_MODEL"
+    return 0
+  fi
+  printf 'envoy install: speech recognition (Whisper %s, one-time; tens to hundreds of MB)\n' "$ASR_MODEL"
+  run "$1" asr install --model "$ASR_MODEL" \
+    || printf 'envoy install: speech recognition did not finish; run `envoy asr install --model %s` later\n' "$ASR_MODEL" >&2
 }
 
 # A finished install that cannot read a page is still a failed install, so say
@@ -211,7 +341,17 @@ except Exception:
     raise SystemExit(0)
 version = data.get("cli_version") or data.get("version") or "unknown"
 protocol = data.get("protocol_version") or "unknown"
-print(f"envoy install: runtime {version}, protocol {protocol}")
+runtime = data.get("runtime") or {}
+browser = "ready" if (runtime.get("browser") or {}).get("ready") else "missing: envoy browser setup"
+install = runtime.get("install") or {}
+model = runtime.get("asr_model") or "base"
+asr = "ready" if runtime.get("asr_model_available") else f"missing: run envoy asr install --model {model}"
+print(f"envoy install: runtime {version}, protocol {protocol}, browser {browser}, asr {asr}")
+status = install.get("status")
+if status and status != "pinned":
+    pinned = install.get("pinned_runtime") or "none"
+    on_path = install.get("path_envoy") or "none"
+    print(f"envoy install: install state {status}: pinned {pinned}, PATH runs {on_path}; rerun install.sh if that is wrong")
 ' 2>/dev/null || printf 'envoy install: could not summarize envoy doctor output\n' >&2
 }
 
@@ -220,30 +360,49 @@ RUNTIME_VERSION=""
 ensure_runtime() {
   version="$(resolve_version)"
   RUNTIME_VERSION="$version"
-  if command -v envoy >/dev/null 2>&1; then
-    current="$(envoy --version 2>/dev/null | sed -n 's/.* \([0-9][0-9.]*\).*/\1/p' | head -1)"
+
+  # One runtime, one absolute path. A pinned path wins over PATH so a stale
+  # `envoy` earlier in the user's PATH cannot hijack the plugin months later.
+  pinned="$(pinned_runtime)"
+  if [ -n "$pinned" ]; then
+    current="$(runtime_version_of "$pinned")"
     if [ -n "$current" ] && version_at_least "$current" "$version"; then
-      printf 'envoy install: using envoy %s from %s\n' "$current" "$(command -v envoy)"
+      printf 'envoy install: using envoy %s from %s (pinned)\n' "$current" "$pinned"
       return 0
     fi
-    printf 'envoy install: envoy %s on PATH is older than %s\n' "${current:-unknown}" "$version" >&2
+    printf 'envoy install: pinned envoy %s is older than %s\n' "${current:-unknown}" "$version" >&2
   fi
+
+  if [ -n "${ENVOY_RUNTIME_BIN:-}" ]; then
+    current="$(runtime_version_of "$ENVOY_RUNTIME_BIN")"
+    [ -n "$current" ] || die "ENVOY_RUNTIME_BIN=$ENVOY_RUNTIME_BIN is not runnable"
+    version_at_least "$current" "$version" || die "ENVOY_RUNTIME_BIN=$ENVOY_RUNTIME_BIN is envoy $current, older than $version"
+    pin_runtime "$ENVOY_RUNTIME_BIN"
+    printf 'envoy install: using envoy %s from %s (ENVOY_RUNTIME_BIN)\n' "$current" "$ENVOY_RUNTIME_BIN"
+    return 0
+  fi
+
   if [ -x "$RUNTIME_BIN" ]; then
-    current="$("$RUNTIME_BIN" --version 2>/dev/null | sed -n 's/.* \([0-9][0-9.]*\).*/\1/p' | head -1)"
+    current="$(runtime_version_of "$RUNTIME_BIN")"
     if [ -n "$current" ] && version_at_least "$current" "$version"; then
+      pin_runtime "$RUNTIME_BIN"
       printf 'envoy install: using envoy %s from %s\n' "$current" "$RUNTIME_BIN"
       expose_runtime
       return 0
     fi
   fi
-  install_runtime "$version"
-}
 
-expose_runtime() {
-  if ! command -v envoy >/dev/null 2>&1; then
-    mkdir -p "$HOME/.local/bin"
-    ln -sf "$RUNTIME_BIN" "$HOME/.local/bin/envoy"
+  if command -v envoy >/dev/null 2>&1; then
+    current="$(runtime_version_of "$(command -v envoy)")"
+    if [ -n "$current" ] && version_at_least "$current" "$version"; then
+      pin_runtime "$(command -v envoy)"
+      printf 'envoy install: using envoy %s from %s (on PATH)\n' "$current" "$(command -v envoy)"
+      return 0
+    fi
+    printf 'envoy install: envoy %s on PATH is older than %s; installing the private runtime\n' "${current:-unknown}" "$version" >&2
   fi
+
+  install_runtime "$version"
 }
 
 find_dsh() {
@@ -257,6 +416,7 @@ find_dsh() {
   fi
   # DeepSeek Harness Desktop ships its CLI inside the app bundle and does not
   # put it on PATH, so a marketplace visitor has no `dsh` to type.
+  [ "$DETECT_DESKTOP_APP" = "1" ] || return 1
   for candidate in \
     "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
     "$HOME/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"; do
@@ -273,7 +433,7 @@ install_dsh() {
   printf 'envoy install: DeepSeek Harness bundle (profile %s)\n' "$DSH_PROFILE"
   # The published npm package trails the repo, and a release tarball carries the
   # same files without waiting for a publish, so try the tarball first.
-  tarball="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/envoy-dsh-$RUNTIME_VERSION.tgz"
+  tarball="$RELEASES_BASE/v$RUNTIME_VERSION/envoy-dsh-$RUNTIME_VERSION.tgz"
   if [ "$DRY_RUN" = "1" ]; then
     run "$dsh_bin" plugin --profile "$DSH_PROFILE" add "$tarball"
   elif curl -fsSL -o /dev/null --range 0-0 "$tarball" 2>/dev/null; then
@@ -288,7 +448,7 @@ install_dsh() {
 install_claude_code() {
   command -v claude >/dev/null 2>&1 || die "the claude CLI is not on PATH; install Claude Code first"
   printf 'envoy install: Claude Code plugin\n'
-  run claude plugin marketplace add "regrevia/Envoy"
+  run claude plugin marketplace add "$REPO"
   run claude plugin install "envoy@envoy"
   printf 'Restart Claude Code, or run /plugin to confirm Envoy is enabled.\n'
   report_health
@@ -300,16 +460,33 @@ install_codex() {
   run codex plugin marketplace add "https://github.com/$REPO.git"
   run codex plugin add "envoy@envoy"
   printf 'envoy install: Codex prompt hook\n'
-  run envoy hook install --host codex
+  run "$(envoy_binary)" hook install --host codex
   printf 'Restart Codex so the plugin and hook load.\n'
   report_health
 }
 
+# Provisioning belongs to the profile, not to the runtime-install branch: a host
+# already on PATH means no wheel is installed, and the browser and the ASR
+# weights would otherwise never be fetched for the tier the user picked. Both
+# steps are idempotent, so a re-run of the installer is also a repair.
+ensure_profile() {
+  binary="$(envoy_binary)"
+  provision_browser "$binary"
+  provision_media "$binary"
+}
+
+# Every host-facing step resolves the binary through here, so the plugin that
+# gets registered and the runtime that serves it are always the same one.
 envoy_binary() {
-  if command -v envoy >/dev/null 2>&1; then
+  pinned="$(pinned_runtime)"
+  if [ -n "$pinned" ]; then
+    printf '%s' "$pinned"
+  elif [ -x "$RUNTIME_BIN" ]; then
+    printf '%s' "$RUNTIME_BIN"
+  elif command -v envoy >/dev/null 2>&1; then
     command -v envoy
   else
-    printf '%s' "$RUNTIME_BIN"
+    die "no envoy runtime found; run the installer without a host argument first"
   fi
 }
 
@@ -370,7 +547,7 @@ ENVOY_MCP
 # For hosts that read a plain skill directory rather than a plugin package.
 install_skill() {
   dest="${ENVOY_SKILL_DIR:-$HOME/.envoy/skill/envoy}"
-  url="https://github.com/$REPO/releases/download/v$RUNTIME_VERSION/envoy-skill.zip"
+  url="$RELEASES_BASE/v$RUNTIME_VERSION/envoy-skill.zip"
   printf 'envoy install: skill -> %s\n' "$dest"
   if [ "$DRY_RUN" = "1" ]; then
     printf '  + download %s\n  + extract to %s\n' "$url" "$dest"
@@ -390,39 +567,91 @@ ENVOY_SKILL
   printf 'Point the host at %s, then restart it.\n' "$dest"
 }
 
-host="${1:-}"
+install_auto() {
+  ensure_runtime
+  ensure_profile
+  ensure_profile
+  installed=0
+  if find_dsh >/dev/null 2>&1; then install_dsh; installed=1; fi
+  if command -v claude >/dev/null 2>&1; then install_claude_code; installed=1; fi
+  if command -v codex >/dev/null 2>&1; then install_codex; installed=1; fi
+  if [ "$installed" = "0" ]; then
+    printf 'envoy install: no host CLI detected; writing the MCP entry instead\n' >&2
+    install_mcp
+  fi
+  report_health
+}
+
+host=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --profile)
+      [ "$#" -ge 2 ] || die "--profile needs a value: minimal, standard or full"
+      PROFILE="$2"
+      shift 2
+      ;;
+    --profile=*)
+      PROFILE="${1#--profile=}"
+      shift
+      ;;
+    -p)
+      [ "$#" -ge 2 ] || die "-p needs a value: minimal, standard or full"
+      PROFILE="$2"
+      shift 2
+      ;;
+    *)
+      host="$1"
+      shift
+      ;;
+  esac
+done
+apply_profile
 case "$host" in
+  "")
+    install_auto
+    ;;
+  auto)
+    install_auto
+    ;;
   dsh)
     ensure_runtime
+    ensure_profile
     install_dsh
     ;;
   claude-code|claude)
     ensure_runtime
+    ensure_profile
     install_claude_code
     ;;
   codex)
     ensure_runtime
+    ensure_profile
     install_codex
     ;;
   mcp)
     ensure_runtime
+    ensure_profile
     install_mcp
     report_health
     ;;
   skill)
     ensure_runtime
+    ensure_profile
     install_skill
     report_health
     ;;
   all)
-    ensure_runtime
-    installed=0
-    if find_dsh >/dev/null 2>&1; then install_dsh; installed=1; fi
-    if command -v claude >/dev/null 2>&1; then install_claude_code; installed=1; fi
-    if command -v codex >/dev/null 2>&1; then install_codex; installed=1; fi
-    if [ "$installed" = "0" ]; then install_mcp; installed=1; fi
-    report_health
-    [ "$installed" = "1" ] || die "no host CLI found (dsh, claude, codex)"
+    install_auto
+    ;;
+  path)
+    pinned="$(pinned_runtime)"
+    if [ -n "$pinned" ]; then
+      printf '%s\n' "$pinned"
+    elif [ -x "$RUNTIME_BIN" ]; then
+      printf '%s\n' "$RUNTIME_BIN"
+    else
+      die "no runtime installed yet; run install.sh first"
+    fi
     ;;
   -h|--help|help)
     usage

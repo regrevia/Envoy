@@ -10,13 +10,42 @@
 </p>
 
 <p align="center">
-  <a href="integrations/skills/envoy/INSTALL.md">安装 Envoy</a> ·
+  <a href="#安装">安装 Envoy</a> ·
   <a href="https://github.com/regrevia/Envoy/releases">下载发行版</a> ·
   <a href="https://github.com/regrevia/Envoy/issues/new/choose">反馈问题</a> ·
   <a href="#english">English</a>
 </p>
 
 给 AI 一个链接，Envoy 把它变成带来源定位的材料，AI 再用它写你要的东西：Wiki、摘要、报告、脚本。网页、公众号、PDF、小红书图文、B 站视频、本地视频都行。
+
+## 安装
+
+三个宿主各一行。安装脚本只要求 `curl`：uv 和 Python 3.11 它自己装，装好会打印 `envoy install: runtime … protocol … browser …`。
+
+```sh
+# Claude Code
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
+
+# Codex
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+
+# DeepSeek Harness
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+```
+
+默认是完整档：runtime、Chromium、Whisper `base` 一次装齐，装完读网页、看视频、转写都不用等到首次使用才下载（整份约 runtime 178 MB + 浏览器 683 MB + 转写权重约 140 MB；后两项的平台差异见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)）。只想要更小的安装：`--profile minimal`（只装 runtime，178 MB，读普通网页/PDF/图片）或 `--profile standard`（加 Chromium，683 MB，读需要渲染的页面和视频页，不转写）。重跑安装脚本并换成更高的档位就能补齐缺的能力，两步都是幂等的。
+
+不确定宿主是哪个：把最后一段换成 `auto`，脚本会识别已装的 Claude Code / Codex / DSH，都没有就写 MCP 条目（`mcp`、`skill` 也可以单独装；`all` 等同于 `auto`）。只想先看它要做什么，命令前加 `ENVOY_DRY_RUN=1`。从镜像或本地目录安装时，把下载根换成 `ENVOY_RELEASES_BASE`、清单地址换成 `ENVOY_MANIFEST_URL`（目录按 `v<版本>/` 放产物与 `SHA256SUMS`），默认值不变；整仓换到 fork 时设 `ENVOY_REPO`（默认 `regrevia/Envoy`）。Windows PowerShell 用 `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex`（默认 auto，指定宿主时下载后 `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`）。
+
+装完两条自检：
+
+```sh
+envoy doctor --json     # runtime.install.status 应为 pinned；browser.ready 与 asr_model_available 应为 true
+envoy browser setup     # 浏览器安装脚本已装好；这行用于补装或换版本，装完会自动清掉被替换的旧版本
+envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存会翻倍），--dry-run 只报不删
+```
+
+升级就是重跑同一行；卸载、企业镜像、各宿主插件目录见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)。
 
 ## 能做什么
 
@@ -149,6 +178,35 @@ docker compose up -d --build
 </p>
 
 Give your AI a link and Envoy turns it into material with source locators; the AI then writes whatever you asked for: a wiki, a summary, a report, a script. Web pages, WeChat posts, PDFs, Xiaohongshu image posts, Bilibili videos, local video files.
+
+### Install
+
+One line per host. The installer only needs `curl`: it installs uv and Python 3.11 itself and prints `envoy install: runtime … protocol … browser …` when done.
+
+```sh
+# Claude Code
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- claude-code
+
+# Codex
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- codex
+
+# DeepSeek Harness
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
+```
+
+The default is the full profile: runtime, Chromium and the Whisper `base` model land in one pass, so reading pages, watching videos and transcribing audio never wait on a first-use download (about runtime 178 MB + browser 683 MB + weights ~140 MB; platform differences are in [INSTALL.md](integrations/skills/envoy/INSTALL.md)). For a smaller install use `--profile minimal` (runtime only, 178 MB: plain pages, PDFs, images) or `--profile standard` (adds Chromium, 683 MB: pages that need rendering and video pages, no transcription). Re-running the installer with a higher profile fills in the rest; both steps are idempotent.
+
+Not sure which host you have: use `auto` instead — it detects an installed Claude Code / Codex / DSH and falls back to an MCP entry (`mcp` and `skill` also install on their own; `all` is the same as `auto`). Add `ENVOY_DRY_RUN=1` to see what it would do first. To install from a mirror or a local directory, point `ENVOY_RELEASES_BASE` at the download root and `ENVOY_MANIFEST_URL` at the manifest (layout: `v<version>/` with the artifacts and `SHA256SUMS`); the defaults are unchanged; to point at a fork set `ENVOY_REPO` (default `regrevia/Envoy`). On Windows PowerShell: `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex` (auto by default; for one host download it and run `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`).
+
+Two checks after installing:
+
+```sh
+envoy doctor --json     # runtime.install.status should be pinned; browser.ready and asr_model_available should be true
+envoy browser setup     # the installer already provisions it; rerun to repair or change versions, stale copies are pruned
+envoy browser prune     # reclaim browser downloads left behind by upgrades; --dry-run only reports
+```
+
+Upgrading means running the same line again. Uninstall, mirrors, and each host's plugin directory: [INSTALL.md](integrations/skills/envoy/INSTALL.md).
 
 ### What it does
 

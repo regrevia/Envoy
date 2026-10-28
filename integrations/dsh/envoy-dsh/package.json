@@ -1,6 +1,6 @@
 {
   "name": "envoy-dsh",
-  "version": "0.1.23",
+  "version": "0.1.26",
   "description": "Paste a link, get citable material: articles, PDFs, audio, Douyin/Bilibili/Xiaohongshu. Same 60 turns with vs without: finishes reading 22%->92%, times out 68%->0%, cites a real fact 23%->82%. On 123 live links 80% came back usable (93% of the pages that answered).",
   "type": "module",
   "license": "Apache-2.0",
@@ -16,6 +16,7 @@
   },
   "files": [
     "index.js",
+    "launch.cjs",
     "link-verdicts.json",
     "skill",
     "cordis.patch.yml",
