@@ -2,25 +2,25 @@
 
 这一份是给「有人在旁边、能联网、能开 GUI」的那一次跑用的。**不要在无人值守时
 自动执行**：里面有真实网页、真实 ASR / OCR 模型下载、Windows 与 Linux 真机安装。
-本轮（0.1.24）这些全部是 `not_run`，`EXPERIMENT-PLAN.json` 里 35 条也全是
+本轮（0.1.25）这些全部是 `not_run`，`EXPERIMENT-PLAN.json` 里 35 条也全是
 `not_run`。
 
 ## 0. 准备
 
 ```sh
 cd <repo>
-git log --oneline -3        # 确认在 0.1.24 交付提交上（见 release-manifest.json 的 source_commit）
+git log --oneline -3        # 确认在 0.1.25 交付提交上（见 release-manifest.json 的 source_commit）
 sh scripts/check_installer_offline.sh        # 期望 10/10
 sh scripts/check_installer_e2e_local.sh      # 期望 14/14（环回镜像，不进公网）
 python scripts/check_versions.py --check
 python scripts/check_release_manifest.py --check
 ```
 
-交付包在 `/Users/apple/Desktop/2026/envoy-delivery/0.1.24/`。装之前跑一次交付校验，
+交付包在 `/Users/apple/Desktop/2026/envoy-delivery/0.1.25/`。装之前跑一次交付校验，
 一条命令覆盖摘要、清单、wheel/tgz/skill 与安装脚本的版本引用（离线，不需要装 wheel）：
 
 ```sh
-cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
+cd /Users/apple/Desktop/2026/envoy-delivery/0.1.25
 PYTHONDONTWRITEBYTECODE=1 python3 verify_delivery.py --dir .
 # 期望最后一行：delivery ok: ... (13 checks)
 ```
@@ -32,7 +32,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 verify_delivery.py --dir .
 `SHA256SUMS` 与 `release-manifest.json` 里。所以不要直接在包里改这两个脚本——改仓库、重新打包、
 再核对摘要；只改不参与哈希的文档与工具（本手册、`verify_delivery.py` 等）才可以直接替换。
 
-想先摸一遍再动发行包，`../0.1.24-preview/` 是同一份代码的 `local-preview` 渠道候选
+想先摸一遍再动发行包，`../0.1.25-preview/` 是同一份代码的 `local-preview` 渠道候选
 （wheel 名带 `+preview.g<rev>.<UTC>`），用 `python3 verify_delivery.py --dir . --allow-preview`
 校验，装法见那目录的 `PREVIEW-NOTES.md`；它不替代发行包验证，也不上传。
 
@@ -62,7 +62,7 @@ sh integrations/install.sh
 # 1c 覆盖升级（在已有 0.1.23 的机器上）
 sh integrations/install.sh
 # 1d pin 是否真的赢
-~/.envoy/runtime-path >/dev/null; envoy --version   # 期望 0.1.24
+~/.envoy/runtime-path >/dev/null; envoy --version   # 期望 0.1.25
 ```
 
 Windows x64（需要一台真机）：
@@ -132,7 +132,7 @@ sh -c 'printf %s "{\"request_id\":\"D11\",\"material_id\":\"$ENVOY_MATERIAL_ID\"
 ## 5. 发行作业（可选，需要权限）
 
 **这一节只有拿到明确同意才做。** 关键一点：`packages/envoy-*/pyproject.toml` 现在就是
-`0.1.24`，而 `origin` 上没有 `v0.1.24` tag——所以 **`git push origin main` 本身就是发布动作**：
+`0.1.25`，而 `origin` 上没有 `v0.1.25` tag——所以 **`git push origin main` 本身就是发布动作**：
 `.github/workflows/auto-release.yml` 在同一个 SHA 的 CI 通过后会自己打 tag、跑
 `.github/workflows/release.yml`、建 Release 并（有 `NPM_TOKEN` 时）发 npm 包。想先只推代码不发布，
 必须先把 pyproject 版本改回已发布的 `0.1.23`，或者关掉 auto-release。
@@ -150,9 +150,9 @@ gh run list --workflow=auto-release.yml --limit 3   # 看它是否因版本变�
 
 1. 同一 SHA 的 `ci.yml` 必须先绿（工作流会拒绝给 CI 已失败的 SHA 打 tag）；
 2. Release 资产应是从该 tag 重建的五个产物 + `release-manifest.json` + `SHA256SUMS`，
-   与本地 `../envoy-delivery/0.1.24/` **不是同一批字节**（本地包是本地构建，tag 触发的是 CI 构建）——
+   与本地 `../envoy-delivery/0.1.25/` **不是同一批字节**（本地包是本地构建，tag 触发的是 CI 构建）——
    两者都校验过再决定以哪个为准，别混用；
-3. 预览候选 `../0.1.24-preview/` 不上传、不挂 Release，它只是本地摸手感用的。
+3. 预览候选 `../0.1.25-preview/` 不上传、不挂 Release，它只是本地摸手感用的。
 
 ## 6. 记录与升级
 
@@ -181,7 +181,7 @@ range GET 探过可达），冻结结果在 `holdout-H12-2026-10-28.json`，sha2
 **已经冻结过，不要再跑一次**——下面是万一要重放的形态，正常执行直接从 §9 记结果开始：
 
 ```sh
-cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
+cd /Users/apple/Desktop/2026/envoy-delivery/0.1.25
 python3 freeze_holdout.py --input candidates.txt --size 12 --id H12-2026-10-28 \
   --out holdout.json --apply-plan EXPERIMENT-PLAN.json
 python3 freeze_holdout.py --check holdout.json --plan EXPERIMENT-PLAN.json  # 期望 holdout ok: ... (12 rows, ...)
@@ -197,7 +197,7 @@ python3 dry_run_experiments.py --check              # 期望 ...; holdout frozen
 ## 9. 把一条结果写回计划（唯一允许的写法）
 
 ```sh
-cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
+cd /Users/apple/Desktop/2026/envoy-delivery/0.1.25
 python3 record_experiment.py --json                       # 先看现在是 35 条 not_run、holdout 状态
 python3 record_experiment.py --id V02 --status passed \
     --evidence "900s budget: 412/600 chunks, gap 188, 214s wall" \

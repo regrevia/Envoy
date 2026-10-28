@@ -1,4 +1,4 @@
-# Windows 交接单：在一台 PowerShell 7 机器上验收 v0.1.24 的 `install.ps1`
+# Windows 交接单：在一台 PowerShell 7 机器上验收 v0.1.25 的 `install.ps1`
 
 这份是给**在 Windows 上干活的 agent** 看的，自包含：不需要仓库、不需要 macOS 那边的东西，
 只要这台机器能上网。目标只有一句：**证明发行版 `install.ps1` 在真实 Windows 上能装出可用
@@ -47,9 +47,9 @@ Start-Transcript -Path "$HOME\envoy-install-$(Get-Date -Format yyyyMMdd-HHmm).lo
 ## 3. 取发行文件并校验（发行物就是交付物，别从 main 拿脚本）
 
 ```powershell
-$dst = "$HOME\envoy-0.1.24"; New-Item -ItemType Directory -Path $dst -Force | Out-Null
+$dst = "$HOME\envoy-0.1.25"; New-Item -ItemType Directory -Path $dst -Force | Out-Null
 Set-Location $dst
-$base = "https://github.com/regrevia/Envoy/releases/download/v0.1.24"
+$base = "https://github.com/regrevia/Envoy/releases/download/v0.1.25"
 foreach ($f in "install.ps1","SHA256SUMS","release-manifest.json") {
   Invoke-WebRequest -Uri "$base/$f" -OutFile $f -UseBasicParsing -TimeoutSec 120
 }
@@ -63,7 +63,7 @@ Get-Content SHA256SUMS
 90239a35ae428229278d6703c619f078412e838ea9ce2a1e7b355ac1591523af
 ```
 
-（`SHA256SUMS` 里那行就是它；`envoy_cli-0.1.24-py3-none-any.whl` 是
+（`SHA256SUMS` 里那行就是它；`envoy_cli-0.1.25-py3-none-any.whl` 是
 `4eaf1aaf5b2d7a1a976b1fdb033cb7cf820f285c6aed44d38294508033fea877`，脚本会自己再核一次。）
 对不上就停，把两行哈希原样带回来。
 
@@ -89,13 +89,13 @@ Remove-Item Env:\ENVOY_MANIFEST_URL
 Claude Code / Codex 插件（那是 I11/I12，不在本次范围）。
 
 ```powershell
-Set-Location "$HOME\envoy-0.1.24"
+Set-Location "$HOME\envoy-0.1.25"
 $t0 = Get-Date
 powershell -ExecutionPolicy Bypass -File .\install.ps1 skill; "EXIT=$LASTEXITCODE"
 "SECONDS=" + [int]((Get-Date) - $t0).TotalSeconds
 ```
 
-预期输出顺序（措辞可有差异，语义要对）：`envoy install: runtime 0.1.24 -> ...`、venv 与
+预期输出顺序（措辞可有差异，语义要对）：`envoy install: runtime 0.1.25 -> ...`、venv 与
 pip 安装、`pin ... -> C:\Users\<you>\.envoy\runtime-path`、`shim ...\envoy.cmd -> ...`、
 `added ...\.envoy\bin to the user PATH (open a new terminal)`、
 `browser runtime (one-time, about 1-2 minutes)`。浏览器下载失败**不算安装失败**（脚本降级为
@@ -118,11 +118,11 @@ envoy doctor --json | Out-String
 | # | 断言 | 期望 |
 |---|------|------|
 | A1 | `where.exe envoy` | 第一行是 `C:\Users\<you>\.envoy\bin\envoy.cmd` |
-| A2 | `envoy --version` | `envoy 0.1.24` |
+| A2 | `envoy --version` | `envoy 0.1.25` |
 | A3 | pin 文件 | 一行绝对路径，指向存在的 `...\envoy-dsh\runtime\Scripts\envoy.exe` |
 | A4 | shim 内容 | 两行：`@echo off` + `"<runtime>\envoy.exe" %*` |
 | A5 | 用户 PATH | 恰好含 `...\.envoy\bin`，且**没有**重复项、没有旧的 0.1.23 runtime 目录 |
-| A6 | `envoy doctor --json` | 合法 JSON；`ok`/`ready` 为 true，`version` 为 `0.1.24`，浏览器项为 ready（若 §5 降级则记为 `browser_not_ready_with_reason`） |
+| A6 | `envoy doctor --json` | 合法 JSON；`ok`/`ready` 为 true，`version` 为 `0.1.25`，浏览器项为 ready（若 §5 降级则记为 `browser_not_ready_with_reason`） |
 | A7 | 插件/宿主未被改写 | 机器上没有多出来的 claude/codex 插件目录（本步只装 skill） |
 
 `envoy doctor --json` 的完整输出要原样贴回（这是唯一能判浏览器与运行时是否真就绪的证据）。
@@ -130,11 +130,11 @@ envoy doctor --json | Out-String
 ## 7. 幂等重跑
 
 ```powershell
-Set-Location "$HOME\envoy-0.1.24"
+Set-Location "$HOME\envoy-0.1.25"
 powershell -ExecutionPolicy Bypass -File .\install.ps1 skill; "EXIT=$LASTEXITCODE"
 ```
 
-断言：输出含 `using envoy 0.1.24 from ...\Scripts\envoy.exe (pinned)`，
+断言：输出含 `using envoy 0.1.25 from ...\Scripts\envoy.exe (pinned)`，
 **不重新下载 wheel、不重建 venv**，pin 内容不变（对比 §6 的 `LastWriteTime`）。
 PATH 不得出现第二条 `.envoy\bin`（A5 复检）。这条同时覆盖 I08 的 Windows 侧半边
 （中断重跑的完整语义只在中途 Ctrl-C 才成立，本次不做，别声称做过）。
@@ -145,12 +145,12 @@ PATH 不得出现第二条 `.envoy\bin`（A5 复检）。这条同时覆盖 I08 
   再跑一次 `install.ps1 skill`，断言 pin/shim 路径没被空格截断；做完删掉这两个环境变量。
 - **S2 跳过浏览器**：`$env:ENVOY_SETUP_BROWSER="0"` 在**全新** `ENVOY_HOME` 下跑，断言出现
   `skipped browser setup`；`envoy doctor` 会报浏览器未就绪——这是预期，不是缺陷。
-- **S3 固定版本**：`$env:ENVOY_VERSION="0.1.24"` 时不请求 manifest 也能装（断网也能进到下载步骤）。
+- **S3 固定版本**：`$env:ENVOY_VERSION="0.1.25"` 时不请求 manifest 也能装（断网也能进到下载步骤）。
 - 探针若污染了用户环境（改了 PATH、动了默认 pin），做完要说明改了什么、怎么恢复的。
 
 ## 9. 带回来的证据（就这一个文件）
 
-把结果写成 UTF-8 JSON，保存到 `$HOME\envoy-0.1.24\windows-evidence.json`，**并在回话里贴全文**：
+把结果写成 UTF-8 JSON，保存到 `$HOME\envoy-0.1.25\windows-evidence.json`，**并在回话里贴全文**：
 
 ```json
 {
