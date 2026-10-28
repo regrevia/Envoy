@@ -1,5 +1,144 @@
 # 更新日志 / Changelog
 
+## 0.1.26 - 2026-10-28
+
+### 中文
+
+- 升级不再涨盘：Playwright 每次升级都下新版本浏览器、从不删旧的（本机实测积压
+  5 份、714.8 MB），`envoy browser setup` 装完现在会删掉被替换掉的旧版本；
+  新增 `envoy browser prune [--dry-run] [--json]` 手动回收，只认
+  `<家族>-<数字>` 目录名，其它内容不动。
+- 安装档位：安装脚本新增 `--profile minimal|standard|full`（`ENVOY_PROFILE`
+  同义），默认 `full` 且是推荐档。`minimal` 只装 runtime（实测 178 MB），
+  `standard` 加 Chromium（实测 683 MB，读抖音/视频页），`full` 再加 Whisper
+  `base`（权重约 140 MB + 依赖）并预取，装完即可离线转写——默认档不再有任何
+  「首次使用才下载」的能力。`ENVOY_SETUP_BROWSER`/`ENVOY_SETUP_MEDIA` 仍可单独
+  覆盖某一步（CI 场景），`ENVOY_ASR_MODEL` 换 `full` 预取的模型；补档只需重跑
+  安装脚本，provision 两步都是幂等的。
+
+### English
+
+- Setup no longer grows the disk: a Playwright upgrade used to leave the previous
+  browser behind forever (5 directories / 714.8 MB measured on this machine);
+  `envoy browser setup` now removes superseded versions and
+  `envoy browser prune [--dry-run] [--json]` reclaims them by hand, touching only
+  `<family>-<number>` directories.
+- Install profiles: `--profile minimal|standard|full` (or `ENVOY_PROFILE`),
+  default and recommended `full`. `minimal` is runtime only (178 MB measured),
+  `standard` adds Chromium (683 MB measured, needed for video pages), `full` also
+  pre-fetches Whisper `base` (about 140 MB of weights plus deps), so the default
+  install downloads nothing on first use. `ENVOY_SETUP_BROWSER` /
+  `ENVOY_SETUP_MEDIA` still override one step (CI), `ENVOY_ASR_MODEL` picks the
+  model `full` fetches, and re-running the installer upgrades a profile in place.
+
+
+- 安装后自检：`envoy doctor` 新增 `runtime` 一行，显示当前运行的 `envoy` 是否就是
+  安装时固定在 `~/.envoy/runtime-path` 的那份，并对未固定 / 固定文件已消失 /
+  PATH 里另有旧 `envoy`（`shadowed`）各给一条修复动作；`doctor --json` 同步给出
+  `runtime.install`。
+- 安装收尾：`install.sh` 与 `install.ps1` 装完打印浏览器状态和安装状态，非 `pinned`
+  时点名 PATH 实际指向哪里；Windows 安装用法并入 `INSTALL.md`。
+- 读取判定稳定：同一个链接是「不是公网地址」还是「域名解析不出来」，现在由
+  一次解析给出结论并在本次读取内复用，不再解析两次——两次之间 DNS 抖一下，
+  报错码就可能从 `source_unavailable` 翻成 `network_error`（或反过来）。
+
+- 安装源可覆盖：`install.sh` 与 `install.ps1` 的四处下载都走 `ENVOY_RELEASES_BASE`（清单地址另有
+  `ENVOY_MANIFEST_URL`），镜像/本地目录按 `v<版本>/` 放产物与 `SHA256SUMS` 即可，默认仍是公开路径。
+  `scripts/check_installer_e2e_local.sh` 在 `127.0.0.1` 上真跑一遍「解析版本 → 下载 → 校验摘要 → 解包」，
+  再确认 `ENVOY_DRY_RUN=1` 只打印计划不落盘、篡改摘要会中止安装。
+- 装前校验管到实验计划：`verify_delivery.py` 多查一项 `EXPERIMENT-PLAN.json` —— schema、条目 id
+  唯一、状态合法，`passed`/`failed` 必须带 `evidence` 与 `observed_at`，`not_run` 不许夹带证据；
+  预览包之前根本没带这份计划，已补上。
+- 预演不落盘：`ENVOY_DRY_RUN=1` 原来会在 `ensure_runtime` 里把选中的 `envoy` 真的 pin 到
+  `~/.envoy/runtime-path`；预演现在连这一步都只打印 `  + pin …`，`mcp` 分支也不再写模板文件。
+- 安装可换仓库：`install.sh` 与 `install.ps1` 的清单地址、发布根、插件市场地址都由 `ENVOY_REPO` 推出
+  （默认 `regrevia/Envoy`），fork 或内网镜像仓库不必再改脚本；README 中/英同步说明。
+- 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
+  连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
+  实测不可达页面（reuters.com）单行从 `77.4 s` 降到 `25.9 s`，结论与错误码不变。
+- 适配：`podcasts.apple.com`、`open.spotify.com`、`docs.anthropic.com`、
+  `infoq.cn`、`engadget.com`、`php.net`、`theverge.com` 提升为 supported
+  （均以实测出正文为前提）。非 http(s) scheme（`mailto:` / `ftp:` / `file:` 等）
+  与 `x.com` / `twitter.com`、微信首页改判 unsupported：宿主要求「别调用工具、
+  走原生能力」，不再白付一次读。
+- 语料：第 19 轮补 3 行、第 20 轮补 5 行、第 21 轮补 5 行，声明 138 行；最近一轮
+  实跑 123 行、可用 `99 = 80.5%`（同组成 118 行子集 `94 = 79.7%`，可达口径
+  `99/107 = 92.5%`，两轮稳定口径 `92/118 = 78.0%`）。
+- 度量修正：`classify()` 原先用 200 字硬下限判可用，整页交付但只有 170 字的
+  `example.com` 被误记为 empty；现在「交付 ≥40 字且整页不超过交付量 2 倍」按短页
+  计可用，`total_chars >= 1000` 的截断分支保留。
+- Skill：长视频 / 播客要在同一次调用里显式抬高 `budget.max_work_seconds`
+  （短集 300、长录音到 900），而不是超时后重读一遍。
+- 实验记录：`record_experiment.py` 把一条实测结果连同证据行和观测数字写进
+  `EXPERIMENT-PLAN.json`；没有证据的「通过 / 失败」写不进去，跑过的条目也不会
+  被悄悄改回 `not_run`，计划级状态跟着条目重算。不带 `--write` 只干跑。
+- 安装包校验：`install.sh` 下载后核对 `SHA256SUMS`，取不到清单或机器上没有
+  `shasum`/`sha256sum` 时各打一行说明；清单拿到了却没有该文件条目就直接失败，
+  不再像以前那样静默跳过；`install.ps1` 侧也改成同样的两条分支，两平台对
+  「不可达」与「缺条目」给一样的反应。
+- 安装源可覆盖：`ENVOY_RELEASES_BASE` 与 `ENVOY_MANIFEST_URL` 让镜像或本地目录
+  按同样布局（`v<版本>/` + 清单）提供安装包，默认值仍是公开路径，`install.sh` 与 `install.ps1` 的
+  四处下载全部走同一个根（Windows 侧同名变量）。`scripts/check_installer_e2e_local.sh` 在 127.0.0.1 上
+  起一个镜像，完整跑「解析版本 → 下载 → 校验摘要 → 解包」，并把摘要改错验证它会
+  真的停下：不进公网、不装运行时 wheel。
+
+
+- Post-install self-check: `envoy doctor` gains a `runtime` line that says whether
+  the running `envoy` is the one pinned at `~/.envoy/runtime-path`, with one
+  repair action for unpinned, stale-pin, and shadowed-by-PATH installs;
+  `doctor --json` exposes the same data under `runtime.install`.
+- Installer epilogue: `install.sh` and `install.ps1` now print the browser state
+  and the install state, naming where `PATH` actually points when it is not the
+  pinned runtime; the Windows usage lives in `INSTALL.md`.
+- Stable URL verdict: whether a link is a non-public address or a host name that
+  does not resolve is now decided by one lookup and reused for the whole read
+  attempt. Two lookups moments apart could disagree and flip the reported code
+  between `source_unavailable` and `network_error`.
+
+- Fast fail: connect-level failures (refused, connect timeout, unusable proxy) are
+  no longer retried three times on the same exit; each retry paid a fresh connect
+  timeout. Planned exits are still tried in order. Measured on an unreachable page
+  (reuters.com): one row drops from `77.4 s` to `25.9 s` with the same verdict.
+- Support: `podcasts.apple.com`, `open.spotify.com`, `docs.anthropic.com`,
+  `infoq.cn`, `engadget.com`, `php.net` and `theverge.com` become supported
+  (each one measured delivering text first). Non-HTTP(S) schemes (`mailto:`,
+  `ftp:`, `file:`, ...), `x.com` / `twitter.com` and the WeChat home page now
+  report unsupported, so the host skips the tool call and uses its native
+  reader instead of paying for a read that cannot succeed.
+- Corpus: 3 rows added in round 19, 5 in round 20 and 5 in round 21; 138 declared.
+  The latest round measured 123 rows, usable `99 = 80.5%` (same-composition
+  118-row subset `94 = 79.7%`, reachable denominator `99/107 = 92.5%`, and a
+  two-round stable measure of `92/118 = 78.0%`).
+- Measurement fix: `classify()` used a flat 200-character floor, so
+  `example.com` (whole page delivered, 170 characters) was recorded as empty;
+  a page delivered in full with at least 40 characters now counts as usable,
+  while the `total_chars >= 1000` truncation branch stays.
+- Skill: a long video or podcast should raise `budget.max_work_seconds` in the
+  same call (300 for a short episode, up to 900 for a long recording) instead of
+  re-reading after the budget timeout.
+
+- Experiment record: `record_experiment.py` writes one measured result, its
+  evidence line and the observed numbers into `EXPERIMENT-PLAN.json`. A
+  pass or fail without evidence is refused, an entry that already ran cannot
+  be quietly turned back into `not_run`, and the plan-level status is
+  recomputed from the entries. Without `--write` it only prints the change.
+
+- Installer checksum: `install.sh` verifies `SHA256SUMS` after downloading and now
+  says so when the list is unreachable or no `shasum`/`sha256sum` exists; a
+  reachable list that lacks the file's entry fails instead of being skipped, so
+  POSIX and Windows now react the same way to an unreachable list and to a
+  list missing the entry.
+- The release root is overridable: `ENVOY_RELEASES_BASE` and
+  `ENVOY_MANIFEST_URL` let a mirror or a local directory serve the same
+  layout, defaulting to the public paths. `scripts/check_installer_e2e_local.sh`
+  serves the release over 127.0.0.1 and runs version resolution, download,
+  checksum verification and unpacking end to end, plus a tampered digest case.
+
+### 文档
+
+- `INSTALL.md` 新增「三档安装」：三档各自装什么、实测体积、`--profile`/`ENVOY_PROFILE` 用法、覆盖变量与补档方式；「装完就是完整的」原段落并入该表，`envoy browser prune` 的回收口径保留。
+- README（中/英）安装段补充默认 `full` 档与 `minimal`/`standard` 的取舍及体积，装后自检改为 `envoy doctor --json`（`browser.ready` 与 `asr_model_available`）加 `envoy browser setup` / `envoy browser prune`。
+
 ## 0.1.25 - 2026-10-28
 
 ### 中文
@@ -96,147 +235,6 @@
   bundle (`envoy-dsh-<version>.tgz`) and both installers, and the release
   workflow publishes the npm bundle (skipping with a note when `NPM_TOKEN` is
   absent).
-
-## 0.1.26 - 2026-10-28
-
-### 中文
-
-- 升级不再涨盘：Playwright 每次升级都下新版本浏览器、从不删旧的（本机实测积压
-  5 份、714.8 MB），`envoy browser setup` 装完现在会删掉被替换掉的旧版本；
-  新增 `envoy browser prune [--dry-run] [--json]` 手动回收，只认
-  `<家族>-<数字>` 目录名，其它内容不动。
-- 安装档位：安装脚本新增 `--profile minimal|standard|full`（`ENVOY_PROFILE`
-  同义），默认 `full` 且是推荐档。`minimal` 只装 runtime（实测 178 MB），
-  `standard` 加 Chromium（实测 683 MB，读抖音/视频页），`full` 再加 Whisper
-  `base`（权重约 140 MB + 依赖）并预取，装完即可离线转写——默认档不再有任何
-  「首次使用才下载」的能力。`ENVOY_SETUP_BROWSER`/`ENVOY_SETUP_MEDIA` 仍可单独
-  覆盖某一步（CI 场景），`ENVOY_ASR_MODEL` 换 `full` 预取的模型；补档只需重跑
-  安装脚本，provision 两步都是幂等的。
-
-### English
-
-- Setup no longer grows the disk: a Playwright upgrade used to leave the previous
-  browser behind forever (5 directories / 714.8 MB measured on this machine);
-  `envoy browser setup` now removes superseded versions and
-  `envoy browser prune [--dry-run] [--json]` reclaims them by hand, touching only
-  `<family>-<number>` directories.
-- Install profiles: `--profile minimal|standard|full` (or `ENVOY_PROFILE`),
-  default and recommended `full`. `minimal` is runtime only (178 MB measured),
-  `standard` adds Chromium (683 MB measured, needed for video pages), `full` also
-  pre-fetches Whisper `base` (about 140 MB of weights plus deps), so the default
-  install downloads nothing on first use. `ENVOY_SETUP_BROWSER` /
-  `ENVOY_SETUP_MEDIA` still override one step (CI), `ENVOY_ASR_MODEL` picks the
-  model `full` fetches, and re-running the installer upgrades a profile in place.
-
-### 文档
-
-- `INSTALL.md` 新增「三档安装」：三档各自装什么、实测体积、`--profile`/`ENVOY_PROFILE` 用法、覆盖变量与补档方式；「装完就是完整的」原段落并入该表，`envoy browser prune` 的回收口径保留。
-- README（中/英）安装段补充默认 `full` 档与 `minimal`/`standard` 的取舍及体积，装后自检改为 `envoy doctor --json`（`browser.ready` 与 `asr_model_available`）加 `envoy browser setup` / `envoy browser prune`。
-
-### 中文
-
-- 安装后自检：`envoy doctor` 新增 `runtime` 一行，显示当前运行的 `envoy` 是否就是
-  安装时固定在 `~/.envoy/runtime-path` 的那份，并对未固定 / 固定文件已消失 /
-  PATH 里另有旧 `envoy`（`shadowed`）各给一条修复动作；`doctor --json` 同步给出
-  `runtime.install`。
-- 安装收尾：`install.sh` 与 `install.ps1` 装完打印浏览器状态和安装状态，非 `pinned`
-  时点名 PATH 实际指向哪里；Windows 安装用法并入 `INSTALL.md`。
-- 读取判定稳定：同一个链接是「不是公网地址」还是「域名解析不出来」，现在由
-  一次解析给出结论并在本次读取内复用，不再解析两次——两次之间 DNS 抖一下，
-  报错码就可能从 `source_unavailable` 翻成 `network_error`（或反过来）。
-
-- 安装源可覆盖：`install.sh` 与 `install.ps1` 的四处下载都走 `ENVOY_RELEASES_BASE`（清单地址另有
-  `ENVOY_MANIFEST_URL`），镜像/本地目录按 `v<版本>/` 放产物与 `SHA256SUMS` 即可，默认仍是公开路径。
-  `scripts/check_installer_e2e_local.sh` 在 `127.0.0.1` 上真跑一遍「解析版本 → 下载 → 校验摘要 → 解包」，
-  再确认 `ENVOY_DRY_RUN=1` 只打印计划不落盘、篡改摘要会中止安装。
-- 装前校验管到实验计划：`verify_delivery.py` 多查一项 `EXPERIMENT-PLAN.json` —— schema、条目 id
-  唯一、状态合法，`passed`/`failed` 必须带 `evidence` 与 `observed_at`，`not_run` 不许夹带证据；
-  预览包之前根本没带这份计划，已补上。
-- 预演不落盘：`ENVOY_DRY_RUN=1` 原来会在 `ensure_runtime` 里把选中的 `envoy` 真的 pin 到
-  `~/.envoy/runtime-path`；预演现在连这一步都只打印 `  + pin …`，`mcp` 分支也不再写模板文件。
-- 安装可换仓库：`install.sh` 与 `install.ps1` 的清单地址、发布根、插件市场地址都由 `ENVOY_REPO` 推出
-  （默认 `regrevia/Envoy`），fork 或内网镜像仓库不必再改脚本；README 中/英同步说明。
-- 快速失败：连接级失败（拒绝连接、连接超时、代理不可用）不再在同一个出口上
-  连试三次——每次都要重新付一次连接超时。出口仍按 `proxy_plan()` 逐个尝试。
-  实测不可达页面（reuters.com）单行从 `77.4 s` 降到 `25.9 s`，结论与错误码不变。
-- 适配：`podcasts.apple.com`、`open.spotify.com`、`docs.anthropic.com`、
-  `infoq.cn`、`engadget.com`、`php.net`、`theverge.com` 提升为 supported
-  （均以实测出正文为前提）。非 http(s) scheme（`mailto:` / `ftp:` / `file:` 等）
-  与 `x.com` / `twitter.com`、微信首页改判 unsupported：宿主要求「别调用工具、
-  走原生能力」，不再白付一次读。
-- 语料：第 19 轮补 3 行、第 20 轮补 5 行、第 21 轮补 5 行，声明 138 行；最近一轮
-  实跑 123 行、可用 `99 = 80.5%`（同组成 118 行子集 `94 = 79.7%`，可达口径
-  `99/107 = 92.5%`，两轮稳定口径 `92/118 = 78.0%`）。
-- 度量修正：`classify()` 原先用 200 字硬下限判可用，整页交付但只有 170 字的
-  `example.com` 被误记为 empty；现在「交付 ≥40 字且整页不超过交付量 2 倍」按短页
-  计可用，`total_chars >= 1000` 的截断分支保留。
-- Skill：长视频 / 播客要在同一次调用里显式抬高 `budget.max_work_seconds`
-  （短集 300、长录音到 900），而不是超时后重读一遍。
-- 实验记录：`record_experiment.py` 把一条实测结果连同证据行和观测数字写进
-  `EXPERIMENT-PLAN.json`；没有证据的「通过 / 失败」写不进去，跑过的条目也不会
-  被悄悄改回 `not_run`，计划级状态跟着条目重算。不带 `--write` 只干跑。
-- 安装包校验：`install.sh` 下载后核对 `SHA256SUMS`，取不到清单或机器上没有
-  `shasum`/`sha256sum` 时各打一行说明；清单拿到了却没有该文件条目就直接失败，
-  不再像以前那样静默跳过；`install.ps1` 侧也改成同样的两条分支，两平台对
-  「不可达」与「缺条目」给一样的反应。
-- 安装源可覆盖：`ENVOY_RELEASES_BASE` 与 `ENVOY_MANIFEST_URL` 让镜像或本地目录
-  按同样布局（`v<版本>/` + 清单）提供安装包，默认值仍是公开路径，`install.sh` 与 `install.ps1` 的
-  四处下载全部走同一个根（Windows 侧同名变量）。`scripts/check_installer_e2e_local.sh` 在 127.0.0.1 上
-  起一个镜像，完整跑「解析版本 → 下载 → 校验摘要 → 解包」，并把摘要改错验证它会
-  真的停下：不进公网、不装运行时 wheel。
-
-### English
-
-- Post-install self-check: `envoy doctor` gains a `runtime` line that says whether
-  the running `envoy` is the one pinned at `~/.envoy/runtime-path`, with one
-  repair action for unpinned, stale-pin, and shadowed-by-PATH installs;
-  `doctor --json` exposes the same data under `runtime.install`.
-- Installer epilogue: `install.sh` and `install.ps1` now print the browser state
-  and the install state, naming where `PATH` actually points when it is not the
-  pinned runtime; the Windows usage lives in `INSTALL.md`.
-- Stable URL verdict: whether a link is a non-public address or a host name that
-  does not resolve is now decided by one lookup and reused for the whole read
-  attempt. Two lookups moments apart could disagree and flip the reported code
-  between `source_unavailable` and `network_error`.
-
-- Fast fail: connect-level failures (refused, connect timeout, unusable proxy) are
-  no longer retried three times on the same exit; each retry paid a fresh connect
-  timeout. Planned exits are still tried in order. Measured on an unreachable page
-  (reuters.com): one row drops from `77.4 s` to `25.9 s` with the same verdict.
-- Support: `podcasts.apple.com`, `open.spotify.com`, `docs.anthropic.com`,
-  `infoq.cn`, `engadget.com`, `php.net` and `theverge.com` become supported
-  (each one measured delivering text first). Non-HTTP(S) schemes (`mailto:`,
-  `ftp:`, `file:`, ...), `x.com` / `twitter.com` and the WeChat home page now
-  report unsupported, so the host skips the tool call and uses its native
-  reader instead of paying for a read that cannot succeed.
-- Corpus: 3 rows added in round 19, 5 in round 20 and 5 in round 21; 138 declared.
-  The latest round measured 123 rows, usable `99 = 80.5%` (same-composition
-  118-row subset `94 = 79.7%`, reachable denominator `99/107 = 92.5%`, and a
-  two-round stable measure of `92/118 = 78.0%`).
-- Measurement fix: `classify()` used a flat 200-character floor, so
-  `example.com` (whole page delivered, 170 characters) was recorded as empty;
-  a page delivered in full with at least 40 characters now counts as usable,
-  while the `total_chars >= 1000` truncation branch stays.
-- Skill: a long video or podcast should raise `budget.max_work_seconds` in the
-  same call (300 for a short episode, up to 900 for a long recording) instead of
-  re-reading after the budget timeout.
-
-- Experiment record: `record_experiment.py` writes one measured result, its
-  evidence line and the observed numbers into `EXPERIMENT-PLAN.json`. A
-  pass or fail without evidence is refused, an entry that already ran cannot
-  be quietly turned back into `not_run`, and the plan-level status is
-  recomputed from the entries. Without `--write` it only prints the change.
-
-- Installer checksum: `install.sh` verifies `SHA256SUMS` after downloading and now
-  says so when the list is unreachable or no `shasum`/`sha256sum` exists; a
-  reachable list that lacks the file's entry fails instead of being skipped, so
-  POSIX and Windows now react the same way to an unreachable list and to a
-  list missing the entry.
-- The release root is overridable: `ENVOY_RELEASES_BASE` and
-  `ENVOY_MANIFEST_URL` let a mirror or a local directory serve the same
-  layout, defaulting to the public paths. `scripts/check_installer_e2e_local.sh`
-  serves the release over 127.0.0.1 and runs version resolution, download,
-  checksum verification and unpacking end to end, plus a tampered digest case.
 
 ## 0.1.21 - 2026-10-27
 
