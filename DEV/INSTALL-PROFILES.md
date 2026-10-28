@@ -87,7 +87,8 @@ uv run --offline --python 3.11 --with pytest pytest -q tests/test_install_script
 
 ## 七、Windows 真机验收（2026-10-28）
 
-三档都在真 Windows 上验过，证据是 Actions 日志，不是推断：
+三档的装法都在真 Windows 上验过（`full` 的浏览器那一半由 `standard` 覆盖，转写那一半由默认那轮覆盖），
+证据是 Actions 日志，不是推断：
 
 | 跑的档 | 运行 | 结果 |
 | --- | --- | --- |
