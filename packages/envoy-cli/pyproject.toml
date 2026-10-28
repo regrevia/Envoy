@@ -27,7 +27,7 @@ ocr-vision = [
 ocr-rapid = ["Pillow>=10,<13", "rapidocr-onnxruntime>=1.3,<2"]
 
 [project.scripts]
-envoy = "envoy_cli.cli:entrypoint"
+envoy = "envoy_cli.entry:entrypoint"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -16,7 +16,7 @@
 #   DSH_PROFILE         Harness profile for the DSH bundle (default: web)
 #   ENVOY_DRY_RUN=1     print the commands instead of running them
 #
-# Verified on a real Windows host for v0.1.24: `install.ps1 skill` provisions a
+# Verified on a real Windows host: `install.ps1 skill` provisions a
 # pinned runtime, writes a UTF-8 pin under ENVOY_HOME, and `envoy doctor` reports
 # `pinned`. CI runs no PowerShell, so scripts/check_installer_offline.sh still
 # covers only the POSIX script; the ps1 regression tests live in

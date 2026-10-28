@@ -345,7 +345,69 @@ def _browser_proxy_server() -> str | None:
     return explicit_proxy() or detected_proxy()
 
 
+def _playwright_cache_dir() -> Path | None:
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if override and override != "0":
+        return Path(override).expanduser()
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA")
+        if not base:
+            return None
+        return Path(base) / "ms-playwright"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for entry in path.rglob("*"):
+        try:
+            if entry.is_file() and not entry.is_symlink():
+                total += entry.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def browser_disk_usage() -> dict:
+    """Report how much disk the browser runtime occupies, per download.
+
+    The browser is by far the largest thing Envoy can put on a machine (683 MB
+    on the measured Windows host: 412 MB headed Chromium plus a 267 MB headless
+    shell), and an installer user has no other way to see it. Read from the same
+    cache Playwright itself uses, without importing Playwright.
+    """
+    root = _playwright_cache_dir()
+    if root is None:
+        return {"path": None, "total_mb": 0.0, "total_bytes": 0, "components": {}}
+    components: dict[str, float] = {}
+    total = 0
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        try:
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+        except OSError:
+            continue
+        size = _dir_size(entry)
+        total += size
+        components[entry.name] = round(size / 1_048_576, 1)
+    return {
+        "path": str(root),
+        # Exact bytes as well: the MB figure is rounded for display, so a test (or
+        # a caller comparing two hosts) needs the number that was actually summed.
+        "total_bytes": total,
+        "total_mb": round(total / 1_048_576, 1),
+        "components": components,
+    }
+
+
 def browser_runtime_status() -> dict:
+    disk = browser_disk_usage()
     try:
         import playwright  # noqa: F401
     except ImportError:
@@ -354,6 +416,7 @@ def browser_runtime_status() -> dict:
             "browser": "chromium",
             "ready": False,
             "profile": str(browser_profile_dir(create=False)),
+            "disk": disk,
         }
     try:
         from playwright.sync_api import sync_playwright
@@ -369,6 +432,7 @@ def browser_runtime_status() -> dict:
         "ready": ready,
         "proxy_configured": _browser_proxy_server() is not None,
         "profile": str(browser_profile_dir(create=False)),
+        "disk": disk,
     }
 
 

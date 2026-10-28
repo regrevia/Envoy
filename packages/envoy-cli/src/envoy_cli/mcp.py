@@ -801,18 +801,68 @@ def _block_line(index: int, total: int, block: dict) -> str:
     return f"[{index}/{total}] {block_id} · {kind}{_locator_note(block)}"
 
 
-def _fit_content(lines: list[str], budget: int) -> list[str]:
+# A body can arrive as one enormous line (minified JSON, a single-line CSV).
+# Wrapping it keeps the beginning inside the budget instead of spending the
+# whole allowance on a header it cannot show.
+_FIT_LINE_WIDTH = 240
+# Room kept for the closing notice, so the caller learns what was cut instead
+# of receiving a response that just stops.
+_FIT_NOTICE_ROOM = 400
+
+
+def _wrap_line(line: str) -> list[str]:
+    if len(line) <= _FIT_LINE_WIDTH:
+        return [line]
+    return [
+        line[start:start + _FIT_LINE_WIDTH]
+        for start in range(0, len(line), _FIT_LINE_WIDTH)
+    ]
+
+
+def _fit_content(lines: list, budget: int, *, continuation=None) -> list[str]:
+    """Return the lines that fit ``budget``, saying honestly what was cut.
+
+    ``lines`` entries are either text, or ``(text, weight)`` where ``weight`` is
+    how many characters of the delivered body that line carries. ``continuation``
+    receives the number of body characters already shown and returns the next
+    step, which is emitted inside the closing notice: a response long enough to
+    be truncated must still tell the caller how to read the rest.
+    """
+    budget = max(int(budget), 0)
+    notice_room = min(_FIT_NOTICE_ROOM, max(budget // 4, 120))
+    limit = max(budget - notice_room, 1)
+    total = 0
+    body_total = 0
+    for entry in lines:
+        text, weight = entry if isinstance(entry, tuple) else (str(entry), 0)
+        total += len(text) + 1
+        body_total += weight
     out: list[str] = []
     used = 0
-    for line in lines:
-        size = len(line) + 1
-        if used + size > budget:
-            if not out:
-                out.append(line[:budget] + "…")
-            out.append(f"… content truncated at {budget} characters")
-            return out
-        out.append(line)
-        used += size
+    shown = 0
+    body_shown = 0
+    for entry in lines:
+        text, weight = entry if isinstance(entry, tuple) else (str(entry), 0)
+        segments = _wrap_line(str(text))
+        for segment in segments:
+            size = len(segment) + 1
+            if used + size > limit:
+                matter = (
+                    f"showing {body_shown} of {body_total} characters of this material"
+                    if body_total
+                    else f"showing {shown} of {total} characters"
+                )
+                notice = f"… output truncated: {matter}"
+                if callable(continuation):
+                    hint = str(continuation(body_shown)).strip()
+                    if hint:
+                        notice += f". {hint}"
+                out.append(notice)
+                return out
+            out.append(segment)
+            used += size
+            shown += size
+            body_shown += weight if len(segment) == len(text) else len(segment)
     return out
 
 
@@ -919,6 +969,25 @@ def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: 
                 lines.append(f"delivered ranges: {rendered}")
             if details.get("text_length"):
                 lines.append(f"material length: {details['text_length']} chars")
+    expired = any(
+        str(error.get("code")) == "expired_resource" for error in errors[:2]
+    )
+    if expired:
+        # The material this call names is gone. Naming idempotency keys or
+        # operation ids here would be advice the caller cannot follow: only a
+        # fresh read of the source brings the evidence back.
+        lines.append("")
+        lines.append(
+            "next: envoy_read with refresh=true for the same source URL; the "
+            "material named above expired or was evicted, so envoy_expand and "
+            "envoy_replay cannot read it"
+        )
+        action = _payload_needs_user_action(payload)
+        if action:
+            lines.append(f"Requires user action: {_action_text(action)}")
+        for note in _payload_unresolved(payload)[:4]:
+            lines.append(f"unresolved: {note}")
+        return lines
     action = _payload_needs_user_action(payload)
     if action:
         lines.append(f"Requires user action: {_action_text(action)}")
@@ -974,6 +1043,38 @@ def _empty_lines(payload: dict) -> list[str]:
     return ["no content returned for this request"]
 
 
+def _material_retained(payload: dict) -> bool:
+    """Whether the material this payload names is still on disk and unexpired.
+
+    A ``next: envoy_expand`` line must be true when it is printed: telling a
+    caller to expand a material that is already gone costs it a round trip that
+    can only fail.
+    """
+    material_id = str(payload.get("material_id") or "").strip()
+    revision = str(payload.get("source_revision") or "").strip()
+    if not material_id or not revision:
+        return False
+    if not payload.get("served_from_retained_material"):
+        # This payload was produced by the call that is describing it, so the reader
+        # wrote the material moments ago. Only a cache serve can name a dead one.
+        return True
+    session_id = payload.get("session_id")
+    try:
+        from .reader import material_is_retained
+    except Exception:  # pragma: no cover - import cycle or partial install
+        return True
+    try:
+        return bool(
+            material_is_retained(
+                material_id,
+                revision,
+                str(session_id) if session_id else None,
+            )
+        )
+    except Exception:  # pragma: no cover - unknown state is not a lie worth making
+        return True
+
+
 def _material_content_text(payload: dict, tool: str, request=None) -> str:
     result = str(payload.get("result") or "unknown")
     blocks = [block for block in payload.get("blocks") or [] if isinstance(block, dict)]
@@ -1007,7 +1108,7 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
         lines.append("")
         lines.append(_block_line(index, len(blocks), block))
         text = _block_text(block)
-        lines.append(text if text else "(no text)")
+        lines.append((text, len(text)) if text else "(no text)")
 
     tail: list[str] = []
     for note in _payload_unresolved(payload)[:4]:
@@ -1023,17 +1124,35 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
     if resources:
         ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
         tail.append(f"resources: {ids}")
+    retained = _material_retained(payload) if material_id else False
     if material_id:
         delivered = sum(len(_block_text(block)) for block in blocks)
-        tail.append(
-            f"next: envoy_expand material_id={material_id} offset={delivered} "
-            f"max_chars={budget} (or envoy_search material_id=… query=…); "
-            "do not re-read the URL"
-        )
+        if retained:
+            tail.append(
+                f"next: envoy_expand material_id={material_id} offset={delivered} "
+                f"max_chars={budget} (or envoy_search material_id=… query=…); "
+                "do not re-read the URL"
+            )
+        else:
+            tail.append(
+                "next: envoy_read with refresh=true for the same URL; this result "
+                "was not retained, so envoy_expand has no material to read"
+            )
     if tail:
         lines.append("")
         lines.extend(tail)
-    return "\n".join(_fit_content(lines, budget))
+
+    def continuation(shown: int) -> str:
+        if not material_id:
+            return ""
+        if retained:
+            return (
+                f"next: envoy_expand material_id={material_id} offset={shown} "
+                f"max_chars={budget} to read the rest"
+            )
+        return "next: envoy_read with refresh=true for the same URL to read it again"
+
+    return "\n".join(_fit_content(lines, budget, continuation=continuation))
 
 
 def _discover_content_text(payload: dict) -> str:
@@ -1348,6 +1467,9 @@ def _retained_candidate(arguments: dict, compact: bool | None = None) -> dict | 
     stored = _retained_read(arguments)
     if stored is None or not _retained_serves(stored, arguments, compact):
         return None
+    # Serving it is still right even if its material has since expired: the payload
+    # is the content, and a blocked source may leave no other way to get it. The
+    # text is what must not point at a dead material (see _material_retained).
     return stored
 
 

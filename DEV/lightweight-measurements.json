@@ -1,0 +1,316 @@
+{
+  "generated_at": "2026-10-28T05:43:51+00:00",
+  "repo": "/Users/apple/Desktop/2026/Envoy",
+  "branch_hint": "run from a checkout; numbers describe this worktree",
+  "python": "3.11.15",
+  "python_executable": "/Users/apple/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11",
+  "platform": "Darwin arm64",
+  "repeat": 7,
+  "total_budget_seconds": 115.0,
+  "truncated": false,
+  "cases": [
+    {
+      "samples_ms": [
+        151.35,
+        109.43,
+        111.18,
+        108.65,
+        103.92,
+        109.07,
+        106.62
+      ],
+      "median_ms": 109.07,
+      "min_ms": 103.92,
+      "max_ms": 151.35,
+      "returncodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "all_succeeded": true,
+      "key": "version",
+      "label": "envoy --version",
+      "command": [
+        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "-c",
+        "from envoy_cli.cli import entrypoint; entrypoint()",
+        "--version"
+      ]
+    },
+    {
+      "samples_ms": [
+        584.76,
+        394.91,
+        394.81,
+        389.76,
+        382.48,
+        389.33,
+        414.55
+      ],
+      "median_ms": 394.81,
+      "min_ms": 382.48,
+      "max_ms": 584.76,
+      "returncodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "all_succeeded": true,
+      "key": "doctor_json",
+      "label": "envoy doctor --json",
+      "command": [
+        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "-c",
+        "from envoy_cli.cli import entrypoint; entrypoint()",
+        "doctor",
+        "--json"
+      ]
+    },
+    {
+      "samples_ms": [
+        106.82,
+        106.55,
+        109.53,
+        107.87,
+        105.97,
+        108.93,
+        106.21
+      ],
+      "median_ms": 106.82,
+      "min_ms": 105.97,
+      "max_ms": 109.53,
+      "returncodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "all_succeeded": true,
+      "key": "import_cli",
+      "label": "python -c \"import envoy_cli.cli\"",
+      "command": [
+        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "-c",
+        "import envoy_cli.cli"
+      ]
+    },
+    {
+      "samples_ms": [
+        110.13,
+        115.36,
+        114.47,
+        112.29,
+        109.83,
+        107.76,
+        106.94
+      ],
+      "median_ms": 110.13,
+      "min_ms": 106.94,
+      "max_ms": 115.36,
+      "returncodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "all_succeeded": true,
+      "key": "importtime_cli",
+      "label": "python -X importtime -c \"import envoy_cli.cli\"",
+      "command": [
+        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "-X",
+        "importtime",
+        "-c",
+        "import envoy_cli.cli"
+      ]
+    }
+  ],
+  "importtime": {
+    "runs_parsed": 7,
+    "grouping": "exact importtime module name, median cumulative µs across runs",
+    "top_modules": [
+      {
+        "module": "envoy_cli.cli",
+        "cumulative_us": 84074,
+        "cumulative_ms": 84.1,
+        "runs": 7
+      },
+      {
+        "module": "envoy_core.schemas.read_v1",
+        "cumulative_us": 58630,
+        "cumulative_ms": 58.6,
+        "runs": 7
+      },
+      {
+        "module": "envoy_core.schemas",
+        "cumulative_us": 58625,
+        "cumulative_ms": 58.6,
+        "runs": 7
+      },
+      {
+        "module": "pydantic",
+        "cumulative_us": 13800,
+        "cumulative_ms": 13.8,
+        "runs": 7
+      },
+      {
+        "module": "pydantic._migration",
+        "cumulative_us": 10352,
+        "cumulative_ms": 10.4,
+        "runs": 7
+      },
+      {
+        "module": "pydantic.warnings",
+        "cumulative_us": 10156,
+        "cumulative_ms": 10.2,
+        "runs": 7
+      },
+      {
+        "module": "pydantic.version",
+        "cumulative_us": 9968,
+        "cumulative_ms": 10.0,
+        "runs": 7
+      },
+      {
+        "module": "pydantic_core",
+        "cumulative_us": 9888,
+        "cumulative_ms": 9.9,
+        "runs": 7
+      },
+      {
+        "module": "pydantic.plugin._loader",
+        "cumulative_us": 7791,
+        "cumulative_ms": 7.8,
+        "runs": 7
+      },
+      {
+        "module": "importlib.metadata",
+        "cumulative_us": 7649,
+        "cumulative_ms": 7.6,
+        "runs": 7
+      },
+      {
+        "module": "pydantic._internal._model_construction",
+        "cumulative_us": 5429,
+        "cumulative_ms": 5.4,
+        "runs": 7
+      },
+      {
+        "module": "pydantic._internal._generate_schema",
+        "cumulative_us": 5096,
+        "cumulative_ms": 5.1,
+        "runs": 7
+      },
+      {
+        "module": "envoy_cli.browser",
+        "cumulative_us": 5056,
+        "cumulative_ms": 5.1,
+        "runs": 7
+      },
+      {
+        "module": "pydantic_core.core_schema",
+        "cumulative_us": 4648,
+        "cumulative_ms": 4.6,
+        "runs": 7
+      },
+      {
+        "module": "pydantic.types",
+        "cumulative_us": 4127,
+        "cumulative_ms": 4.1,
+        "runs": 7
+      }
+    ],
+    "by_top_level": [
+      {
+        "module": "envoy_core",
+        "cumulative_us": 117339,
+        "cumulative_ms": 117.3
+      },
+      {
+        "module": "envoy_cli",
+        "cumulative_us": 114927,
+        "cumulative_ms": 114.9
+      },
+      {
+        "module": "pydantic",
+        "cumulative_us": 83009,
+        "cumulative_ms": 83.0
+      },
+      {
+        "module": "importlib",
+        "cumulative_us": 17746,
+        "cumulative_ms": 17.7
+      },
+      {
+        "module": "pydantic_core",
+        "cumulative_us": 15402,
+        "cumulative_ms": 15.4
+      },
+      {
+        "module": "email",
+        "cumulative_us": 10473,
+        "cumulative_ms": 10.5
+      },
+      {
+        "module": "urllib",
+        "cumulative_us": 5272,
+        "cumulative_ms": 5.3
+      },
+      {
+        "module": "typing_extensions",
+        "cumulative_us": 4113,
+        "cumulative_ms": 4.1
+      },
+      {
+        "module": "concurrent",
+        "cumulative_us": 3819,
+        "cumulative_ms": 3.8
+      },
+      {
+        "module": "multiprocessing",
+        "cumulative_us": 3739,
+        "cumulative_ms": 3.7
+      },
+      {
+        "module": "typing_inspection",
+        "cumulative_us": 3628,
+        "cumulative_ms": 3.6
+      },
+      {
+        "module": "http",
+        "cumulative_us": 3187,
+        "cumulative_ms": 3.2
+      },
+      {
+        "module": "inspect",
+        "cumulative_us": 3079,
+        "cumulative_ms": 3.1
+      },
+      {
+        "module": "html",
+        "cumulative_us": 2926,
+        "cumulative_ms": 2.9
+      },
+      {
+        "module": "re",
+        "cumulative_us": 2891,
+        "cumulative_ms": 2.9
+      }
+    ],
+    "by_top_level_note": "sums every submodule's cumulative time; parents and children overlap, so this block describes import structure, not wall clock"
+  }
+}

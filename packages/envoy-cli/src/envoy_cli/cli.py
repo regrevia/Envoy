@@ -928,8 +928,12 @@ def _doctor_text(runtime: dict) -> str:
         + (f"; missing {', '.join(missing_tools)}" if missing_tools else "")
     )
     browser = runtime.get("browser") or {}
+    footprint = browser.get("disk") or {}
+    total_mb = footprint.get("total_mb") or 0
+    detail = f" ({total_mb:g} MB on disk)" if total_mb else ""
     lines.append(
         f"browser    {'ready' if browser.get('ready') else 'missing: run envoy browser setup'}"
+        f"{detail if browser.get('ready') or total_mb else ''}"
     )
     imported = cookies_status().get("imported") or 0
     lines.append(

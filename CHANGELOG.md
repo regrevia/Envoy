@@ -1,5 +1,43 @@
 # 更新日志 / Changelog
 
+## 未发布 / Unreleased
+
+### 中文
+
+- MCP 正文预算：单行超长 JSON 不再只输出头部——正文按 240 字符硬折行，逐块给出
+  字符数与 `output truncated: showing N of M characters`，续读提示按材料是否还在
+  决定给 `envoy_expand` 还是 `envoy_read refresh=true`。
+- 材料过期不再误导：缓存里仍有的 payload 照常返回给被拦的源，但正文不再提示
+  `envoy_expand` 一个已被回收的 `material_id`（正是它把调用方引到
+  `expired_resource`），改为明确的 `refresh=true` 续读路径。
+- 启动轻量化：`httpx` / `pypdf` / Playwright / feed 解析改为惰性导入，
+  `envoy --version` 走独立快路径，`doctor` 报浏览器磁盘占用；默认安装依然不拉
+  `torch` / `whisper`（`[media]` 之外没有入口），mac 上 `import envoy_cli.cli`
+  从 127.8 ms 降到 106.8 ms、`--version` 从 130.1 ms 降到 109.1 ms。
+- Windows 适配合并：dry-run 不再因「计划内 runtime」报退出码 1、用户 PATH 保持
+  `REG_EXPAND_SZ`、安装脚本 UTF-8 无 BOM 并兼顾 OEM 代码页、uv 分支在临时目录里
+  按 `SHA256SUMS` 校验并保留 wheel 文件名。
+
+### English
+
+- MCP body budget: a single-line oversized JSON block is now hard-wrapped at 240
+  characters and reported as `output truncated: showing N of M characters`
+  instead of arriving as a header with no body; the continuation hint chooses
+  `envoy_expand` or `envoy_read refresh=true` by whether the material survives.
+- Expired material no longer misleads: a cached payload is still served when the
+  source is blocked, but its text stops offering `envoy_expand` for a reclaimed
+  `material_id` (the path that led to `expired_resource`) and names the
+  `refresh=true` re-read instead.
+- Startup lightweighting: lazy `httpx` / `pypdf` / Playwright / feed imports, a
+  dedicated `envoy --version` fast path, browser disk usage in `doctor`; a
+  default install still pulls no `torch` / `whisper` (only the `[media]` extra
+  does). On macOS `import envoy_cli.cli` went 127.8 → 106.8 ms and `--version`
+  130.1 → 109.1 ms.
+- Windows adaptation merged: dry-run no longer exits 1 on a planned runtime, the
+  user PATH keeps `REG_EXPAND_SZ`, the installer writes UTF-8 without BOM around
+  the OEM code page, and the uv branch verifies `SHA256SUMS` in a temp directory
+  while preserving the wheel filename.
+
 ## 0.1.24 - 2026-10-28
 
 ### 中文

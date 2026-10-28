@@ -21,11 +21,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
-import httpx
-from pypdf import PdfReader
+from ._lazy_module import lazy_attr, lazy_module
+
 from .video import extract_public_subtitles, has_specialized_extractor
-from .fallbacks import public_api_fallback
-from .feeds import fetch_feed, looks_like_feed_url
 from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
 from .platforms import (
     classify_public_url,
@@ -90,6 +88,17 @@ from envoy_core.schemas.read_v1 import (
     VisualObservationHistoryRequest,
     WebLocator,
 )
+
+# Imported on first use: every invocation paid for both of these even when it only
+# needed the argument parser (see DEV/LIGHTWEIGHT-WINDOWS.md, L1).
+httpx = lazy_module("httpx")
+PdfReader = lazy_attr("pypdf", "PdfReader")
+
+# Both modules import httpx at their own module scope; keeping them lazy keeps
+# the network stack out of `envoy --version` and `import envoy_cli.reader`.
+public_api_fallback = lazy_attr("envoy_cli.fallbacks", "public_api_fallback")
+fetch_feed = lazy_attr("envoy_cli.feeds", "fetch_feed")
+looks_like_feed_url = lazy_attr("envoy_cli.feeds", "looks_like_feed_url")
 
 
 MAX_HTML_BYTES = 20 * 1024 * 1024
@@ -2341,6 +2350,25 @@ def _load_matching_material(material_id: str, source_revision: str, session_id: 
     return data
 
 
+def material_is_retained(
+    material_id: str,
+    source_revision: str,
+    session_id: str | None,
+) -> bool:
+    """Whether the material a finished response names can still be expanded.
+
+    The MCP bridge keeps a finished read in memory for the life of the process;
+    the material behind it lives on disk under a lease. Advertising or serving a
+    material that is already gone turns a recoverable read into a dead end, so the
+    bridge asks this before it reuses one.
+    """
+    if not material_id or not source_revision:
+        return False
+    return (
+        _load_matching_material(material_id, source_revision, session_id) is not None
+    )
+
+
 def persist_operation_response(
     material_id: str | None,
     response: dict,
@@ -2568,6 +2596,54 @@ def _annotate_unserialized_read(response: ReadResponse) -> ReadResponse:
     })
 
 
+def _annotate_reacquired_read(response: ReadResponse) -> ReadResponse:
+    """Record that a stale completed result was replaced by a fresh read.
+
+    Returning the re-read evidence with a note is better than an EXPIRED_RESOURCE
+    error: the caller asked for the source, not for the ledger's copy of it.
+    """
+    note = (
+        "The completed result recorded for this operation had expired, so the "
+        "source was read again instead of returning stale evidence"
+    )
+    detail = {"reacquired_after_expiry": True}
+    modalities = dict(response.coverage.modalities)
+    for name, item in modalities.items():
+        if not isinstance(item, CoverageItem):
+            continue
+        modalities[name] = item.model_copy(update={
+            "unresolved": list(dict.fromkeys([*item.unresolved, note])),
+            "details": {**item.details, **detail},
+        })
+    return response.model_copy(update={
+        "coverage": response.coverage.model_copy(update={"modalities": modalities}),
+    })
+
+
+def _pretty_json_text(text: str) -> str:
+    """Indent a JSON body so a caller reading line-oriented text can find an entry.
+
+    A minified endpoint answer arrives as one enormous line: nothing in it can be
+    located, quoted or excerpted, and any host that reads text line by line sees a
+    single unusable block. The parsed form carries the same content. Anything that
+    is not JSON, or whose formatted form would change truncation behaviour, is
+    returned exactly as received.
+    """
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return text
+    if not isinstance(parsed, (dict, list)):
+        return text
+    try:
+        pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
+    except (ValueError, TypeError):
+        return text
+    if len(pretty) > MAX_TEXT_CHARS:
+        return text
+    return pretty
+
+
 def _serialize_read_request(function):
     @wraps(function)
     def wrapped(request, *args, **kwargs):
@@ -2649,14 +2725,17 @@ def _serialize_read_request(function):
                         response.session_id,
                     )
                     if cached_material is None:
-                        raise OperationConflict(
-                            "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
-                        )
+                        # The ledger still holds a completed result whose evidence
+                        # is gone, and the caller never sets idempotency_key itself,
+                        # so "use a new key" would be advice it cannot follow. The
+                        # read is idempotent by source, not by bookkeeping: read it.
+                        return _annotate_reacquired_read(execute())
                 for resource in response.resources:
                     target = resource.delivery.path
                     if target and not Path(target).is_file():
                         raise OperationConflict(
-                            "Completed evidence expired or was evicted; use a new idempotency_key to reacquire it"
+                            "The delivered resources for this completed read expired; "
+                            "retry envoy_read with refresh=true to reacquire them"
                         )
                 return _rebind_cached_response_session(
                     response,
@@ -3168,7 +3247,8 @@ def _rebind_cached_response_session(
     )
     if original is None:
         raise PublicPageError(
-            "Completed material expired or was evicted; start a new operation to reacquire it",
+            "The completed material expired or was evicted; retry envoy_read with "
+            "refresh=true to read the source again",
             ErrorCode.EXPIRED_RESOURCE,
         )
     remaining_ttl = max(
@@ -5292,6 +5372,8 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
             "The endpoint returned a JSON status stub instead of readable content",
             ErrorCode.EMPTY_CONTENT,
         )
+    if mime_type.endswith("json"):
+        text = _pretty_json_text(text)
     source_truncated = len(text) > MAX_TEXT_CHARS
     text = text[:MAX_TEXT_CHARS]
     title = Path(urlparse(source["url"]).path).name or "Text document"
