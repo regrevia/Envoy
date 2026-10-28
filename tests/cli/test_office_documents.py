@@ -299,3 +299,53 @@ def test_a_legacy_doc_link_says_which_format_to_use(monkeypatch):
 
     assert excinfo.value.code == reader.ErrorCode.UNSUPPORTED_SOURCE
     assert ".docx" in str(excinfo.value)
+
+
+def test_an_apple_iwork_file_answers_with_a_conversion_hint(monkeypatch):
+    from envoy_cli import reader
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/octet-stream"},
+            content=b"PK\x03\x04iwork-index-binary",
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(reader.PublicPageError) as excinfo:
+        reader._fetch_html("https://example.com/deck.pages", 1024 * 1024, {})
+
+    message = str(excinfo.value)
+    assert "iWork" in message
+    assert ".pptx" in message
+
+
+def test_an_xlsb_workbook_answers_with_a_conversion_hint(monkeypatch):
+    from envoy_cli import reader
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/octet-stream"},
+            content=b"\x00\x01xlsb-binary",
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(reader.PublicPageError) as excinfo:
+        reader._fetch_html("https://example.com/book.xlsb", 1024 * 1024, {})
+
+    message = str(excinfo.value)
+    assert ".xlsb" in message
+    assert ".xlsx" in message

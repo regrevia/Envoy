@@ -197,6 +197,10 @@ RTF_CONTENT_TYPES = {"application/rtf", "text/rtf", "application/x-rtf"}
 # Legacy binary Office files are OLE2 containers we do not parse; they get a
 # clear "save it as .docx/.xlsx" answer instead of a generic HTML error.
 LEGACY_OFFICE_SUFFIXES = (".doc", ".xls", ".ppt")
+# Files Envoy cannot unpack, but which users hit often enough to deserve a
+# concrete "save it as" answer instead of a binary-content error.
+IWORK_SUFFIXES = (".pages", ".numbers", ".key")
+BINARY_SHEET_SUFFIXES = (".xlsb",)
 LEGACY_OFFICE_CONTENT_TYPES = {
     "application/msword",
     "application/vnd.ms-excel",
@@ -4714,6 +4718,19 @@ def _fetch_html_via(
                             ),
                             "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
                         })
+                    hint_path = urlparse(current_url).path.lower()
+                    if hint_path.endswith(IWORK_SUFFIXES):
+                        raise PublicPageError(
+                            "This is an Apple iWork file (Pages/Numbers/Keynote). "
+                            "Export it as .docx/.xlsx/.pptx or PDF and read that link instead",
+                            ErrorCode.UNSUPPORTED_SOURCE,
+                        )
+                    if hint_path.endswith(BINARY_SHEET_SUFFIXES):
+                        raise PublicPageError(
+                            "This is a binary Excel workbook (.xlsb). "
+                            "Save it as .xlsx and read that link instead",
+                            ErrorCode.UNSUPPORTED_SOURCE,
+                        )
                     document_path = urlparse(current_url).path.lower()
                     is_office_content = content_type in (
                         OFFICE_CONTENT_TYPES - {"application/zip"}

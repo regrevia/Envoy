@@ -943,3 +943,20 @@ douyin 相册顺序用例失败。
   否则会写进真实用户目录。
 - `unit_checked`：`tests/cli/test_credential_handoff.py` 已有 14 条覆盖上述四点（含
   「禁用时不附带 cookie」「启用时静态抓取带头」「值不进读结果」）。
+
+## 第三十轮（Apple iWork 与 .xlsb：拒得明白）
+
+`.pages` / `.numbers` / `.key` 是 ZIP 容器但不是 OOXML，之前会掉进「声明了 ZIP 文档但
+内容不符」的泛化报错；`.xlsb` 是二进制工作簿，之前只得到「只接受 HTML」的含糊回答。
+现在两者都在读正文前给出可执行提示：
+
+- `.pages/.numbers/.key` → 提示导出成 `.docx/.xlsx/.pptx` 或 PDF 再读。
+  实测（`unit_checked`）：octet-stream + `PK\x03\x04…` 响应指向 `deck.pages`，
+  错误信息含 `iWork` 与 `.pptx`。
+- `.xlsb` → 提示另存为 `.xlsx`。实测（`unit_checked`）：响应指向 `book.xlsb`，
+  错误信息含 `.xlsb` 与 `.xlsx`。
+- 未取得真实样本：想用 SheetJS 的公开测试集做联网复测，`test_files` 是 submodule
+  指针、`SheetJS/test_files` 递归树里没有 `.xlsb`/`.numbers` 条目，本轮就此停止；
+  这两条停留在单测级，不改写文案里的「已实测」措辞。
+- 两条测试在 `tests/cli/test_office_documents.py`，与既有 12 条同文件同构
+  （`httpx.MockTransport` 驱动 `_fetch_html`）。

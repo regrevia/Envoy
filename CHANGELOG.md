@@ -23,6 +23,8 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- Apple iWork（`.pages`/`.numbers`/`.key`）与 `.xlsb` 不再给含糊报错，
+  直接提示导出/另存为 `.docx`/`.xlsx`/`.pptx` 或 PDF 再读。
 - 长 PDF 链接走完整读取链路时按页窗口取，续读窗口互不重取正文；
   声明体积超过 64 MiB 的 PDF 不下载正文直接拒绝。
 - 被当成二进制附件（`application/octet-stream`）下发的纯文本不再被拒绝：
@@ -75,6 +77,8 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- Apple iWork files (`.pages`/`.numbers`/`.key`) and `.xlsb` answer with a concrete
+  conversion hint instead of a generic binary-content error.
 - A long PDF link is read one page window at a time through the real fetch path,
   and a PDF that declares more than 64 MiB is refused before its body is read.
 - Plain text served as a binary attachment (`application/octet-stream`) is read
