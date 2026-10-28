@@ -23,6 +23,9 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- 分享链接直接读正文：`drive.google.com/file/d/<id>/view` 换成下载地址，
+  `docs.google.com` 的文档 / 表格 / 幻灯片换成对应导出格式，Dropbox 链接补 `dl=1`；
+  按原样抓只会拿到 JS 外壳。
 - 安装完整性用 `envoy doctor` 判定，不再只看命令退出码：选了 `standard`/`full`
   却拿不到 Chromium 或 Whisper 模型时，安装以非零退出并说明补救命令，
   不会留下「装好了、第一次用视频再下 140 MB」；
@@ -66,6 +69,10 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- Share links read as content: a `drive.google.com/file/d/<id>/view` link asks for
+  the download endpoint, `docs.google.com` documents/sheets/slides ask for their
+  export format, and Dropbox links get `dl=1`; fetched as written they return a
+  JavaScript shell.
 - Install completeness is judged by `envoy doctor`, not by a command's exit
   code: a `standard`/`full` run that ends without Chromium or the Whisper model
   now exits non-zero and names the repair, instead of leaving the download for

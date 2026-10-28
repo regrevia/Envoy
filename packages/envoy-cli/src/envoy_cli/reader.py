@@ -475,6 +475,45 @@ def _all_global(addresses: set) -> bool:
     return bool(addresses) and all(address.is_global for address in addresses)
 
 
+_GOOGLE_DOC_FORMATS = {"document": "docx", "spreadsheets": "xlsx", "presentation": "pptx"}
+
+
+def share_export_url(url: str) -> str:
+    """Turn a share/view link into the URL that returns the file itself.
+
+    Drive and Docs answer their share links with a JavaScript shell, so a reader
+    that fetches the link as written sees an empty page. Their export endpoints
+    return the bytes under the same permissions. Dropbox is the same story with
+    `dl=0` instead of `dl=1`. Anything unrecognised is returned unchanged.
+    """
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in {"drive.google.com", "docs.google.com"}:
+        segments = [part for part in parsed.path.split("/") if part]
+        if len(segments) >= 3 and segments[1] == "d":
+            kind, file_id = segments[0], segments[2]
+            if kind == "file" and host == "drive.google.com":
+                return f"https://drive.google.com/uc?export=download&id={file_id}"
+            if kind in _GOOGLE_DOC_FORMATS and host == "docs.google.com":
+                return (
+                    f"https://docs.google.com/{kind}/d/{file_id}/export"
+                    f"?format={_GOOGLE_DOC_FORMATS[kind]}"
+                )
+        return url
+    if host == "dropbox.com" or host.endswith(".dropbox.com"):
+        if host == "dl.dropboxusercontent.com":
+            return url
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key != "dl"
+        ]
+        query.append(("dl", "1"))
+        return parsed._replace(query=urlencode(query)).geturl()
+    return url
+
+
 def _is_public_http_url(value: str, dns_cache: dict[str, str] | None = None) -> bool:
     return _public_url_rejection(value, dns_cache) is None
 
@@ -8255,7 +8294,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         else:
             try:
                 final_url, html = _fetch_html(
-                    source_url,
+                    share_export_url(source_url),
                     min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
                     dns_cache,
                 )

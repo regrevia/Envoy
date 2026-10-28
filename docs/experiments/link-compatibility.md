@@ -429,6 +429,27 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十五轮（共享链接：Drive / Docs / Dropbox 的分享地址）
+
+分享链接（`drive.google.com/file/d/<id>/view`、`docs.google.com/.../d/<id>/edit`）
+返回的是 JS 外壳，按原样抓只会读到空页面。这一轮在抓取前把地址换成导出地址：
+
+| 原始链接 | 抓取时用的地址 |
+|---|---|
+| `drive.google.com/file/d/<id>/view?usp=sharing` | `drive.google.com/uc?export=download&id=<id>` |
+| `docs.google.com/document/d/<id>/edit` | `docs.google.com/document/d/<id>/export?format=docx` |
+| `docs.google.com/spreadsheets/d/<id>/edit` | `…/export?format=xlsx` |
+| `docs.google.com/presentation/d/<id>/edit` | `…/export?format=pptx` |
+| `www.dropbox.com/s/…?raw=1` | 同地址改 `dl=1` |
+
+- 单测 5 条：四条地址改写（含「普通链接不动」），一条用 `httpx.MockTransport`
+  证明读的是导出地址、docx 正文进了文本块（`unit_checked`）。
+- 抓取级证据只到「公开文件不可得」：试过的公开 Drive 样本
+  （`0B9P1L--7Wd2vU3VUVlFnbTgtS2c`）实际是 5 字节 `spam\n` + `application/octet-stream`，
+  被内容嗅探按设计拒绝；没有找到一个公开的 Docs/Dropbox 文档链接可用。
+- 已知限制：Drive 大文件会先给「病毒扫描确认」HTML 页，那种情况下仍读不到正文；
+  私有文件继续走隔离浏览器（带用户自己的登录态）。
+
 ## 第二十四轮（表格文档与 RTF：.xlsx / .xlsm / .ods / .rtf）
 
 上一轮把 ZIP 容器文档读成正文，这一轮补两块同样是「点开链接就该有字」的形态：
