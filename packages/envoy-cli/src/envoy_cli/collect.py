@@ -27,6 +27,10 @@ from .reader import read_public_page
 EXCERPT_LIMIT = 4000
 _TEXT_BLOCK_FIELDS = ("text", "value", "transcript", "content", "caption", "summary")
 _UNFINISHED_STATES = {"blocked", "failed", "partial", "skipped"}
+# Wall-clock elapsed work is measured with perf_counter: on Windows
+# ``time.monotonic`` has ~15.6 ms granularity, so two same-tick measurements
+# read as a 0.0 delta and a finished stage would never be charged.
+_clock = time.perf_counter
 
 
 def _record_work_usage(
@@ -41,7 +45,7 @@ def _record_work_usage(
     cannot double-charge the manifest, and the stage a given second belonged to
     stays readable in ``applied_operations`` after a resume.
     """
-    if seconds <= 0:
+    if seconds < 0:
         return manifest
     stage = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:16]
     run_id = str(manifest["run_id"])
@@ -502,16 +506,16 @@ def collect(
         raise checkpoint.CollectionError(
             "This collection run belongs to a different profile"
         )
-    work_started = time.monotonic()
+    work_started = _clock()
 
     def remaining_work() -> float:
         """Seconds this run may still spend, discovery included."""
-        return float(max_work_seconds) - (time.monotonic() - work_started)
+        return float(max_work_seconds) - (_clock() - work_started)
 
     sources_path = _sources_path(out)
     sources = _load_sources(sources_path)
     if not manifest.get("selected_candidate_ids"):
-        discovery_started = time.monotonic()
+        discovery_started = _clock()
         manifest = _select_candidates(
             manifest,
             canonical,
@@ -520,7 +524,7 @@ def collect(
             max_work_seconds=max(int(remaining_work()), 1),
         )
         manifest = _record_work_usage(
-            manifest, collection_id, "discovery", time.monotonic() - discovery_started
+            manifest, collection_id, "discovery", _clock() - discovery_started
         )
     candidates = {
         str(item.get("candidate_id")): item
@@ -575,7 +579,7 @@ def collect(
             # run resumes here instead of reading them with a fresh allowance.
             break
         manifest = _set_state(manifest, candidate, "processing")
-        item_started = time.monotonic()
+        item_started = _clock()
         try:
             with _LeaseHeartbeat(collection_id, run_id, candidate):
                 response = read_public_page(
@@ -604,7 +608,7 @@ def collect(
             continue
         finally:
             manifest = _record_work_usage(
-                manifest, collection_id, candidate, time.monotonic() - item_started
+                manifest, collection_id, candidate, _clock() - item_started
             )
         result = str(getattr(response.result, "value", response.result))
         if response.material_id:

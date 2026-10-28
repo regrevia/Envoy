@@ -32,6 +32,10 @@ jobs:
           python -m pip install --no-build-isolation -r backend/requirements-media.txt
           python -m pip install -e packages/envoy-core
           python -m pip install -e packages/envoy-cli
+      # 浏览器运行时用例会在真实 Chromium 里跑，runner 上必须先把浏览器装好，
+      # 否则这批用例全部以 BrowserRuntimeUnavailable 失败（不是代码问题）。
+      - name: 安装 Chromium（浏览器用例） / Install Chromium for browser tests
+        run: python -m playwright install chromium
       - name: 运行视频与导出测试 / Run video and export tests
         run: >
           pytest -q
@@ -101,6 +105,10 @@ jobs:
           python -m pip install pytest
           python -m pip install "reportlab==4.5.0"
           python -m pip install -e packages/envoy-core -e packages/envoy-cli
+      # 浏览器运行时用例会在真实 Chromium 里跑，runner 上必须先把浏览器装好，
+      # 否则这批用例全部以 BrowserRuntimeUnavailable 失败（不是代码问题）。
+      - name: 安装 Chromium（浏览器用例） / Install Chromium for browser tests
+        run: python -m playwright install chromium
       - name: 运行 Skill、协议和材料测试 / Run Skill, protocol, and material tests
         run: >
           pytest -q
@@ -128,6 +136,10 @@ jobs:
           python -m pip install pytest
           python -m pip install "reportlab==4.5.0"
           python -m pip install -e packages/envoy-core -e packages/envoy-cli
+      # 浏览器运行时用例会在真实 Chromium 里跑，runner 上必须先把浏览器装好，
+      # 否则这批用例全部以 BrowserRuntimeUnavailable 失败（不是代码问题）。
+      - name: 安装 Chromium（浏览器用例） / Install Chromium for browser tests
+        run: python -m playwright install chromium
       - name: 运行 Skill、协议、MCP 和安装测试 / Run Skill, protocol, MCP, and install tests
         run: >
           pytest -q

@@ -206,3 +206,33 @@ def test_work_usage_survives_a_heartbeat_that_bumped_the_revision(
 
     assert raced, "the race was not exercised"
     assert manifest["usage"]["work_seconds"] >= 2, "both items were charged anyway"
+
+
+def test_a_coarse_clock_still_charges_every_finished_stage(data_dir, monkeypatch):
+    """Windows' monotonic clock ticks at ~15.6 ms: same-tick deltas are 0.0.
+
+    A finished stage must still be charged then, otherwise the run's consumed
+    seconds (and the per-stage entries) silently vanish on Windows.
+    """
+
+    tick = 0.0
+
+    def one_tick():
+        nonlocal tick
+        tick += 0.0
+        return tick
+
+    monkeypatch.setattr(collect_module, "_clock", one_tick)
+    monkeypatch.setattr(collect_module, "read_public_page", lambda request: _Response())
+    out = data_dir / "notes.md"
+
+    summary = collect_module.collect(PROFILE, out, limit=2, max_work_seconds=5)
+    manifest = collect_module.checkpoint.get_collection(summary["collection_id"], "run-1")
+
+    stages = [
+        operation
+        for operation in manifest["applied_operations"]
+        if operation.startswith("collect-work-run-1-")
+    ]
+    assert len(stages) == 3, "a zero-second delta must still charge the stage"
+    assert manifest["usage"]["work_seconds"] == 3
