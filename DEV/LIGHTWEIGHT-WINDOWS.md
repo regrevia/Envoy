@@ -149,3 +149,24 @@ Windows 为实测 µs；mac 为 JSON 中 5 次运行的中位数（精确模块�
 
 L1 惰性导入、L2 `--version` 快速路径、L5 浏览器占用上报、L6 媒体栈不进默认安装均已随 `v0.1.25` 发行包发出（`packaged`，wheel 摘要见发布 `SHA256SUMS`）；L3（进一步削减导入面）仍未实现。
 实测仍只有 macOS arm64：`envoy --version` 109.1 ms、`import envoy_cli.cli` 106.8 ms（`--repeat 7` 中位数），Linux/Windows 同源码未实测。
+
+## 7. Windows 真机验收（0.1.25，GitHub Actions）
+
+自托管 Windows 节点跑通了三条腿，`install.ps1` 在**真实 Windows** 上装出可用 runtime。
+
+| 腿 | 结果 | 说明 |
+|---|---|---|
+| 自托管 · Windows PowerShell 5.1 | success | `10.0.26200.0`，`scenario=both` |
+| 自托管 · PowerShell 7.4.6 | success | 同一台机器串行跑，`shell: pwsh` |
+| 干净机 · windows-2022（托管） | success | 对照组，`scenario=fresh` |
+
+- run：`40687082612`（scenario=both，结论 success），断言 A1–A7 全 OK，证据在 job 日志里（自托管腿不再依赖 `upload-artifact`，因为 action 下载发生在 job setup 阶段，`continue-on-error` 救不了）。
+- 装的是 0.1.25：`envoy install: runtime 0.1.25 -> <runner-temp>\envoy-acceptance`，shim `envoy.cmd --version` 报 0.1.25，`runtime-path` pin 落盘。
+- 用户 PATH 只加一次、保持 `REG_EXPAND_SZ`、`%VAR%` 不被展开；**不写 HKLM**；重跑幂等（第二次装不重复加 PATH，pin 指向存在的 runtime）；跑完 PATH 还原成跑前值。
+- 实测计划条目 **I03（Windows x64 干净装）已登记为 `passed`**（`envoy-delivery/0.1.25/EXPERIMENT-PLAN.json`，证据指向上面的 run），`verify_delivery.py` 仍 13/13。
+- 这些只证明**安装与 PATH 契约**在 Windows 上成立，**不是**启动耗时/体积的复测：第 2、3 节的 Windows 数字仍是 Windows 侧同事提供的已知值，本轮未重测。
+
+三个要记住的点（都在 workflow 里修掉了，Windows 侧复现同类问题时先看这两条）：
+
+1. `shell: powershell` 的 `run` 块由 PS 5.1 按 ANSI 读临时 `.ps1`，块内中文注释/消息会变成乱码并直接 `ParserError`。该块必须是纯 ASCII。
+2. 以**服务**方式启动的 runner 沿用开机时的 PATH，装完 PowerShell 7 的服务节点看不见 `pwsh`。workflow 现在按 `Program Files\PowerShell\7\pwsh.exe` 等位置直接探测，命中后写进 `GITHUB_PATH`。
