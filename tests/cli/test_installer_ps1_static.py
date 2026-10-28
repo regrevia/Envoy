@@ -65,3 +65,19 @@ def test_both_installers_dispatch_the_same_host_targets(text: str):
     assert documented <= cases, (documented - cases)
     assert "" in cases and "auto" in cases  # the no-argument default
     assert "dsh|claude-code|codex|mcp|skill|all|path" in shell
+
+
+# --- Windows-adaptation regressions (seen on a real host) ------------------
+
+def test_dry_run_never_dies_on_the_runtime_it_did_not_install(text: str):
+    """Get-EnvoyBinary must return the planned target under ENVOY_DRY_RUN.
+
+    A dry run writes nothing, so RuntimeBin is absent; without an early return
+    Get-EnvoyBinary fell through to Stop-Install and `install.ps1 skill` under
+    ENVOY_DRY_RUN=1 exited 1 — the very path the Windows handoff recommends.
+    """
+    body = text[text.index("function Get-EnvoyBinary"):]
+    body = body[: body.index("function ", 10)]
+    assert "$Script:DryRun" in body, "Get-EnvoyBinary must special-case a dry run"
+    # The dry-run return has to come before the Stop-Install fallback.
+    assert body.index("$Script:DryRun") < body.index("Stop-Install")

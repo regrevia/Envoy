@@ -132,6 +132,11 @@ function Get-EnvoyBinary {
     $pinned = Get-PinnedRuntime
     if ($pinned) { return $pinned }
     if (Test-Path -LiteralPath $Script:RuntimeBin) { return $Script:RuntimeBin }
+    # In a dry run nothing is written, so the runtime file does not exist yet and
+    # an older `envoy` on PATH must not be mistaken for the one we planned. Return
+    # the planned target so dry-run never dies on a runtime it deliberately did
+    # not install (the POSIX script's envoy_binary has no such dead end).
+    if ($Script:DryRun) { return $Script:RuntimeBin }
     $onPath = Get-Command envoy -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
     Stop-Install "no envoy runtime found; run the installer without a host argument first"
