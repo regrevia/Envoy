@@ -40,7 +40,7 @@ jobs:
   windows-powershell-5-1:
     name: Windows PowerShell 5.1
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: [self-hosted, windows, x64, envoy-win]
+    runs-on: [self-hosted, windows, x64, regrevia-win]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +96,7 @@ jobs:
   windows-powershell-7:
     name: PowerShell 7
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: [self-hosted, windows, x64, envoy-win]
+    runs-on: [self-hosted, windows, x64, regrevia-win]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

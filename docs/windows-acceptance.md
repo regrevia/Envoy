@@ -51,12 +51,12 @@ gh api -X POST repos/regrevia/Envoy/actions/runners/registration-token --jq .tok
 
 # 在 Windows 节点上，管理员 PowerShell
 git clone https://github.com/regrevia/win-runner C:\win-runner
-C:\win-runner\scripts\runner-setup.ps1 -Token <token> -Repo regrevia/Envoy -Labels windows,x64,envoy-win
+C:\win-runner\scripts\runner-setup.ps1 -Token <token> -Repo regrevia/Envoy -Labels windows,x64,regrevia-win
 ```
 
 个人账号没有组织级 runner，注册是按仓库的：同一台机器要给多个仓库用，就按仓库各跑一次，脚本会把 root 派生到 `C:\actions-runner\<repo>`、work 目录各自独立，实例之间不冲突。
 
-跑完节点以服务形式长期在线，仓库 Settings → Actions → Runners 里能看到 `Idle`。标签必须与工作流一致：`runs-on: [self-hosted, windows, x64, envoy-win]`，不要只写 `self-hosted`。
+跑完节点以服务形式长期在线，仓库 Settings → Actions → Runners 里能看到 `Idle`。标签是**机器能力**（`regrevia-win` 表示「这台 regrevia 的 Windows 机器」），实例归属由注册时选定的仓库决定。标签必须与工作流一致：`runs-on: [self-hosted, windows, x64, regrevia-win]`，不要只写 `self-hosted`。
 
 ## 手动跑一轮
 
