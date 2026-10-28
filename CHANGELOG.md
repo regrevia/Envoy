@@ -99,8 +99,17 @@
 
 ## Unreleased
 
+### 中文
+
+- 升级不再涨盘：Playwright 每次升级都下新版本浏览器、从不删旧的（本机实测积压
+  5 份、714.8 MB），`envoy browser setup` 装完现在会删掉被替换掉的旧版本；
+  新增 `envoy browser prune [--dry-run] [--json]` 手动回收，只认
+  `<家族>-<数字>` 目录名，其它内容不动。默认安装仍是「浏览器一起装好」，
+  装完即可读抖音、视频页，不依赖首次使用时的额外下载。
+
 ### 文档
 
+- `INSTALL.md` 新增「装完就是完整的」：默认安装含浏览器及其体积、`envoy browser prune` 的回收口径、ASR 权重默认不含。
 - README（中/英）新增「安装」段：Claude Code / Codex / DSH 各一行 `install.sh` 命令、`auto` 识别、`ENVOY_DRY_RUN` 预演、Windows `install.ps1`，以及装后 `envoy doctor --json` 与 `envoy browser setup` 两条自检。
 
 ### 中文

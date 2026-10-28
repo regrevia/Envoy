@@ -144,6 +144,75 @@ def test_browser_disk_usage_sums_the_playwright_cache(monkeypatch, tmp_path):
     assert report["total_mb"] == 0.0
 
 
+def _browser_cache(tmp_path, *names):
+    for name in names:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "asset").write_bytes(b"x" * 1024)
+    return tmp_path
+
+
+def test_prune_browser_versions_keeps_only_the_newest_revision(monkeypatch, tmp_path):
+    _browser_cache(
+        tmp_path,
+        "chromium-1208",
+        "chromium-1248",
+        "chromium_headless_shell-1208",
+        "chromium_headless_shell-1248",
+        "ffmpeg-1013",
+    )
+    (tmp_path / "not-a-browser.txt").write_text("ignored")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+
+    report = browser.prune_browser_versions()
+
+    assert sorted(item["name"] for item in report["removed"]) == [
+        "chromium-1208",
+        "chromium_headless_shell-1208",
+    ]
+    assert {item["name"] for item in report["kept"]} == {
+        "chromium-1248",
+        "chromium_headless_shell-1248",
+        "ffmpeg-1013",
+    }
+    assert report["freed_bytes"] == 2048
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "chromium-1248",
+        "chromium_headless_shell-1248",
+        "ffmpeg-1013",
+        "not-a-browser.txt",
+    ]
+
+
+def test_prune_browser_versions_dry_run_reports_without_deleting(monkeypatch, tmp_path):
+    _browser_cache(tmp_path, "chromium-1208", "chromium-1248")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+
+    report = browser.prune_browser_versions(dry_run=True)
+
+    assert report["dry_run"] is True
+    assert [item["name"] for item in report["removed"]] == ["chromium-1208"]
+    assert (tmp_path / "chromium-1208").is_dir()
+
+
+def test_prune_browser_versions_ignores_a_missing_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "absent"))
+
+    report = browser.prune_browser_versions()
+
+    assert report["removed"] == [] and report["kept"] == []
+
+
+def test_prune_browser_versions_leaves_unversioned_names_alone(monkeypatch, tmp_path):
+    _browser_cache(tmp_path, "chromium", "chromium-latest", "chromium-1248")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+
+    report = browser.prune_browser_versions()
+
+    assert report["removed"] == []
+    assert (tmp_path / "chromium").is_dir()
+    assert (tmp_path / "chromium-latest").is_dir()
+
+
 def test_browser_disk_usage_ignores_a_missing_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "absent"))
 

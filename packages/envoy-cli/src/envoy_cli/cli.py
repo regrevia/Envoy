@@ -145,6 +145,11 @@ def _parser() -> argparse.ArgumentParser:
     browser = subparsers.add_parser("browser", help="manage the isolated browser runtime")
     browser_commands = browser.add_subparsers(dest="browser_command", required=True)
     browser_commands.add_parser("setup", help="install the isolated Chromium browser")
+    browser_prune = browser_commands.add_parser(
+        "prune", help="delete browser downloads the installed Playwright no longer uses"
+    )
+    browser_prune.add_argument("--dry-run", action="store_true", help="report without deleting")
+    browser_prune.add_argument("--json", action="store_true")
     asr = subparsers.add_parser("asr", help="prepare local speech recognition")
     asr_commands = asr.add_subparsers(dest="asr_command", required=True)
     asr_setup = asr_commands.add_parser("setup", help="download and verify one local Whisper model")
@@ -438,6 +443,24 @@ def _run_auth_resume(args) -> int:
     return 0 if verification.get("headless_reusable") else 1
 
 
+def _run_browser_prune(args) -> int:
+    report = browser_runtime.prune_browser_versions(dry_run=bool(args.dry_run))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    if report["path"] is None:
+        print("browser   no Playwright cache on this host")
+        return 0
+    verb = "would remove" if report["dry_run"] else "removed"
+    if not report["removed"]:
+        print(f"browser   nothing stale in {report['path']}")
+        return 0
+    for item in report["removed"]:
+        print(f"browser   {verb} {item['name']} ({item['bytes'] / 1_048_576:.0f} MB)")
+    print(f"browser   {verb} {len(report['removed'])} download(s), {report['freed_mb']} MB")
+    return 0
+
+
 def _run_auth(args) -> int:
     from . import cookies as cookie_store
 
@@ -695,6 +718,8 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
     if args.command == "auth":
         return _run_auth(args)
     if args.command == "browser":
+        if getattr(args, "browser_command", None) == "prune":
+            return _run_browser_prune(args)
         return browser_runtime.setup_browser()
     if args.command == "mcp":
         return mcp.main(toolset=args.toolset)

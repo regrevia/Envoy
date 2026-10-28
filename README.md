@@ -39,7 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 
 ```sh
 envoy doctor --json     # runtime.install.status 应为 pinned：固定唯一 runtime，旧 PATH 上的 envoy 不会抢占
-envoy browser setup     # 准备首次读网页用的浏览器；没准备时读路径会直接报缺能力，不会干等下载
+envoy browser setup     # 浏览器安装脚本已装好；这行用于补装或换版本，装完会自动清掉被替换的旧版本
+envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存会翻倍），--dry-run 只报不删
 ```
 
 升级就是重跑同一行；卸载、企业镜像、各宿主插件目录见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)。
@@ -197,7 +198,8 @@ Two checks after installing:
 
 ```sh
 envoy doctor --json     # runtime.install.status should be pinned: one runtime, an older envoy on PATH cannot win
-envoy browser setup     # browser for the first read; without it a read fails fast as a missing capability
+envoy browser setup     # the installer already provisions it; rerun to repair or change versions, stale copies are pruned
+envoy browser prune     # reclaim browser downloads left behind by upgrades; --dry-run only reports
 ```
 
 Upgrading means running the same line again. Uninstall, mirrors, and each host's plugin directory: [INSTALL.md](integrations/skills/envoy/INSTALL.md).

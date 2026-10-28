@@ -133,6 +133,22 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","so
 只验证公开网页读取，不代表视频或 ASR 已就绪。安装脚本结束时也会打印
 `envoy doctor --json` 的 runtime 版本与协议版本，对不上就是没装成。
 
+## 装完就是完整的 / Installed means complete
+
+安装脚本默认连浏览器一起装好（`ENVOY_SETUP_BROWSER=1`），装完即可读抖音、视频页
+这类必须渲染的链接，不需要再单独跑命令、也不在首次读取时下载。整份安装约：
+runtime 178 MB + Chromium 683 MB（Windows 与 mac 相近，视版本而定）。
+
+```bash
+envoy doctor --json           # browser.ready 应为 true，disk 给出浏览器占用
+envoy browser prune --dry-run # 先看会回收多少，不删
+```
+
+Playwright 每升一次就换个浏览器版本、从不删旧的，所以升级几次后缓存会翻倍；
+`envoy browser setup` 装完会自动清掉被替换掉的旧版本，`envoy browser prune` 可手动
+重跑（`--dry-run` 只报不删）。音频转写是可选能力，单独装（`envoy asr setup`），
+默认安装不含任何模型权重。
+
 ## 更新与卸载 / Update and remove
 
 ```bash

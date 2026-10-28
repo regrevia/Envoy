@@ -4,6 +4,7 @@ from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -406,6 +407,73 @@ def browser_disk_usage() -> dict:
     }
 
 
+_BROWSER_FAMILIES = ("chromium_headless_shell", "chromium", "ffmpeg", "firefox", "webkit")
+
+
+def _browser_revision(name: str) -> tuple[str, int] | None:
+    for family in _BROWSER_FAMILIES:
+        prefix = f"{family}-"
+        if name.startswith(prefix):
+            suffix = name[len(prefix) :]
+            return (family, int(suffix)) if suffix.isdigit() else None
+    return None
+
+
+def prune_browser_versions(*, dry_run: bool = False) -> dict:
+    """Delete browser downloads the installed Playwright no longer uses.
+
+    Playwright writes a new revision per browser release and never removes the
+    previous one, so every Envoy upgrade that pulls a newer Playwright leaves
+    another 200-400 MB behind (five revisions on the machine this was written
+    on). Only directory names that are a known family plus a numeric revision
+    are candidates; anything else in the cache is left untouched.
+    """
+    root = _playwright_cache_dir()
+    report: dict = {
+        "path": None if root is None else str(root),
+        "removed": [],
+        "kept": [],
+        "freed_bytes": 0,
+        "freed_mb": 0.0,
+        "dry_run": dry_run,
+    }
+    if root is None:
+        return report
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return report
+    families: dict[str, list[tuple[int, Path]]] = {}
+    for entry in entries:
+        try:
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+        except OSError:
+            continue
+        parsed = _browser_revision(entry.name)
+        if parsed is None:
+            continue
+        families.setdefault(parsed[0], []).append((parsed[1], entry))
+    for items in families.values():
+        items.sort(key=lambda item: item[0])
+        newest = items[-1][1]
+        report["kept"].append({"name": newest.name, "bytes": _dir_size(newest)})
+        for _revision, stale in items[:-1]:
+            size = _dir_size(stale)
+            if not dry_run:
+                try:
+                    shutil.rmtree(stale)
+                except OSError:
+                    # A locked directory stays reported as kept; the next setup
+                    # retries it instead of failing the install.
+                    report["kept"].append({"name": stale.name, "bytes": size})
+                    continue
+            report["removed"].append({"name": stale.name, "bytes": size})
+            report["freed_bytes"] += size
+    report["freed_mb"] = round(report["freed_bytes"] / 1_048_576, 1)
+    return report
+
+
 def browser_runtime_status() -> dict:
     disk = browser_disk_usage()
     try:
@@ -538,7 +606,18 @@ def setup_browser() -> int:
         [sys.executable, "-m", "playwright", "install", "chromium"],
         check=False,
     )
-    return int(result.returncode)
+    if int(result.returncode) != 0:
+        return int(result.returncode)
+    # A Playwright upgrade downloads a fresh revision; drop the one it replaced
+    # so re-installing Envoy on a provisioned machine reuses the cache instead
+    # of growing it by a few hundred MB each time.
+    pruned = prune_browser_versions()
+    if pruned["removed"]:
+        print(
+            f"envoy browser setup: removed {len(pruned['removed'])} stale browser "
+            f"download(s), freed {pruned['freed_mb']} MB"
+        )
+    return 0
 
 
 def _page_state(page) -> tuple[str, str, bool]:
