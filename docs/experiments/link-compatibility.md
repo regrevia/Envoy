@@ -437,6 +437,8 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 | 链接 | 实测 |
 |---|---|
 | `https://go.microsoft.com/fwlink/?LinkID=521962`（Financial Sample.xlsx） | `partial` / 返回 11351 字（全篇 96109 字）/ `document_format: xlsx`，15 列真实财务数据 |
+| `https://raw.githubusercontent.com/frictionlessdata/testsuite-data/main/files/other/sample.ods` | `ready` / 123 字 / `document_format: ods`，Sheet1 与 Sheet2 各自成段 |
+| `https://raw.githubusercontent.com/bitfocus/rtf2text/master/sample.rtf` | `ready` / 1863 字（全篇 1852 字）/ `reader: document:rtf`，正文可读 |
 
 - `.xlsx/.xlsm`：`xl/sharedStrings.xml` 取字符串池，`workbook.xml` + `workbook.xml.rels`
   按工作簿顺序定位每个 sheet，逐行 `<row>`/`<c>` 还原成「A | B | C」文本；`t="inlineStr"`
@@ -449,8 +451,8 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 旧的二进制 `.doc/.xls/.ppt` 不再给一句「只认 HTML」：检测到 `application/msword`
   等类型或这些后缀时，直接说明「请另存为 .docx/.xlsx 再读」（`unsupported_source`）。
 - 单测 12 条（原 8 条 + xlsx 行、ods 行、rtf 抓取与解析、旧格式提示），全部离线。
-  `.ods` 与 `.rtf` 只到 `unit_checked`：本机没有稳定的公开样本链接，合成样本走的是
-  与真实链接相同的检测/解包/文本管线。
+  三种格式都有真实公开链接的抓取级证据；RTF 样本里的样式组会残留少量标点噪声
+  （`*`、`;;`），正文段落完整，属于该样本源文件本身的写法，不影响阅读。
 
 ## 第二十三轮（文档链接：.docx / .pptx / .epub / .odt 直接读成正文）
 
