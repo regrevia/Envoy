@@ -197,6 +197,57 @@ function Confirm-Checksum {
     }
 }
 
+$Script:UvVersion = "0.13.6"
+$Script:UvRelease = if ($env:ENVOY_UV_BASE) { $env:ENVOY_UV_BASE } else {
+    "https://github.com/astral-sh/uv/releases/download"
+}
+
+# The wheel needs a Python, and Windows has none by default. uv is its own Python
+# manager, so a machine with neither has to fail before anything else can help:
+# fetch it the same way the runtime wheel is fetched, verified against the
+# release's own .sha256, into a cache the next run reuses.
+function Ensure-Uv {
+    $onPath = Get-Command uv -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64" } else { "x86_64" }
+    $asset = "uv-$arch-pc-windows-msvc.zip"
+    $cached = Join-Path $Script:EnvoyHome "tools\uv\$($Script:UvVersion)\uv.exe"
+    if (Test-Path -LiteralPath $cached) { return $cached }
+    if ($Script:DryRun) {
+        Write-Host ("  + download {0}/{1}/{2}" -f $Script:UvRelease, $Script:UvVersion, $asset)
+        return "uv"
+    }
+    Write-Host "envoy install: fetching uv $($Script:UvVersion) (no Python on this machine)"
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-uv-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $work -Force | Out-Null
+    try {
+        $archive = Join-Path $work $asset
+        $baseUrl = "$($Script:UvRelease)/$($Script:UvVersion)/$asset"
+        try {
+            Invoke-WebRequest -Uri $baseUrl -OutFile $archive -UseBasicParsing -TimeoutSec 300
+        } catch {
+            Stop-Install "could not download uv ($asset): $($_.Exception.Message)"
+        }
+        $sumFile = Join-Path $work "$asset.sha256"
+        try {
+            Invoke-WebRequest -Uri "$baseUrl.sha256" -OutFile $sumFile -UseBasicParsing -TimeoutSec 60
+            $expected = ((Get-Content -LiteralPath $sumFile -Raw).Trim() -split "\s+")[0].ToLowerInvariant()
+            $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { Stop-Install "uv download failed its SHA-256 check ($asset)" }
+        } catch {
+            Stop-Install "could not verify uv ($asset): $($_.Exception.Message)"
+        }
+        Expand-Archive -LiteralPath $archive -DestinationPath $work -Force
+        $extracted = Join-Path $work "uv.exe"
+        if (-not (Test-Path -LiteralPath $extracted)) { Stop-Install "uv archive did not contain uv.exe" }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $cached) -Force | Out-Null
+        Copy-Item -LiteralPath $extracted -Destination $cached -Force
+        return $cached
+    } finally {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-RawUserPath {
     # The raw (unexpanded) user PATH. [Environment]::GetEnvironmentVariable
     # expands %VARS%, and writing an expanded value back would freeze them, which
@@ -296,6 +347,13 @@ function Install-Runtime {
         return
     }
     $uv = Get-Command uv -ErrorAction SilentlyContinue
+    if (-not $uv) {
+        $bootstrapped = Ensure-Uv
+        if ($bootstrapped -and $bootstrapped -ne "uv") {
+            $uv = [pscustomobject]@{ Source = $bootstrapped }
+            $env:PATH = (Split-Path -Parent $bootstrapped) + ";" + $env:PATH
+        }
+    }
     if ($uv) {
         $pythonOk = Test-Path -LiteralPath (Join-Path $Script:RuntimeHome "Scripts\python.exe")
         if (-not $pythonOk) {

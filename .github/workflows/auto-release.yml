@@ -63,12 +63,6 @@ jobs:
                       stderr=subprocess.DEVNULL,
                   )
                   previous.append(tomllib.loads(content)["project"]["version"])
-          if previous and previous[0] == current[0] and previous[1] == current[1]:
-              print(f"包版本未变化 {version} / Package version unchanged; no release tag needed.")
-              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                  output.write("release=false\n")
-              raise SystemExit(0)
-
           tag = f"v{version}"
           existing = subprocess.run(
               ["git", "ls-remote", "--exit-code", "--tags", "origin", f"refs/tags/{tag}"],
@@ -81,6 +75,14 @@ jobs:
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                   output.write("release=false\n")
               raise SystemExit(0)
+
+          # 版本没变但标签不存在，说明上一次发布被红灯 CI 或失败任务吃掉了；
+          # 这一次 CI 如果绿就该补上，否则这个版本永远不会发出去。
+          if previous and previous[0] == current[0] and previous[1] == current[1]:
+              print(
+                  f"包版本未变化 {version}，但标签 {tag} 不存在，补发 / "
+                  f"Package version unchanged, but {tag} has no tag yet; releasing it now."
+              )
 
           if existing.returncode != 2:
               raise SystemExit(existing.stderr or "Could not check the remote release tag")

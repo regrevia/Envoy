@@ -111,6 +111,21 @@ def test_user_path_write_preserves_expand_type(text: str):
     assert "function Join-PathValue" in text
 
 
+def test_a_machine_without_python_or_uv_fetches_uv_first(text: str):
+    """The wheel needs a Python; uv is how a bare Windows machine gets one."""
+    assert "function Ensure-Uv" in text
+    body = text[text.index("function Ensure-Uv"):]
+    body = body[: body.index("function ", 10)]
+    assert "uv-$arch-pc-windows-msvc.zip" in body
+    assert '.sha256' in body, "the uv archive must be verified like the wheel"
+    assert "Get-FileHash" in body
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    # Bootstrap before the python fallback: on a bare host neither exists, and the
+    # python branch is the one that dies with "install Python (or uv)".
+    assert runtime.index("Ensure-Uv") < runtime.index("Get-Command python")
+
+
 def test_uv_branch_verifies_the_checksum_like_the_python_branch(text: str):
     """The uv path used to hand the URL straight to uv, skipping SHA256SUMS."""
     if "} else {" not in text:

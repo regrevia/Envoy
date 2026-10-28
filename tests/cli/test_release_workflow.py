@@ -30,6 +30,26 @@ def test_tag_names_the_version_guard_and_no_version_is_hardcoded(text: str):
     assert "does not match tag" in text
 
 
+
+def test_a_burned_release_is_retried_on_the_next_green_push():
+    """A red CI run must not cost the version its tag forever.
+
+    The tag job used to exit as soon as the package version was unchanged, so a
+    push whose CI went red (or whose release job failed) left the version
+    unreleased: every later push changed nothing and released nothing. The tag
+    check has to come first, and a missing tag must release on this push.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "auto-release.yml").read_text(encoding="utf-8")
+    decide = workflow[workflow.index("id: version") : workflow.index("Require green CI")]
+    tag_check = decide.index("refs/tags/{tag}")
+    unchanged = decide.index("previous[0] == current[0]")
+    assert tag_check < unchanged, "the tag lookup must decide before the unchanged shortcut"
+    rescue = decide[decide.index("previous[0] == current[0]") :]
+    assert "补发" in rescue
+    assert "release=false" not in rescue.split("raise SystemExit(0)")[0]
+
+
+
 def test_all_four_consistency_gates_run_before_building(text: str):
     for gate in (
         "scripts/check_versions.py --check",

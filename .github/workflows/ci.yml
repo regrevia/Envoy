@@ -100,6 +100,21 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: packages/envoy-cli/pyproject.toml
+      # install.ps1 只有 Windows 才跑得到：先在解析器里过一遍，语法错了当场红。
+      - name: 解析安装脚本 / Parse the installer scripts
+        shell: pwsh
+        run: |
+          $files = @("integrations/install.ps1", "scripts/windows/acceptance.ps1")
+          foreach ($file in $files) {
+            $errors = $null
+            $path = (Resolve-Path $file).Path
+            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              foreach ($error in $errors) { Write-Host "::error file=$file,line=$($error.Extent.StartLineNumber)::$($error.Message)" }
+              exit 1
+            }
+          }
+
       - name: 安装独立运行与测试依赖 / Install standalone runtime and test dependencies
         run: |
           python -m pip install --upgrade pip
