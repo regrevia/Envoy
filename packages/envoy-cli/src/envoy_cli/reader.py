@@ -169,7 +169,9 @@ SAFE_VIDEO_QUERY_KEYS = {
     "mid", "item_id", "lang", "p", "page", "download", "filename",
     "format", "quality", "source", "utm_source", "utm_medium", "utm_campaign",
 }
-TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst")
+TEXT_SUFFIXES = (
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst",
+)
 # ZIP container documents. They are parsed with the standard library only, so
 # reading a .docx or .epub link costs nothing at install time.
 OFFICE_SUFFIXES = (
@@ -210,6 +212,7 @@ TEXT_CONTENT_TYPES = {
     "text/plain",
     "text/markdown",
     "text/csv",
+    "text/tab-separated-values",
     "application/json",
     "application/xml",
     "text/xml",
@@ -485,6 +488,22 @@ def _all_global(addresses: set) -> bool:
 _GOOGLE_DOC_FORMATS = {"document": "docx", "spreadsheets": "xlsx", "presentation": "pptx"}
 
 
+def _with_flag(parsed, flag: str) -> str:
+    """Ask a share link for the bytes while leaving its other parameters alone.
+
+    Re-encoding the whole query would rewrite values like `resid=ABC!123`, so the
+    raw parameter text is kept and only the requested flag is replaced.
+    """
+
+    kept = [
+        part
+        for part in parsed.query.split("&")
+        if part and not part.startswith(f"{flag}=")
+    ]
+    kept.append(f"{flag}=1")
+    return parsed._replace(query="&".join(kept)).geturl()
+
+
 def share_export_url(url: str) -> str:
     """Turn a share/view link into the URL that returns the file itself.
 
@@ -508,16 +527,12 @@ def share_export_url(url: str) -> str:
                     f"?format={_GOOGLE_DOC_FORMATS[kind]}"
                 )
         return url
-    if host == "dropbox.com" or host.endswith(".dropbox.com"):
-        if host == "dl.dropboxusercontent.com":
-            return url
-        query = [
-            (key, value)
-            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-            if key != "dl"
-        ]
-        query.append(("dl", "1"))
-        return parsed._replace(query=urlencode(query)).geturl()
+    if host == "1drv.ms" or host == "onedrive.live.com":
+        return _with_flag(parsed, "download")
+    if (host == "dropbox.com" or host.endswith(".dropbox.com")) and (
+        host != "dl.dropboxusercontent.com"
+    ):
+        return _with_flag(parsed, "dl")
     return url
 
 

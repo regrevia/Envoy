@@ -429,6 +429,19 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十六轮（制表符表格 .tsv；OneDrive 分享链接）
+
+- `.tsv` 和 `text/tab-separated-values` 归入文本源，按原样保留制表符分列。
+  实测：`raw.githubusercontent.com/Giammaria/PublicFiles/…/data/data.tsv`
+  → `ready`，1490 字，标题取文件名 `data.tsv`，首行表头与数据行的 `\t` 完整保留。
+- OneDrive 分享链接（`1drv.ms/…`、`onedrive.live.com/?resid=…`）补 `download=1`，
+  其余参数原样保留（`resid=ABC!123` 不会被重新编码）。`unit_checked`：
+  `1drv.ms/u/s!AgsM…?e=abc` → `…?e=abc&download=1`，
+  `onedrive.live.com/?resid=ABC!123&cid=ABC&download=0` → `…&download=1`。
+- OneDrive 抓取级实测没做成：本机到 `onedrive.live.com` 连接超时
+  （`1drv.ms` 的 301 能拿到，跳转目标连不通），属网络环境限制，不是读取缺陷。
+- 顺带把 Dropbox 的「补 `dl=1`」改成同样的参数替换逻辑，`dl=0` 会被替换而不是叠加。
+
 ## 第二十五轮（共享链接：Drive / Docs / Dropbox 的分享地址）
 
 分享链接（`drive.google.com/file/d/<id>/view`、`docs.google.com/.../d/<id>/edit`）

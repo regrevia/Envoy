@@ -23,6 +23,8 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- `.tsv` 链接按制表符原样读成文本；OneDrive 分享链接（`1drv.ms` / `onedrive.live.com`）
+  补 `download=1` 取原始文件。
 - 分享链接直接读正文：`drive.google.com/file/d/<id>/view` 换成下载地址，
   `docs.google.com` 的文档 / 表格 / 幻灯片换成对应导出格式，Dropbox 链接补 `dl=1`；
   按原样抓只会拿到 JS 外壳。
@@ -69,6 +71,8 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- `.tsv` links read as text with their tabs intact, and OneDrive share links
+  (`1drv.ms`, `onedrive.live.com`) ask for `download=1` to get the file itself.
 - Share links read as content: a `drive.google.com/file/d/<id>/view` link asks for
   the download endpoint, `docs.google.com` documents/sheets/slides ask for their
   export format, and Dropbox links get `dl=1`; fetched as written they return a

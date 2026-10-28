@@ -105,3 +105,21 @@ def test_a_shared_document_link_is_read_as_text(monkeypatch):
         f"https://docs.google.com/document/d/{FILE_ID}/edit"
     )
     assert response.blocks[0].content.text == "docs.google.com"
+
+
+def test_a_onedrive_link_asks_for_the_download():
+    assert reader.share_export_url(
+        "https://1drv.ms/u/s!AgsM3hkLexJ-hvJIR_epSz7JH8hB7g?e=abc"
+    ) == "https://1drv.ms/u/s!AgsM3hkLexJ-hvJIR_epSz7JH8hB7g?e=abc&download=1"
+    assert reader.share_export_url(
+        "https://onedrive.live.com/?resid=ABC!123&cid=ABC"
+    ) == "https://onedrive.live.com/?resid=ABC!123&cid=ABC&download=1"
+
+
+def test_a_tsv_link_is_read_as_text_rows():
+    response = reader._parse_text_source(
+        _request("https://example.com/data.tsv"),
+        {"url": "https://example.com/data.tsv", "data": b"a\tb\n1\t2\n", "mime_type": "text/tab-separated-values"},
+    )
+    assert response.result == reader.ReadResult.READY
+    assert "1\t2" in _text(response)
