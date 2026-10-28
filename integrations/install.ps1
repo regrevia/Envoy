@@ -115,6 +115,17 @@ function Get-PinnedRuntime {
     return ""
 }
 
+# Writes a small text file as UTF-8 without BOM. `Set-Content -Encoding ASCII`
+# turned `C:\Users\张三\...` into `C:\Users\??\...`, so a Chinese user name or a
+# non-ASCII ENVOY_HOME produced a pin/shim that pointed at a path that cannot
+# exist. The CLI reads the pin back as UTF-8, so write UTF-8 without BOM (a BOM
+# would survive .strip() as a stray U+FEFF in the recorded path).
+function Write-Utf8NoBom {
+    param([string]$Path, [string]$Content)
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
 function Set-PinnedRuntime {
     param([string]$Path)
     if ($Script:DryRun) {
@@ -123,7 +134,7 @@ function Set-PinnedRuntime {
     }
     $parent = Split-Path -Parent $Script:RuntimePin
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Set-Content -LiteralPath $Script:RuntimePin -Value $Path -Encoding ASCII
+    Write-Utf8NoBom $Script:RuntimePin ($Path + "`n")
 }
 
 # Every host-facing step resolves the binary through here, so the plugin and the
@@ -230,8 +241,19 @@ function Set-ExposedRuntime {
         New-Item -ItemType Directory -Path $Script:ShimDir -Force | Out-Null
     }
     $shim = Join-Path $Script:ShimDir "envoy.cmd"
+    # `cmd.exe` parses a .cmd in the console (OEM) code page, so an ASCII write
+    # turned `C:\Users\张三\...` into `C:\Users\??\...` and the shim could never
+    # start. Write with the OEM code page cmd will actually use. Note that
+    # [Text.Encoding]::Default is UTF-8 under .NET Core (PowerShell 7), so it is
+    # NOT the right encoding here; Encoding.GetEncoding(0) is also UTF-8 there.
+    $oem = try {
+        [System.Text.Encoding]::GetEncoding(
+            [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    } catch {
+        [System.Text.Encoding]::ASCII
+    }
     $content = "@echo off`r`n`"$binary`" %*`r`n"
-    Set-Content -LiteralPath $shim -Value $content -Encoding ASCII
+    [System.IO.File]::WriteAllText($shim, $content, $oem)
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not $userPath -or ($userPath -split ";" -notcontains $Script:ShimDir)) {
         Add-ToUserPath $Script:ShimDir

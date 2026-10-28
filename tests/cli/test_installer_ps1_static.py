@@ -83,6 +83,18 @@ def test_dry_run_never_dies_on_the_runtime_it_did_not_install(text: str):
     assert body.index("$Script:DryRun") < body.index("Stop-Install")
 
 
+def test_no_lossy_ascii_write_for_pin_or_shim(text: str):
+    """`-Encoding ASCII` mangles a Chinese user name into `??`."""
+    # Only code counts: the explanatory comment mentions the old encoding.
+    code = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "-Encoding ASCII" not in code
+    # The pin is read back as UTF-8 by install_state, so write UTF-8 without BOM.
+    assert "UTF8Encoding($false)" in code
+    assert "Write-Utf8NoBom" in code
+
+
 def test_user_path_write_preserves_expand_type(text: str):
     """A REG_EXPAND_SZ user PATH must not be downgraded to REG_SZ.
 
@@ -97,3 +109,9 @@ def test_user_path_write_preserves_expand_type(text: str):
     assert "reg.exe" in text
     # Pure merge helper exists so the no-duplicate rule is testable offline.
     assert "function Join-PathValue" in text
+
+
+def test_shim_uses_the_oem_code_page_not_utf8(text: str):
+    """cmd.exe parses .cmd in the OEM code page; Encoding.Default is UTF-8 in PS7."""
+    assert "OEMCodePage" in text
+    assert "[System.Text.Encoding]::Default" not in text
