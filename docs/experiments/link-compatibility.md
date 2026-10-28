@@ -960,3 +960,17 @@ douyin 相册顺序用例失败。
   这两条停留在单测级，不改写文案里的「已实测」措辞。
 - 两条测试在 `tests/cli/test_office_documents.py`，与既有 12 条同文件同构
   （`httpx.MockTransport` 驱动 `_fetch_html`）。
+
+## 第三十一轮（B站多P：分P 不再被合并成一个候选）
+
+`canonical_candidate_url` 以前只保留 `/video/BV…` 路径、丢掉所有 query，于是
+`?p=2`、`?p=3` 与第一集归一到同一个 URL，`candidate_id` 一样，采集时被当成重复项
+去重，一轮下来只能拿到其中一集。
+
+现在：`p` 为正整数且 > 1 时保留为 `?p=N`，其余分享参数（`share_source`、
+`spm_id_from` 等）继续丢弃，`p=1`/无 `p`/非法 `p` 都回到不带 query 的第一集。
+`candidate_id` 基于归一化 URL，因此同一视频的不同分P得到不同 id、不再互相去重。
+
+- `unit_checked`：`tests/cli/test_collection_urls.py` 新增 7 条（分P保留、p=1 等价、
+  非法 p 忽略、两P两id、分享参数不影响 id、手机域与主站同P一致、非视频路径仍拒绝）。
+- 未跑真实采集：分P 采集会真的走媒体链路，用户不在场时按既定约束不做真下载。

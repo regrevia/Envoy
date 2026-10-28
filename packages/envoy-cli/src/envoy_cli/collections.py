@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from . import storage
 from .media import interprocess_file_lock
@@ -176,6 +176,18 @@ def _write(path: Path, value: dict) -> None:
             pass
 
 
+def _bilibili_part(query: str) -> str:
+    """The `?p=N` suffix for a multi-part Bilibili video, or "" for part one."""
+
+    for key, value in parse_qsl(query, keep_blank_values=True):
+        if key != "p" or not value.isdigit():
+            continue
+        number = int(value)
+        if number > 1:
+            return f"?p={number}"
+    return ""
+
+
 def canonical_candidate_url(value: str) -> str:
     parts = urlsplit(str(value or "").strip())
     host = (parts.hostname or "").lower()
@@ -192,7 +204,10 @@ def canonical_candidate_url(value: str) -> str:
         match = re.fullmatch(r"/video/(BV[A-Za-z0-9]{10}|av\d+)", path)
         if not match:
             raise CollectionError("URL does not identify a canonical Bilibili video")
-        return f"https://www.bilibili.com/video/{match.group(1)}"
+        # A multi-part video (?p=N) is a separate episode of the same BV id:
+        # dropping the part would collapse every part into one candidate.
+        part = _bilibili_part(parts.query)
+        return f"https://www.bilibili.com/video/{match.group(1)}{part}"
     raise CollectionError("Only public Douyin or Bilibili post URLs can be canonicalized")
 
 
