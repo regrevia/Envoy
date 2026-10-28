@@ -189,15 +189,19 @@ Envoy does not install an automatic URL-interception hook by default: hook
 formats and routing semantics differ by host, and users should retain control
 over which links are sent to the local reader.
 
-## Douyin Profile Collections
+## Profile, Collection and Playlist Discovery
 
-When the user provides a Douyin creator profile and asks to organize a range of
-posts, first check whether the goal is actionable. If date range, maximum
+`mcp__envoy__envoy_discover` enumerates a public Douyin creator profile, a Bilibili space,
+collection (合集) or series (系列), or a YouTube playlist
+(`youtube.com/playlist?list=…`). It reads listing metadata only.
+
+When the user provides one of those links, or a creator profile, and asks to
+organize a range of items, first check whether the goal is actionable. If date range, maximum
 number, selection criteria, or output format would materially change the work,
 ask a follow-up question before discovery. Do not ask questions whose answers
 are already clear from the request.
 
-Call `mcp__envoy__envoy_discover` with the public profile URL and a bounded limit (default
+Call `mcp__envoy__envoy_discover` with the public profile, collection or playlist URL and a bounded limit (default
 20; maximum 100). Discovery returns candidate IDs, canonical links, titles,
 publication metadata when exposed, item type, and a continuation cursor.
 Discovery does not read post contents, download media, run ASR, or extract
