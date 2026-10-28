@@ -17,7 +17,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "integrations" / "install.sh"
 
 def _stubs(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(parents=True)
     for name in ("dsh", "claude", "codex"):
         stub = bin_dir / name
         stub.write_text("#!/bin/sh\nexit 0\n")
@@ -246,3 +246,62 @@ def test_unreachable_checksum_list_is_announced(tmp_path):
     result = _run(["skill"], env)
     assert result.returncode == 0, result.stderr
     assert "envoy doctor --json" in result.stdout
+
+
+def test_profiles_choose_how_much_is_provisioned(tmp_path):
+    """One knob, three tiers. A first link must never be the moment something
+    downloads, so the default profile is the complete one: runtime, Chromium
+    and the Whisper base model."""
+    expected = {
+        "minimal": (False, False),
+        "standard": (True, False),
+        "full": (True, True),
+    }
+    for profile, (wants_browser, wants_media) in expected.items():
+        _, env = _stubs(tmp_path / profile)
+        result = _run(["--profile", profile, "mcp"], env)
+        assert result.returncode == 0, (profile, result.stderr)
+        assert ("browser runtime (one-time" in result.stdout) is wants_browser, profile
+        assert ("speech recognition (Whisper" in result.stdout) is wants_media, profile
+
+
+def test_full_is_the_default_profile(tmp_path):
+    _, env = _stubs(tmp_path)
+    result = _run(["mcp"], env)
+    assert result.returncode == 0, result.stderr
+    assert "browser runtime (one-time" in result.stdout
+    assert "speech recognition (Whisper base" in result.stdout
+
+
+def test_profile_accepts_the_equals_form_and_the_env(tmp_path):
+    _, env = _stubs(tmp_path / "equals")
+    result = _run(["--profile=minimal", "mcp"], env)
+    assert result.returncode == 0, result.stderr
+    assert "browser runtime (one-time" not in result.stdout
+
+    _, env = _stubs(tmp_path / "env")
+    env["ENVOY_PROFILE"] = "standard"
+    env.pop("ENVOY_SETUP_MEDIA", None)
+    result = _run(["mcp"], env)
+    assert result.returncode == 0, result.stderr
+    assert "browser runtime (one-time" in result.stdout
+    assert "speech recognition (Whisper" not in result.stdout
+
+
+def test_environment_override_wins_over_the_profile(tmp_path):
+    """A CI box or a metered connection may want the full tier's plugin wiring
+    without its downloads; the explicit override still wins."""
+    _, env = _stubs(tmp_path)
+    env["ENVOY_SETUP_BROWSER"] = "0"
+    env["ENVOY_SETUP_MEDIA"] = "0"
+    result = _run(["--profile", "full", "mcp"], env)
+    assert result.returncode == 0, result.stderr
+    assert "browser runtime (one-time" not in result.stdout
+    assert "speech recognition (Whisper" not in result.stdout
+
+
+def test_unknown_profile_is_rejected(tmp_path):
+    _, env = _stubs(tmp_path)
+    result = _run(["--profile", "ultra", "mcp"], env)
+    assert result.returncode != 0
+    assert "unknown profile 'ultra'" in result.stderr

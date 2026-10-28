@@ -104,13 +104,19 @@
 - 升级不再涨盘：Playwright 每次升级都下新版本浏览器、从不删旧的（本机实测积压
   5 份、714.8 MB），`envoy browser setup` 装完现在会删掉被替换掉的旧版本；
   新增 `envoy browser prune [--dry-run] [--json]` 手动回收，只认
-  `<家族>-<数字>` 目录名，其它内容不动。默认安装仍是「浏览器一起装好」，
-  装完即可读抖音、视频页，不依赖首次使用时的额外下载。
+  `<家族>-<数字>` 目录名，其它内容不动。
+- 安装档位：安装脚本新增 `--profile minimal|standard|full`（`ENVOY_PROFILE`
+  同义），默认 `full` 且是推荐档。`minimal` 只装 runtime（实测 178 MB），
+  `standard` 加 Chromium（实测 683 MB，读抖音/视频页），`full` 再加 Whisper
+  `base`（权重约 140 MB + 依赖）并预取，装完即可离线转写——默认档不再有任何
+  「首次使用才下载」的能力。`ENVOY_SETUP_BROWSER`/`ENVOY_SETUP_MEDIA` 仍可单独
+  覆盖某一步（CI 场景），`ENVOY_ASR_MODEL` 换 `full` 预取的模型；补档只需重跑
+  安装脚本，provision 两步都是幂等的。
 
 ### 文档
 
-- `INSTALL.md` 新增「装完就是完整的」：默认安装含浏览器及其体积、`envoy browser prune` 的回收口径、ASR 权重默认不含。
-- README（中/英）新增「安装」段：Claude Code / Codex / DSH 各一行 `install.sh` 命令、`auto` 识别、`ENVOY_DRY_RUN` 预演、Windows `install.ps1`，以及装后 `envoy doctor --json` 与 `envoy browser setup` 两条自检。
+- `INSTALL.md` 新增「三档安装」：三档各自装什么、实测体积、`--profile`/`ENVOY_PROFILE` 用法、覆盖变量与补档方式；「装完就是完整的」原段落并入该表，`envoy browser prune` 的回收口径保留。
+- README（中/英）安装段补充默认 `full` 档与 `minimal`/`standard` 的取舍及体积，装后自检改为 `envoy doctor --json`（`browser.ready` 与 `asr_model_available`）加 `envoy browser setup` / `envoy browser prune`。
 
 ### 中文
 

@@ -39,7 +39,7 @@ job 日志和 artifact 在公开仓库里对所有访客可见。所以：
 2. `Python 3.11+` 或 `uv` 在 PATH 上：`install.ps1` 需要其中之一建 venv。
 3. PowerShell 7.4+（`winget install --id Microsoft.PowerShell -e --silent`）。缺失时 `windows-powershell-7` 会先尝试装，装不上直接报错，不会静默当通过。
 4. 能访问 `github.com` / `raw.githubusercontent.com` / PyPI（或用 `ENVOY_RELEASES_BASE`、`ENVOY_MANIFEST_URL` 指向镜像做常规回归）。
-5. 浏览器预取已关（`ENVOY_SETUP_BROWSER=0`）。验收只测安装器，不测 Chromium 下载。
+5. 浏览器与转写预取已关（`ENVOY_SETUP_BROWSER=0`、`ENVOY_SETUP_MEDIA=0`，等价于 `--profile minimal`）。验收只测安装器，不测 Chromium 与 Whisper 下载。
 
 ## 注册节点
 

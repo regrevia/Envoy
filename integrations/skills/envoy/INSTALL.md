@@ -133,21 +133,50 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","so
 只验证公开网页读取，不代表视频或 ASR 已就绪。安装脚本结束时也会打印
 `envoy doctor --json` 的 runtime 版本与协议版本，对不上就是没装成。
 
-## 装完就是完整的 / Installed means complete
+## 三档安装 / Three profiles
 
-安装脚本默认连浏览器一起装好（`ENVOY_SETUP_BROWSER=1`），装完即可读抖音、视频页
-这类必须渲染的链接，不需要再单独跑命令、也不在首次读取时下载。整份安装约：
-runtime 178 MB + Chromium 683 MB（Windows 与 mac 相近，视版本而定）。
+默认是完整档，装完没有「首次使用时还要下载」的能力：
+
+| 档位 | 装什么 | 大致体积 | 适合 |
+| --- | --- | --- | --- |
+| `minimal` 简洁 | 只有 runtime：读普通网页、PDF、图片 | 178 MB | 磁盘吃紧的容器 / CI |
+| `standard` 标准 | runtime + Chromium：再加必须渲染的页面、视频页 | 178 + 683 MB | 只用网页能力，不需要转写 |
+| `full` 完整（默认，推荐） | 上一档 + Whisper `base`：字幕、语音、无字幕视频都能转写 | 上一档 + Whisper 依赖 + 权重约 140 MB | 默认选这个 |
 
 ```bash
-envoy doctor --json           # browser.ready 应为 true，disk 给出浏览器占用
+# 不写 --profile 就是完整档
+curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh
+# 只装 runtime
+curl -fsSL .../install.sh | sh -s -- --profile minimal dsh
+# Windows
+powershell -ExecutionPolicy Bypass -File install.ps1 -Profile standard
+```
+
+`ENVOY_PROFILE=minimal` 与 `--profile` 等价；`ENVOY_SETUP_BROWSER=0`、
+`ENVOY_SETUP_MEDIA=0` 覆盖所选档位里的某一步（CI 里既想要完整档的插件接线、又不想
+下载时用）；`ENVOY_ASR_MODEL` 换 `full` 档预取的模型（默认 `base`）。
+
+装完核对，以及升级后回收旧浏览器：
+
+```bash
+envoy doctor --json           # browser.ready、asr_model_available 应为 true
 envoy browser prune --dry-run # 先看会回收多少，不删
 ```
 
 Playwright 每升一次就换个浏览器版本、从不删旧的，所以升级几次后缓存会翻倍；
 `envoy browser setup` 装完会自动清掉被替换掉的旧版本，`envoy browser prune` 可手动
-重跑（`--dry-run` 只报不删）。音频转写是可选能力，单独装（`envoy asr setup`），
-默认安装不含任何模型权重。
+重跑（`--dry-run` 只报不删）。
+
+体积口径：runtime 与 Chromium 是在本机（macOS，`du`）实测；Whisper 依赖里 torch
+占大头，各平台不同，本仓库没有实测数字，只保证 `full` 档装完即可离线转写。
+后装的补法：`minimal`/`standard` 想升级能力，重跑安装脚本并带 `--profile full`
+即可，两步都是幂等的。
+
+English: the installer takes `--profile minimal|standard|full` (`ENVOY_PROFILE` is
+the same knob) and defaults to `full`, so a fresh install already has Chromium and
+the Whisper `base` model — nothing downloads on first use. Runtime 178 MB and
+Chromium 683 MB are measured on macOS; the Whisper dependency set (torch is most
+of it) varies by platform and is not measured here.
 
 ## 更新与卸载 / Update and remove
 

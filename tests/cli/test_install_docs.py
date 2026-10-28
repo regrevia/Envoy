@@ -36,7 +36,9 @@ def _sh_repo(sh: str) -> str:
 
 
 def _dispatched_targets(sh: str) -> set[str]:
-    body = sh[sh.index('host="${1:-}"') :]
+    # The host word is the last argument, after any --profile flag, so the list
+    # lives in the case block that dispatches on it.
+    body = sh[sh.index('case "$host" in') :]
     return set(re.findall(r"^\s{2}([a-z][a-z-]*)(?:\|[a-z-]+)?\)", body, re.MULTILINE))
 
 

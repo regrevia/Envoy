@@ -18,7 +18,13 @@
 #   ENVOY_VERSION        runtime version to install (default: release manifest)
 #   ENVOY_HOME           private runtime root (default: ~/.local/share/envoy-dsh/runtime)
 #   ENVOY_RUNTIME_BIN    explicit runtime to reuse instead of installing one
-#   ENVOY_SETUP_BROWSER  1 (default) downloads Chromium at install time; 0 skips
+#   ENVOY_PROFILE       minimal | standard | full (default: full, the recommended one)
+#                       minimal: runtime only, ~180 MB
+#                       standard: runtime + Chromium, ~860 MB
+#                       full: runtime + Chromium + Whisper base, no later downloads
+#   ENVOY_SETUP_BROWSER override the profile's browser step: 1 download, 0 skip
+#   ENVOY_SETUP_MEDIA   override the profile's speech-recognition step: 1 setup, 0 skip
+#   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base)
 #   ENVOY_DETECT_DESKTOP_APP 1 (default) also finds the DeepSeek Harness app bundle
 #   DSH_PROFILE          Harness profile for the DSH bundle (default: web)
 #   ENVOY_MANIFEST_URL   release manifest to read (default: raw.githubusercontent main)
@@ -40,7 +46,10 @@ RUNTIME_BIN="$RUNTIME_HOME/bin/envoy"
 RUNTIME_PIN="${ENVOY_RUNTIME_PIN:-$HOME/.envoy/runtime-path}"
 DSH_PROFILE="${DSH_PROFILE:-web}"
 DRY_RUN="${ENVOY_DRY_RUN:-0}"
-SETUP_BROWSER="${ENVOY_SETUP_BROWSER:-1}"
+PROFILE="${ENVOY_PROFILE:-full}"
+SETUP_BROWSER="${ENVOY_SETUP_BROWSER:-}"
+SETUP_MEDIA="${ENVOY_SETUP_MEDIA:-}"
+ASR_MODEL="${ENVOY_ASR_MODEL:-base}"
 DETECT_DESKTOP_APP="${ENVOY_DETECT_DESKTOP_APP:-1}"
 
 die() {
@@ -58,9 +67,20 @@ run() {
 
 usage() {
   cat <<'EOF'
-usage: install.sh [dsh|claude-code|codex|mcp|skill|all|path]
+usage: install.sh [--profile minimal|standard|full] [dsh|claude-code|codex|mcp|skill|all|path]
 
-  (no argument) every host detected on this machine
+  (no argument) every host detected on this machine, full profile
+
+  --profile minimal   runtime only, about 180 MB; nothing is downloaded later
+                      until you ask for it
+  --profile standard  runtime + Chromium, about 860 MB; reads rendered pages
+                      and video pages, no speech recognition
+  --profile full      runtime + Chromium + Whisper base model (recommended);
+                      every capability this host exposes works offline after
+                      install, nothing downloads on first use
+
+  ENVOY_PROFILE sets the same thing without the flag; ENVOY_SETUP_BROWSER and
+  ENVOY_SETUP_MEDIA override one step of the chosen profile.
   dsh          install the DeepSeek Harness bundle from npm
   claude-code  add this repository as a marketplace, then install the plugin
   codex        same, plus the user-level prompt hook Codex needs
@@ -196,7 +216,6 @@ install_runtime() {
     printf '  + download %s\n' "$url"
     printf '  + pip install %s\n' "$wheel"
     printf '  + pin %s -> %s\n' "$RUNTIME_BIN" "$RUNTIME_PIN"
-    provision_browser "$RUNTIME_BIN"
     return 0
   fi
 
@@ -232,7 +251,6 @@ install_runtime() {
   # `envoy`, so expose it on PATH without touching an existing install.
   pin_runtime "$RUNTIME_BIN"
   expose_runtime
-  provision_browser "$RUNTIME_BIN"
 }
 
 # The two plugin hosts spawn a bare `envoy`; expose the pinned runtime on PATH
@@ -251,16 +269,52 @@ expose_runtime() {
   fi
 }
 
+# Three profiles, one axis: how much of the optional surface is provisioned up
+# front. The default is the complete one, because a capability that silently
+# fails on first use costs the user more than the download it would have taken
+# at install time.
+apply_profile() {
+  case "$PROFILE" in
+    minimal|standard|full) ;;
+    *) die "unknown profile '$PROFILE'; expected minimal, standard or full" ;;
+  esac
+  if [ -z "$SETUP_BROWSER" ]; then
+    case "$PROFILE" in
+      minimal) SETUP_BROWSER=0 ;;
+      *) SETUP_BROWSER=1 ;;
+    esac
+  fi
+  if [ -z "$SETUP_MEDIA" ]; then
+    case "$PROFILE" in
+      full) SETUP_MEDIA=1 ;;
+      *) SETUP_MEDIA=0 ;;
+    esac
+  fi
+}
+
 # Chromium takes a minute or two and belongs to install time, not to the user's
 # first link: a read that downloads it would sit inside the host's tool deadline
 # and surface as a failed page instead of a one-time setup step.
 provision_browser() {
   if [ "$SETUP_BROWSER" != "1" ]; then
-    printf 'envoy install: skipped browser setup (ENVOY_SETUP_BROWSER=0); run `envoy browser setup` before the first link\n'
+    printf 'envoy install: skipped browser setup (profile %s); run `envoy browser setup` before the first link\n' "$PROFILE"
     return 0
   fi
   printf 'envoy install: browser runtime (one-time, about 1-2 minutes)\n'
   run "$1" browser setup || printf 'envoy install: browser setup did not finish; run `envoy browser setup` later\n' >&2
+}
+
+# Speech recognition is the only base capability whose weights are not in the
+# wheel: install-time is where they belong, so `full` never downloads on the
+# first audio or subtitle-less video.
+provision_media() {
+  if [ "$SETUP_MEDIA" != "1" ]; then
+    printf 'envoy install: skipped speech recognition (profile %s); run `envoy asr install --model %s` if you need audio transcription\n' "$PROFILE" "$ASR_MODEL"
+    return 0
+  fi
+  printf 'envoy install: speech recognition (Whisper %s, one-time; tens to hundreds of MB)\n' "$ASR_MODEL"
+  run "$1" asr install --model "$ASR_MODEL" \
+    || printf 'envoy install: speech recognition did not finish; run `envoy asr install --model %s` later\n' "$ASR_MODEL" >&2
 }
 
 # A finished install that cannot read a page is still a failed install, so say
@@ -290,7 +344,9 @@ protocol = data.get("protocol_version") or "unknown"
 runtime = data.get("runtime") or {}
 browser = "ready" if (runtime.get("browser") or {}).get("ready") else "missing: envoy browser setup"
 install = runtime.get("install") or {}
-print(f"envoy install: runtime {version}, protocol {protocol}, browser {browser}")
+model = runtime.get("asr_model") or "base"
+asr = "ready" if runtime.get("asr_model_available") else f"missing: run envoy asr install --model {model}"
+print(f"envoy install: runtime {version}, protocol {protocol}, browser {browser}, asr {asr}")
 status = install.get("status")
 if status and status != "pinned":
     pinned = install.get("pinned_runtime") or "none"
@@ -409,6 +465,16 @@ install_codex() {
   report_health
 }
 
+# Provisioning belongs to the profile, not to the runtime-install branch: a host
+# already on PATH means no wheel is installed, and the browser and the ASR
+# weights would otherwise never be fetched for the tier the user picked. Both
+# steps are idempotent, so a re-run of the installer is also a repair.
+ensure_profile() {
+  binary="$(envoy_binary)"
+  provision_browser "$binary"
+  provision_media "$binary"
+}
+
 # Every host-facing step resolves the binary through here, so the plugin that
 # gets registered and the runtime that serves it are always the same one.
 envoy_binary() {
@@ -503,6 +569,8 @@ ENVOY_SKILL
 
 install_auto() {
   ensure_runtime
+  ensure_profile
+  ensure_profile
   installed=0
   if find_dsh >/dev/null 2>&1; then install_dsh; installed=1; fi
   if command -v claude >/dev/null 2>&1; then install_claude_code; installed=1; fi
@@ -514,7 +582,30 @@ install_auto() {
   report_health
 }
 
-host="${1:-}"
+host=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --profile)
+      [ "$#" -ge 2 ] || die "--profile needs a value: minimal, standard or full"
+      PROFILE="$2"
+      shift 2
+      ;;
+    --profile=*)
+      PROFILE="${1#--profile=}"
+      shift
+      ;;
+    -p)
+      [ "$#" -ge 2 ] || die "-p needs a value: minimal, standard or full"
+      PROFILE="$2"
+      shift 2
+      ;;
+    *)
+      host="$1"
+      shift
+      ;;
+  esac
+done
+apply_profile
 case "$host" in
   "")
     install_auto
@@ -524,23 +615,28 @@ case "$host" in
     ;;
   dsh)
     ensure_runtime
+    ensure_profile
     install_dsh
     ;;
   claude-code|claude)
     ensure_runtime
+    ensure_profile
     install_claude_code
     ;;
   codex)
     ensure_runtime
+    ensure_profile
     install_codex
     ;;
   mcp)
     ensure_runtime
+    ensure_profile
     install_mcp
     report_health
     ;;
   skill)
     ensure_runtime
+    ensure_profile
     install_skill
     report_health
     ;;

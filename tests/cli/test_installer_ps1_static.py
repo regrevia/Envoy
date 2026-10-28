@@ -147,3 +147,38 @@ def test_shim_uses_the_oem_code_page_not_utf8(text: str):
     """cmd.exe parses .cmd in the OEM code page; Encoding.Default is UTF-8 in PS7."""
     assert "OEMCodePage" in text
     assert "[System.Text.Encoding]::Default" not in text
+
+
+def test_profiles_exist_and_default_to_full(text: str):
+    """Same three tiers as install.sh, same default.
+
+    install.sh cannot be run from this file to compare, so pin the strings both
+    installers must agree on.
+    """
+    assert "[string]$Profile" in text
+    assert '$Script:Profile' in text
+    for profile in ("minimal", "standard", "full"):
+        assert f'"{profile}"' in text
+    assert '$Script:Profile -eq "minimal"' in text
+    assert '$Script:Profile -eq "full"' in text
+    assert '$env:ENVOY_PROFILE' in text
+    assert "expected minimal, standard or full" in text
+
+
+def test_profile_provisioning_runs_outside_the_runtime_install(text: str):
+    """A host CLI already on PATH skips Install-Runtime, so provisioning hung
+    off that branch would never apply the profile the user picked."""
+    assert "function Ensure-Profile" in text
+    assert "function Provision-Media" in text
+    ensure = text[text.index("function Ensure-Profile"):]
+    ensure = ensure[: ensure.index("function ", 10)]
+    assert "Provision-Browser" in ensure and "Provision-Media" in ensure
+    for branch in ('"mcp"', '"dsh"', '"claude-code"', '"codex"', '"skill"'):
+        line = next(item for item in text.splitlines() if item.strip().startswith(branch))
+        assert "Ensure-Profile" in line, branch
+    auto = text[text.index("function Install-Auto"):]
+    auto = auto[: auto.index("Confirm-Health")]
+    assert "Ensure-Profile" in auto
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    assert "Provision-Browser $Script:RuntimeBin" not in runtime

@@ -33,12 +33,14 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
 
+默认是完整档：runtime、Chromium、Whisper `base` 一次装齐，装完读网页、看视频、转写都不用等到首次使用才下载（整份约 runtime 178 MB + 浏览器 683 MB + 转写权重约 140 MB；后两项的平台差异见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)）。只想要更小的安装：`--profile minimal`（只装 runtime，178 MB，读普通网页/PDF/图片）或 `--profile standard`（加 Chromium，683 MB，读需要渲染的页面和视频页，不转写）。重跑安装脚本并换成更高的档位就能补齐缺的能力，两步都是幂等的。
+
 不确定宿主是哪个：把最后一段换成 `auto`，脚本会识别已装的 Claude Code / Codex / DSH，都没有就写 MCP 条目（`mcp`、`skill` 也可以单独装；`all` 等同于 `auto`）。只想先看它要做什么，命令前加 `ENVOY_DRY_RUN=1`。从镜像或本地目录安装时，把下载根换成 `ENVOY_RELEASES_BASE`、清单地址换成 `ENVOY_MANIFEST_URL`（目录按 `v<版本>/` 放产物与 `SHA256SUMS`），默认值不变；整仓换到 fork 时设 `ENVOY_REPO`（默认 `regrevia/Envoy`）。Windows PowerShell 用 `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex`（默认 auto，指定宿主时下载后 `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`）。
 
 装完两条自检：
 
 ```sh
-envoy doctor --json     # runtime.install.status 应为 pinned：固定唯一 runtime，旧 PATH 上的 envoy 不会抢占
+envoy doctor --json     # runtime.install.status 应为 pinned；browser.ready 与 asr_model_available 应为 true
 envoy browser setup     # 浏览器安装脚本已装好；这行用于补装或换版本，装完会自动清掉被替换的旧版本
 envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存会翻倍），--dry-run 只报不删
 ```
@@ -192,12 +194,14 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
 
+The default is the full profile: runtime, Chromium and the Whisper `base` model land in one pass, so reading pages, watching videos and transcribing audio never wait on a first-use download (about runtime 178 MB + browser 683 MB + weights ~140 MB; platform differences are in [INSTALL.md](integrations/skills/envoy/INSTALL.md)). For a smaller install use `--profile minimal` (runtime only, 178 MB: plain pages, PDFs, images) or `--profile standard` (adds Chromium, 683 MB: pages that need rendering and video pages, no transcription). Re-running the installer with a higher profile fills in the rest; both steps are idempotent.
+
 Not sure which host you have: use `auto` instead — it detects an installed Claude Code / Codex / DSH and falls back to an MCP entry (`mcp` and `skill` also install on their own; `all` is the same as `auto`). Add `ENVOY_DRY_RUN=1` to see what it would do first. To install from a mirror or a local directory, point `ENVOY_RELEASES_BASE` at the download root and `ENVOY_MANIFEST_URL` at the manifest (layout: `v<version>/` with the artifacts and `SHA256SUMS`); the defaults are unchanged; to point at a fork set `ENVOY_REPO` (default `regrevia/Envoy`). On Windows PowerShell: `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex` (auto by default; for one host download it and run `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`).
 
 Two checks after installing:
 
 ```sh
-envoy doctor --json     # runtime.install.status should be pinned: one runtime, an older envoy on PATH cannot win
+envoy doctor --json     # runtime.install.status should be pinned; browser.ready and asr_model_available should be true
 envoy browser setup     # the installer already provisions it; rerun to repair or change versions, stale copies are pruned
 envoy browser prune     # reclaim browser downloads left behind by upgrades; --dry-run only reports
 ```

@@ -12,7 +12,13 @@
 #   ENVOY_VERSION       runtime version to install (default: release manifest)
 #   ENVOY_HOME          private runtime root (default: %LOCALAPPDATA%\envoy-dsh\runtime)
 #   ENVOY_RUNTIME_BIN   explicit runtime to reuse instead of installing one
-#   ENVOY_SETUP_BROWSER 1 (default) downloads Chromium at install time; 0 skips
+#   ENVOY_PROFILE       minimal | standard | full (default: full, the recommended one)
+#                       minimal: runtime only, about 180 MB
+#                       standard: runtime + Chromium, about 860 MB
+#                       full: runtime + Chromium + Whisper base, no later downloads
+#   ENVOY_SETUP_BROWSER override the profile's browser step: 1 download, 0 skip
+#   ENVOY_SETUP_MEDIA   override the profile's speech-recognition step: 1 setup, 0 skip
+#   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base)
 #   DSH_PROFILE         Harness profile for the DSH bundle (default: web)
 #   ENVOY_DRY_RUN=1     print the commands instead of running them
 #
@@ -25,7 +31,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$Target = ""
+    [string]$Target = "",
+    [string]$Profile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,7 +58,13 @@ $Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else
 $Script:ShimDir = Join-Path $Script:EnvoyHome "bin"
 $Script:DshProfile = if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { "web" }
 $Script:DryRun = ($env:ENVOY_DRY_RUN -eq "1")
-$Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER } else { "1" }
+# Three profiles, one axis: how much optional surface is provisioned up front.
+# The default is the complete one, because a capability that silently fails on
+# first use costs more than the download it would have taken at install time.
+$Script:Profile = if ($Profile) { $Profile.ToLowerInvariant() } elseif ($env:ENVOY_PROFILE) { $env:ENVOY_PROFILE.ToLowerInvariant() } else { "full" }
+$Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER } elseif ($Script:Profile -eq "minimal") { "0" } else { "1" }
+$Script:SetupMedia = if ($env:ENVOY_SETUP_MEDIA) { $env:ENVOY_SETUP_MEDIA } elseif ($Script:Profile -eq "full") { "1" } else { "0" }
+$Script:AsrModel = if ($env:ENVOY_ASR_MODEL) { $env:ENVOY_ASR_MODEL } else { "base" }
 $Script:RuntimeVersion = ""
 
 function Stop-Install {
@@ -277,7 +290,6 @@ function Install-Runtime {
         Write-Host ("  + download {0}" -f $url)
         Write-Host ("  + pip install {0}" -f $wheel)
         Set-PinnedRuntime $Script:RuntimeBin
-        Provision-Browser $Script:RuntimeBin
         return
     }
     $uv = Get-Command uv -ErrorAction SilentlyContinue
@@ -322,7 +334,6 @@ function Install-Runtime {
     if (-not (Test-Path -LiteralPath $Script:RuntimeBin)) { Stop-Install "runtime install finished without $($Script:RuntimeBin)" }
     Set-PinnedRuntime $Script:RuntimeBin
     Set-ExposedRuntime
-    Provision-Browser $Script:RuntimeBin
 }
 
 # Chromium belongs to install time, not to the first link: a read that downloads
@@ -330,7 +341,7 @@ function Install-Runtime {
 function Provision-Browser {
     param([string]$Binary)
     if ($Script:SetupBrowser -ne "1") {
-        Write-Host "envoy install: skipped browser setup (ENVOY_SETUP_BROWSER=0); run ``envoy browser setup`` before the first link"
+        Write-Host "envoy install: skipped browser setup (profile $($Script:Profile)); run ``envoy browser setup`` before the first link"
         return
     }
     Write-Host "envoy install: browser runtime (one-time, about 1-2 minutes)"
@@ -339,6 +350,32 @@ function Provision-Browser {
     } catch {
         Write-Host "envoy install: browser setup did not finish; run ``envoy browser setup`` later" -ForegroundColor Yellow
     }
+}
+
+# Speech recognition is the only base capability whose weights are not in the
+# wheel: install-time is where they belong, so `full` never downloads on the
+# first audio or subtitle-less video.
+function Provision-Media {
+    param([string]$Binary)
+    if ($Script:SetupMedia -ne "1") {
+        Write-Host "envoy install: skipped speech recognition (profile $($Script:Profile)); run ``envoy asr install --model $($Script:AsrModel)`` if you need audio transcription"
+        return
+    }
+    Write-Host "envoy install: speech recognition (Whisper $($Script:AsrModel), one-time; tens to hundreds of MB)"
+    try {
+        Invoke-Step $Binary @("asr", "install", "--model", $Script:AsrModel)
+    } catch {
+        Write-Host "envoy install: speech recognition did not finish; run ``envoy asr install --model $($Script:AsrModel)`` later" -ForegroundColor Yellow
+    }
+}
+
+# Provisioning belongs to the profile, not to the runtime-install branch: a host
+# already on PATH means no wheel is installed, and the tier the user picked would
+# otherwise never be applied. Both steps are idempotent, so a re-run repairs.
+function Ensure-Profile {
+    $binary = Get-EnvoyBinary
+    Provision-Browser $binary
+    Provision-Media $binary
 }
 
 function Confirm-Runtime {
@@ -516,7 +553,9 @@ function Confirm-Health {
     $version = if ($data.cli_version) { $data.cli_version } elseif ($data.version) { $data.version } else { "unknown" }
     $protocol = if ($data.protocol_version) { $data.protocol_version } else { "unknown" }
     $browser = if ($data.runtime.browser.ready) { "ready" } else { "missing: envoy browser setup" }
-    Write-Host "envoy install: runtime $version, protocol $protocol, browser $browser"
+    $model = if ($data.runtime.asr_model) { $data.runtime.asr_model } else { "base" }
+    $asr = if ($data.runtime.asr_model_available) { "ready" } else { "missing: run envoy asr install --model $model" }
+    Write-Host "envoy install: runtime $version, protocol $protocol, browser $browser, asr $asr"
     $install = $data.runtime.install
     if ($install -and $install.status -and $install.status -ne "pinned") {
         $pinned = if ($install.pinned_runtime) { $install.pinned_runtime } else { "none" }
@@ -527,6 +566,7 @@ function Confirm-Health {
 
 function Install-Auto {
     Confirm-Runtime
+    Ensure-Profile
     $installed = $false
     if (Find-Dsh) { Install-Dsh; $installed = $true }
     if (Get-Command claude -ErrorAction SilentlyContinue) { Install-ClaudeCode; $installed = $true }
@@ -538,17 +578,22 @@ function Install-Auto {
     Confirm-Health
 }
 
+if ($Script:Profile -notin @("minimal", "standard", "full")) {
+    Write-Host "envoy install: unknown profile '$($Script:Profile)'; expected minimal, standard or full" -ForegroundColor Red
+    exit 2
+}
+
 $command = if ($Target) { $Target.ToLowerInvariant() } else { "" }
 switch ($command) {
     "" { Install-Auto }
     "auto" { Install-Auto }
     "all" { Install-Auto }
-    "dsh" { Confirm-Runtime; Install-Dsh }
-    "claude-code" { Confirm-Runtime; Install-ClaudeCode }
-    "claude" { Confirm-Runtime; Install-ClaudeCode }
-    "codex" { Confirm-Runtime; Install-Codex }
-    "mcp" { Confirm-Runtime; Install-Mcp; Confirm-Health }
-    "skill" { Confirm-Runtime; Install-Skill; Confirm-Health }
+    "dsh" { Confirm-Runtime; Ensure-Profile; Install-Dsh }
+    "claude-code" { Confirm-Runtime; Ensure-Profile; Install-ClaudeCode }
+    "claude" { Confirm-Runtime; Ensure-Profile; Install-ClaudeCode }
+    "codex" { Confirm-Runtime; Ensure-Profile; Install-Codex }
+    "mcp" { Confirm-Runtime; Ensure-Profile; Install-Mcp; Confirm-Health }
+    "skill" { Confirm-Runtime; Ensure-Profile; Install-Skill; Confirm-Health }
     "path" {
         $pinned = Get-PinnedRuntime
         if ($pinned) { Write-Host $pinned }
@@ -559,7 +604,7 @@ switch ($command) {
     "-h" { Get-Help $PSCommandPath }
     "--help" { Get-Help $PSCommandPath }
     default {
-        Write-Host "usage: install.ps1 [dsh|claude-code|codex|mcp|skill|all|path]" -ForegroundColor Red
+        Write-Host "usage: install.ps1 [-Profile minimal|standard|full] [dsh|claude-code|codex|mcp|skill|all|path]" -ForegroundColor Red
         exit 2
     }
 }
