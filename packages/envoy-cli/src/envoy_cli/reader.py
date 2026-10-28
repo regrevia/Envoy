@@ -204,6 +204,8 @@ LEGACY_OFFICE_CONTENT_TYPES = {
 }
 _MAX_OFFICE_UNCOMPRESSED = 64 * 1024 * 1024
 _MAX_OFFICE_ENTRIES = 4000
+_SNIFF_MAX_BYTES = 1 << 20
+_PRINTABLE_TABLES = ("utf-8", "gb18030")
 TEXT_CONTENT_TYPES = {
     "application/atom+xml",
     "application/rss+xml",
@@ -4781,6 +4783,28 @@ def _fetch_html_via(
                             "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
                             "encoding": charset,
                         })
+                    if content_type in {"", "application/octet-stream", "binary/octet-stream"}:
+                        body = bytearray()
+                        for chunk in response.iter_bytes():
+                            body.extend(chunk)
+                            if len(body) > _SNIFF_MAX_BYTES:
+                                raise PublicPageError(
+                                    "The source is served as a binary download that is too large to read as text",
+                                    ErrorCode.UNSUPPORTED_SOURCE,
+                                )
+                        sniffed = _sniff_plain_text(bytes(body))
+                        if sniffed is not None:
+                            sniffed_data, sniffed_encoding = sniffed
+                            raise DetectedText({
+                                "url": _redact_url(current_url),
+                                "data": sniffed_data,
+                                "mime_type": "text/plain",
+                                "encoding": sniffed_encoding,
+                            })
+                        raise PublicPageError(
+                            f"Static reader only accepts HTML pages, received {content_type}",
+                            ErrorCode.UNSUPPORTED_SOURCE,
+                        )
                     if content_type in LEGACY_OFFICE_CONTENT_TYPES or text_path.endswith(
                         LEGACY_OFFICE_SUFFIXES
                     ):
@@ -6086,6 +6110,36 @@ def _parse_office_source(request: ReadRequest, source: dict) -> ReadResponse:
     for item in coverage.modalities.values():
         item.details = {**item.details, "reader": f"document:{kind}", "document_format": kind}
     return response.model_copy(update={"coverage": coverage})
+
+
+def _sniff_plain_text(data: bytes) -> tuple[str, str] | None:
+    """Decide whether bytes served as octet-stream are really plain text.
+
+    Some hosts hand over text with `application/octet-stream` (a Drive download
+    of a `.txt`, a pasted log, an old export). Refusing all of those loses pages
+    that would read fine, so a short body is decoded strictly and only accepted
+    when nearly every character is printable. Anything with a NUL byte is binary
+    and stays refused.
+    """
+
+    if not data or b"\x00" in data or len(data) > _SNIFF_MAX_BYTES:
+        return None
+    for encoding in _PRINTABLE_TABLES:
+        try:
+            text = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if not text.strip():
+            return None
+        control = sum(
+            1
+            for char in text
+            if ord(char) < 32 and char not in "\n\r\t\f\v"
+        )
+        if control * 20 > len(text):
+            return None
+        return data, encoding
+    return None
 
 
 def _text_document_title(url: str) -> str:

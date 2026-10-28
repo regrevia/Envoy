@@ -23,6 +23,8 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- 被当成二进制附件（`application/octet-stream`）下发的纯文本不再被拒绝：
+  小体积文本按 UTF-8 / GB18030 嗅探后照常读取，含 NUL 或大文件仍判为二进制。
 - `.tsv` 链接按制表符原样读成文本；OneDrive 分享链接（`1drv.ms` / `onedrive.live.com`）
   补 `download=1` 取原始文件。
 - 分享链接直接读正文：`drive.google.com/file/d/<id>/view` 换成下载地址，
@@ -71,6 +73,9 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- Plain text served as a binary attachment (`application/octet-stream`) is read
+  again: a small body is sniffed as UTF-8/GB18030 text, while NUL bytes and
+  large downloads stay classified as binary.
 - `.tsv` links read as text with their tabs intact, and OneDrive share links
   (`1drv.ms`, `onedrive.live.com`) ask for `download=1` to get the file itself.
 - Share links read as content: a `drive.google.com/file/d/<id>/view` link asks for

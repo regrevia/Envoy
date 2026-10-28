@@ -10,6 +10,7 @@ import io
 import zipfile
 
 import httpx
+import pytest
 
 from envoy_cli import reader
 from envoy_core.schemas.read_v1 import ReadRequest
@@ -123,3 +124,35 @@ def test_a_tsv_link_is_read_as_text_rows():
     )
     assert response.result == reader.ReadResult.READY
     assert "1\t2" in _text(response)
+
+
+def test_a_text_file_served_as_a_binary_download_is_read(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/octet-stream"},
+            content="第一行\nsecond line\n".encode(),
+        )
+
+    _serve(monkeypatch, handler)
+
+    response = reader._read_public_page_once(_request("https://example.com/notes"))
+
+    assert response.result == reader.ReadResult.READY
+    assert "第一行" in _text(response)
+
+
+def test_a_binary_download_stays_refused(monkeypatch):
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/octet-stream"},
+            content=b"\x00\x01\x02binary",
+        )
+
+    _serve(monkeypatch, handler)
+
+    response = reader._read_public_page_once(_request("https://example.com/blob"))
+
+    assert response.result != reader.ReadResult.READY
+    assert response.errors[0].code == reader.ErrorCode.UNSUPPORTED_SOURCE

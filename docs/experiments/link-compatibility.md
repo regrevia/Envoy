@@ -429,6 +429,20 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十七轮（`application/octet-stream` 里的纯文本）
+
+- 服务器把文本当二进制附件发（`application/octet-stream`，路径又没后缀或后缀不认识）
+  时，不再一律拒绝：读最多 1 MiB，按 UTF-8 / GB18030 严格解码，控制字符超过 5%
+  或含 NUL 字节就仍判为二进制。命中则按 `text/plain` 走文本块。
+- 实测（抓取级）：`drive.google.com/file/d/0B9P1L--7Wd2vU3VUVlFnbTgtS2c/view`
+  —— 第二十五轮记的那条「5 字节 `spam\n` + octet-stream、被嗅探拒绝」的样本，
+  现在返回 `ready`，10 字正文 `spam`，`mime_type=text/plain`。
+  同轮再测 `.tsv` 样本仍 `ready`，无回归。
+- `unit_checked`：`tests/cli/test_share_links.py` 两条断言——
+  中文 octet-stream 文本读成正文；`\x00\x01\x02binary` 仍是 `unsupported_source`。
+- 边界：超过 1 MiB 的二进制附件仍拒绝（错误信息说明「太大，无法按文本读」），
+  不做截断后猜测；这条没有放宽安全边界。
+
 ## 第二十六轮（制表符表格 .tsv；OneDrive 分享链接）
 
 - `.tsv` 和 `text/tab-separated-values` 归入文本源，按原样保留制表符分列。
