@@ -482,3 +482,107 @@ def test_mcp_flattens_page_window_into_scope():
     declared = mcp._READ_SCOPE_PROPERTIES
     assert declared["page_start"]["minimum"] == 1
     assert declared["page_end"]["minimum"] == 1
+
+
+def _serve_pdf(monkeypatch, data: bytes, seen: list[str]):
+    import httpx
+
+    from envoy_cli import reader
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/pdf"},
+            content=data,
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_a, **_k: True)
+
+
+def test_a_long_pdf_link_is_read_a_window_at_a_time(monkeypatch):
+    """The real fetch path reads one page window per call, not the whole file."""
+
+    from envoy_cli import reader
+
+    pages = [f"page {number} of the long report" for number in range(1, 21)]
+    seen: list[str] = []
+    _serve_pdf(monkeypatch, _build_pdf(pages), seen)
+
+    request = ReadRequest.model_validate(
+        {
+            "request_id": "req-window-1",
+            "source": {"url": "https://example.com/long-report.pdf"},
+            "scope": {"page_start": 1, "page_end": 5},
+        }
+    )
+    first = reader._read_public_page_once(request)
+
+    assert seen == ["https://example.com/long-report.pdf"]
+    assert first.result.value == "partial"
+    pages_read = [
+        block.locator.page_number
+        for block in first.blocks
+        if block.id.startswith("blk-pdf-page-")
+    ]
+    assert pages_read == [1, 2, 3, 4, 5]
+    details = first.coverage.modalities["text"].details
+    assert details["page_count"] == 20
+    assert details["not_processed_ranges"] == [[6, 20]]
+
+    tail_request = request.model_copy(
+        update={
+            "request_id": "req-window-2",
+            "scope": request.scope.model_copy(update={"page_start": 16, "page_end": 20}),
+        }
+    )
+    tail = reader._read_public_page_once(tail_request)
+
+    assert tail.result.value == "partial"
+    tail_pages = [
+        block.locator.page_number
+        for block in tail.blocks
+        if block.id.startswith("blk-pdf-page-")
+    ]
+    assert tail_pages == [16, 17, 18, 19, 20]
+    tail_details = tail.coverage.modalities["text"].details
+    assert tail_details["not_processed_ranges"] == [[1, 15]]
+
+
+def test_an_oversized_pdf_link_is_refused_from_its_declared_length(monkeypatch):
+    import httpx
+
+    from envoy_cli import reader
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "content-type": "application/pdf",
+                "content-length": str(reader.MAX_PDF_BYTES + 1),
+            },
+            content=_build_pdf(["one page"]),
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_a, **_k: True)
+    request = ReadRequest.model_validate(
+        {"request_id": "req-big-pdf", "source": {"url": "https://example.com/big.pdf"}}
+    )
+
+    response = reader._read_public_page_once(request)
+
+    assert response.result.value != "ready"
+    assert response.errors
+    assert "size limit" in response.errors[0].message.lower()

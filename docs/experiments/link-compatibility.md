@@ -429,6 +429,22 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十八轮（长 PDF：抓取链路级的分页读取）
+
+之前只测过 `_parse_pdf_source` 这一层的页窗口，没证明「一个 PDF 链接走完整读取链路
+时真的按窗口取页」。本轮用 `httpx.MockTransport` 让真实 fetch 路径拿到一份 20 页
+合成 PDF（文字层，离线可重建）：
+
+- 第一次读 `scope.page_start=1/page_end=5` → `partial`，只出 1–5 页块，
+  `page_count=20`，`not_processed_ranges=[[6,20]]`。
+- 第二次读同一链接 `16–20` → `partial`，只出 16–20 页块，
+  `not_processed_ranges=[[1,15]]`；两窗口互不重取正文，续读偏移符合预期
+  （`unit_checked`，`tests/cli/test_pdf_reader.py`）。
+- 同一层再加一条：`content-length` 声明超过 `MAX_PDF_BYTES`（64 MiB）时，
+  不读正文直接按体积上限拒绝。
+- 说明：`partial` 是「整篇没覆盖完」的诚实标注，不是失败；窗口读完整篇后
+  才可能变 `ready`。真实大 PDF 的联网复测仍按既定约束不做。
+
 ## 第二十七轮（`application/octet-stream` 里的纯文本）
 
 - 服务器把文本当二进制附件发（`application/octet-stream`，路径又没后缀或后缀不认识）

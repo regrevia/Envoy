@@ -23,6 +23,8 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- 长 PDF 链接走完整读取链路时按页窗口取，续读窗口互不重取正文；
+  声明体积超过 64 MiB 的 PDF 不下载正文直接拒绝。
 - 被当成二进制附件（`application/octet-stream`）下发的纯文本不再被拒绝：
   小体积文本按 UTF-8 / GB18030 嗅探后照常读取，含 NUL 或大文件仍判为二进制。
 - `.tsv` 链接按制表符原样读成文本；OneDrive 分享链接（`1drv.ms` / `onedrive.live.com`）
@@ -73,6 +75,8 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- A long PDF link is read one page window at a time through the real fetch path,
+  and a PDF that declares more than 64 MiB is refused before its body is read.
 - Plain text served as a binary attachment (`application/octet-stream`) is read
   again: a small body is sniffed as UTF-8/GB18030 text, while NUL bytes and
   large downloads stay classified as binary.
