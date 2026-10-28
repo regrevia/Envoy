@@ -326,3 +326,87 @@ def test_one_site_pause_stops_the_rest_of_that_host(tmp_path, monkeypatch):
     assert len(calls) == 3
     assert third["read_now"] == 2
     assert third["completed"] == 2
+
+
+YOUTUBE_PLAYLIST = "https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI"
+
+
+def test_a_youtube_playlist_is_a_discoverable_collection():
+    from envoy_cli.collections import canonical_profile_url
+
+    url, platform = canonical_profile_url(YOUTUBE_PLAYLIST + "&si=abc")
+
+    assert platform == "youtube"
+    assert url == YOUTUBE_PLAYLIST
+
+
+def test_a_youtube_playlist_without_a_list_id_is_refused():
+    import pytest as _pytest
+
+    from envoy_cli.collections import CollectionError, canonical_profile_url
+
+    with _pytest.raises(CollectionError) as excinfo:
+        canonical_profile_url("https://www.youtube.com/playlist")
+
+    assert "list id" in str(excinfo.value)
+
+
+def test_a_youtube_watch_link_is_not_a_collection():
+    import pytest as _pytest
+
+    from envoy_cli.collections import CollectionError, canonical_profile_url
+
+    with _pytest.raises(CollectionError):
+        canonical_profile_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+
+def test_a_youtube_playlist_is_enumerated_through_flat_metadata(monkeypatch, tmp_path):
+    from envoy_cli import collections
+
+    monkeypatch.setenv("ENVOY_COLLECTION_DIR", str(tmp_path / "collections"))
+
+    captured: dict = {}
+
+    class _YDL:
+        def __init__(self, options):
+            captured.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def extract_info(self, url, download=False):
+            captured["url"] = url
+            return {
+                "_type": "playlist",
+                "entries": [
+                    {"id": "aaaaaaaaaaa", "title": "First", "webpage_url": "https://www.youtube.com/watch?v=aaaaaaaaaaa"},
+                    {"id": "bbbbbbbbbbb", "title": "Second", "url": "https://www.youtube.com/watch?v=bbbbbbbbbbb"},
+                ],
+            }
+
+    monkeypatch.setattr(
+        collections,
+        "discover_profile",
+        collections.discover_profile,
+    )
+    monkeypatch.setattr(
+        "envoy_cli.video._load_yt_dlp",
+        lambda: (_YDL, None),
+    )
+    monkeypatch.setattr("envoy_cli.media.guard_yt_dlp_client", lambda _ydl: None)
+    monkeypatch.setattr(collections, "proxy_plan", lambda: [None])
+
+    result = collections.discover_profile(YOUTUBE_PLAYLIST, limit=5)
+
+    assert result["platform"] == "youtube"
+    assert result["cursor_mode"] == "yt_dlp_flat_metadata"
+    assert captured["url"] == YOUTUBE_PLAYLIST
+    assert captured["skip_download"] is True
+    assert [item["source_url"] for item in result["candidates"]] == [
+        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+    ]
+    assert {item["platform"] for item in result["candidates"]} == {"youtube"}

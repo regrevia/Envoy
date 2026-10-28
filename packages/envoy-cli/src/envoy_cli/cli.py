@@ -96,7 +96,7 @@ def _parser() -> argparse.ArgumentParser:
     search = subparsers.add_parser("search", help="find relevant passages in a local material")
     search.add_argument("--request-json", required=True, help="read an envoy.search/1 request from this path or '-' for stdin")
 
-    discover = subparsers.add_parser("discover", help="discover bounded public Douyin or Bilibili profile candidates")
+    discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
     discover.add_argument("--limit", type=int, default=20)
     discover.add_argument("--cursor")
@@ -113,7 +113,7 @@ def _parser() -> argparse.ArgumentParser:
 
     collect_parser = subparsers.add_parser(
         "collect",
-        help="enumerate a Douyin or Bilibili profile into one Markdown source pack",
+        help="enumerate a Douyin, Bilibili or YouTube playlist into one Markdown source pack",
     )
     collect_parser.add_argument("--url")
     collect_parser.add_argument("--out")

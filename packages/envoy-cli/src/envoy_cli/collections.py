@@ -208,7 +208,30 @@ def canonical_candidate_url(value: str) -> str:
         # dropping the part would collapse every part into one candidate.
         part = _bilibili_part(parts.query)
         return f"https://www.bilibili.com/video/{match.group(1)}{part}"
-    raise CollectionError("Only public Douyin or Bilibili post URLs can be canonicalized")
+    if host in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        if path != "/watch":
+            raise CollectionError("URL does not identify a canonical YouTube video")
+        video_id = next(
+            (
+                value
+                for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                if key == "v" and re.fullmatch(r"[A-Za-z0-9_-]{11}", value)
+            ),
+            "",
+        )
+        if not video_id:
+            raise CollectionError("URL does not identify a canonical YouTube video")
+        # A playlist position (index=) and a share token (si=) are not part of
+        # the video's identity, so they are dropped here.
+        return f"https://www.youtube.com/watch?v={video_id}"
+    if host == "youtu.be":
+        video_id = path.lstrip("/")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            raise CollectionError("URL does not identify a canonical YouTube video")
+        return f"https://www.youtube.com/watch?v={video_id}"
+    raise CollectionError(
+        "Only public Douyin, Bilibili or YouTube post URLs can be canonicalized"
+    )
 
 
 def candidate_id(source_url: str) -> str:
@@ -232,6 +255,23 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
         if not re.fullmatch(r"/user/[^/]+", path):
             raise CollectionError("A public Douyin user profile URL is required")
         return f"https://www.douyin.com{path}", "douyin"
+    if host in {"youtube.com", "www.youtube.com", "m.youtube.com"} and re.fullmatch(
+        r"/playlist", path
+    ):
+        playlist_id = next(
+            (
+                value
+                for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                if key == "list"
+            ),
+            "",
+        )
+        if not re.fullmatch(r"[A-Za-z0-9_-]{10,}", playlist_id):
+            raise CollectionError(
+                "A YouTube playlist link needs its list id, for example "
+                "/playlist?list=PL..."
+            )
+        return f"https://www.youtube.com/playlist?list={playlist_id}", "youtube"
     if host == "space.bilibili.com":
         collection = re.fullmatch(
             r"/(\d{1,20})/channel/(collectiondetail|seriesdetail)", path
@@ -258,7 +298,9 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
         if not match:
             raise CollectionError("A public Bilibili space URL is required")
         return f"https://space.bilibili.com/{match.group(1)}/video", "bilibili"
-    raise CollectionError("A public Douyin or Bilibili profile URL is required")
+    raise CollectionError(
+        "A public Douyin, Bilibili or YouTube playlist URL is required"
+    )
 
 
 _BILIBILI_LINK = re.compile(
@@ -297,7 +339,9 @@ def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100
             candidate_url = raw_url
         elif item_id and re.fullmatch(r"[A-Za-z0-9_-]+", item_id):
             entry_type = str(entry.get("ie_key") or entry.get("extractor_key") or "").lower()
-            if "bilibili" in entry_type:
+            if "youtube" in entry_type and re.fullmatch(r"[A-Za-z0-9_-]{11}", item_id):
+                candidate_url = f"https://www.youtube.com/watch?v={item_id}"
+            elif "bilibili" in entry_type:
                 candidate_url = f"https://www.bilibili.com/video/{item_id}"
             else:
                 kind = "note" if "note" in entry_type else "video"
@@ -316,7 +360,11 @@ def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100
         candidates.append({
             "candidate_id": stable_id,
             "source_url": canonical,
-            "platform": "bilibili" if "bilibili.com" in canonical else "douyin",
+            "platform": (
+                "bilibili"
+                if "bilibili.com" in canonical
+                else "youtube" if "youtube.com" in canonical else "douyin"
+            ),
             "item_type": "image_note" if path_kind == "note" else "video",
             "title": str(entry.get("title") or ""),
             "published_at": entry.get("upload_date"),

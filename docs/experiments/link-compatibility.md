@@ -1026,3 +1026,20 @@ bilibili 提取器本身支持这两种 URL（测试样例 sid 57445 / 547718 �
   立即返回（未渲染页面、未抓取）。
 - 边界：`watch?v=…&list=…` 仍按单条视频读（`noplaylist` 已保证只取该条），
   `space.bilibili.com/<mid>/video` 仍是可发现的主页，不误伤。
+
+## 第三十五轮（YouTube 播放列表：从「一组」变成可枚举、只取元数据）
+
+第三十四轮把播放列表链接挡在渲染之前，答案里让用户改用 `envoy_discover`；
+但 `discover` 之前只认抖音主页与 B站，YouTube 播放列表并不真的能枚举。
+现在 `canonical_profile_url()` 接受 `youtube.com/playlist?list=…`（`si=`/`index=`
+等分享与位置参数不影响身份），`canonical_candidate_url()` 认 `watch?v=…`（11 位
+id）与 `youtu.be/<id>`，扁平元数据里的条目按其 `ie_key` 还原成 watch 链接。
+
+- `unit_checked`：`tests/cli/test_collect.py` 新增 4 条——播放列表规范化（丢弃 `si`）、
+  缺 `list` id 报错、`watch?v=` 不算集合、以及用假 yt-dlp 断言
+  `skip_download=True`、`cursor_mode=yt_dlp_flat_metadata`、候选 URL/平台正确。
+- 真实链接实测（仅元数据，`skip_download`，未下载任何媒体）：
+  `https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI`
+  → `platform=youtube`、`cursor_mode=yt_dlp_flat_metadata`、`has_more=true`、
+  `stop_reason=page_limit`，前三条为 `watch?v=fOT0BUpITw8` / `NFvDHYMzj9U` / `8c7KOGxeY3w`。
+- 全套件：`tests/cli` 962 passed。
