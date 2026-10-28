@@ -23,6 +23,8 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- Office 模板与宏格式（`.dotx/.dotm/.xltx/.xltm/.potx/.potm/.ppsx/.ppsm`）按同构 OOXML 直接读，
+  宏不执行。
 - B站合集（`collectiondetail?sid=`）与系列（`seriesdetail?sid=`）链接可直接做集合发现，
   不再要求改传作者主页链接。
 - B站多P 视频的 `?p=N` 不再被归一化成同一个候选，分P 各自成项、不再互相去重。
@@ -80,6 +82,8 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- Office templates and macro-enabled formats (`.dotx/.dotm/.xltx/.xltm/.potx/.potm/.ppsx/.ppsm`)
+  are read as the same OOXML structure they are; macros are never executed.
 - Bilibili collection (`collectiondetail?sid=`) and series (`seriesdetail?sid=`) links
   are discovered directly, without rewriting them to the creator space URL.
 - Each part of a multi-part Bilibili video (`?p=N`) is now its own candidate instead

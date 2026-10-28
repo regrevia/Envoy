@@ -992,3 +992,18 @@ bilibili 提取器本身支持这两种 URL（测试样例 sid 57445 / 547718 �
   `yt_dlp_flat_metadata`，取回 3 条。
 - `unit_checked`：`tests/cli/test_collection_urls.py` 4 条（合集保留 sid、系列保留 sid、
   缺 sid 的提示、裸 space 链接仍归一为 `/video`）。
+
+## 第三十三轮（模板与宏格式：`.dotx/.dotm/.xltx/.xltm/.potx/.potm/.ppsx/.ppsm`）
+
+这些后缀和内容类型与 `.docx/.xlsx/.pptx` 同一个 ZIP + OOXML 结构，只是多了宏或
+模板标记，之前不在 `OFFICE_SUFFIXES`/`OFFICE_CONTENT_TYPES`/后缀映射里，会落到
+「不是 Envoy 能读的 ZIP 容器」。现在补进三处并复用同一解析器；宏本身不执行、
+`vbaProject.bin` 只当普通条目跳过。
+
+- `unit_checked`（`tests/cli/test_office_documents.py`，新增 9 条）：
+  - `.docm/.dotx/.dotm` 含 `vbaProject.bin` → `ready`，正文可见，`document_format=docx`；
+  - `.xlsm/.xltm` → `ready`，单元格文本可见，`document_format=xlsx`；
+  - `.ppsm/.potx` → `ready`，幻灯片文本可见，`document_format=pptx`；
+  - `.dotm` 配 `application/octet-stream` 时仍按后缀选中解析器（不依赖内容类型）。
+- 同时补上「超大文档按声明长度拒绝」：`content-length` 超过
+  `MAX_TEXT_SOURCE_BYTES` 时直接报 `size limit`，不拉正文（本次为 `unit_checked`）。

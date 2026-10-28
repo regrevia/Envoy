@@ -349,3 +349,131 @@ def test_an_xlsb_workbook_answers_with_a_conversion_hint(monkeypatch):
     message = str(excinfo.value)
     assert ".xlsb" in message
     assert ".xlsx" in message
+
+
+DOCX_BODY = (
+    '<w:document xmlns:w="w"><w:body>'
+    "<w:p><w:r><w:t>宏文档的正文</w:t></w:r></w:p>"
+    "</w:body></w:document>"
+)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mime_type"),
+    [
+        (".docm", "application/vnd.ms-word.document.macroenabled.12"),
+        (".dotx", "application/vnd.openxmlformats-officedocument.wordprocessingml.template"),
+        (".dotm", "application/vnd.ms-word.template.macroenabled.12"),
+    ],
+)
+def test_macro_enabled_and_template_word_files_are_read(suffix, mime_type):
+    data = _zip({
+        "[Content_Types].xml": "<Types/>",
+        "word/document.xml": DOCX_BODY,
+        "word/vbaProject.bin": "not parsed",
+    })
+
+    response = _read(f"https://example.com/report{suffix}", data, mime_type)
+
+    assert response.result == reader.ReadResult.READY
+    assert "宏文档的正文" in _text(response)
+    assert response.coverage.modalities["text"].details["document_format"] == "docx"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mime_type"),
+    [
+        (".xltm", "application/vnd.ms-excel.template.macroenabled.12"),
+        (".xlsm", "application/vnd.ms-excel.sheet.macroenabled.12"),
+    ],
+)
+def test_template_spreadsheets_are_read(suffix, mime_type):
+    data = _zip({
+        "[Content_Types].xml": "<Types/>",
+        "xl/workbook.xml": (
+            '<workbook xmlns="x"><sheets>'
+            '<sheet name="表一" sheetId="1" r:id="rId1" xmlns:r="r"/>'
+            "</sheets></workbook>"
+        ),
+        "xl/sharedStrings.xml": (
+            '<sst xmlns="x"><si><t>单元格内容</t></si></sst>'
+        ),
+        "xl/worksheets/sheet1.xml": (
+            '<worksheet xmlns="x"><sheetData><row r="1">'
+            '<c r="A1" t="s"><v>0</v></c>'
+            "</row></sheetData></worksheet>"
+        ),
+    })
+
+    response = _read(f"https://example.com/book{suffix}", data, mime_type)
+
+    assert response.result == reader.ReadResult.READY
+    assert "单元格内容" in _text(response)
+    assert response.coverage.modalities["text"].details["document_format"] == "xlsx"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mime_type"),
+    [
+        (".ppsm", "application/vnd.ms-powerpoint.slideshow.macroenabled.12"),
+        (".potx", "application/vnd.openxmlformats-officedocument.presentationml.template"),
+    ],
+)
+def test_template_and_slideshow_presentations_are_read(suffix, mime_type):
+    data = _zip({
+        "[Content_Types].xml": "<Types/>",
+        "ppt/presentation.xml": '<p:presentation xmlns:p="p"/>',
+        "ppt/slides/slide1.xml": (
+            '<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree>'
+            "<p:sp><p:txBody><a:p><a:r><a:t>幻灯片标题</a:t></a:r></a:p></p:txBody></p:sp>"
+            "</p:spTree></p:cSld></p:sld>"
+        ),
+    })
+
+    response = _read(f"https://example.com/deck{suffix}", data, mime_type)
+
+    assert response.result == reader.ReadResult.READY
+    assert "幻灯片标题" in _text(response)
+    assert response.coverage.modalities["text"].details["document_format"] == "pptx"
+
+
+def test_a_document_link_over_the_size_limit_is_refused_from_its_declared_length(
+    monkeypatch,
+):
+    from envoy_cli import reader as reader_module
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "content-type": DOCX_TYPE,
+                "content-length": str(reader_module.MAX_TEXT_SOURCE_BYTES + 1),
+            },
+            content=b"",
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        reader_module.httpx,
+        "Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(reader_module.PublicPageError) as excinfo:
+        reader_module._fetch_html("https://example.com/huge.docx", 1024 * 1024, {})
+
+    assert "size limit" in str(excinfo.value)
+
+
+def test_the_suffix_alone_selects_the_reader_when_the_type_is_generic():
+    data = _zip({
+        "[Content_Types].xml": "<Types/>",
+        "word/document.xml": DOCX_BODY,
+    })
+
+    response = _read(
+        "https://example.com/report.dotm", data, "application/octet-stream"
+    )
+
+    assert response.result == reader.ReadResult.READY
+    assert "宏文档的正文" in _text(response)
