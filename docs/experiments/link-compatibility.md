@@ -974,3 +974,21 @@ douyin 相册顺序用例失败。
 - `unit_checked`：`tests/cli/test_collection_urls.py` 新增 7 条（分P保留、p=1 等价、
   非法 p 忽略、两P两id、分享参数不影响 id、手机域与主站同P一致、非视频路径仍拒绝）。
 - 未跑真实采集：分P 采集会真的走媒体链路，用户不在场时按既定约束不做真下载。
+
+## 第三十二轮（B站合集/系列链接：直接当集合发现）
+
+以前 `space.bilibili.com/<mid>/channel/collectiondetail?sid=…` 与
+`seriesdetail?sid=…` 只得到「A public Bilibili space URL is required」——因为
+`canonical_profile_url` 只认 `/<mid>` 与 `/<mid>/video`。yt-dlp 2026.10.26 的
+bilibili 提取器本身支持这两种 URL（测试样例 sid 57445 / 547718 就来自它），
+所以放开即可，集合身份由 `sid` 决定；缺 `sid` 时给出具体提示而不是泛化错误。
+
+实测（真实链接，元数据枚举，`skip_download`，未下载媒体）：
+
+- `collectiondetail?sid=57445` → canonical 保留 `sid=57445`，
+  `cursor_mode=yt_dlp_flat_metadata`，`stop_reason=page_limit`，`has_more=true`，
+  取回 5 条 BV 链接（如 `https://www.bilibili.com/video/BV1Jp411R7SV`）。
+- `seriesdetail?sid=547718&ctype=0` → 去掉 `ctype` 只留 `sid`，同样走
+  `yt_dlp_flat_metadata`，取回 3 条。
+- `unit_checked`：`tests/cli/test_collection_urls.py` 4 条（合集保留 sid、系列保留 sid、
+  缺 sid 的提示、裸 space 链接仍归一为 `/video`）。

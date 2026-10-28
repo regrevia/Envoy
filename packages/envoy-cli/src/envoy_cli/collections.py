@@ -233,6 +233,27 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
             raise CollectionError("A public Douyin user profile URL is required")
         return f"https://www.douyin.com{path}", "douyin"
     if host == "space.bilibili.com":
+        collection = re.fullmatch(
+            r"/(\d{1,20})/channel/(collectiondetail|seriesdetail)", path
+        )
+        if collection:
+            # A collection (合集) or series (系列) holds an explicit set of videos;
+            # yt-dlp extracts both, so keep the id that selects it.
+            sid = next(
+                (
+                    value
+                    for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                    if key == "sid" and value.isdigit()
+                ),
+                "",
+            )
+            if not sid:
+                raise CollectionError(
+                    "A Bilibili collection link needs its sid, for example "
+                    "/channel/collectiondetail?sid=57445"
+                )
+            mid, kind = collection.groups()
+            return f"https://space.bilibili.com/{mid}/channel/{kind}?sid={sid}", "bilibili"
         match = re.fullmatch(r"/(\d{1,20})(?:/video)?", path)
         if not match:
             raise CollectionError("A public Bilibili space URL is required")

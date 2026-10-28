@@ -62,3 +62,39 @@ def test_the_same_part_on_the_mobile_host_matches():
 def test_a_non_video_path_is_still_refused():
     with pytest.raises(collections.CollectionError):
         collections.canonical_candidate_url("https://www.bilibili.com/read/cv123456")
+
+
+def test_a_bilibili_collection_link_keeps_its_sid():
+    canonical, platform = collections.canonical_profile_url(
+        "https://space.bilibili.com/2142762/channel/collectiondetail?sid=57445&ctype=0"
+    )
+
+    assert platform == "bilibili"
+    assert canonical == "https://space.bilibili.com/2142762/channel/collectiondetail?sid=57445"
+
+
+def test_a_bilibili_series_link_keeps_its_sid():
+    canonical, platform = collections.canonical_profile_url(
+        "https://space.bilibili.com/1958703906/channel/seriesdetail?sid=547718&ctype=0"
+    )
+
+    assert platform == "bilibili"
+    assert canonical == "https://space.bilibili.com/1958703906/channel/seriesdetail?sid=547718"
+
+
+def test_a_collection_link_without_an_sid_says_what_is_missing():
+    with pytest.raises(collections.CollectionError) as excinfo:
+        collections.canonical_profile_url(
+            "https://space.bilibili.com/2142762/channel/collectiondetail"
+        )
+
+    assert "sid" in str(excinfo.value)
+
+
+def test_a_plain_space_link_still_canonicalizes_to_its_video_tab():
+    canonical, platform = collections.canonical_profile_url(
+        "https://space.bilibili.com/2142762/"
+    )
+
+    assert platform == "bilibili"
+    assert canonical == "https://space.bilibili.com/2142762/video"
