@@ -132,11 +132,11 @@ jobs:
                 "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe",
                 "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"
               )) {
-              if (Test-Path -LiteralPath $candidate) { $pwsh = Get-Item -LiteralPath $candidate; break }
+              if (Test-Path -LiteralPath $candidate) { $pwsh = Get-Item -LiteralPath $candidate; break }  # FileInfo: use FullName
             }
             if ($pwsh) {
-              Write-Host "pwsh found outside PATH: $($pwsh.Source)"
-              Split-Path -Parent $pwsh.Source | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              Write-Host "pwsh found outside PATH: $($pwsh.FullName)"
+              Split-Path -Parent $pwsh.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
             }
           }
           if (-not $pwsh) {
@@ -154,7 +154,9 @@ jobs:
             Write-Host "::error::PowerShell 7 missing: install the MSI (docs/windows-acceptance.md) and rerun; 7.x not verified"
             exit 1
           }
-          $version = [version](& $pwsh.Source -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')
+          # Get-Command returns ApplicationInfo (.Path); a probed file is FileInfo (.FullName).
+          $pwshPath = if ($pwsh -is [System.Management.Automation.ApplicationInfo]) { $pwsh.Path } else { $pwsh.FullName }
+          $version = [version](& $pwshPath -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')
           Write-Host "pwsh $version"
           if ($version -lt [version]"7.4.0") {
             Write-Host "::error::pwsh $version is below the 7.4 baseline"
