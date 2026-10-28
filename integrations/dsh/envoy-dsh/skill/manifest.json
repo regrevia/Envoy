@@ -1,7 +1,7 @@
 {
   "name": "envoy",
   "description": "Read, understand, compare, or extract material from public URLs with Envoy. Use when the user asks what a link contains, asks to inspect an article, image post, video, audio, PDF, or web page, or asks to transform linked material. Do not trigger for merely editing or quoting a URL, or for short text the user already pasted; reach for it for video, audio, long articles, and platform pages that need scrolling, cookies, or login. This DeepSeek Harness plugin mounts the Envoy MCP bridge with the bounded core toolset and provides the adapted skill, so no separate MCP setup is required.",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "generated_from": "integrations/skills/envoy/SKILL.md",
   "protocol": "envoy.read/1"
 }

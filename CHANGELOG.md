@@ -97,7 +97,7 @@
   workflow publishes the npm bundle (skipping with a note when `NPM_TOKEN` is
   absent).
 
-## Unreleased
+## 0.1.26 - 2026-10-28
 
 ### 中文
 
@@ -112,6 +112,21 @@
   「首次使用才下载」的能力。`ENVOY_SETUP_BROWSER`/`ENVOY_SETUP_MEDIA` 仍可单独
   覆盖某一步（CI 场景），`ENVOY_ASR_MODEL` 换 `full` 预取的模型；补档只需重跑
   安装脚本，provision 两步都是幂等的。
+
+### English
+
+- Setup no longer grows the disk: a Playwright upgrade used to leave the previous
+  browser behind forever (5 directories / 714.8 MB measured on this machine);
+  `envoy browser setup` now removes superseded versions and
+  `envoy browser prune [--dry-run] [--json]` reclaims them by hand, touching only
+  `<family>-<number>` directories.
+- Install profiles: `--profile minimal|standard|full` (or `ENVOY_PROFILE`),
+  default and recommended `full`. `minimal` is runtime only (178 MB measured),
+  `standard` adds Chromium (683 MB measured, needed for video pages), `full` also
+  pre-fetches Whisper `base` (about 140 MB of weights plus deps), so the default
+  install downloads nothing on first use. `ENVOY_SETUP_BROWSER` /
+  `ENVOY_SETUP_MEDIA` still override one step (CI), `ENVOY_ASR_MODEL` picks the
+  model `full` fetches, and re-running the installer upgrades a profile in place.
 
 ### 文档
 
