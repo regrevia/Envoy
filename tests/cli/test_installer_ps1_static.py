@@ -81,3 +81,19 @@ def test_dry_run_never_dies_on_the_runtime_it_did_not_install(text: str):
     assert "$Script:DryRun" in body, "Get-EnvoyBinary must special-case a dry run"
     # The dry-run return has to come before the Stop-Install fallback.
     assert body.index("$Script:DryRun") < body.index("Stop-Install")
+
+
+def test_user_path_write_preserves_expand_type(text: str):
+    """A REG_EXPAND_SZ user PATH must not be downgraded to REG_SZ.
+
+    [Environment]::SetEnvironmentVariable writes REG_SZ and would freeze
+    %USERPROFILE% etc. The installer must read the raw value and write back via
+    reg.exe with the original type.
+    """
+    assert "function Get-RawUserPath" in text
+    assert "DoNotExpandEnvironmentNames" in text
+    assert "REG_EXPAND_SZ" in text
+    # reg add is the non-lossy write; the .NET setter stays only as a fallback.
+    assert "reg.exe" in text
+    # Pure merge helper exists so the no-duplicate rule is testable offline.
+    assert "function Join-PathValue" in text

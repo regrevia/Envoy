@@ -163,14 +163,57 @@ function Confirm-Checksum {
     }
 }
 
+function Get-RawUserPath {
+    # The raw (unexpanded) user PATH. [Environment]::GetEnvironmentVariable
+    # expands %VARS%, and writing an expanded value back would freeze them, which
+    # is the same damage as the REG_SZ downgrade below.
+    try {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+        if ($key) {
+            $raw = $key.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $kind = "REG_SZ"
+            if ($null -ne $key.GetValueKind("Path") -and $key.GetValueKind("Path") -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) {
+                $kind = "REG_EXPAND_SZ"
+            }
+            $key.Close()
+            if ($null -ne $raw) { return @([string]$raw, $kind) }
+        }
+    } catch { }
+    # No registry value yet (or the read failed): the expanded value is all we have.
+    return @([string][Environment]::GetEnvironmentVariable("Path", "User"), "REG_SZ")
+}
+
+# Pure helper: append a directory to a `;`-separated PATH value. No I/O, so the
+# merge rule (no duplicates, no empty segments, no double separators) can be
+# checked without touching a real user environment.
+function Join-PathValue {
+    param([string]$Current, [string]$Directory)
+    $parts = @()
+    if ($Current) { $parts = @($Current -split ";" | Where-Object { $_ }) }
+    if ($parts -contains $Directory) { return ($parts -join ";") }
+    return ((@($parts) + $Directory) -join ";")
+}
+
 function Add-ToUserPath {
     param([string]$Directory)
-    $current = [Environment]::GetEnvironmentVariable("Path", "User")
+    $state = Get-RawUserPath
+    $current = $state[0]
+    $kind = $state[1]
     $parts = @()
-    if ($current) { $parts = $current -split ";" | Where-Object { $_ } }
+    if ($current) { $parts = @($current -split ";" | Where-Object { $_ }) }
     if ($parts -notcontains $Directory) {
-        $updated = (($parts + $Directory) -join ";")
-        [Environment]::SetEnvironmentVariable("Path", $updated, "User")
+        $updated = Join-PathValue $current $Directory
+        # [Environment]::SetEnvironmentVariable writes REG_SZ, which downgrades a
+        # REG_EXPAND_SZ user PATH to a plain string: the user's `%USERPROFILE%`,
+        # `%JAVA_HOME%` etc. would be frozen to their current expansion. Write the
+        # value back through reg.exe with the type the key already has, staying
+        # REG_EXPAND_SZ when it was. reg.exe lives in System32 on every Windows host.
+        $reg = Join-Path $env:SystemRoot "System32\reg.exe"
+        & $reg add "HKCU\Environment" /v Path /t $kind /d $updated /f | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            # Fallback only if reg.exe is unavailable; this is the lossy path.
+            [Environment]::SetEnvironmentVariable("Path", $updated, "User")
+        }
         Write-Host "envoy install: added $Directory to the user PATH (open a new terminal)"
     }
 }
