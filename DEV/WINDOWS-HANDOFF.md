@@ -60,11 +60,11 @@ Get-Content SHA256SUMS
 断言：`install.ps1` 的哈希必须等于
 
 ```
-90239a35ae428229278d6703c619f078412e838ea9ce2a1e7b355ac1591523af
+25936ae5dd4b4c1a34dc0cae925fb8663c7fce66b463c25f89b6524e7788fe3c
 ```
 
 （`SHA256SUMS` 里那行就是它；`envoy_cli-0.1.25-py3-none-any.whl` 是
-`4eaf1aaf5b2d7a1a976b1fdb033cb7cf820f285c6aed44d38294508033fea877`，脚本会自己再核一次。）
+`3655b6d4680187ceda1883dc9c66a23119b539e350b90b311b7fc825be5d22f2`，脚本会自己再核一次。）
 对不上就停，把两行哈希原样带回来。
 
 ## 4. 干净机先做「离线探针」（有旧安装就跳过这步）
@@ -158,7 +158,7 @@ PATH 不得出现第二条 `.envoy\bin`（A5 复检）。这条同时覆盖 I08 
   "entry": "I03",
   "started_at": "2026-10-28T12:00:00+08:00",
   "duration_seconds": 0,
-  "install_ps1_sha256": "90239a35...",
+  "install_ps1_sha256": "25936ae5...",
   "prereq": {"uv": "", "python": "", "preexisting_envoy": ""},
   "offline_probe": {"ran": true, "message": "", "exit_code": 1, "pin_written": false},
   "dry_run": {"ran": false, "note": "ENVOY_DRY_RUN=1 可选，跑了就贴前 20 行"},

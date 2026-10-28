@@ -144,3 +144,8 @@ Windows 为实测 µs；mac 为 JSON 中 5 次运行的中位数（精确模块�
 - **Windows 真机验证由 Windows 侧同事执行**：本文所有 Windows 数字均为其提供的已知值，本机未复测。
 - mac 数字来自单机、单次会话、5 次采样；换机器或系统负载不同会有波动。mac 侧 `torch`/`pypdf` 之外的组件未单独测体积（未测量）。
 - 两侧环境不同，**禁止用 mac 与 Windows 的差值下结论**（见第 1 节）。
+
+## 0.1.25 状态更新
+
+L1 惰性导入、L2 `--version` 快速路径、L5 浏览器占用上报、L6 媒体栈不进默认安装均已随 `v0.1.25` 发行包发出（`packaged`，wheel 摘要见发布 `SHA256SUMS`）；L3（进一步削减导入面）仍未实现。
+实测仍只有 macOS arm64：`envoy --version` 109.1 ms、`import envoy_cli.cli` 106.8 ms（`--repeat 7` 中位数），Linux/Windows 同源码未实测。

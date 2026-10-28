@@ -207,3 +207,16 @@ $env:ENVOY_DRY_RUN="1"; powershell -ExecutionPolicy Bypass -File .\install.ps1 s
 powershell -ExecutionPolicy Bypass -File .\install.ps1 skill     # 真装（不带参数会按检测安装宿主插件）
 where.exe envoy; envoy --version                                 # 期望 0.1.24
 ```
+
+## 0.1.25 追加验证（2026-10-28）
+
+- 版本升到 `0.1.25`：`check_versions.py --check` → 11 处声明一致（含 2 份文档）；发行清单、DSH skill、宿主 skills 均 `--check` current。
+- 定向测试：`pytest -q tests/cli tests/test_envoy_cli_distribution.py tests/core_protocol` → **886 passed**。
+- 发行包（`--channel release`，源码 `b0e420e733af`，`source_dirty=false`）在仓库根 `dist/` 全量重建后 emit 清单，交付到 `/Users/apple/Desktop/2026/envoy-delivery/0.1.25/`；后按发布字节替换 wheel/清单/摘要。
+- 交付校验：`verify_delivery.py --dir .` → `delivery ok (13 checks)`；`shasum -c SHA256SUMS` → 6/6 OK；`dry_run_experiments.py --check` → `plan ok: 35 entries (not_run 35); holdout frozen`。
+- 安装器：`check_installer_offline.sh` → **10/10**；`check_installer_e2e_local.sh …/0.1.25` → **14/14**；预览候选 `…/0.1.25-preview` 同样 13 项 + **14/14**。
+- 发行轮子冒烟：`envoy --version` → `envoy-cli 0.1.25 (core 0.1.25)`；`doctor --json` 的 `build = {channel: release, version: 0.1.25, source_revision: b0e420e733af, source_dirty: false}`。
+- GitHub：`main` 推 `b0e420e`，CI `40645692583` success、Auto Release `40645692553` success；tag `v0.1.25` → Release 运行 `40645702881` success，7 个资产已挂出。
+- 发布资产复核：从 Release 下载全部 7 个文件后 `shasum -a 256 -c SHA256SUMS` → 6/6 OK；manifest `source_commit = b0e420e733af…`、5 个 artifacts。
+- 与本地包字节比对：`envoy-dsh-0.1.25.tgz`、`envoy-skill.zip`、`install.sh`、`install.ps1` **逐字节相同**；`envoy_cli-0.1.25-py3-none-any.whl` 与 `release-manifest.json` 不同（CI 构建环境差异导致 wheel 内时间戳/元数据不同，各自摘要自洽），因此交付目录改用发布字节。npm 仍未发布（`NPM_TOKEN` 未配置，workflow 只把 tgz 挂到 Release）。
+- Windows 交接单已指向 `v0.1.25`，`install.ps1` 期望哈希更新为 `25936ae5…`、wheel 期望哈希 `3655b6d4…`；Windows 真机（I03）仍 `not_run`。
