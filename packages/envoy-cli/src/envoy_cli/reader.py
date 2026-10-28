@@ -38,6 +38,7 @@ from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
 from .platforms import (
     classify_public_url,
     extract_xhs_note_images,
+    is_collection_url,
     is_platform_page,
 )
 from . import storage
@@ -8218,6 +8219,15 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             )
         return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
     source_path = urlparse(source_url).path.lower()
+    if is_collection_url(source_url):
+        return _blocked(
+            request,
+            ErrorCode.UNSUPPORTED_SOURCE,
+            "This link selects a set of videos, not one. "
+            "Pass one item link (a watch?v=... or /video/BV... URL), or enumerate the "
+            "set with envoy_discover on the creator space or the collection link",
+            details={"reader": "collection_guard"},
+        )
     direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
     direct_douyin_note = (
         urlparse(source_url).hostname in {"douyin.com", "www.douyin.com"}

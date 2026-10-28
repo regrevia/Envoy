@@ -1007,3 +1007,22 @@ bilibili 提取器本身支持这两种 URL（测试样例 sid 57445 / 547718 �
   - `.dotm` 配 `application/octet-stream` 时仍按后缀选中解析器（不依赖内容类型）。
 - 同时补上「超大文档按声明长度拒绝」：`content-length` 超过
   `MAX_TEXT_SOURCE_BYTES` 时直接报 `size limit`，不拉正文（本次为 `unit_checked`）。
+
+## 第三十四轮（集合/播放列表链接：读取前就给出下一步，不渲染整页）
+
+`youtube.com/playlist?list=…`、`space.bilibili.com/<mid>/channel/collectiondetail?sid=…`、
+`seriesdetail?sid=…`、`bilibili.com/list/…`、`bilibili.com/medialist/play/…` 以前被当成
+普通平台页交给浏览器渲染：YouTube 播放列表只回 JS 外壳（几乎无正文），B站合集页
+则白花一次浏览器渲染。现在 `is_collection_url()` 在 DNS/网络之前就判定为「一组」
+链接，`envoy_read` 直接返回 `unsupported_source` + 下一步：给单条链接，或用
+`envoy_discover` 枚举作者主页/合集。
+
+- `unit_checked`：`tests/cli/test_collection_read_guard.py` 11 条——5 种集合形态识别、
+  4 种单条链接不误判、BLOCKED 文案含 `envoy_discover`、`details.reader=collection_guard`、
+  且守卫在 fallback 之前（未触发网络回退）。
+- 真实链接实测：`envoy read` 读
+  `https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI`
+  → `result=blocked`、`code=unsupported_source`、`details.reader=collection_guard`，
+  立即返回（未渲染页面、未抓取）。
+- 边界：`watch?v=…&list=…` 仍按单条视频读（`noplaylist` 已保证只取该条），
+  `space.bilibili.com/<mid>/video` 仍是可发现的主页，不误伤。

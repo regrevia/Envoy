@@ -23,6 +23,8 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- 播放列表/合集链接（YouTube `playlist`、B站 `list`/`medialist`、合集与系列）不再被当普通页渲染，
+  直接回「给单条链接或用 envoy_discover 枚举」。
 - Office 模板与宏格式（`.dotx/.dotm/.xltx/.xltm/.potx/.potm/.ppsx/.ppsm`）按同构 OOXML 直接读，
   宏不执行。
 - B站合集（`collectiondetail?sid=`）与系列（`seriesdetail?sid=`）链接可直接做集合发现，
@@ -82,6 +84,8 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- Playlist and collection links (YouTube `playlist`, Bilibili `list`/`medialist`, collections
+  and series) are no longer rendered as a page; the answer names the next step instead.
 - Office templates and macro-enabled formats (`.dotx/.dotm/.xltx/.xltm/.potx/.potm/.ppsx/.ppsm`)
   are read as the same OOXML structure they are; macros are never executed.
 - Bilibili collection (`collectiondetail?sid=`) and series (`seriesdetail?sid=`) links

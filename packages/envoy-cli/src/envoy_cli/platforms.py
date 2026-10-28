@@ -120,6 +120,37 @@ def classify_public_url(value: str) -> str:
     return "generic"
 
 
+_YOUTUBE_PLAYLIST_RE = re.compile(r"^/playlist/?$", re.IGNORECASE)
+_BILIBILI_COLLECTION_PATH_RE = re.compile(
+    r"^/(?:list|medialist/play)/", re.IGNORECASE
+)
+_BILIBILI_CHANNEL_SET_RE = re.compile(
+    r"^/\d{1,20}/channel/(?:collectiondetail|seriesdetail)/?$", re.IGNORECASE
+)
+
+
+def is_collection_url(value: str) -> bool:
+    """True for a URL that selects a set of videos rather than one video.
+
+    ``envoy_read`` answers a single item; these links are enumerated by
+    ``envoy_discover`` instead (Bilibili spaces, collections and series) or must
+    be narrowed to one item first (YouTube playlists).
+    """
+
+    parsed = urlparse(str(value or "").strip())
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    if host.startswith("www."):
+        host = host[4:]
+    if host in {"youtube.com", "m.youtube.com"}:
+        return bool(_YOUTUBE_PLAYLIST_RE.match(path))
+    if host == "space.bilibili.com":
+        return bool(_BILIBILI_CHANNEL_SET_RE.match(path))
+    if host in _BILIBILI_HOSTS:
+        return bool(_BILIBILI_COLLECTION_PATH_RE.match(path))
+    return False
+
+
 def is_platform_page(value: str) -> bool:
     return classify_public_url(value) in {
         "video_page",
