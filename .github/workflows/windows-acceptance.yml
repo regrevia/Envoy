@@ -207,12 +207,12 @@ jobs:
         run: |
           chcp 65001 | Out-Null
           [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario fresh -Redact $false
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario fresh -Redact $false -Profile "${{ inputs.profile }}"
       - name: 验收（PowerShell 7）/ Acceptance (7)
         shell: pwsh
         run: |
           $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 7 -Scenario fresh -Redact $false
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 7 -Scenario fresh -Redact $false -Profile "${{ inputs.profile }}"
       - name: 证据摘要 / Evidence summary
         if: always()
         shell: powershell
