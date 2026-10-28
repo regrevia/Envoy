@@ -251,6 +251,18 @@ def _parser() -> argparse.ArgumentParser:
         "status", help="report imported cookies and pauses waiting for a person"
     )
     auth_status.add_argument("--json", action="store_true")
+    auth_handoff = auth_commands.add_parser(
+        "handoff",
+        help="turn the opt-in credential handoff on or off (off by default)",
+    )
+    auth_handoff.add_argument(
+        "state",
+        nargs="?",
+        default="status",
+        choices=("status", "on", "off"),
+        help="status (default), on, or off",
+    )
+    auth_handoff.add_argument("--json", action="store_true")
     auth_open = auth_commands.add_parser(
         "open",
         help="open one visible window so a person can sign in, then check the link",
@@ -485,6 +497,30 @@ def _run_auth(args) -> int:
                 f"Imported {report['imported']} cookies for "
                 f"{', '.join(report['domains'])} from {report['source']}"
             )
+        return 0
+    if args.auth_command == "handoff":
+        from . import features
+
+        if args.state in ("on", "off"):
+            report = features.set_credential_handoff(args.state == "on")
+        else:
+            report = features.credential_handoff_status()
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            state = "on" if report["enabled"] else "off"
+            print(f"Credential handoff: {state} (source: {report['source']})")
+            if report["enabled"]:
+                print(
+                    "Sign-in pages can be opened for the user in the chat and a "
+                    "browser session can be reused; nothing leaves this machine."
+                )
+            else:
+                print(
+                    "Off: no sign-in page is opened and no stored session is used. "
+                    "Turn on with `envoy auth handoff on`."
+                )
+            print(f"config: {report['config_path']}")
         return 0
     if args.auth_command == "status":
         from . import authflow, profile_state

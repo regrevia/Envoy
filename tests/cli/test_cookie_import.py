@@ -183,8 +183,10 @@ def test_binarycookies_parser_rejects_foreign_files():
         cookies._parse_binarycookies(b"not-a-cookie-file")
 
 
-def test_apply_imported_cookies_is_a_noop_without_a_store(store):
+def test_apply_imported_cookies_is_a_noop_without_a_store(store, monkeypatch):
     from envoy_cli import browser
+
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
 
     class Context:
         def __init__(self):

@@ -12,6 +12,13 @@ PROFILE = "https://www.douyin.com/user/creator"
 SPACE = "https://space.bilibili.com/123456"
 
 
+@pytest.fixture(autouse=True)
+def _credential_handoff_on(monkeypatch):
+    # These tests pin the enabled mechanics; the shipped default (off) has its
+    # own coverage in tests/cli/test_credential_handoff.py.
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
+
+
 class _Block:
     def __init__(self, text):
         self._text = text

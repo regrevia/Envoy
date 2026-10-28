@@ -20,6 +20,16 @@
   `page_unreachable`（Hacker News 薄条目从 45 秒报错变成 18 秒读到 187 字）。
 - 文档链接直接读成正文：`.docx` / `.pptx` / `.epub` / `.odt` 用标准库解包取文本，
   安装体积不变；普通 `.zip` 不会被误当文档（实测 docx 链接 8952 字、EPUB 11412 字）。
+- 需要登录时可以把认证交给用户，默认关闭：`envoy auth handoff on|status|off`（或
+  一次性 `ENVOY_CREDENTIAL_HANDOFF=1`）。关着时 `envoy_auth` 不出现在工具列表里，
+  读到的登录墙只给「用户在终端自己登录」一条路，已导入的会话也不会被自动使用。
+- 打开后多一条更快的路：`envoy_auth` 用 `action: "import"` 加 `browser: "chrome"`
+  （Edge/Brave/Vivaldi/Chromium/Safari 同）直接把用户本机浏览器里该站点的会话
+  复制进 Envoy 的本地存储，不用终端、不用扫码；开着开关时静态 `envoy_read` 也会
+  带上该站点的 cookie，登录墙页面不启动浏览器就能读。
+- 凭据只在本机：cookie 存 `~/.envoy/imported-cookies.json`（0600、原子替换），
+  开关存 `~/.envoy/config.json`（0600、目录 0700），工具返回里只有数量、域名和
+  cookie 名，值不出现、不入日志、不上传（有测试驱动 401 读取并断言值不在结果里）。
 
 ### English
 
@@ -45,6 +55,19 @@
   the standard library only, so the install stays the same size; a plain `.zip` is not
   mistaken for a document (measured: 8952 characters from a .docx link, 11412 from an
   EPUB).
+- Sign-in can be handed to the user, and it ships off: `envoy auth handoff on|status|off`
+  (or `ENVOY_CREDENTIAL_HANDOFF=1` for one shell). While it is off `envoy_auth` is not
+  advertised, a blocked read offers only the terminal sign-in, and a stored session is
+  never attached.
+- With it on there is a faster route: `envoy_auth` with `action: "import"` and
+  `browser: "chrome"` (also edge, brave, vivaldi, chromium, safari) copies that site's
+  session out of the user's own local browser into Envoy's store — no terminal, no QR
+  scan — and an enabled static `envoy_read` attaches the same cookies, so a gated page
+  reads without launching a browser.
+- Credentials stay on the machine: cookies live in `~/.envoy/imported-cookies.json`
+  (0600, atomic replace), the switch in `~/.envoy/config.json` (0600, directory 0700),
+  and tool output carries counts, domains, and cookie names only — never values, which
+  a test drives through a 401 read to prove absent from the result.
 
 ## 0.1.26 - 2026-10-28
 

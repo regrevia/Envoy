@@ -173,6 +173,15 @@ again instead of re-reading. The browser stays alive between calls, so one scan
 covers every pause for the same site in the batch; `action: "cancel"` closes it.
 The session stays in Envoy's separate local browser profile on the machine.
 
+Handoff is opt-in: `envoy_auth` is not in `tools/list` until the user runs
+`envoy auth handoff on` (or sets `ENVOY_CREDENTIAL_HANDOFF=1`). If a blocked read
+says `credential_handoff.enabled: false`, relay that one command and stop; do not
+retry the tool. When the user is already signed in to the site in their own
+browser, `action: "import"` with `browser: "chrome"` (or `edge`, `brave`,
+`vivaldi`, `chromium`, `safari`) copies that site's session into Envoy's local
+store without a terminal, returning counts and cookie names only; then read the
+link again. Cookie values never leave the machine and are never printed.
+
 Hooks are optional, not required for normal use. A host may wrap tool calls for
 logging, caching, or usage accounting, but the Envoy request/response contract
 must remain usable without host hooks.

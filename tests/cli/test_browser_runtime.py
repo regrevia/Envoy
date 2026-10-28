@@ -29,6 +29,13 @@ from envoy_core.schemas.read_v1 import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _credential_handoff_on(monkeypatch):
+    # These tests pin the enabled mechanics; the shipped default (off) has its
+    # own coverage in tests/cli/test_credential_handoff.py.
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
+
+
 @dataclass
 class FakeResponse:
     status: int = 200

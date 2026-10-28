@@ -11,6 +11,68 @@ browser session, saves a picture of it, and returns the picture's path to the
 model. The model shows the picture; the user scans it; the same link reads
 normally afterwards.
 
+## Off by default
+
+Handoff reads a session the user owns, so it ships **off**. While the switch is
+off:
+
+- `envoy_auth` is not advertised in any toolset (`tools_for_toolset` removes it),
+  so the model is never offered a capability that would refuse to run.
+- A read that hits a sign-in wall still returns `needs_user_action`, but with
+  `credential_handoff.enabled = false`, `how_to_enable`, and only the
+  `human_sign_in` option; no auth action is created and no browser is opened.
+- A stored session is never attached: `browser._apply_imported_cookies` returns
+  0 and a static fetch sends no `Cookie` header.
+
+The user turns it on once:
+
+```bash
+envoy auth handoff on      # writes {"credential_handoff": true} to ~/.envoy/config.json
+envoy auth handoff status  # {"enabled": ..., "source": "config"|"env"|"default", ...}
+envoy auth handoff off     # back to the shipped default
+```
+
+`ENVOY_CREDENTIAL_HANDOFF=0|1` overrides the file for one shell. The file is
+written atomically, `0600` inside a `0700` directory, and holds booleans only —
+no cookie, token, or password ever reaches it. If the tool is called anyway
+(stale tool list, another host), the handler answers `blocked` with the
+enable instruction instead of acting.
+
+## Fast path: reuse the session the user's browser already has
+
+Opening a page and scanning a QR code takes the user a few seconds. When they are
+already signed in **in their own browser** on the same machine, `envoy_auth`
+takes a shorter route with no terminal and no scan:
+
+```json
+{"action": "import", "url": "https://example.com/private", "browser": "chrome"}
+```
+
+Envoy copies that site's cookies out of the local browser profile into
+`~/.envoy/imported-cookies.json` (mode `0600`, atomic replace), and answers with
+`result: "ready"`, the count, the domains, and the cookie **names** — never the
+values. The model then calls `envoy_read` on the same link. With the switch on,
+the reader attaches those cookies to its own HTTP fetch for matching hosts, so a
+gated page reads without launching a browser at all. Safari and Windows
+Chromium/Edge/Brave/Vivaldi decryption are handled by `cookies.py`
+(DPAPI + AES-GCM on Windows, Keychain on Safari).
+
+`envoy auth import --from chrome --domain example.com` remains the same action
+from a terminal, for scripts and hosts without MCP.
+
+## What never leaves the machine
+
+- Cookie values live only in this process for the length of one request. They are
+  not logged, not returned in a read result, not written to coverage, and not
+  included in error details — `test_cookie_values_never_reach_a_read_result`
+  drives a 401 read with a stored cookie and asserts the value is absent from the
+  serialized response.
+- `envoy_auth` output carries counts, domains, cookie names, and file paths only.
+- Nothing is uploaded anywhere: import reads a local profile, the store is local,
+  and the browser path uses the local Playwright profile.
+- The sign-in screenshot is the site's own page; the QR code is the same one the
+  user would see in their browser.
+
 ## Flow
 
 1. `envoy_read` on a gated link returns `blocked` with

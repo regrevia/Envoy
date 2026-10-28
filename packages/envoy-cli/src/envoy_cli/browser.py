@@ -883,9 +883,14 @@ def _apply_imported_cookies(context, source_url: str) -> int:
 
     Injection is scoped to the requested host, so the isolated profile never
     picks up unrelated sessions, and a missing store is a no-op: anonymous
-    pages keep reading exactly as before.
+    pages keep reading exactly as before. Credential reuse itself is opt-in:
+    with the switch off (the default) a stored session is never attached.
     """
 
+    from . import features
+
+    if not features.credential_handoff_enabled():
+        return 0
     try:
         from .cookies import load_cookies_for
 

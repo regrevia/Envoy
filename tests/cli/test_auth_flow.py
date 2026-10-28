@@ -8,12 +8,18 @@ from envoy_cli import authflow, auth_window, cli, profile_state, reader
 from envoy_core.schemas import ErrorCode, ReadRequest
 
 
+@pytest.fixture(autouse=True)
+def _credential_handoff_on(monkeypatch):
+    # These tests pin the enabled mechanics; the shipped default (off) has its
+    # own coverage in tests/cli/test_credential_handoff.py.
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
+
+
 @pytest.fixture()
 def auth_home(tmp_path, monkeypatch):
     monkeypatch.setenv("ENVOY_AUTH_DIR", str(tmp_path / "auth"))
     monkeypatch.setenv("ENVOY_BROWSER_PROFILE_DIR", str(tmp_path / "profile"))
     return tmp_path
-
 
 def test_a_pause_is_persisted_and_reused_for_the_same_link(auth_home):
     first = authflow.create_auth_action("https://www.douyin.com/video/1")
@@ -25,7 +31,6 @@ def test_a_pause_is_persisted_and_reused_for_the_same_link(auth_home):
     assert first["resume_token"].isalnum(), "a resume token must survive --token parsing"
     assert authflow.load_auth_action(first["action_id"])["status"] == "pending"
     assert authflow.resolve_resume_token(first["resume_token"])["action_id"] == first["action_id"]
-
 
 def test_a_pause_expires_and_stops_being_resumable(auth_home):
     action = authflow.create_auth_action("https://vimeo.com/9")
@@ -39,7 +44,6 @@ def test_a_pause_expires_and_stops_being_resumable(auth_home):
     assert loaded["status"] == "expired"
     assert authflow.auth_status()["pending"] == []
 
-
 def test_verification_needs_headless_reuse_to_count_as_success(auth_home):
     action = authflow.create_auth_action("https://vimeo.com/3")
     page_only = authflow.record_verification(
@@ -52,13 +56,11 @@ def test_verification_needs_headless_reuse_to_count_as_success(auth_home):
     )
     assert ok["status"] == "ok"
 
-
 def test_clearing_credentials_invalidates_live_pauses(auth_home):
     action = authflow.create_auth_action("https://vimeo.com/4")
 
     assert authflow.invalidate_actions() == 1
     assert authflow.load_auth_action(action["action_id"])["status"] == "canceled"
-
 
 def test_a_blocked_read_carries_a_top_level_authenticate_need(auth_home):
     request = ReadRequest(
@@ -82,7 +84,6 @@ def test_a_blocked_read_carries_a_top_level_authenticate_need(auth_home):
     assert action["open_command"].endswith(need.action_id)
     assert authflow.load_auth_action(need.action_id)["source_url"] == "https://www.douyin.com/video/766"
 
-
 def test_cli_status_lists_pauses_and_clear_cancels_them(auth_home, capsys):
     action = authflow.create_auth_action("https://vimeo.com/5")
 
@@ -94,7 +95,6 @@ def test_cli_status_lists_pauses_and_clear_cancels_them(auth_home, capsys):
     cleared = json.loads(capsys.readouterr().out)
     assert cleared["pauses_invalidated"] == 1
     assert authflow.load_auth_action(action["action_id"])["status"] == "canceled"
-
 
 def test_cli_verify_reports_the_reason_without_opening_a_window(auth_home, capsys, monkeypatch):
     action = authflow.create_auth_action("https://vimeo.com/6")
@@ -114,7 +114,6 @@ def test_cli_verify_reports_the_reason_without_opening_a_window(auth_home, capsy
     assert payload["status"] == "ok"
     assert payload["verification"]["reason"] == "readable"
 
-
 def test_cli_resume_uses_the_token_to_find_the_paused_link(auth_home, capsys, monkeypatch):
     action = authflow.create_auth_action("https://vimeo.com/7", purpose="collect_item")
     monkeypatch.setattr(
@@ -132,7 +131,6 @@ def test_cli_resume_uses_the_token_to_find_the_paused_link(auth_home, capsys, mo
     payload = json.loads(capsys.readouterr().out)
     assert payload["source_url"] == "https://vimeo.com/7"
     assert payload["status"] == "failed"
-
 
 def test_clearing_a_host_removes_only_that_sites_profile_cookies(auth_home):
     import sqlite3

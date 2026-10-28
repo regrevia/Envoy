@@ -4483,6 +4483,32 @@ def _is_connect_failure(error: Exception) -> bool:
     )
 
 
+def _credential_cookie_header(url: str) -> str:
+    """The Cookie header for one URL, or "" when handoff is off.
+
+    Cookie values exist only in this local process for the length of the
+    request. They are never logged, returned in a read result, or written to
+    coverage: only the existence of a session can change the outcome.
+    """
+
+    from . import features
+
+    if not features.credential_handoff_enabled():
+        return ""
+    try:
+        from .cookies import load_cookies_for
+
+        cookies = load_cookies_for(url)
+    except Exception:  # noqa: BLE001 - a broken store must not break a read
+        return ""
+    pairs = [
+        f"{item['name']}={item['value']}"
+        for item in cookies
+        if item.get("name") and item.get("value") is not None
+    ]
+    return "; ".join(pairs)
+
+
 def _fetch_html(
     source_url: str,
     max_bytes: int = MAX_HTML_BYTES,
@@ -4525,6 +4551,11 @@ def _fetch_html_via(
     for _ in range(5):
         if not _is_public_http_url(current_url, dns_cache):
             raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
+        cookie_header = _credential_cookie_header(current_url)
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+        else:
+            headers.pop("Cookie", None)
         for attempt in range(MAX_FETCH_ATTEMPTS):
             try:
                 with client.stream("GET", current_url, headers=headers) as response:
@@ -8834,12 +8865,19 @@ def _login_user_action(
             "them itself."
         )
 
-    action = _persisted_auth_action(source_url, purpose)
+    from . import features
+
+    handoff_enabled = features.credential_handoff_enabled()
+    action = _persisted_auth_action(source_url, purpose) if handoff_enabled else {}
     payload = {
         "kind": kind,
         "host": host,
         "question": question,
         "requires_human": True,
+        "credential_handoff": {
+            "enabled": handoff_enabled,
+            "scope": "this machine only",
+        },
         "options": [
             {
                 "action": "in_chat_sign_in",
@@ -8886,6 +8924,18 @@ def _login_user_action(
             },
         ],
     }
+    if not handoff_enabled:
+        # The switch is off (the shipped default). Say so once, in a form the
+        # model can relay but cannot act on itself: enabling is the user's step.
+        payload["credential_handoff"]["how_to_enable"] = (
+            "Credential handoff is off. The user can enable it once with "
+            "`envoy auth handoff on` (or ENVOY_CREDENTIAL_HANDOFF=1 for one "
+            "shell); only then can Envoy open a sign-in page in the chat or "
+            "reuse a browser session."
+        )
+        payload["options"] = [
+            option for option in payload["options"] if option.get("action") == "human_sign_in"
+        ]
     if action.get("action_id"):
         action_id = str(action["action_id"])
         payload["action_id"] = action_id

@@ -290,9 +290,18 @@ AUTH_SCHEMA = {
     "additionalProperties": False,
     "required": ["action"],
     "properties": {
-        "action": {"type": "string", "enum": ["open", "status", "cancel"]},
+        "action": {"type": "string", "enum": ["open", "status", "cancel", "import"]},
         "action_id": {"type": ["string", "null"]},
         "url": {"type": ["string", "null"]},
+        "browser": {
+            "type": "string",
+            "enum": ["chrome", "edge", "brave", "vivaldi", "chromium", "safari"],
+            "description": (
+                "For action 'import': which of the user's own browsers holds the "
+                "session. Copying is local; only the cookie count and names are "
+                "reported back, never the values."
+            ),
+        },
         "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 900},
         "visible": {"type": "boolean", "default": False},
     },
@@ -509,7 +518,12 @@ TOOLS = [
             "the user with its absolute path, then call action 'status' after they "
             "finish and re-read the original link. The browser stays open in the "
             "background between calls, so a scan is enough and the user never has "
-            "to find a terminal. action 'cancel' closes it. Pass action_id when a "
+            "to find a terminal. action 'cancel' closes it. When the user's own "
+            "browser already holds the session, action 'import' with browser "
+            "'chrome'/'edge'/'safari' copies that site's cookies into Envoy's "
+            "local store without a terminal; only counts and cookie names come "
+            "back, never values. This whole tool is off by default: it works only "
+            "after the user runs `envoy auth handoff on`. Pass action_id when a "
             "previous open gave one, or url to start from a link."
         ),
         "inputSchema": AUTH_SCHEMA,
@@ -551,10 +565,23 @@ def normalize_toolset(value: str | None = None) -> str:
 
 
 def tools_for_toolset(value: str | None = None) -> list[dict]:
-    """Return the static tool declarations for one toolset, preserving order."""
+    """Return the static tool declarations for one toolset, preserving order.
+
+    Credential handoff ships off, so its tool is not advertised until the user
+    turns the switch on: a model should not be offered a capability that is
+    deliberately unavailable.
+    """
 
     allowed = set(TOOLSETS[normalize_toolset(value)])
+    if not _credential_handoff_enabled():
+        allowed.discard("envoy_auth")
     return [tool for tool in TOOLS if tool["name"] in allowed]
+
+
+def _credential_handoff_enabled() -> bool:
+    from . import features
+
+    return features.credential_handoff_enabled()
 
 
 class MCPProtocolSession:
@@ -1612,6 +1639,19 @@ def _auth_payload(arguments: dict) -> dict:
     url = str(arguments.get("url") or "").strip()
     timeout_seconds = int(arguments.get("timeout_seconds") or 300)
     payload: dict = {"tool": "envoy_auth", "action": action}
+    from . import features
+
+    if not features.credential_handoff_enabled():
+        payload.update({
+            "result": "blocked",
+            "credential_handoff": {"enabled": False, "scope": "this machine only"},
+            "instruction": (
+                "Credential handoff is off by default. Relay this to the user: "
+                "they can enable it with `envoy auth handoff on`. Nothing was "
+                "opened and no stored session was used."
+            ),
+        })
+        return payload
     if action == "open":
         if not action_id and not url:
             raise ValueError("envoy_auth open needs action_id or url")
@@ -1649,8 +1689,28 @@ def _auth_payload(arguments: dict) -> dict:
             raise ValueError("envoy_auth cancel needs action_id")
         payload.update(auth_session.stop(action_id))
         payload["result"] = "canceled"
+    elif action == "import":
+        if not url:
+            raise ValueError("envoy_auth import needs url")
+        source = str(arguments.get("browser") or "").strip().lower()
+        if not source:
+            raise ValueError(
+                "envoy_auth import needs browser: chrome, edge, brave, vivaldi, "
+                "chromium or safari"
+            )
+        from .cookies import import_cookies
+
+        payload.update(import_cookies(source, source_url=url))
+        payload["use_local_store"] = True
+        payload["result"] = "ready"
+        payload["instruction"] = (
+            "the session the user's own browser already holds was copied for this "
+            "site only into Envoy's local store (mode 600, never uploaded); call "
+            "envoy_read on source_url now. Do not ask for a password and do not "
+            "repeat cookie names or values back to the user."
+        )
     else:
-        raise ValueError("envoy_auth action must be open, status, or cancel")
+        raise ValueError("envoy_auth action must be open, status, cancel, or import")
     return payload
 
 

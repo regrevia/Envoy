@@ -145,6 +145,22 @@ original link. `action: "cancel"` closes the background worker. The same
 operation is available outside MCP as `envoy auth shot --url <link> --json`;
 `envoy auth verify --action-id <id>` checks the link after the person signs in.
 
+`envoy_auth` ships **off**. While it is off the tool is absent from `tools/list`,
+a blocked read carries `needs_user_action.credential_handoff.enabled: false`
+with `how_to_enable`, and a stored session is never attached. Relay this to the
+user once: `envoy auth handoff on` (or `ENVOY_CREDENTIAL_HANDOFF=1` for one
+shell), with `envoy auth handoff status|off` for the rest. Never call
+`envoy_auth` after a `blocked` answer that says the switch is off; tell the user
+the command and stop until they enable it.
+
+When the user is already signed in to the site in their own browser on this
+machine, the faster path needs no scan and no terminal: `envoy_auth` with
+`action: "import"`, `url`, and `browser` (`chrome`, `edge`, `brave`, `vivaldi`,
+`chromium`, or `safari`). Envoy copies that site's cookies into its own local
+store (mode 600) and answers with `imported`, `domains`, and cookie names only —
+then `mcp__envoy__envoy_read` the same link. Cookie values are never returned, logged, or
+uploaded; do not ask the user for a password or repeat names back.
+
 ## Expand long text
 
 When a read returns `partial` with `continuation_available: true`, send:

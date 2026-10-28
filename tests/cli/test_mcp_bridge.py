@@ -3,7 +3,6 @@ import io
 import sys
 from pathlib import Path
 
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 for path in (
     ROOT_DIR / "packages" / "envoy-core" / "src",
@@ -14,6 +13,13 @@ for path in (
 
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _credential_handoff_on(monkeypatch):
+    # These tests pin the enabled mechanics; the shipped default (off) has its
+    # own coverage in tests/cli/test_credential_handoff.py.
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
 
 
 @pytest.fixture(autouse=True)
