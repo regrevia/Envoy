@@ -42,7 +42,7 @@ def test_only_dispatch_and_release_run():
 
 def test_self_hosted_jobs_are_labelled():
     text = workflow()
-    assert text.count("runs-on: [self-hosted, windows, x64, envoy-win]") == 2
+    assert text.count("runs-on: [self-hosted, windows, x64, regrevia-win]") == 2
     assert "runs-on: windows-2022" in text, "keep a hosted clean-machine leg"
 
 
@@ -104,4 +104,4 @@ def test_runner_registration_is_not_owned_by_this_repository():
     assert "runner-setup.ps1" not in doc or "win-runner" in doc
 
     workflow = (ROOT / ".github" / "workflows" / "windows-acceptance.yml").read_text(encoding="utf-8")
-    assert "[self-hosted, windows, x64, envoy-win]" in workflow
+    assert "[self-hosted, windows, x64, regrevia-win]" in workflow
