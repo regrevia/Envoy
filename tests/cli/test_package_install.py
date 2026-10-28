@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import sys
 
 import pytest
@@ -412,3 +413,63 @@ def test_doctor_reports_configured_asr_dependency_lost_after_tool_reinstall(
     assert status["asr_installed"] is False
     assert status["asr_model"] == "small"
     assert "rerun envoy asr install" in status["asr_next_step"]
+
+
+def test_uv_is_bootstrapped_when_the_machine_has_none(monkeypatch, tmp_path):
+    import hashlib
+    import io
+    import zipfile
+
+    from envoy_cli import package_install
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(package_install.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(package_install.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(package_install.platform, "machine", lambda: "AMD64")
+
+    payload = b"uv-binary-bytes"
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("uv.exe", payload)
+    digest = hashlib.sha256(archive.getvalue()).hexdigest()
+    downloaded = {
+        "https://github.com/astral-sh/uv/releases/download/0.13.6/"
+        "uv-x86_64-pc-windows-msvc.zip": archive.getvalue(),
+        "https://github.com/astral-sh/uv/releases/download/0.13.6/"
+        "uv-x86_64-pc-windows-msvc.zip.sha256": f"{digest}  uv-x86_64-pc-windows-msvc.zip\n".encode(),
+    }
+    calls: list[str] = []
+
+    def _fake_fetch(url, *, limit=64 * 1024 * 1024):
+        calls.append(url)
+        return downloaded[url]
+
+    monkeypatch.setattr(package_install, "_fetch", _fake_fetch)
+
+    path = package_install.resolve_uv()
+
+    assert path.endswith("uv.exe")
+    assert pathlib.Path(path).read_bytes() == payload
+    assert package_install.resolve_uv() == path
+    assert len(calls) == 2  # the archive and its published checksum
+
+
+def test_a_uv_download_that_fails_its_checksum_is_refused(monkeypatch, tmp_path):
+    import pytest as _pytest
+
+    from envoy_cli import package_install
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(package_install.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(package_install.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(package_install.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(
+        package_install,
+        "_fetch",
+        lambda url, *, limit=64 * 1024 * 1024: b"0" * 64 if url.endswith(".sha256") else b"payload",
+    )
+
+    with _pytest.raises(RuntimeError) as excinfo:
+        package_install.resolve_uv()
+
+    assert "SHA-256" in str(excinfo.value)

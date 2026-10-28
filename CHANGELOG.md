@@ -4,6 +4,7 @@
 
 ### 中文
 
+- 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `~/.envoy/tools/uv/`，`envoy asr install --model base` 因此在干净机器上也能装好。
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
   （A8：`minimal` 无浏览器无转写引擎、`standard` 浏览器就绪、`full` 两者都在）。
@@ -59,6 +60,9 @@
 
 ### English
 
+- A full install no longer needs `uv` to exist first: Envoy downloads the official
+  binary, verifies its published SHA-256, and keeps it in `~/.envoy/tools/uv/`, so
+  `envoy asr install --model base` also works on a clean machine.
 - Windows acceptance can now verify one install profile on its own: `acceptance.ps1`
   takes `-Profile`, the workflow takes a `profile` input, and the run asserts what that
   profile provisioned through `envoy doctor --json` (check A8).
@@ -124,6 +128,15 @@
   (0600, atomic replace), the switch in `~/.envoy/config.json` (0600, directory 0700),
   and tool output carries counts, domains, and cookie names only — never values, which
   a test drives through a 401 read to prove absent from the result.
+
+## 0.1.27
+
+- 完整安装时如果机器上没有 `uv`，Envoy 自己下好它（按官方发布包的 SHA-256 校验，存到 `~/.envoy/tools/uv/`），ASR 模型因此不再需要用户先装工具链——GitHub 托管干净机上 `envoy asr install --model base` 因缺 uv 而失败的路径已修。
+- YouTube 播放列表可用 `envoy_discover` 枚举（只取元数据，不下载媒体）。
+## 0.1.27
+
+- A full install no longer needs `uv` to be present first: Envoy downloads the official binary once, verifies its published SHA-256, and keeps it in `~/.envoy/tools/uv/`, so `envoy asr install --model base` works on a clean machine.
+- A YouTube playlist is enumerable through `envoy_discover` (metadata only, no media download).
 
 ## 0.1.26 - 2026-10-28
 

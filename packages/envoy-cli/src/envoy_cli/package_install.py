@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import platform
 import subprocess
 import shutil
+import stat
 import sys
+import tarfile
+import tempfile
 import time
+import zipfile
+from pathlib import Path
 from time import monotonic
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -143,11 +150,109 @@ def select_package_index() -> PackageIndex:
     return indexes[0]
 
 
+UV_VERSION = "0.13.6"
+_UV_RELEASE = "https://github.com/astral-sh/uv/releases/download"
+
+
+def _uv_asset() -> str:
+    """The uv release asset that runs on this machine."""
+
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    arm = machine in {"arm64", "aarch64"}
+    if system == "windows":
+        return "uv-aarch64-pc-windows-msvc.zip" if arm else "uv-x86_64-pc-windows-msvc.zip"
+    if system == "darwin":
+        return (
+            "uv-aarch64-apple-darwin.tar.gz"
+            if arm
+            else "uv-x86_64-apple-darwin.tar.gz"
+        )
+    if arm:
+        return "uv-aarch64-unknown-linux-gnu.tar.gz"
+    return "uv-x86_64-unknown-linux-gnu.tar.gz"
+
+
+def _uv_binary_name() -> str:
+    return "uv.exe" if platform.system().lower() == "windows" else "uv"
+
+
+def _fetch(url: str, *, limit: int = 64 * 1024 * 1024) -> bytes:
+    request = Request(url, headers={"User-Agent": "envoy"})
+    with urlopen(request, timeout=120) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise RuntimeError(f"download exceeded {limit} bytes: {url}")
+    return data
+
+
+def ensure_uv() -> str:
+    """Return a uv executable, installing one under Envoy's home if needed.
+
+    A default (full) install provisions the ASR model, which needs uv. Asking the
+    user to install it first is the cost this project is trying to remove, so the
+    same binary uv publishes is downloaded once, verified against its own
+    SHA-256, and kept next to Envoy's other state.
+    """
+
+    existing = shutil.which("uv")
+    if existing:
+        return existing
+    target_dir = Path.home() / ".envoy" / "tools" / "uv" / UV_VERSION
+    target = target_dir / _uv_binary_name()
+    if target.is_file() and os.access(target, os.X_OK):
+        return str(target)
+    asset = _uv_asset()
+    base = f"{_UV_RELEASE}/{UV_VERSION}/{asset}"
+    expected = _fetch(f"{base}.sha256").decode("utf-8", "replace").split()[0].strip()
+    if len(expected) != 64:
+        raise RuntimeError(f"uv published no usable checksum for {asset}")
+    archive = _fetch(base)
+    digest = hashlib.sha256(archive).hexdigest()
+    if digest != expected:
+        raise RuntimeError(
+            f"uv download failed its SHA-256 check ({asset}): "
+            f"got {digest[:12]}…, expected {expected[:12]}…"
+        )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="envoy-uv-") as scratch:
+        path = Path(scratch) / asset
+        path.write_bytes(archive)
+        if asset.endswith(".zip"):
+            with zipfile.ZipFile(path) as bundle:
+                member = next(
+                    (name for name in bundle.namelist() if name.endswith(_uv_binary_name())),
+                    "",
+                )
+                if not member:
+                    raise RuntimeError(f"uv archive {asset} contains no {_uv_binary_name()}")
+                with bundle.open(member) as source:
+                    target.write_bytes(source.read())
+        else:
+            with tarfile.open(path) as bundle:
+                member = next(
+                    (
+                        item
+                        for item in bundle.getmembers()
+                        if item.isfile() and item.name.endswith("/" + _uv_binary_name())
+                    ),
+                    None,
+                )
+                if member is None:
+                    raise RuntimeError(f"uv archive {asset} contains no {_uv_binary_name()}")
+                extracted = bundle.extractfile(member)
+                if extracted is None:
+                    raise RuntimeError(f"uv archive {asset} is unreadable")
+                target.write_bytes(extracted.read())
+    target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(target)
+
+
 def resolve_uv() -> str:
     path = shutil.which("uv")
-    if not path:
-        raise RuntimeError("uv is required to install Envoy media dependencies")
-    return path
+    if path:
+        return path
+    return ensure_uv()
 
 
 def install_media_dependencies(
