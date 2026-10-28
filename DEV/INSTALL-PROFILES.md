@@ -100,6 +100,7 @@ uv run --offline --python 3.11 --with pytest pytest -q tests/test_install_script
   `ENVOY_SETUP_BROWSER=0`，非 `full` 档显式 `ENVOY_SETUP_MEDIA=0`），
   `.github/workflows/windows-acceptance.yml` 加 `profile` 输入并透传给三个 job，
   装完跑 `envoy doctor --json` 做 A8 断言。落地提交 `cd449e3`、`1fe4113`。
+- 顺手抓到的两个真问题：`scripts/embed_dsh_launcher.py --check` 原来比 base64 字符串，同一个 `launch.cjs` 在 macOS 和 Linux 上压出来的字节不同，于是 main 的 CI 在 Ubuntu 上一直红（`06afb0e` 改成解码后比内容）；`dev` 分支的 dsh 测试与 manifest 检查器停在旧格式，同步后转绿（`d944672`、`34e546f`）。
 - 没做：Windows 上把 Chromium 与 Whisper 一起装的 `full` 一整轮（默认那轮 Chromium
   是关的，`standard` 那轮转写是关的）；托管机有一次转写 `did not finish`，安装器照常
   退出 0 并打印 `run envoy asr install --model base later` —— 这是容错行为，不是失败，
