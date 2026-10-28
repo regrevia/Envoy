@@ -64,6 +64,7 @@ jobs:
           python scripts/check_release_manifest.py --check
           python scripts/sync_host_skills.py --check
           python scripts/build_envoy_dsh_plugin.py --check
+          python scripts/embed_dsh_launcher.py --check
       - name: 构建无凭据 Skill 包 / Build credential-free Skill bundle
         run: |
           python scripts/package_envoy_skill.py --output /tmp/envoy-skill.zip --json

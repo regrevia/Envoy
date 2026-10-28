@@ -2,21 +2,65 @@
 
 from __future__ import annotations
 
+import base64
+import gzip
 import json
+import os
+import pathlib
 import re
 import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIR = ROOT / "integrations" / "dsh" / "envoy-dsh"
 GENERATOR = ROOT / "scripts" / "build_envoy_dsh_plugin.py"
 INDEX = PACKAGE_DIR / "index.js"
 PATCH = PACKAGE_DIR / "cordis.patch.yml"
+
+
+def _node_command() -> list[str]:
+    """The argv prefix that runs `node` on this host, spawnable by subprocess.
+
+    On the DSH desktop host `node` is the app binary in Node mode
+    (`ELECTRON_RUN_AS_NODE=1`), and `node` on PATH is a `.cmd` wrapper. A .cmd
+    cannot be spawned without a shell, and passing a large `-e` script through
+    cmd.exe breaks on the script's punctuation, so the tests call the binary
+    directly exactly as the launcher is meant to run.
+    """
+    found = shutil.which("node")
+    if not found:
+        pytest.skip("node is not installed; the bundle launcher needs it")
+    if os.name == "nt" and found.lower().endswith((".cmd", ".bat")):
+        directory = Path(found).parent
+        exe = directory / "node.exe"
+        if exe.is_file():
+            return [str(exe)]
+        # The DSH desktop host: node.cmd runs the app binary in Node mode.
+        text = found and Path(found).read_text(encoding="utf-8", errors="ignore")
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if line.upper().startswith("SET ") and "ELECTRON_RUN_AS_NODE" in line.upper():
+                continue
+            match = re.search(r'^"(?P<exe>[^"]+\.exe)"', line)
+            if match:
+                os.environ.setdefault("ELECTRON_RUN_AS_NODE", "1")
+                return [match.group("exe")]
+    return [found]
+
+
+def node_binary() -> str:
+    return _node_command()[0]
+
+
+def _run_node(args: list[str], **kwargs):
+    return subprocess.run(_node_command() + args, **kwargs)
 
 ENVOY_TOOLS = (
     "envoy_read",
@@ -42,16 +86,17 @@ def _load_json(path: Path) -> dict:
 def _run_node_probe(tmp_path: Path, name: str, source: str) -> dict:
     """Import the host plugin in node and return the probe's JSON payload."""
 
-    node = shutil.which("node")
-    if node is None:
+    if shutil.which("node") is None:
         pytest.skip("node is unavailable")
 
     script = tmp_path / name
     script.write_text(source, encoding="utf-8")
-    result = subprocess.run(
-        [node, str(script), str(INDEX)],
+    result = _run_node(
+        [str(script), str(INDEX)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -95,16 +140,151 @@ def test_manifest_declares_bundle_and_display_resources():
 
 
 def test_patch_mounts_envoy_mcp_and_skill_provider():
-    patch = PATCH.read_text(encoding="utf-8")
-    assert "@deepseek-ai/dsh-mcp-client" in patch
-    assert "serverName: envoy" in patch
-    assert "transport: stdio" in patch
-    assert "command: /bin/sh" in patch
-    assert "exec envoy mcp" in patch
-    assert "toolCallTimeoutMs: 300000" in patch
-    assert "failOnStartupError: true" in patch
-    assert "id: envoy-skill" in patch
-    assert "name: 'envoy-dsh'" in patch
+    patch_text = PATCH.read_text(encoding="utf-8")
+    assert "@deepseek-ai/dsh-mcp-client" in patch_text
+    assert "serverName: envoy" in patch_text
+    assert "transport: stdio" in patch_text
+    assert "toolCallTimeoutMs: 300000" in patch_text
+    assert "failOnStartupError: true" in patch_text
+    assert "id: envoy-skill" in patch_text
+    assert "name: 'envoy-dsh'" in patch_text
+
+
+def _inflate_inline_launcher() -> str:
+    """Recover launch.cjs from the gzipped+base64 payload in cordis.patch.yml."""
+    entry = yaml.safe_load(PATCH.read_text(encoding="utf-8"))[0]["insert"][0]
+    stub = entry["config"]["args"][1]
+    match = re.search(r"Buffer\.from\('([A-Za-z0-9+/=]+)'", stub)
+    assert match, "inline launcher payload not found"
+    return gzip.decompress(base64.b64decode(match.group(1))).decode("utf-8")
+
+
+def test_patch_launches_node_not_posix_shell():
+    """Windows has no /bin/sh; the bridge must start the same way on every OS."""
+    patch_text = PATCH.read_text(encoding="utf-8")
+    entry = yaml.safe_load(patch_text)[0]["insert"][0]
+    config = entry["config"]
+    assert config["command"] == "node"
+    assert config["args"][0] == "-e"
+    # The old launcher's fingerprints must be gone from the executable part.
+    # (The prose may name /bin/sh while explaining why it is not used.)
+    script = _inflate_inline_launcher()
+    assert "/bin/sh" not in script
+    assert "exec envoy mcp" not in script
+    assert "$HOME" not in script
+
+
+def test_patch_inline_script_matches_the_launcher_source():
+    """cordis.patch.yml carries launch.cjs verbatim (gzipped); keep them identical.
+
+    The MCP client spawns with the host's cwd, so a relative `node launch.cjs`
+    is not dependable; the script is inlined. launch.cjs stays the source of
+    truth and this pins the two copies together.
+    """
+    inline = _inflate_inline_launcher()
+    source = (PACKAGE_DIR / "launch.cjs").read_text(encoding="utf-8")
+    assert inline.rstrip("\n") == source.rstrip("\n")
+
+
+def test_internal_launcher_stub_is_short_enough_for_cmd():
+    """A .cmd shim runs through cmd.exe, which caps a command line at 8191 chars."""
+    entry = yaml.safe_load(PATCH.read_text(encoding="utf-8"))[0]["insert"][0]
+    stub = entry["config"]["args"][1]
+    assert len(stub) < 8000, f"inline stub is {len(stub)} chars; cmd.exe caps at 8191"
+
+
+def _inline_script() -> str:
+    """The exact `-e` argument the client passes: the short inflating stub.
+
+    Passing the inflated source instead would exceed cmd.exe's 8191-character
+    command line on Windows (where `node` is often a .cmd shim) and fail for a
+    reason that has nothing to do with the launcher.
+    """
+    entry = yaml.safe_load(PATCH.read_text(encoding="utf-8"))[0]["insert"][0]
+    return entry["config"]["args"][1]
+
+
+def test_inline_launcher_refuses_an_external_runtime_that_is_too_old():
+    """The version gate must fail loudly instead of mounting an old CLI.
+
+    `ENVOY_BIN` points at the running interpreter, which reports its own
+    version; a required minimum far above it forces the external-runtime branch
+    on every platform without needing a fake executable (Windows cannot spawn a
+    .cmd/.bat without a shell, and the MCP client spawns with none).
+    """
+    env = dict(os.environ)
+    env["ENVOY_BIN"] = sys.executable
+    env["ENVOY_DSH_VERSION"] = "99.0.0"
+    env["ENVOY_DSH_REQUIRED_RUNTIME"] = "99.0.0"
+    result = _run_node(
+        ["-e", _inline_script()],
+        input="",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=120,
+    )
+    assert result.returncode == 1
+    assert "needs >=99.0.0" in result.stderr
+
+
+def test_inline_launcher_hands_off_to_envoy_mcp():
+    """End to end: resolve a real runtime, then start `envoy mcp`.
+
+    Uses an installed runtime, so this proves the actual handoff rather than a
+    stub. Skips when none is installed, because provisioning downloads a wheel.
+    """
+    runtime = _provisioned_runtime()
+    if runtime is None:
+        pytest.skip("no Envoy runtime installed; nothing to hand off to")
+    env = dict(os.environ)
+    env["ENVOY_BIN"] = str(runtime)
+    env["ENVOY_DSH_VERSION"] = "0.1.24"
+    env["ENVOY_DSH_REQUIRED_RUNTIME"] = "0.1.24"
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        }
+    )
+    result = _run_node(
+        ["-e", _inline_script()],
+        input=request + "\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    assert '"serverInfo"' in result.stdout
+    assert "envoy" in result.stdout
+
+
+def _provisioned_runtime() -> pathlib.Path | None:
+    """An installed runtime the launcher could use, when one is present."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        candidate = base / "envoy-dsh" / "runtime" / "Scripts" / "envoy.exe"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        candidate = base / "envoy-dsh" / "runtime" / "bin" / "envoy"
+    if candidate.is_file():
+        return candidate
+    value = os.environ.get("ENVOY_BIN")
+    if value and Path(value).is_file():
+        return Path(value)
+    return None
+
 
 
 def test_host_plugin_has_no_harness_package_imports():

@@ -35,10 +35,16 @@ MANIFEST = ROOT / "integrations" / "release-manifest.json"
 CLI_PYPROJECT = ROOT / "packages" / "envoy-cli" / "pyproject.toml"
 DSH_PACKAGE = ROOT / "integrations" / "dsh" / "envoy-dsh" / "package.json"
 DSH_PATCH = ROOT / "integrations" / "dsh" / "envoy-dsh" / "cordis.patch.yml"
+DSH_LAUNCHER = ROOT / "integrations" / "dsh" / "envoy-dsh" / "launch.cjs"
 PROTOCOL_DOC = ROOT / "integrations" / "skills" / "envoy" / "references" / "protocol.md"
 
-PATCH_VERSION_RE = re.compile(r'V="\$\{ENVOY_DSH_VERSION:-([^}]+)\}"')
-PATCH_REQUIRED_RE = re.compile(r'REQ="\$\{ENVOY_DSH_REQUIRED_RUNTIME:-(\$V|[^}]+)\}"')
+# The launcher is a Node script now, so the pins live in `launch.cjs` and the
+# bundle patch only carries the provisioned default in its `env:` block.
+LAUNCHER_VERSION_RE = re.compile(r"process\.env\.ENVOY_DSH_VERSION \|\| '([^']+)'")
+LAUNCHER_REQUIRED_RE = re.compile(
+    r"process\.env\.ENVOY_DSH_REQUIRED_RUNTIME \|\| (VERSION|'([^']+)')"
+)
+PATCH_ENV_VERSION_RE = re.compile(r"ENVOY_DSH_VERSION: '([^']+)'")
 _VERSION_RE = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)")
 
 
@@ -62,19 +68,19 @@ def _dsh_version() -> str:
 
 
 def _patch_pins() -> tuple[str | None, str | None]:
-    text = DSH_PATCH.read_text(encoding="utf-8")
-    version = PATCH_VERSION_RE.search(text)
-    required = PATCH_REQUIRED_RE.search(text)
+    text = DSH_LAUNCHER.read_text(encoding="utf-8")
+    version = LAUNCHER_VERSION_RE.search(text)
+    required = LAUNCHER_REQUIRED_RE.search(text)
     return (
         version.group(1) if version else None,
-        required.group(1) if required else None,
+        (required.group(1) if required else None),
     )
 
 
 def _normalised_required(pin: str | None) -> str | None:
-    """``$V`` means "same as the provisioned version"."""
+    """``VERSION``/``$V`` means "same as the provisioned version"."""
 
-    return None if pin == "$V" else pin
+    return None if pin in {"VERSION", "$V"} else pin
 
 
 def problems() -> list[str]:
@@ -111,14 +117,14 @@ def problems() -> list[str]:
 
     pinned_version, pinned_required = _patch_pins()
     if pinned_version is None:
-        out.append("cordis.patch.yml lost its ENVOY_DSH_VERSION default")
+        out.append("launch.cjs lost its ENVOY_DSH_VERSION default")
     elif pinned_version != version:
-        out.append(f"cordis.patch.yml provisions {pinned_version}, manifest says {version}")
+        out.append(f"launch.cjs provisions {pinned_version}, manifest says {version}")
     if pinned_required is None:
-        out.append("cordis.patch.yml lost its ENVOY_DSH_REQUIRED_RUNTIME default")
+        out.append("launch.cjs lost its ENVOY_DSH_REQUIRED_RUNTIME default")
     elif _normalised_required(pinned_required) not in (None, min_runtime):
         out.append(
-            f"cordis.patch.yml requires {pinned_required}, manifest min_runtime is {min_runtime}"
+            f"launch.cjs requires {pinned_required}, manifest min_runtime is {min_runtime}"
         )
     return out
 
@@ -151,11 +157,34 @@ def write() -> int:
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {MANIFEST.relative_to(ROOT).as_posix()} (version {version})")
 
+    launcher = DSH_LAUNCHER.read_text(encoding="utf-8")
+    launcher = LAUNCHER_VERSION_RE.sub(
+        f"process.env.ENVOY_DSH_VERSION || '{version}'", launcher, count=1
+    )
+    launcher = LAUNCHER_REQUIRED_RE.sub(
+        "process.env.ENVOY_DSH_REQUIRED_RUNTIME || VERSION", launcher, count=1
+    )
+    DSH_LAUNCHER.write_text(launcher, encoding="utf-8")
+    print(f"wrote {DSH_LAUNCHER.relative_to(ROOT).as_posix()} (provisions {version})")
+
     text = DSH_PATCH.read_text(encoding="utf-8")
-    text = PATCH_VERSION_RE.sub(f'V="${{ENVOY_DSH_VERSION:-{version}}}"', text, count=1)
-    text = PATCH_REQUIRED_RE.sub('REQ="${ENVOY_DSH_REQUIRED_RUNTIME:-$V}"', text, count=1)
+    text = PATCH_ENV_VERSION_RE.sub(f"ENVOY_DSH_VERSION: '{version}'", text, count=1)
     DSH_PATCH.write_text(text, encoding="utf-8")
-    print(f"wrote {DSH_PATCH.relative_to(ROOT).as_posix()} (provisions {version})")
+    print(f"wrote {DSH_PATCH.relative_to(ROOT).as_posix()} (env default {version})")
+
+    # The `-e` stub is a generated gzip+base64 copy of the launcher: refresh it
+    # or the bundle ships the previous source and the plugin tests fail.
+    embed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "embed_dsh_launcher.py"), "--write"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if embed.returncode != 0:
+        print(embed.stdout + embed.stderr, file=sys.stderr)
+        return embed.returncode
+    print(embed.stdout.strip())
     return 0
 
 
