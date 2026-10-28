@@ -4,6 +4,7 @@
 
 ### 中文
 
+- Windows 上「仅自己可读」原来等于没设：`os.chmod(0o600)` 在 NTFS 上不生效，开关配置与导入的 cookie 存储改为用 `icacls` 断继承、只授权当前账户（POSIX 仍是 0600/0700，有单测覆盖两种平台）。
 - 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `~/.envoy/tools/uv/`，`envoy asr install --model base` 因此在干净机器上也能装好。
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
@@ -60,6 +61,10 @@
 
 ### English
 
+- "Owner-only" was a no-op on Windows: `os.chmod(0o600)` does nothing on NTFS,
+  so the switch config and the imported cookie store now break ACL inheritance
+  with `icacls` and grant only the running account (POSIX keeps 0600/0700; unit
+  tests cover both paths).
 - A full install no longer needs `uv` to exist first: Envoy downloads the official
   binary, verifies its published SHA-256, and keeps it in `~/.envoy/tools/uv/`, so
   `envoy asr install --model base` also works on a clean machine.

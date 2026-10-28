@@ -19,8 +19,9 @@ import os
 import tempfile
 from pathlib import Path
 
+from .permissions import restrict_to_owner
+
 CONFIG_NAME = "config.json"
-CONFIG_MODE = 0o600
 DIR_MODE = 0o700
 ENV_FLAG = "ENVOY_CREDENTIAL_HANDOFF"
 KEY = "credential_handoff"
@@ -63,16 +64,13 @@ def write_config(patch: dict) -> dict:
     current.update(patch)
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
-    try:
-        os.chmod(path.parent, DIR_MODE)
-    except OSError:
-        pass
+    restrict_to_owner(path.parent, directory=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".config-", dir=str(path.parent))
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(current, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
-        os.chmod(temporary, CONFIG_MODE)
+        restrict_to_owner(Path(temporary))
         os.replace(temporary, path)
     except OSError as exc:
         raise ConfigError(f"cannot write {path}: {exc}") from exc

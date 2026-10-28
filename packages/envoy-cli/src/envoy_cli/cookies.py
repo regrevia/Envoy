@@ -23,8 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .permissions import restrict_to_owner
+
 COOKIE_STORE_NAME = "imported-cookies.json"
-STORE_MODE = 0o600
 _MAX_AGE_SECONDS = 45 * 24 * 3600
 
 _SAFE_STORAGE_LABELS = {
@@ -678,7 +679,7 @@ def _save_cookies(source: str, domains: list[str], cookies: list[dict]) -> dict:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
-        os.chmod(temporary, STORE_MODE)
+        restrict_to_owner(Path(temporary))
         os.replace(temporary, target)
     finally:
         if os.path.exists(temporary):

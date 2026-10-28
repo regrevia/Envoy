@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 
 import httpx
 import pytest
 
-from envoy_cli import cookies, features, mcp, reader
+from envoy_cli import cookies, features, mcp, permissions, reader
 from envoy_core.schemas.read_v1 import ReadRequest
 
 
@@ -60,8 +59,8 @@ def test_turning_it_on_advertises_the_tool_and_persists_owner_only():
 
     path = features.config_path()
     assert json.loads(path.read_text(encoding="utf-8"))["credential_handoff"] is True
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert permissions.is_owner_only(path)
+    assert permissions.is_owner_only(path.parent)
 
     features.set_credential_handoff(False)
     assert features.credential_handoff_enabled() is False
