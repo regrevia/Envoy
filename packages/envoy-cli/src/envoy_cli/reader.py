@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import html
+import io
 import ipaddress
 import json
 import mimetypes
@@ -12,13 +14,14 @@ import shutil
 import sys
 import tempfile
 import time
+import zipfile
 from contextvars import ContextVar
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
 from io import BytesIO
 from html.parser import HTMLParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from ._lazy_module import lazy_attr, lazy_module
@@ -160,6 +163,22 @@ SAFE_VIDEO_QUERY_KEYS = {
     "format", "quality", "source", "utm_source", "utm_medium", "utm_campaign",
 }
 TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".rst")
+# ZIP container documents. They are parsed with the standard library only, so
+# reading a .docx or .epub link costs nothing at install time.
+OFFICE_SUFFIXES = (".docx", ".docm", ".pptx", ".pptm", ".epub", ".odt")
+OFFICE_CONTENT_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+    "application/vnd.ms-word.document.macroenabled.12",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+    "application/epub+zip",
+    "application/vnd.oasis.opendocument.text",
+    "application/zip",
+}
+_MAX_OFFICE_UNCOMPRESSED = 64 * 1024 * 1024
+_MAX_OFFICE_ENTRIES = 4000
 TEXT_CONTENT_TYPES = {
     "application/atom+xml",
     "application/rss+xml",
@@ -218,6 +237,12 @@ def _http_proxy_configured() -> bool:
 class DetectedPDF(PublicPageError):
     def __init__(self, source: dict):
         super().__init__("The URL resolved to a PDF document", ErrorCode.UNSUPPORTED_SOURCE)
+        self.source = source
+
+
+class DetectedOffice(PublicPageError):
+    def __init__(self, source: dict) -> None:
+        super().__init__("This URL serves a ZIP container document")
         self.source = source
 
 
@@ -4579,6 +4604,43 @@ def _fetch_html_via(
                             ),
                             "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
                         })
+                    document_path = urlparse(current_url).path.lower()
+                    is_office_content = content_type in (
+                        OFFICE_CONTENT_TYPES - {"application/zip"}
+                    )
+                    if not is_office_content and document_path.endswith(OFFICE_SUFFIXES):
+                        is_office_content = content_type in {
+                            "",
+                            "application/zip",
+                            "application/octet-stream",
+                            "binary/octet-stream",
+                        }
+                    if is_office_content:
+                        content_length = response.headers.get("content-length")
+                        if content_length:
+                            try:
+                                if int(content_length) > MAX_TEXT_SOURCE_BYTES:
+                                    raise PublicPageError(
+                                        "The document exceeds Envoy's size limit"
+                                    )
+                            except ValueError:
+                                pass
+                        body = bytearray()
+                        for chunk in response.iter_bytes():
+                            body.extend(chunk)
+                            if len(body) > MAX_TEXT_SOURCE_BYTES:
+                                raise PublicPageError("The document exceeds Envoy's size limit")
+                        document_data = bytes(body)
+                        if not document_data.startswith(b"PK\x03\x04"):
+                            raise PublicPageError(
+                                "The server declared a ZIP document but returned other data",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        raise DetectedOffice({
+                            "url": _redact_url(current_url),
+                            "data": document_data,
+                            "mime_type": content_type or "application/zip",
+                        })
                     text_path = urlparse(current_url).path.lower()
                     is_text_content = (
                         content_type in TEXT_CONTENT_TYPES
@@ -5451,6 +5513,195 @@ def _json_payload_has_content(text: str) -> bool:
                 yield from _strings(item, depth + 1)
 
     return any(len(item.strip()) >= 40 for item in _strings(payload))
+
+
+def _office_unescape(value: str) -> str:
+    return html.unescape(value)
+
+
+def _office_run_text(blob: str, tag: str) -> str:
+    """Collect the text runs of one XML element name, keeping line breaks."""
+
+    parts: list[str] = []
+    for match in re.finditer(
+        rf"<{tag}\b[^>]*>(.*?)</{tag}>", blob, re.DOTALL | re.IGNORECASE
+    ):
+        inner = match.group(1)
+        inner = re.sub(r"<[^>]+>", "", inner)
+        parts.append(_office_unescape(inner))
+    return re.sub(r"[ \t]+", " ", "".join(parts)).strip()
+
+
+def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, str]:
+    """Text of a ZIP container document, from the standard library only.
+
+    Returns ``(kind, text)`` where kind is one of ``docx``, ``pptx``, ``epub`` or
+    ``odt``. Unknown or oversized containers raise ``PublicPageError`` so the
+    read reports a clear reason instead of dumping binary bytes.
+    """
+
+    suffix = Path(name).suffix.lower()
+    by_type = {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.template": "docx",
+        "application/vnd.ms-word.document.macroenabled.12": "docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "application/vnd.openxmlformats-officedocument.presentationml.slideshow": "pptx",
+        "application/vnd.ms-powerpoint.presentation.macroenabled.12": "pptx",
+        "application/epub+zip": "epub",
+        "application/vnd.oasis.opendocument.text": "odt",
+    }
+    by_suffix = {
+        ".docx": "docx",
+        ".docm": "docx",
+        ".pptx": "pptx",
+        ".pptm": "pptx",
+        ".epub": "epub",
+        ".odt": "odt",
+    }
+    kind = by_type.get(mime_type) or by_suffix.get(suffix)
+    if kind is None:
+        raise PublicPageError(
+            "This ZIP container is not a document Envoy can read",
+            ErrorCode.UNSUPPORTED_SOURCE,
+        )
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise PublicPageError(
+            f"The document ZIP is unreadable ({type(exc).__name__})",
+            ErrorCode.UNSUPPORTED_SOURCE,
+        ) from exc
+
+    with archive:
+        infos = archive.infolist()
+        if len(infos) > _MAX_OFFICE_ENTRIES:
+            raise PublicPageError("The document has too many parts to read")
+        if sum(info.file_size for info in infos) > _MAX_OFFICE_UNCOMPRESSED:
+            raise PublicPageError("The document exceeds Envoy's unpacked size limit")
+        names = {info.filename for info in infos}
+
+        def read(name_in_zip: str, limit: int = MAX_TEXT_SOURCE_BYTES) -> str:
+            with archive.open(name_in_zip) as handle:
+                raw = handle.read(limit)
+            return raw.decode("utf-8", errors="replace")
+
+        def paragraphs(xml: str, tag: str, run_tag: str) -> str:
+            lines: list[str] = []
+            for match in re.finditer(
+                rf"<{tag}\b[^>]*>(.*?)</{tag}>", xml, re.DOTALL | re.IGNORECASE
+            ):
+                text = _office_run_text(match.group(1), run_tag)
+                if text.strip():
+                    lines.append(text.strip())
+            return "\n\n".join(lines)
+
+        if kind == "docx":
+            if "word/document.xml" not in names:
+                raise PublicPageError("The Word document has no body part")
+            text = paragraphs(read("word/document.xml"), "w:p", "w:t")
+        elif kind == "pptx":
+            slides = sorted(
+                (
+                    name_in_zip
+                    for name_in_zip in names
+                    if re.fullmatch(r"ppt/slides/slide\d+\.xml", name_in_zip)
+                ),
+                key=lambda value: int(re.search(r"(\d+)\.xml$", value).group(1)),
+            )
+            if not slides:
+                raise PublicPageError("The presentation has no slides")
+            parts: list[str] = []
+            for index, slide in enumerate(slides, start=1):
+                body = _office_run_text(read(slide), "a:t")
+                if body.strip():
+                    parts.append(f"Slide {index}\n\n{body.strip()}")
+            text = "\n\n".join(parts)
+        elif kind == "odt":
+            if "content.xml" not in names:
+                raise PublicPageError("The OpenDocument text has no content part")
+            lines: list[str] = []
+            content = read("content.xml")
+            for match in re.finditer(
+                r"<text:p\b[^>]*>(.*?)</text:p>", content, re.DOTALL | re.IGNORECASE
+            ):
+                inner = re.sub(r"<text:s/>", " ", match.group(1))
+                inner = re.sub(r"<[^>]+>", "", inner)
+                inner = re.sub(r"[ \t]+", " ", _office_unescape(inner)).strip()
+                if inner:
+                    lines.append(inner)
+            text = "\n\n".join(lines)
+        else:  # epub
+            spine: list[str] = []
+            if "META-INF/container.xml" in names:
+                container = read("META-INF/container.xml")
+                match = re.search(r'full-path="([^"]+)"', container)
+                if match and match.group(1) in names:
+                    package = read(match.group(1))
+                    base = str(PurePosixPath(match.group(1)).parent)
+                    ids = dict(
+                        re.findall(
+                            r'<item\b[^>]*id="([^"]+)"[^>]*href="([^"]+)"', package
+                        )
+                    )
+                    ids.update(
+                        {
+                            item_id: href
+                            for href, item_id in re.findall(
+                                r'<item\b[^>]*href="([^"]+)"[^>]*id="([^"]+)"', package
+                            )
+                        }
+                    )
+                    for idref in re.findall(r'<itemref\b[^>]*idref="([^"]+)"', package):
+                        href = ids.get(idref)
+                        if not href:
+                            continue
+                        candidate = (
+                            href if base in {"", "."} else f"{base}/{href}"
+                        ).replace("./", "/")
+                        if candidate in names:
+                            spine.append(candidate)
+            if not spine:
+                spine = sorted(
+                    name_in_zip
+                    for name_in_zip in names
+                    if name_in_zip.lower().endswith((".xhtml", ".html", ".htm"))
+                )
+            if not spine:
+                raise PublicPageError("The EPUB has no readable chapters")
+            chapters: list[str] = []
+            for chapter in spine[:200]:
+                raw = read(chapter)
+                plain = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", raw)
+                plain = re.sub(r"(?i)</(p|div|h[1-6]|li|br)\s*>", "\n\n", plain)
+                plain = re.sub(r"<[^>]+>", " ", plain)
+                plain = _office_unescape(plain)
+                plain = re.sub(r"[ \t]+", " ", plain)
+                plain = re.sub(r"\n{3,}", "\n\n", plain).strip()
+                if plain:
+                    chapters.append(plain)
+            text = "\n\n".join(chapters)
+    text = text.strip()
+    if not text:
+        raise PublicPageError("The document has no extractable text", ErrorCode.EMPTY_CONTENT)
+    return kind, text
+
+
+def _parse_office_source(request: ReadRequest, source: dict) -> ReadResponse:
+    """Read a .docx/.pptx/.epub/.odt link as text."""
+
+    url = str(source.get("url") or "")
+    kind, text = _office_document_text(
+        source["data"], urlparse(url).path, str(source.get("mime_type") or "")
+    )
+    response = _parse_text_source(
+        request,
+        {"url": url, "data": text.encode("utf-8"), "mime_type": "text/plain"},
+    )
+    coverage = response.coverage.model_copy(deep=True)
+    for item in coverage.modalities.values():
+        item.details = {**item.details, "reader": f"document:{kind}", "document_format": kind}
+    return response.model_copy(update={"coverage": coverage})
 
 
 def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
@@ -7688,6 +7939,8 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 )
             except DetectedPDF as detected_pdf:
                 return _parse_pdf_source(request, detected_pdf.source)
+            except DetectedOffice as detected_office:
+                return _parse_office_source(request, detected_office.source)
             except DetectedText as detected_text:
                 return _parse_text_source(request, detected_text.source)
             except DetectedImage:

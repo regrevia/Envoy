@@ -429,6 +429,28 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十三轮（文档链接：.docx / .pptx / .epub / .odt 直接读成正文）
+
+这一轮补的是链接另一类常见形态：不少站点（学校、政府、出版社、GitHub raw）直接发
+ZIP 容器文档，以前 reader 只认 HTML / PDF / 文本，这类链接要么被判 `unsupported_source`，
+要么把二进制当文本倒出来。解析只用标准库（`zipfile` + 正则取 XML 文本），安装体积零增加。
+
+| 链接 | 实测 |
+|---|---|
+| `https://calibre-ebook.com/downloads/demos/demo.docx` | `ready` / 8952 字 / 63.2s（1.3 MB 下载，本机出口偏慢） |
+| `https://www.gutenberg.org/ebooks/1342.epub.noimages` | `partial` / 11412 字 / 34.5s，`continuation_available` 可续读 |
+
+- 检测放在 `_fetch_html` 的 content-type 分支里：声明了 Office/EPUB 类型，或 URL 后缀是
+  `.docx/.docm/.pptx/.pptm/.epub/.odt` 且实际返回 `application/zip`、`octet-stream`，
+  才下载并校验 `PK\x03\x04`；普通 `.zip` 包不会被当成文档。
+- 解包有上限：条数 ≤ 4000、解压后总量 ≤ 64 MiB，避免压缩炸弹；没有可提取文本时
+  报 `empty_content` 而不是空响应。
+- 返回的 `coverage.details` 带 `reader: document:docx|pptx|epub|odt` 与 `document_format`，
+  后续可分格式统计；正文仍走原有文本管线，`MAX_TEXT_CHARS` 与分段续读照常生效。
+- 语料 `document` 族新增两行（`docx-calibre` / `epub-gutenberg`），整族复跑 7/7 可用：
+  docx `partial` 7276 字 78.2s、epub `partial` 7414 字 26.1s（都是本机下载慢、预算内截断，
+  非解析失败）。单测 8 条覆盖 docx/pptx/epub/odt、纯 zip 拒绝、无正文报错与抓取层检测。
+
 ## 第二十二轮（新增 12 行 6 条可用，GitHub Release 页的误判修掉）
 
 本轮 12 行先实测再进语料，覆盖订阅归档、论坛条目、文章、中文媒体、商店、影视条目、

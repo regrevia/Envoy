@@ -143,6 +143,8 @@ CORPUS: list[tuple[str, str, str]] = [
     ("document", "rfc9110-pdf", "https://www.rfc-editor.org/rfc/rfc9110.pdf"),
     ("document", "github-raw-md", "https://raw.githubusercontent.com/psf/requests/main/README.md"),
     ("document", "rfc", "https://www.rfc-editor.org/rfc/rfc9110.html"),
+    ("document", "docx-calibre", "https://calibre-ebook.com/downloads/demos/demo.docx"),
+    ("document", "epub-gutenberg", "https://www.gutenberg.org/ebooks/1342.epub.noimages"),
     # -- spa -------------------------------------------------------------
     ("spa", "notion-public", "https://www.notion.so/product/ai"),
     ("spa", "figma-community", "https://www.figma.com/community"),

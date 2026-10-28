@@ -18,6 +18,8 @@
 - 读不到的链接不再白等：连接预算从「直连 20 秒 + 代理 20 秒」降到「10 秒 + 6 秒」。
 - 页面打不开但站点公共接口有正文时照样给出内容：短正文留作最后兜底，报告里标
   `page_unreachable`（Hacker News 薄条目从 45 秒报错变成 18 秒读到 187 字）。
+- 文档链接直接读成正文：`.docx` / `.pptx` / `.epub` / `.odt` 用标准库解包取文本，
+  安装体积不变；普通 `.zip` 不会被误当文档（实测 docx 链接 8952 字、EPUB 11412 字）。
 
 ### English
 
@@ -39,6 +41,10 @@
   is the answer: short answers are kept as a last resort and flagged with
   `page_unreachable` (a thin Hacker News item went from a 45 s error to 187 characters
   in 18 s).
+- Document links now read as text: `.docx`, `.pptx`, `.epub` and `.odt` are unpacked with
+  the standard library only, so the install stays the same size; a plain `.zip` is not
+  mistaken for a document (measured: 8952 characters from a .docx link, 11412 from an
+  EPUB).
 
 ## 0.1.26 - 2026-10-28
 
