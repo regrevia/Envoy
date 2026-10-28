@@ -16,9 +16,11 @@
 #   DSH_PROFILE         Harness profile for the DSH bundle (default: web)
 #   ENVOY_DRY_RUN=1     print the commands instead of running them
 #
-# Not yet exercised on a real Windows host in this repo: install.ps1 is written to
-# the same contract as install.sh, but scripts/check_installer_offline.sh covers
-# the POSIX script only. COMPATIBILITY.md records the Windows row as untested.
+# Verified on a real Windows host for v0.1.24: `install.ps1 skill` provisions a
+# pinned runtime, writes a UTF-8 pin under ENVOY_HOME, and `envoy doctor` reports
+# `pinned`. CI runs no PowerShell, so scripts/check_installer_offline.sh still
+# covers only the POSIX script; the ps1 regression tests live in
+# tests/cli/test_installer_ps1_static.py (static) plus this real-host run.
 
 [CmdletBinding()]
 param(
@@ -40,8 +42,13 @@ $Script:ReleasesBase = if ($env:ENVOY_RELEASES_BASE) { $env:ENVOY_RELEASES_BASE 
 }
 $Script:RuntimeHome = if ($env:ENVOY_HOME) { $env:ENVOY_HOME } else { Join-Path $env:LOCALAPPDATA "envoy-dsh\runtime" }
 $Script:RuntimeBin = Join-Path $Script:RuntimeHome "Scripts\envoy.exe"
-$Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else { Join-Path $HOME ".envoy\runtime-path" }
-$Script:ShimDir = Join-Path $HOME ".envoy\bin"
+# The pin must land where `envoy doctor` looks: install_state.pin_file() is
+# <ENVOY_HOME>/runtime-path when ENVOY_HOME is set, else ~/.envoy/runtime-path.
+# Writing it to a fixed ~/.envoy would make doctor report `unpinned` for anyone
+# who relocates the runtime with ENVOY_HOME.
+$Script:EnvoyHome = if ($env:ENVOY_HOME) { $env:ENVOY_HOME } else { Join-Path $HOME ".envoy" }
+$Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else { Join-Path $Script:EnvoyHome "runtime-path" }
+$Script:ShimDir = Join-Path $Script:EnvoyHome "bin"
 $Script:DshProfile = if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { "web" }
 $Script:DryRun = ($env:ENVOY_DRY_RUN -eq "1")
 $Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER } else { "1" }
@@ -115,6 +122,17 @@ function Get-PinnedRuntime {
     return ""
 }
 
+# Writes a small text file as UTF-8 without BOM. `Set-Content -Encoding ASCII`
+# turned `C:\Users\张三\...` into `C:\Users\??\...`, so a Chinese user name or a
+# non-ASCII ENVOY_HOME produced a pin/shim that pointed at a path that cannot
+# exist. The CLI reads the pin back as UTF-8, so write UTF-8 without BOM (a BOM
+# would survive .strip() as a stray U+FEFF in the recorded path).
+function Write-Utf8NoBom {
+    param([string]$Path, [string]$Content)
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
 function Set-PinnedRuntime {
     param([string]$Path)
     if ($Script:DryRun) {
@@ -123,7 +141,7 @@ function Set-PinnedRuntime {
     }
     $parent = Split-Path -Parent $Script:RuntimePin
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Set-Content -LiteralPath $Script:RuntimePin -Value $Path -Encoding ASCII
+    Write-Utf8NoBom $Script:RuntimePin ($Path + "`n")
 }
 
 # Every host-facing step resolves the binary through here, so the plugin and the
@@ -132,6 +150,11 @@ function Get-EnvoyBinary {
     $pinned = Get-PinnedRuntime
     if ($pinned) { return $pinned }
     if (Test-Path -LiteralPath $Script:RuntimeBin) { return $Script:RuntimeBin }
+    # In a dry run nothing is written, so the runtime file does not exist yet and
+    # an older `envoy` on PATH must not be mistaken for the one we planned. Return
+    # the planned target so dry-run never dies on a runtime it deliberately did
+    # not install (the POSIX script's envoy_binary has no such dead end).
+    if ($Script:DryRun) { return $Script:RuntimeBin }
     $onPath = Get-Command envoy -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
     Stop-Install "no envoy runtime found; run the installer without a host argument first"
@@ -158,14 +181,57 @@ function Confirm-Checksum {
     }
 }
 
+function Get-RawUserPath {
+    # The raw (unexpanded) user PATH. [Environment]::GetEnvironmentVariable
+    # expands %VARS%, and writing an expanded value back would freeze them, which
+    # is the same damage as the REG_SZ downgrade below.
+    try {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+        if ($key) {
+            $raw = $key.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $kind = "REG_SZ"
+            if ($null -ne $key.GetValueKind("Path") -and $key.GetValueKind("Path") -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) {
+                $kind = "REG_EXPAND_SZ"
+            }
+            $key.Close()
+            if ($null -ne $raw) { return @([string]$raw, $kind) }
+        }
+    } catch { }
+    # No registry value yet (or the read failed): the expanded value is all we have.
+    return @([string][Environment]::GetEnvironmentVariable("Path", "User"), "REG_SZ")
+}
+
+# Pure helper: append a directory to a `;`-separated PATH value. No I/O, so the
+# merge rule (no duplicates, no empty segments, no double separators) can be
+# checked without touching a real user environment.
+function Join-PathValue {
+    param([string]$Current, [string]$Directory)
+    $parts = @()
+    if ($Current) { $parts = @($Current -split ";" | Where-Object { $_ }) }
+    if ($parts -contains $Directory) { return ($parts -join ";") }
+    return ((@($parts) + $Directory) -join ";")
+}
+
 function Add-ToUserPath {
     param([string]$Directory)
-    $current = [Environment]::GetEnvironmentVariable("Path", "User")
+    $state = Get-RawUserPath
+    $current = $state[0]
+    $kind = $state[1]
     $parts = @()
-    if ($current) { $parts = $current -split ";" | Where-Object { $_ } }
+    if ($current) { $parts = @($current -split ";" | Where-Object { $_ }) }
     if ($parts -notcontains $Directory) {
-        $updated = (($parts + $Directory) -join ";")
-        [Environment]::SetEnvironmentVariable("Path", $updated, "User")
+        $updated = Join-PathValue $current $Directory
+        # [Environment]::SetEnvironmentVariable writes REG_SZ, which downgrades a
+        # REG_EXPAND_SZ user PATH to a plain string: the user's `%USERPROFILE%`,
+        # `%JAVA_HOME%` etc. would be frozen to their current expansion. Write the
+        # value back through reg.exe with the type the key already has, staying
+        # REG_EXPAND_SZ when it was. reg.exe lives in System32 on every Windows host.
+        $reg = Join-Path $env:SystemRoot "System32\reg.exe"
+        & $reg add "HKCU\Environment" /v Path /t $kind /d $updated /f | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            # Fallback only if reg.exe is unavailable; this is the lossy path.
+            [Environment]::SetEnvironmentVariable("Path", $updated, "User")
+        }
         Write-Host "envoy install: added $Directory to the user PATH (open a new terminal)"
     }
 }
@@ -182,8 +248,19 @@ function Set-ExposedRuntime {
         New-Item -ItemType Directory -Path $Script:ShimDir -Force | Out-Null
     }
     $shim = Join-Path $Script:ShimDir "envoy.cmd"
+    # `cmd.exe` parses a .cmd in the console (OEM) code page, so an ASCII write
+    # turned `C:\Users\张三\...` into `C:\Users\??\...` and the shim could never
+    # start. Write with the OEM code page cmd will actually use. Note that
+    # [Text.Encoding]::Default is UTF-8 under .NET Core (PowerShell 7), so it is
+    # NOT the right encoding here; Encoding.GetEncoding(0) is also UTF-8 there.
+    $oem = try {
+        [System.Text.Encoding]::GetEncoding(
+            [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    } catch {
+        [System.Text.Encoding]::ASCII
+    }
     $content = "@echo off`r`n`"$binary`" %*`r`n"
-    Set-Content -LiteralPath $shim -Value $content -Encoding ASCII
+    [System.IO.File]::WriteAllText($shim, $content, $oem)
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if (-not $userPath -or ($userPath -split ";" -notcontains $Script:ShimDir)) {
         Add-ToUserPath $Script:ShimDir
@@ -210,7 +287,20 @@ function Install-Runtime {
             if (Test-Path -LiteralPath $Script:RuntimeHome) { Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force }
             Invoke-Step $uv.Source @("venv", "--quiet", "--python", "3.11", $Script:RuntimeHome)
         }
-        Invoke-Step $uv.Source @("pip", "install", "--quiet", "--python", (Join-Path $Script:RuntimeHome "Scripts\python.exe"), $url)
+        # Download and verify before installing, so the uv path gets the same
+        # SHA256SUMS gate as the python path (it previously piped the URL straight
+        # to uv, which never checked the digest). The unique part is a directory:
+        # renaming the file breaks the wheel filename pip/uv parse.
+        $tmpUvDir = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-dl-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $tmpUvDir -Force | Out-Null
+        $tmpUv = Join-Path $tmpUvDir $wheel
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmpUv -UseBasicParsing -TimeoutSec 300
+            Confirm-Checksum $tmpUv $wheel
+            Invoke-Step $uv.Source @("pip", "install", "--quiet", "--python", (Join-Path $Script:RuntimeHome "Scripts\python.exe"), $tmpUv)
+        } finally {
+            Remove-Item -LiteralPath $tmpUvDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     } else {
         $python = Get-Command python -ErrorAction SilentlyContinue
         if (-not $python) { Stop-Install "neither uv nor python is available; install Python 3.11+ (or uv) and re-run" }
@@ -218,11 +308,16 @@ function Install-Runtime {
             if (Test-Path -LiteralPath $Script:RuntimeHome) { Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force }
             Invoke-Step $python.Source @("-m", "venv", $Script:RuntimeHome)
         }
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) $wheel
-        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 300
-        Confirm-Checksum $tmp $wheel
-        Invoke-Step (Join-Path $Script:RuntimeHome "Scripts\python.exe") @("-m", "pip", "install", "--quiet", "--upgrade", $tmp)
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-dl-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        $tmp = Join-Path $tmpDir $wheel
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 300
+            Confirm-Checksum $tmp $wheel
+            Invoke-Step (Join-Path $Script:RuntimeHome "Scripts\python.exe") @("-m", "pip", "install", "--quiet", "--upgrade", $tmp)
+        } finally {
+            Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     if (-not (Test-Path -LiteralPath $Script:RuntimeBin)) { Stop-Install "runtime install finished without $($Script:RuntimeBin)" }
     Set-PinnedRuntime $Script:RuntimeBin

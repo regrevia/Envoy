@@ -65,3 +65,85 @@ def test_both_installers_dispatch_the_same_host_targets(text: str):
     assert documented <= cases, (documented - cases)
     assert "" in cases and "auto" in cases  # the no-argument default
     assert "dsh|claude-code|codex|mcp|skill|all|path" in shell
+
+
+# --- Windows-adaptation regressions (seen on a real host) ------------------
+
+def test_dry_run_never_dies_on_the_runtime_it_did_not_install(text: str):
+    """Get-EnvoyBinary must return the planned target under ENVOY_DRY_RUN.
+
+    A dry run writes nothing, so RuntimeBin is absent; without an early return
+    Get-EnvoyBinary fell through to Stop-Install and `install.ps1 skill` under
+    ENVOY_DRY_RUN=1 exited 1 — the very path the Windows handoff recommends.
+    """
+    body = text[text.index("function Get-EnvoyBinary"):]
+    body = body[: body.index("function ", 10)]
+    assert "$Script:DryRun" in body, "Get-EnvoyBinary must special-case a dry run"
+    # The dry-run return has to come before the Stop-Install fallback.
+    assert body.index("$Script:DryRun") < body.index("Stop-Install")
+
+
+def test_no_lossy_ascii_write_for_pin_or_shim(text: str):
+    """`-Encoding ASCII` mangles a Chinese user name into `??`."""
+    # Only code counts: the explanatory comment mentions the old encoding.
+    code = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "-Encoding ASCII" not in code
+    # The pin is read back as UTF-8 by install_state, so write UTF-8 without BOM.
+    assert "UTF8Encoding($false)" in code
+    assert "Write-Utf8NoBom" in code
+
+
+def test_user_path_write_preserves_expand_type(text: str):
+    """A REG_EXPAND_SZ user PATH must not be downgraded to REG_SZ.
+
+    [Environment]::SetEnvironmentVariable writes REG_SZ and would freeze
+    %USERPROFILE% etc. The installer must read the raw value and write back via
+    reg.exe with the original type.
+    """
+    assert "function Get-RawUserPath" in text
+    assert "DoNotExpandEnvironmentNames" in text
+    assert "REG_EXPAND_SZ" in text
+    # reg add is the non-lossy write; the .NET setter stays only as a fallback.
+    assert "reg.exe" in text
+    # Pure merge helper exists so the no-duplicate rule is testable offline.
+    assert "function Join-PathValue" in text
+
+
+def test_uv_branch_verifies_the_checksum_like_the_python_branch(text: str):
+    """The uv path used to hand the URL straight to uv, skipping SHA256SUMS."""
+    if "} else {" not in text:
+        return
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    # Each install branch that downloads must call Confirm-Checksum.
+    assert runtime.count("Confirm-Checksum") >= 2, "both uv and python branches must verify"
+
+
+def test_download_keeps_the_real_wheel_filename(text: str):
+    """pip/uv reject a wheel whose filename was decorated to make it unique."""
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    # Uniqueness must come from a temp directory, not from renaming the file.
+    assert "envoy-dl-" in runtime
+    assert '"envoy-" + [guid]' not in runtime
+
+
+def test_pin_and_shim_follow_envoy_home(text: str):
+    """The pin must land where `envoy doctor` looks.
+
+    install_state.pin_file() is <ENVOY_HOME>/runtime-path when ENVOY_HOME is
+    set; a fixed ~/.envoy/runtime-path made doctor report `unpinned` for anyone
+    who relocated the runtime.
+    """
+    assert "$Script:EnvoyHome" in text
+    assert 'Join-Path $Script:EnvoyHome "runtime-path"' in text
+    assert 'Join-Path $Script:EnvoyHome "bin"' in text
+    assert 'Join-Path $HOME ".envoy\\runtime-path"' not in text
+
+
+def test_shim_uses_the_oem_code_page_not_utf8(text: str):
+    """cmd.exe parses .cmd in the OEM code page; Encoding.Default is UTF-8 in PS7."""
+    assert "OEMCodePage" in text
+    assert "[System.Text.Encoding]::Default" not in text

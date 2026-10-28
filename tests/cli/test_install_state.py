@@ -28,7 +28,8 @@ def test_missing_pin_reports_unpinned(monkeypatch, tmp_path):
     assert report["status"] == install_state.STATUS_UNPINNED
     assert report["pinned_runtime"] is None
     assert report["invoked_is_pinned"] is False
-    assert "install.sh" in report["next_action"]
+    # The hint has to be the command this platform can actually run.
+    assert install_state.install_hint() in report["next_action"]
 
 
 def test_pin_matching_running_binary_is_pinned(monkeypatch, tmp_path):
@@ -68,7 +69,7 @@ def test_other_binary_on_path_is_shadowed(monkeypatch, tmp_path):
     assert report["status"] == install_state.STATUS_SHADOWED
     assert report["pinned_runtime"] == str(pinned)
     assert report["path_envoy"] == str(stale.resolve())
-    assert "install.sh" in report["next_action"]
+    assert install_state.install_hint() in report["next_action"]
 
 
 def test_missing_pinned_file_is_stale(monkeypatch, tmp_path):
@@ -98,6 +99,24 @@ def test_envoy_home_override_is_reported(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.which", lambda name: None)
     report = install_state.install_report()
     assert report["home"] == str(home)
+
+
+def test_install_hint_matches_platform():
+    # A Windows user pasting `sh install.sh` in PowerShell fails; give install.ps1.
+    assert "install.ps1" in install_state.install_hint("win32")
+    assert "install.ps1" in install_state.install_hint("windows")
+    assert "install.ps1" in install_state.install_hint("nt")
+    assert "sh install.sh" in install_state.install_hint("darwin")
+    assert "sh install.sh" in install_state.install_hint("linux")
+
+
+def test_windows_hint_reaches_next_action(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("ENVOY_HOME", str(home))
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(install_state, "install_hint", lambda *a: install_state.WINDOWS_INSTALL_HINT)
+    report = install_state.install_report()
+    assert "install.ps1" in report["next_action"]
 
 
 def test_doctor_json_includes_install_status(monkeypatch, capsys, tmp_path):

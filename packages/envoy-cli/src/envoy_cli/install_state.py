@@ -23,7 +23,18 @@ STATUS_UNPINNED = "unpinned"
 STATUS_STALE_PIN = "stale_pin"
 STATUS_SHADOWED = "shadowed"
 
-INSTALL_HINT = "run sh install.sh"
+# The hint must name a command the user can actually paste: `sh install.sh` is
+# not runnable from native Windows PowerShell, where the installer is install.ps1.
+POSIX_INSTALL_HINT = "run sh install.sh"
+WINDOWS_INSTALL_HINT = "run powershell -ExecutionPolicy Bypass -File install.ps1"
+
+
+def install_hint(platform: str | None = None) -> str:
+    """Pastable reinstall command for the current platform (default: sys.platform)."""
+    target = platform if platform is not None else sys.platform
+    if target.startswith("win") or target in {"nt", "windows"}:
+        return WINDOWS_INSTALL_HINT
+    return POSIX_INSTALL_HINT
 
 
 def envoy_home() -> Path:
@@ -91,13 +102,14 @@ def _same_file(left: str | None, right: str | None) -> bool:
 
 
 def _next_action(status: str, pinned: str | None, on_path: str | None) -> str | None:
+    hint = install_hint()
     if status == STATUS_UNPINNED:
-        return f"{INSTALL_HINT} once to pin the runtime"
+        return f"{hint} once to pin the runtime"
     if status == STATUS_STALE_PIN:
-        return f"pinned runtime is gone: {INSTALL_HINT}"
+        return f"pinned runtime is gone: {hint}"
     if status == STATUS_SHADOWED:
         target = on_path or "another envoy"
-        return f"PATH runs {target}; use {pinned} or {INSTALL_HINT}"
+        return f"PATH runs {target}; use {pinned} or {hint}"
     return None
 
 
