@@ -1,0 +1,195 @@
+name: Windows 验收 / Windows Acceptance
+
+# 这台 runner 是一台长期在线的真机，所以触发面必须收窄：
+#   - 只允许 workflow_dispatch（需要写权限才能触发）和 tag 发行后的 workflow_run；
+#   - 永远不挂 pull_request / pull_request_target：公开仓库的 fork PR 会在本机执行任意代码。
+# 想在 PR 上验证，用 GitHub 托管的 windows-latest（见 ci.yml），不要用这台机器。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要安装的版本；留空取 integrations/release-manifest.json"
+        required: false
+        default: ""
+      previous_version:
+        description: "升级场景里先装的旧版本"
+        required: false
+        default: "0.1.23"
+      scenario:
+        description: "fresh / upgrade / both"
+        required: false
+        default: "both"
+        type: choice
+        options: [both, fresh, upgrade]
+  workflow_run:
+    workflows: ["Envoy 正式发行 / Envoy Release"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-acceptance-${{ github.event.workflow_run.head_sha || github.ref }}
+  cancel-in-progress: false
+
+env:
+  ENVOY_SETUP_BROWSER: "0"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  windows-powershell-5-1:
+    name: Windows PowerShell 5.1
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, windows, x64, envoy-win]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 1
+      - name: 环境准备 / Prepare
+        shell: powershell
+        run: |
+          git config --global core.longpaths true
+          chcp 65001 | Out-Null
+          [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          # 日志在公开仓库里对所有人可见：账号名、机器名、用户目录先打成掩码。
+          foreach ($value in @($env:USERNAME, $env:COMPUTERNAME, $env:USERPROFILE, $env:LOCALAPPDATA, $env:RUNNER_TEMP)) {
+            if ($value) { Write-Host "::add-mask::$value" }
+          }
+          "$($PSVersionTable.PSVersion)" | Out-Host
+          "runner: $($env:RUNNER_NAME)" | Out-Host
+      - name: 快照用户 PATH / Snapshot PATH
+        shell: powershell
+        run: |
+          $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+          $raw = $key.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+          $kind = "REG_SZ"
+          if ($null -ne $key.GetValueKind("Path") -and $key.GetValueKind("Path") -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) { $kind = "REG_EXPAND_SZ" }
+          $key.Close()
+          $file = Join-Path $env:RUNNER_TEMP "path.before.json"
+          [pscustomobject]@{ kind = $kind; value = [string]$raw } | ConvertTo-Json | Set-Content -LiteralPath $file -Encoding UTF8
+          Write-Host "snapshot written"
+      - name: 验收 / Acceptance
+        shell: powershell
+        run: |
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario "${{ inputs.scenario || 'both' }}" -Version "${{ inputs.version }}" -PreviousVersion "${{ inputs.previous_version || '0.1.23' }}"
+      - name: 还原用户 PATH / Restore PATH
+        if: always()
+        shell: powershell
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP "path.before.json"
+          if (-not (Test-Path -LiteralPath $file)) { Write-Host "no snapshot"; exit 0 }
+          $snapshot = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+          $reg = Join-Path $env:SystemRoot "System32\reg.exe"
+          & $reg add "HKCU\Environment" /v Path /t $snapshot.kind /d $snapshot.value /f | Out-Null
+          Write-Host "user PATH restored ($($snapshot.kind))"
+      - name: 证据 / Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-acceptance-ps51
+          path: ${{ runner.temp }}/envoy-windows-acceptance-ps5.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-powershell-7:
+    name: PowerShell 7
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, windows, x64, envoy-win]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 1
+      - name: 环境准备 / Prepare
+        shell: powershell
+        run: |
+          git config --global core.longpaths true
+          chcp 65001 | Out-Null
+          [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          foreach ($value in @($env:USERNAME, $env:COMPUTERNAME, $env:USERPROFILE, $env:LOCALAPPDATA, $env:RUNNER_TEMP)) {
+            if ($value) { Write-Host "::add-mask::$value" }
+          }
+          $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+          $raw = $key.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+          $kind = "REG_SZ"
+          if ($null -ne $key.GetValueKind("Path") -and $key.GetValueKind("Path") -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) { $kind = "REG_EXPAND_SZ" }
+          $key.Close()
+          [pscustomobject]@{ kind = $kind; value = [string]$raw } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "path.before.json") -Encoding UTF8
+      - name: 确认 PowerShell 7 / Ensure PowerShell 7
+        shell: powershell
+        run: |
+          $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+          if (-not $pwsh) {
+            Write-Host "::warning::节点上没有 PowerShell 7，尝试安装"
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+              winget install --id Microsoft.PowerShell -e --silent --accept-source-agreements --accept-package-agreements
+              Start-Sleep -Seconds 5
+              $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+              $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+            }
+          }
+          if (-not $pwsh) {
+            Write-Host "::error::节点缺 PowerShell 7：按 docs/windows-acceptance.md 装 MSI 后重跑，本次未验证 7.x"
+            exit 1
+          }
+          $version = [version](& $pwsh.Source -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')
+          Write-Host "pwsh $version"
+          if ($version -lt [version]"7.4.0") {
+            Write-Host "::error::pwsh $version 低于 7.4：验收基线要求 7.4+"
+            exit 1
+          }
+      - name: 验收 / Acceptance
+        shell: pwsh
+        run: |
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 7 -Scenario "${{ inputs.scenario || 'both' }}" -Version "${{ inputs.version }}" -PreviousVersion "${{ inputs.previous_version || '0.1.23' }}"
+      - name: 还原用户 PATH / Restore PATH
+        if: always()
+        shell: powershell
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP "path.before.json"
+          if (-not (Test-Path -LiteralPath $file)) { Write-Host "no snapshot"; exit 0 }
+          $snapshot = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+          $reg = Join-Path $env:SystemRoot "System32\reg.exe"
+          & $reg add "HKCU\Environment" /v Path /t $snapshot.kind /d $snapshot.value /f | Out-Null
+          Write-Host "user PATH restored ($($snapshot.kind))"
+      - name: 证据 / Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-acceptance-ps7
+          path: ${{ runner.temp }}/envoy-windows-acceptance-ps7.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-hosted:
+    name: 干净机 / Hosted clean machine
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 1
+      - name: 验收（PowerShell 5.1）/ Acceptance (5.1)
+        shell: powershell
+        run: |
+          chcp 65001 | Out-Null
+          [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario fresh -Redact $false
+      - name: 验收（PowerShell 7）/ Acceptance (7)
+        shell: pwsh
+        run: |
+          $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 7 -Scenario fresh -Redact $false
+      - name: 证据 / Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-acceptance-hosted
+          path: ${{ runner.temp }}/envoy-windows-acceptance-ps*.json
+          if-no-files-found: warn
+          retention-days: 7
