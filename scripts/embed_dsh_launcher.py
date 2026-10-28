@@ -32,8 +32,26 @@ CMD_LIMIT = 8191
 
 
 def encode(source: bytes) -> str:
-    # mtime=0 keeps the payload byte-stable across machines and rebuilds.
+    # mtime=0 keeps the payload byte-stable across rebuilds; the compressed bytes
+    # themselves still differ between zlib builds, so only ever compare decoded
+    # content (see ``matches``).
     return base64.b64encode(gzip.compress(source, 9, mtime=0)).decode("ascii")
+
+
+def decode(payload: str) -> bytes:
+    return gzip.decompress(base64.b64decode(payload))
+
+
+def matches(payload: str, source: bytes) -> bool:
+    """True when the embedded payload unpacks to exactly ``source``.
+
+    Byte-comparing the base64 would make the check depend on the local zlib build:
+    the same ``launch.cjs`` compresses to different bytes on macOS and on Linux.
+    """
+    try:
+        return decode(payload) == source
+    except (OSError, ValueError):
+        return False
 
 
 def current(patch_text: str) -> str:
@@ -56,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     have = current(patch_text)
 
     if args.check:
-        if have != wanted:
+        if not matches(have, source):
             print(
                 f"stale: embedded launcher payload in {PATCH.relative_to(ROOT)} does not match "
                 f"{LAUNCHER.relative_to(ROOT)}; run python scripts/embed_dsh_launcher.py --write",
