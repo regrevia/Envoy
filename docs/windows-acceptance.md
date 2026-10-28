@@ -2,7 +2,7 @@
 
 PowerShell 安装器（`integrations/install.ps1`）在真实 Windows 上的验收。补的是 mac 上开发看不到的空白：Windows PowerShell 5.1 与 PowerShell 7 的解析差异、真实用户 PATH（`HKCU\Environment`）、旧版本残留、中文/含空格路径。
 
-工作流：`.github/workflows/windows-acceptance.yml`，脚本：`scripts/windows/acceptance.ps1`，节点注册：`scripts/windows/runner-setup.ps1`。
+工作流：`.github/workflows/windows-acceptance.yml`，脚本：`scripts/windows/acceptance.ps1`，节点注册：不在本仓库，见 [`regrevia/win-runner`](https://github.com/regrevia/win-runner)。
 
 ## 两条腿
 
@@ -43,17 +43,20 @@ job 日志和 artifact 在公开仓库里对所有访客可见。所以：
 
 ## 注册节点
 
+节点是 regrevia 的基础设施，脚本和说明在 [`regrevia/win-runner`](https://github.com/regrevia/win-runner)，本仓库不再放注册脚本。
+
 ```powershell
 # 在有仓库管理员权限的机器上取一次性 token（不要贴进任何文件）
 gh api -X POST repos/regrevia/Envoy/actions/runners/registration-token --jq .token
 
 # 在 Windows 节点上，管理员 PowerShell
-.\scripts\windows\runner-setup.ps1 -Token <token>
+git clone https://github.com/regrevia/win-runner C:\win-runner
+C:\win-runner\scripts\runner-setup.ps1 -Token <token> -Repo regrevia/Envoy -Labels windows,x64,envoy-win
 ```
 
-脚本会下载官方 runner、以 `--labels windows,x64,envoy-win --work _work --unattended --replace` 注册，并 `svc.cmd install` + `svc.cmd start`。跑完节点以服务形式长期在线，在仓库 Settings → Actions → Runners 里能看到 `Idle`。
+个人账号没有组织级 runner，注册是按仓库的：同一台机器要给多个仓库用，就按仓库各跑一次，脚本会把 root 派生到 `C:\actions-runner\<repo>`、work 目录各自独立，实例之间不冲突。
 
-标签必须与工作流一致：`runs-on: [self-hosted, windows, x64, envoy-win]`。不要只写 `self-hosted`，以后加第二台机器会串。
+跑完节点以服务形式长期在线，仓库 Settings → Actions → Runners 里能看到 `Idle`。标签必须与工作流一致：`runs-on: [self-hosted, windows, x64, envoy-win]`，不要只写 `self-hosted`。
 
 ## 手动跑一轮
 

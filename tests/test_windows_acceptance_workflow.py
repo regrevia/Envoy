@@ -90,9 +90,18 @@ def test_acceptance_script_restores_state():
     assert "Remove-Item -LiteralPath $EnvoyHome -Recurse" in text
 
 
-def test_runner_setup_requires_the_workflow_labels():
-    text = (SCRIPTS / "runner-setup.ps1").read_text(encoding="utf-8")
-    assert '"windows", "x64", "envoy-win"' in text
-    assert "svc.cmd" in text
-    assert "--unattended" in text
-    assert "--work" in text
+def test_runner_registration_is_not_owned_by_this_repository():
+    """Node registration is regrevia infrastructure, not an Envoy artifact.
+
+    A personal GitHub account has no organization-level runners, so the same
+    machine serves several repositories as several independent instances. That
+    setup lives in regrevia/win-runner; keeping a copy here would drift.
+    """
+    assert not (SCRIPTS / "runner-setup.ps1").exists()
+
+    doc = (ROOT / "docs" / "windows-acceptance.md").read_text(encoding="utf-8")
+    assert "regrevia/win-runner" in doc
+    assert "runner-setup.ps1" not in doc or "win-runner" in doc
+
+    workflow = (ROOT / ".github" / "workflows" / "windows-acceptance.yml").read_text(encoding="utf-8")
+    assert "[self-hosted, windows, x64, envoy-win]" in workflow
