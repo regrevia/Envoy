@@ -203,7 +203,7 @@ Windows PowerShell 7 那台机器现在可以直接从 Release 装，不用再�
 
 ```powershell
 iwr https://github.com/regrevia/Envoy/releases/download/v0.1.24/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun   # 先看计划
-powershell -ExecutionPolicy Bypass -File .\install.ps1           # 真装
+$env:ENVOY_DRY_RUN="1"; powershell -ExecutionPolicy Bypass -File .\install.ps1 skill; Remove-Item Env:\ENVOY_DRY_RUN
+powershell -ExecutionPolicy Bypass -File .\install.ps1 skill     # 真装（不带参数会按检测安装宿主插件）
 where.exe envoy; envoy --version                                 # 期望 0.1.24
 ```

@@ -68,10 +68,14 @@ sh integrations/install.sh
 Windows x64（需要一台真机）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -DryRun
-powershell -ExecutionPolicy Bypass -File install.ps1
-where envoy            # 期望命中 ~\.envoy\bin\envoy.cmd
+$env:ENVOY_DRY_RUN="1"; powershell -ExecutionPolicy Bypass -File install.ps1 skill; Remove-Item Env:\ENVOY_DRY_RUN
+# 注意：install.ps1 没有 -DryRun 开关，-DryRun 会被当成宿主名并以 exit 2 打印用法
+powershell -ExecutionPolicy Bypass -File install.ps1 skill   # 不带参数会按检测装宿主插件
+where.exe envoy        # 期望命中 ~\.envoy\bin\envoy.cmd
 ```
+
+整段验收（含离线探针、断言表、幂等重跑、证据 JSON 模板）见 `DEV/WINDOWS-HANDOFF.md`，
+可以直接把那份交给 Windows 上的 agent 独立执行；**本次不要求本机 macOS 侧复现 Windows 行**。
 
 对应 `EXPERIMENT-PLAN.json` 的 `I01`–`I10`。一键安装那三条（`I11` Claude Code、`I12` Codex、`I13` 镜像源）在同一段里做，先干跑看计划：
 
