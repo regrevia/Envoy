@@ -48,16 +48,21 @@ def test_windows_uses_an_acl_instead_of_posix_mode_bits(monkeypatch, tmp_path):
 
 
 def test_windows_acl_reader_accepts_only_the_running_account(monkeypatch, tmp_path):
+    import subprocess as sp
+
     monkeypatch.setattr(permissions, "_running_on_windows", lambda: True)
-    monkeypatch.setattr(permissions, "_owner_sid", lambda: "S-1-5-21-1-2-3-1001")
+    monkeypatch.setattr(permissions, "_owner_name", lambda: "DESKTOP-ABC\\runner")
     path = tmp_path / "config.json"
     path.write_text("{}", encoding="utf-8")
 
     def _owner_only(command, **kwargs):
-        return subprocess.CompletedProcess(
+        return sp.CompletedProcess(
             command,
             0,
-            stdout=f"{path} S-1-5-21-1-2-3-1001:(F)\n\nSuccessfully processed 1 files.\n",
+            stdout=(
+                f"{path} DESKTOP-ABC\\runner:(F)\n"
+                "\nSuccessfully processed 1 files; Failed processing 0 files\n"
+            ),
             stderr="",
         )
 
@@ -65,18 +70,35 @@ def test_windows_acl_reader_accepts_only_the_running_account(monkeypatch, tmp_pa
     assert permissions.is_owner_only(path) is True
 
     def _everyone(command, **kwargs):
-        return subprocess.CompletedProcess(
+        return sp.CompletedProcess(
             command,
             0,
             stdout=(
-                f"{path} S-1-5-21-1-2-3-1001:(F)\n"
-                f"{path} BUILTIN\\Users:(R)\n\nSuccessfully processed 1 files.\n"
+                f"{path} DESKTOP-ABC\\runner:(F)\n"
+                "                    BUILTIN\\Users:(RX)\n"
+                "\nSuccessfully processed 1 files; Failed processing 0 files\n"
             ),
             stderr="",
         )
 
     monkeypatch.setattr(permissions.subprocess, "run", _everyone)
     assert permissions.is_owner_only(path) is False
+
+    def _system_too(command, **kwargs):
+        return sp.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                f"{path} DESKTOP-ABC\\runner:(F)\n"
+                "                    NT AUTHORITY\\SYSTEM:(F)\n"
+                "                    BUILTIN\\Administrators:(F)\n"
+                "\nSuccessfully processed 1 files; Failed processing 0 files\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(permissions.subprocess, "run", _system_too)
+    assert permissions.is_owner_only(path) is True
 
 
 def test_a_mode_that_leaves_a_file_world_readable_is_reported(monkeypatch, tmp_path):

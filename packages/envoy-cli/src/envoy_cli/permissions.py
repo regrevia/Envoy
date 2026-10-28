@@ -19,25 +19,47 @@ def _running_on_windows() -> bool:
     return os.name == "nt"
 
 
-def _owner_sid() -> str:
-    """The SID of the account running Envoy, or "" when it cannot be read."""
-
+def _run_capture(command: list[str]) -> str:
     try:
         result = subprocess.run(
-            ["whoami", "/user", "/fo", "csv", "/nh"],
+            command,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
-    for line in result.stdout.splitlines():
-        parts = [item.strip().strip('"') for item in line.split(",")]
-        for part in parts:
-            if part.upper().startswith("S-1-"):
-                return part
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _owner_sid() -> str:
+    """The SID of the account running Envoy, or "" when it cannot be read."""
+
+    for line in _run_capture(["whoami", "/user", "/fo", "csv", "/nh"]).splitlines():
+        for part in line.split(","):
+            candidate = part.strip().strip('"').strip()
+            if candidate.upper().startswith("S-1-"):
+                return candidate
     return ""
+
+
+def _owner_name() -> str:
+    """The ``DOMAIN\\user`` name of the account running Envoy, or ""."""
+
+    lines = [line.strip() for line in _run_capture(["whoami"]).splitlines() if line.strip()]
+    return lines[0] if lines else ""
+
+
+# Windows always lets the OS account and local administrators in; that is not
+# "another user can read it", so it does not count as exposure here.
+_SYSTEM_ACCOUNTS = {"system", "administrators", "trustedinstaller"}
+
+
+def _account_of(principal: str) -> str:
+    """The account part of ``DOMAIN\\user``, lowercased."""
+
+    return principal.strip().rstrip(":").lower().split("\\")[-1]
 
 
 def restrict_to_owner(path: Path, *, directory: bool = False) -> None:
@@ -73,40 +95,7 @@ def is_owner_only(path: Path) -> bool:
     """Whether ``path`` is restricted to the current account."""
 
     if _running_on_windows():
-        sid = _owner_sid()
-        if not sid:
-            return False
-        try:
-            result = subprocess.run(
-                ["icacls", str(path)],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        if result.returncode != 0:
-            return False
-        grants = [
-            line.strip()
-            for line in result.stdout.splitlines()
-            if ":" in line and "Successfully processed" not in line
-        ]
-        if not grants:
-            return False
-        allowed = 0
-        for line in grants:
-            # "file SID:(F)" on one line when icacls prints the path; the
-            # permission part always follows the last colon.
-            permission = line.rsplit(":", 1)[-1].strip()
-            if not permission:
-                continue
-            if "(" in line and sid in line.upper():
-                allowed += 1
-                continue
-            return False
-        return allowed >= 1
+        return _windows_acl_is_owner_only(path)
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
     except OSError:
@@ -114,6 +103,31 @@ def is_owner_only(path: Path) -> bool:
     if path.is_dir():
         return mode == 0o700
     return mode == 0o600
+
+
+def _windows_acl_is_owner_only(path: Path) -> bool:
+    """Read the ACL back: every grant must name the running account only."""
+
+    account = _account_of(_owner_name())
+    if not account:
+        return False
+    output = _run_capture(["icacls", str(path)])
+    if not output:
+        return False
+    grants = 0
+    for line in output.splitlines():
+        if "(" not in line or "Successfully processed" in line:
+            continue
+        if "Mandatory Label" in line:
+            continue
+        head = line[: line.index("(")].rstrip(": ").split()
+        if not head:
+            return False
+        principal = _account_of(head[-1])
+        if principal != account and principal not in _SYSTEM_ACCOUNTS:
+            return False
+        grants += 1
+    return grants >= 1
 
 
 __all__ = ["restrict_to_owner", "is_owner_only"]
