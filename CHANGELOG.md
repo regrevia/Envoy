@@ -1,5 +1,19 @@
 # 更新日志 / Changelog
 
+## Unreleased
+
+### 中文
+
+- Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
+  Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
+  （A8：`minimal` 无浏览器无转写引擎、`standard` 浏览器就绪、`full` 两者都在）。
+
+### English
+
+- Windows acceptance can now verify one install profile on its own: `acceptance.ps1`
+  takes `-Profile`, the workflow takes a `profile` input, and the run asserts what that
+  profile provisioned through `envoy doctor --json` (check A8).
+
 ## 0.1.26 - 2026-10-28
 
 ### 中文
