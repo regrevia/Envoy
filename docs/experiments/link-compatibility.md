@@ -429,6 +429,39 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 另加 risk host 跳过与死链剔除。写数字时一律用 **报告里的行数**作分母，从不用声明数，
 两者差额必须能被「重复 + 跳过 + 死链」解释完，否则视为报告损坏。
 
+## 第二十二轮（新增 12 行 6 条可用，GitHub Release 页的误判修掉）
+
+本轮 12 行先实测再进语料，覆盖订阅归档、论坛条目、文章、中文媒体、商店、影视条目、
+社区首页、GitHub Release、arXiv PDF 八类页面：
+
+| 行 | 族 | 结果 |
+|---|---|---|
+| `substack-archive` | blog | 1234 字 / 1.6s（partial） |
+| `thepaper-home` | news | 767 字 / 3.7s（partial） |
+| `bilibili-read` | video | 4166 字 / 16.0s（partial） |
+| `steam-app` | web | 7212 字 / 50.4s（partial） |
+| `github-release` | code | 7979 字 / 6.4s（partial） |
+| `arxiv-pdf` | document | 7387 字 / 29.0s（partial） |
+| `reddit-sub` | forum | unreachable / 25.5s（`network_error`） |
+| `hackernews-item` | forum | unreachable / 28.9s（`network_error`） |
+| `medium-tag` | blog | unreachable / 25.4s（`network_error`） |
+| `quora-question` | forum | blocked / 30.4s（precheck 403） |
+| `imdb-title` | web | blocked / 11.4s（precheck 202） |
+| `producthunt-home` | web | blocked / 29.1s（precheck 403） |
+
+- **`github-release` 是本轮真正修掉的缺陷**：上一轮这条被判 `blocked / challenge_required`。
+  在本机进程内复现后定位到 `_looks_like_access_challenge`——它在整页正文里扫
+  「验证码 / 安全验证 / captcha」，而 Release 页的 changelog 正好写了这些词，于是正常页面
+  被判成风控页。现在标题命中直接判风控，正文超过 400 字则不看标记；同一 URL 读回
+  56153 字符、标题 `Release v0.1.26 · regrevia/Envoy · GitHub`，语料侧从 0 字变成 7979 字。
+- 3 条 `blocked` 是站点侧的传输层拦截，不是解析缺陷：precheck 对 imdb 返回 202
+  （反爬壳页）、对 producthunt 与 quora 返回 403，reader 报 `challenge_required` 与
+  precheck 一致。3 条 `unreachable` 是本机出口问题：同一时刻 `curl` 对
+  reddit / hackernews / medium 全部失败（连接被重置），与 reader 的分类一致，不记为缺陷。
+- 延迟：mean 21.6s、p50 25.5s、max 50.4s，零超时。
+- 不作过度声称：`bilibili-read` 从上一轮 165 字变成 4166 字，原因未定（页面结构或出口
+  变化都可能），不计入能力变化。
+
 ## 第十九轮（113 行 / 可用 81.4%，判定前置挡掉注定读不到的链接，audio/web 各补一行）
 
 两件事：

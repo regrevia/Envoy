@@ -7,12 +7,29 @@
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
   （A8：`minimal` 无浏览器无转写引擎、`standard` 浏览器就绪、`full` 两者都在）。
+- 长 PDF 按窗口读：超过 500 页不再整份判错，`page_start`/`page_end` 一次读一段，
+  报告里给 `page_window` 与 `not_processed_ranges`，并说明下一段该传什么参数
+  （700 页样本连读两段即可覆盖全篇）。
+- 长视频/长音频先转写一段：ASR 每个窗口单独用 FFmpeg 解码 60 秒，不再把整段音频
+  读进内存——21.7 分钟样本实测峰值 51.6 MB（整份解码 516.9 MB），预算用完返回
+  `partial` + `next_seconds`，下一轮从该点续跑。
+- 网页正文里讨论「验证码/安全验证」不再被误判为风控页：整页超过 400 字时不看正文
+  标记，只用标题判定（GitHub Release 页此前被误报 `challenge_required`，现在正常读）。
 
 ### English
 
 - Windows acceptance can now verify one install profile on its own: `acceptance.ps1`
   takes `-Profile`, the workflow takes a `profile` input, and the run asserts what that
   profile provisioned through `envoy doctor --json` (check A8).
+- Long PDFs are read in page windows: past 500 pages a read no longer fails as a whole;
+  `page_start`/`page_end` cover one window, and the report carries `page_window` plus
+  `not_processed_ranges` so the next call knows what to ask for.
+- Long recordings transcribe window by window: each 60 s window is decoded by FFmpeg on
+  its own instead of loading the whole file (51.6 MB peak vs 516.9 MB on a 21.7-minute
+  sample), and an exhausted budget returns `partial` with `next_seconds` to resume from.
+- A page that merely mentions a captcha is no longer reported as a challenge: when the
+  body is longer than 400 characters only the title decides (GitHub release pages were
+  being misreported as `challenge_required`).
 
 ## 0.1.26 - 2026-10-28
 

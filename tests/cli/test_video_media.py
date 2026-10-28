@@ -1069,3 +1069,53 @@ def test_whisper_worker_emits_timestamped_segments_in_bounded_chunks(monkeypatch
         "end_seconds": 130,
         "language": "en",
     }
+
+
+def test_audio_window_decode_is_bounded_and_maps_the_whole_window(monkeypatch):
+    import sys
+    import types
+
+    from envoy_cli import media
+
+    class FakeSamples:
+        def __init__(self, payload):
+            self.values = list(memoryview(payload).cast("f"))
+
+        def astype(self, dtype, copy=True):
+            assert dtype == "float32" and copy
+            return self.values
+
+    fake_numpy = types.SimpleNamespace(
+        frombuffer=lambda payload, dtype: FakeSamples(payload)
+        if dtype == "<f4"
+        else None
+    )
+    monkeypatch.setitem(sys.modules, "numpy", fake_numpy)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=b"\x00\x00\x80?\x00\x00\x00\x40")
+
+    monkeypatch.setattr(media.subprocess, "run", fake_run)
+    samples = media._decode_audio_window("/tmp/a.m4a", 61.5, 60, ffmpeg="/usr/bin/ffmpeg")
+
+    command, kwargs = calls[0]
+    assert command[:5] == ["/usr/bin/ffmpeg", "-nostdin", "-v", "error", "-ss"]
+    assert command[command.index("-ss") + 1] == "61.500"
+    assert command[command.index("-t") + 1] == "60.000"
+    assert command[-1] == "pipe:1" and "-ar" in command and command[command.index("-ar") + 1] == "16000"
+    assert kwargs["timeout"] >= 60
+    assert list(samples) == [1.0, 2.0]
+
+
+def test_audio_window_decode_reports_a_missing_ffmpeg(monkeypatch):
+    from envoy_cli import media
+
+    monkeypatch.setattr(media.shutil, "which", lambda *_a, **_k: None)
+    try:
+        media._decode_audio_window("/tmp/a.m4a", 0, 60)
+    except media.MediaCapabilityMissing as exc:
+        assert "FFmpeg" in str(exc)
+    else:
+        raise AssertionError("a missing FFmpeg must not decode to silence")

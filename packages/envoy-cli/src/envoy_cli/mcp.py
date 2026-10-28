@@ -104,6 +104,16 @@ _READ_SCOPE_PROPERTIES = {
         "exclusiveMinimum": 0,
         "description": "Range read end; send together with start_seconds.",
     },
+    "page_start": {
+        "type": ["integer", "null"],
+        "minimum": 1,
+        "description": "PDF page window start (1-based); send with page_end for another window.",
+    },
+    "page_end": {
+        "type": ["integer", "null"],
+        "minimum": 1,
+        "description": "PDF page window end, inclusive; clamped to the document length.",
+    },
     "locator": {"type": ["string", "null"]},
     "include_visual": {"type": "boolean"},
 }
@@ -1212,7 +1222,14 @@ _SERVER_FILLED_FIELDS = (
     "ocr_language",
     "video_subtitle_language",
 )
-_RANGE_FIELDS = ("start_seconds", "end_seconds", "locator", "include_visual")
+_RANGE_FIELDS = (
+    "start_seconds",
+    "end_seconds",
+    "page_start",
+    "page_end",
+    "locator",
+    "include_visual",
+)
 # One bridge process serves one host session, so a stable identity keeps
 # material scope coherent across calls: re-reading a URL addresses the same
 # persisted material instead of minting a request-scoped duplicate. Replay is
@@ -1350,6 +1367,8 @@ def _request_material_needs(arguments: dict) -> dict:
     return {
         "start_seconds": scope.get("start_seconds"),
         "end_seconds": scope.get("end_seconds"),
+        "page_start": scope.get("page_start"),
+        "page_end": scope.get("page_end"),
         "include_visual": bool(scope.get("include_visual")),
         "video_input": str(host.get("video_input") or "none"),
         "image_input": str(host.get("image_input") or "none"),
@@ -1382,9 +1401,16 @@ def _payload_has_visual(payload: dict) -> bool:
 
 
 def _retained_needs_cover(have: dict, need: dict) -> bool:
-    if (have.get("start_seconds"), have.get("end_seconds")) != (
+    if (
+        have.get("start_seconds"),
+        have.get("end_seconds"),
+        have.get("page_start"),
+        have.get("page_end"),
+    ) != (
         need.get("start_seconds"),
         need.get("end_seconds"),
+        need.get("page_start"),
+        need.get("page_end"),
     ):
         # Another window is different work; it does not invalidate this one.
         return False

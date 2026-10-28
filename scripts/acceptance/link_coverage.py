@@ -229,12 +229,26 @@ CORPUS: list[tuple[str, str, str]] = [
     ("blog", "brendangregg-blog", "https://www.brendangregg.com/blog/index.html"),
     ("news", "lwn-home", "https://lwn.net/"),
     ("news", "techcrunch-home", "https://techcrunch.com/"),
+    # -- round 22: families added while widening link support ------------
+    ("round-22", "reddit-sub", "https://www.reddit.com/r/programming/"),
+    ("round-22", "hackernews-item", "https://news.ycombinator.com/item?id=1"),
+    ("round-22", "substack-archive", "https://www.astralcodexten.com/archive"),
+    ("round-22", "medium-tag", "https://medium.com/tag/machine-learning"),
+    ("round-22", "quora-question", "https://www.quora.com/What-is-machine-learning"),
+    ("round-22", "bilibili-read", "https://www.bilibili.com/read/cv2"),
+    ("round-22", "thepaper-home", "https://www.thepaper.cn/"),
+    ("round-22", "steam-app", "https://store.steampowered.com/app/570/Dota_2/"),
+    ("round-22", "imdb-title", "https://www.imdb.com/title/tt0133093/"),
+    ("round-22", "producthunt-home", "https://www.producthunt.com/"),
+    ("round-22", "github-release", "https://github.com/regrevia/Envoy/releases/tag/v0.1.26"),
+    ("round-22", "arxiv-pdf", "https://arxiv.org/pdf/1706.03762"),
 ]
 
 #: Families a report table shows, in a stable order.
 FAMILY_ORDER = [
     "reference", "news", "blog", "code", "forum", "social", "video", "audio",
     "image", "document", "spa", "feed", "api", "web", "cn-platform", "cn-media",
+    "round-22",
     "platforms",
 ]
 

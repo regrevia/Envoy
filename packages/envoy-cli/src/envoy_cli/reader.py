@@ -844,7 +844,20 @@ def _source_text_was_truncated(values: list[str]) -> bool:
     return len(text) > MAX_TEXT_CHARS
 
 
+# A challenge interstitial is a stub page: title, one sentence of script or a
+# captcha box. Read as full text those markers also show up inside real
+# articles -- a release note that discusses captchas, a security-industry post,
+# this project's own changelog -- so a marker only counts when the title
+# carries it or the page body is too short to be the source itself.
+CHALLENGE_MARKER_MAX_CHARS = 400
+
+
 def _looks_like_access_challenge(title: str, text: str) -> bool:
+    title_haystack = title.lower()
+    if any(marker in title_haystack for marker in CHALLENGE_MARKERS):
+        return True
+    if len(text.strip()) > CHALLENGE_MARKER_MAX_CHARS:
+        return False
     haystack = f"{title}\n{text}".lower()
     return any(marker in haystack for marker in CHALLENGE_MARKERS)
 
@@ -4689,6 +4702,24 @@ def _pdf_page_store(digest: str):
         return None
 
 
+def _pdf_page_window(total: int, start: int | None, end: int | None) -> tuple[int, int]:
+    """Return the inclusive 1-based page window a single read extracts.
+
+    A page number past the end is clamped rather than rejected, so a caller that
+    guesses too far still gets the tail of the document. A window wider than
+    ``MAX_PDF_PAGES`` is cut: one call never extracts an unbounded document, and
+    the rest is reported as not processed so the host can ask for it by range.
+    """
+
+    last_page = max(int(total), 1)
+    first = max(int(start or 1), 1)
+    first = min(first, last_page)
+    stop = last_page if end is None else max(min(int(end), last_page), first)
+    if stop - first + 1 > MAX_PDF_PAGES:
+        stop = first + MAX_PDF_PAGES - 1
+    return first, stop
+
+
 def _fetch_pdf_source(
     source_url: str,
     max_bytes: int,
@@ -4844,8 +4875,19 @@ def _parse_pdf_source(
     if getattr(pdf, "is_encrypted", False):
         raise PublicPageError("Encrypted PDFs are not supported by the standalone Skill", ErrorCode.AUTH_REQUIRED)
     total_page_count = len(pdf.pages)
-    if total_page_count > MAX_PDF_PAGES:
-        raise PublicPageError(f"PDF has {total_page_count} pages; limit is {MAX_PDF_PAGES}")
+    window_start, window_end = _pdf_page_window(
+        total_page_count,
+        getattr(request.scope, "page_start", None),
+        getattr(request.scope, "page_end", None),
+    )
+    window_gaps = [
+        gap
+        for gap in (
+            (1, window_start - 1) if window_start > 1 else None,
+            (window_end + 1, total_page_count) if window_end < total_page_count else None,
+        )
+        if gap is not None
+    ]
 
     title = ""
     if pdf.metadata:
@@ -4873,13 +4915,24 @@ def _parse_pdf_source(
     scanned_pages: list[int] = []
     blank_pages: list[int] = []
     parse_error_pages: list[int] = []
-    unprocessed_pages: list[int] = []
+    # Long documents report the skipped window as a range plus a bounded page
+    # list: a 10k-page PDF must not put 10k integers into the coverage payload.
+    page_list_limit = 200
+    gap_pages: list[int] = []
+    for gap_first, gap_last in window_gaps:
+        room = page_list_limit - len(gap_pages)
+        if room <= 0:
+            break
+        gap_pages.extend(range(gap_first, min(gap_last, gap_first + room - 1) + 1))
+    unprocessed_pages: list[int] = list(gap_pages)
     work_budget_exhausted = False
     cursor = 0
-    for page_number in range(1, total_page_count + 1):
+    for page_number in range(window_start, window_end + 1):
         if deadline is not None and time.monotonic() >= deadline:
             work_budget_exhausted = True
-            unprocessed_pages = list(range(page_number, total_page_count + 1))
+            unprocessed_pages = (
+                gap_pages + list(range(page_number, window_end + 1))
+            )[:page_list_limit]
             break
         record = stored_pages.get(page_number)
         if record is not None and str(record.get("status")) in {"text", "ocr_candidate", "blank", "parse_error"}:
@@ -4931,7 +4984,9 @@ def _parse_pdf_source(
         if deadline is not None and time.monotonic() >= deadline:
             # This page is finished and committed; stop before starting the next.
             work_budget_exhausted = True
-            unprocessed_pages = list(range(page_number + 1, total_page_count + 1))
+            unprocessed_pages = (
+                gap_pages + list(range(page_number + 1, window_end + 1))
+            )[:page_list_limit]
             break
 
     full_text = "\n\n".join(page_texts)
@@ -4945,8 +5000,27 @@ def _parse_pdf_source(
         "blank_pages": blank_pages,
         "parse_error_pages": parse_error_pages,
         "not_processed_pages": unprocessed_pages,
+        "not_processed_count": sum(
+            last - first + 1 for first, last in window_gaps
+        ) + (len(unprocessed_pages) - len(gap_pages) if work_budget_exhausted else 0),
+        "not_processed_ranges": [[first, last] for first, last in window_gaps],
+        "page_window": {
+            "page_start": window_start,
+            "page_end": window_end,
+            "limit": MAX_PDF_PAGES,
+        },
     }
     real_unresolved: list[str] = []
+    if window_gaps:
+        real_unresolved.append(
+            f"PDF has {total_page_count} pages; this read covered pages "
+            f"{window_start}-{window_end} (limit {MAX_PDF_PAGES} per read). Pages not covered: "
+            + ", ".join(
+                str(first) if first == last else f"{first}-{last}"
+                for first, last in window_gaps[:8]
+            )
+            + ". Send page_start/page_end to read another window"
+        )
     if scanned_pages:
         real_unresolved.append(
             "PDF pages without an extractable text layer require OCR: "
@@ -5113,6 +5187,11 @@ def _parse_pdf_source(
                 unprocessed_pages,
                 page_count=total_page_count,
                 material_id=material_id if should_store_material and not continuation_storage_failed else None,
+                reason=(
+                    "work budget exhausted"
+                    if work_budget_exhausted
+                    else "pages outside the requested window"
+                ),
             )
         except OSError:
             pass
@@ -5121,7 +5200,9 @@ def _parse_pdf_source(
         unresolved.append("Continuation is unavailable because local retention is disabled")
     if continuation_storage_failed:
         unresolved.append("Continuation cache could not be written")
-    has_unread_pages = bool(scanned_pages or parse_error_pages or unprocessed_pages)
+    has_unread_pages = bool(
+        scanned_pages or parse_error_pages or unprocessed_pages or window_gaps
+    )
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,

@@ -376,3 +376,109 @@ def test_expand_clears_the_pdf_delivery_gap(monkeypatch):
     assert reader._pdf_source_unresolved(stored) == []
     assert stored["delivery_gap"] is False
     assert reader._pdf_page_coverage_details(stored)["page_coverage"]["page_count"] == 2
+
+
+def _scoped_request(**scope) -> ReadRequest:
+    return ReadRequest(
+        request_id="req-pdf-window",
+        source=SourceRef(url="https://example.com/paper", kind="document"),
+        scope=scope,
+    )
+
+
+def test_page_window_reads_only_the_requested_pages():
+    from envoy_cli import reader
+
+    data = _build_pdf(["First page text", "Second page text", "Third page text"])
+    response = reader._parse_pdf_source(
+        _scoped_request(page_start=2, page_end=2), _pdf_source(data)
+    )
+
+    blocks = [b for b in response.blocks if b.id.startswith("blk-pdf-page-")]
+    assert [b.locator.page_number for b in blocks] == [2]
+    details = response.coverage.modalities["text"].details
+    assert details["page_window"] == {"page_start": 2, "page_end": 2, "limit": reader.MAX_PDF_PAGES}
+    assert details["not_processed_ranges"] == [[1, 1], [3, 3]]
+    assert details["not_processed_count"] == 2
+    assert response.result.value == "partial"
+    note = " ".join(response.coverage.unresolved)
+    assert "page_start" in note and "Pages not covered: 1, 3" in note
+
+
+def test_page_end_is_clamped_and_a_start_past_the_end_takes_the_tail():
+    from envoy_cli import reader
+
+    data = _build_pdf(["First page text", "Second page text"])
+    clamped = reader._parse_pdf_source(
+        _scoped_request(page_start=1, page_end=99), _pdf_source(data)
+    )
+    pages = [b.locator.page_number for b in clamped.blocks if b.id.startswith("blk-pdf-page-")]
+    assert pages == [1, 2]
+    assert clamped.result.value == "ready"
+
+    tail = reader._parse_pdf_source(_scoped_request(page_start=99), _pdf_source(data))
+    pages = [b.locator.page_number for b in tail.blocks if b.id.startswith("blk-pdf-page-")]
+    assert pages == [2]
+
+
+def test_large_pdf_is_windowed_instead_of_rejected(monkeypatch):
+    from envoy_cli import reader
+
+    class _Page:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    total = reader.MAX_PDF_PAGES + 200
+
+    class _FakePdf:
+        is_encrypted = False
+        metadata = None
+        pages = [_Page(f"page {number} text") for number in range(1, total + 1)]
+
+    monkeypatch.setattr(reader, "PdfReader", lambda *_a, **_k: _FakePdf())
+    response = reader._parse_pdf_source(
+        _request(max_response_chars=1_000_000, max_total_response_chars=5_000_000),
+        {"url": "https://example.com/huge.pdf", "data": b"%PDF-fake"},
+    )
+
+    details = response.coverage.modalities["text"].details
+    assert details["page_count"] == total
+    assert details["page_window"]["page_end"] == reader.MAX_PDF_PAGES
+    assert details["not_processed_ranges"] == [[reader.MAX_PDF_PAGES + 1, total]]
+    assert details["not_processed_count"] == 200
+    assert response.result.value == "partial"
+    assert any(str(total) in note for note in response.coverage.unresolved)
+
+
+def test_invalid_page_ranges_are_rejected_by_the_request_model():
+    from envoy_core.schemas.read_v1 import Scope
+
+    with pytest.raises(ValueError):
+        Scope(page_start=3, page_end=2)
+    with pytest.raises(ValueError):
+        Scope(page_start=0)
+    assert Scope(page_start=5).page_start == 5
+
+
+def test_mcp_flattens_page_window_into_scope():
+    from envoy_cli import mcp
+
+    prepared = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.com/paper.pdf"},
+            "page_start": 3,
+            "page_end": 9,
+        },
+    )
+    assert "page_start" not in prepared and "page_end" not in prepared
+    assert prepared["scope"]["kind"] == "range"
+    assert prepared["scope"]["page_start"] == 3
+    assert prepared["scope"]["page_end"] == 9
+
+    declared = mcp._READ_SCOPE_PROPERTIES
+    assert declared["page_start"]["minimum"] == 1
+    assert declared["page_end"]["minimum"] == 1

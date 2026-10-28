@@ -105,6 +105,18 @@ class Scope(ContractModel):
     include_visual: bool = False
     start_seconds: Optional[float] = Field(default=None, ge=0)
     end_seconds: Optional[float] = Field(default=None, gt=0)
+    page_start: Optional[int] = Field(default=None, ge=1)
+    page_end: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_page_range(self):
+        if (
+            self.page_start is not None
+            and self.page_end is not None
+            and self.page_end < self.page_start
+        ):
+            raise ValueError("page_end must be greater than or equal to page_start")
+        return self
 
     @model_validator(mode="after")
     def validate_time_range(self):

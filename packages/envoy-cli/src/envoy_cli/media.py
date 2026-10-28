@@ -1263,6 +1263,58 @@ def probe_video_stream(
 _probe_duration = probe_media_duration
 
 
+def _decode_audio_window(
+    path: str | Path,
+    start_seconds: float,
+    duration_seconds: float,
+    *,
+    ffmpeg: str | None = None,
+) -> Any:
+    """Decode one PCM window into a float32 mono 16 kHz array via FFmpeg.
+
+    Memory stays at one window instead of the whole file, which is what makes a
+    multi-hour recording readable on a small machine. A missing FFmpeg raises
+    so the caller can fall back to the whole-file decode rather than silently
+    returning an empty transcript.
+    """
+
+    binary = ffmpeg or shutil.which(os.getenv("FFMPEG_BIN", "ffmpeg"))
+    if not binary:
+        raise MediaCapabilityMissing("FFmpeg is required to decode audio in windows")
+    # Imported after the binary check so a machine without FFmpeg reports the
+    # missing decoder rather than an unrelated missing array library.
+    import numpy as np
+    duration = max(float(duration_seconds), 0.0)
+    command = [
+        binary,
+        "-nostdin",
+        "-v", "error",
+        "-ss", f"{max(float(start_seconds), 0.0):.3f}",
+        "-t", f"{duration:.3f}",
+        "-i", str(path),
+        "-f", "f32le",
+        "-acodec", "pcm_f32le",
+        "-ac", "1",
+        "-ar", "16000",
+        "pipe:1",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            timeout=max(30.0, duration * 4 + 10),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise MediaProcessingError(
+            f"Could not decode audio window ({type(exc).__name__})"
+        ) from exc
+    if completed.returncode != 0:
+        raise MediaProcessingError(
+            f"Could not decode audio window (ffmpeg exit {completed.returncode})"
+        )
+    return np.frombuffer(completed.stdout, dtype="<f4").astype("float32", copy=True)
+
+
 def _whisper_worker(
     audio_path: str,
     model_name: str,
@@ -1280,27 +1332,33 @@ def _whisper_worker(
                 device="cpu",
                 download_root=download_root,
             )
-            # Interface boundary (A4): this engine decodes the whole file into
-            # one float32 array (~230 MB per hour at 16 kHz) before any chunk is
-            # transcribed, so a long video needs the full PCM in memory even
-            # though the loop below only ever reads a window. A memory-bounded
-            # engine should instead accept a windowing source -- something like
-            # `read_audio_range(path, start_seconds, end_seconds) -> ndarray` --
-            # and decode lazily per chunk. Not implemented here: the GPU-less
-            # target cannot be measured in this pass, and swapping the decode
-            # path without a real acceptance run would risk the working engine.
-            # TODO(A4): pass a lazy window reader into the worker once the
-            # resource ceiling is measured; keep `load_audio` as the fallback.
-            audio = whisper.load_audio(audio_path, sr=16_000)
-            audio_duration = len(audio) / 16_000
-            end_seconds = min(float(end_seconds), audio_duration)
+            # A whole-file decode pins the whole recording in memory (~230 MB
+            # per hour at 16 kHz), so a long video would be limited by RAM
+            # instead of the work budget. Each chunk is decoded on its own
+            # instead, which keeps the footprint at one window (~4 MB per
+            # minute) and reads the same samples the whole-file path produced.
+            # The whole-file decode stays as the fallback for a machine whose
+            # FFmpeg is missing or refuses the file.
+            audio = None
+            ffmpeg = shutil.which(os.getenv("FFMPEG_BIN", "ffmpeg"))
             language = None
             cursor = float(start_seconds)
             while cursor < end_seconds:
                 chunk_duration = min(float(ASR_CHUNK_SECONDS), end_seconds - cursor)
-                start_sample = int(cursor * 16_000)
-                end_sample = int((cursor + chunk_duration) * 16_000)
-                audio_chunk = audio[start_sample:end_sample]
+                if audio is not None:
+                    start_sample = int(cursor * 16_000)
+                    end_sample = int((cursor + chunk_duration) * 16_000)
+                    audio_chunk = audio[start_sample:end_sample]
+                else:
+                    try:
+                        audio_chunk = _decode_audio_window(
+                            audio_path, cursor, chunk_duration, ffmpeg=ffmpeg
+                        )
+                    except (MediaCapabilityMissing, MediaProcessingError, ImportError):
+                        audio = whisper.load_audio(audio_path, sr=16_000)
+                        audio_duration = len(audio) / 16_000
+                        end_seconds = min(float(end_seconds), audio_duration)
+                        continue
                 if len(audio_chunk) <= 0:
                     break
                 result = model.transcribe(

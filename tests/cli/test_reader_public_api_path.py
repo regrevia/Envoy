@@ -179,6 +179,20 @@ def test_volcengine_security_check_counts_as_an_access_challenge():
     assert not reader._looks_like_access_challenge("网络安全检测公司融资", article)
 
 
+def test_a_full_article_that_mentions_a_challenge_is_not_one():
+    # Real content may discuss captchas or verification; only a stub page with
+    # the marker is a wall, otherwise a GitHub release note about Envoy's own
+    # challenge handling is refused as a login wall.
+    title = "Release v0.1.26 · regrevia/Envoy · GitHub"
+    article = (
+        "此前该契约不可见，模型会去侧边栏开页面、撞上验证码，再拿封面帧当证据。"
+        "安全验证字样仍先让浏览器解一次人机校验，避免误杀能过的站。"
+    ) * 20
+    assert len(article) > reader.CHALLENGE_MARKER_MAX_CHARS
+    assert not reader._looks_like_access_challenge(title, article)
+    assert reader._looks_like_access_challenge("Just a moment...", article)
+
+
 THIN_BLOG_HTML = (
     "<html><head><title>A blog</title>"
     '<link rel="alternate" type="application/rss+xml" href="/feed.xml">'
