@@ -124,6 +124,22 @@ jobs:
         run: |
           $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
           if (-not $pwsh) {
+            # A service-started runner keeps the PATH it had at boot, so a PowerShell 7
+            # installed after the service started is invisible here. Probe the install
+            # locations directly instead of trusting PATH.
+            foreach ($candidate in @(
+                "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe",
+                "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"
+              )) {
+              if (Test-Path -LiteralPath $candidate) { $pwsh = Get-Item -LiteralPath $candidate; break }
+            }
+            if ($pwsh) {
+              Write-Host "pwsh found outside PATH: $($pwsh.Source)"
+              Split-Path -Parent $pwsh.Source | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            }
+          }
+          if (-not $pwsh) {
             # ASCII only: PowerShell 5.1 parses this file as ANSI, so CJK text here
             # turns into a parse error before the script ever runs.
             Write-Host "::warning::no PowerShell 7 on this node, trying winget"
