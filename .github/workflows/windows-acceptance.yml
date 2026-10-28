@@ -93,15 +93,6 @@ jobs:
           $file = Join-Path $env:RUNNER_TEMP "envoy-windows-acceptance-ps5.json"
           if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | Out-Host }
           else { Write-Host "no evidence file at $file" }
-      - name: 证据 / Evidence
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-acceptance-ps51
-          path: ${{ runner.temp }}/envoy-windows-acceptance-ps5.json
-          if-no-files-found: warn
-          retention-days: 7
 
   windows-powershell-7:
     name: PowerShell 7
@@ -174,15 +165,6 @@ jobs:
           $file = Join-Path $env:RUNNER_TEMP "envoy-windows-acceptance-ps7.json"
           if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | Out-Host }
           else { Write-Host "no evidence file at $file" }
-      - name: 证据 / Evidence
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-acceptance-ps7
-          path: ${{ runner.temp }}/envoy-windows-acceptance-ps7.json
-          if-no-files-found: warn
-          retention-days: 7
 
   windows-hosted:
     name: 干净机 / Hosted clean machine
