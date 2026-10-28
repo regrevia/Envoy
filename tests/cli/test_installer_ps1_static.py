@@ -130,6 +130,19 @@ def test_download_keeps_the_real_wheel_filename(text: str):
     assert '"envoy-" + [guid]' not in runtime
 
 
+def test_pin_and_shim_follow_envoy_home(text: str):
+    """The pin must land where `envoy doctor` looks.
+
+    install_state.pin_file() is <ENVOY_HOME>/runtime-path when ENVOY_HOME is
+    set; a fixed ~/.envoy/runtime-path made doctor report `unpinned` for anyone
+    who relocated the runtime.
+    """
+    assert "$Script:EnvoyHome" in text
+    assert 'Join-Path $Script:EnvoyHome "runtime-path"' in text
+    assert 'Join-Path $Script:EnvoyHome "bin"' in text
+    assert 'Join-Path $HOME ".envoy\\runtime-path"' not in text
+
+
 def test_shim_uses_the_oem_code_page_not_utf8(text: str):
     """cmd.exe parses .cmd in the OEM code page; Encoding.Default is UTF-8 in PS7."""
     assert "OEMCodePage" in text

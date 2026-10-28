@@ -16,9 +16,11 @@
 #   DSH_PROFILE         Harness profile for the DSH bundle (default: web)
 #   ENVOY_DRY_RUN=1     print the commands instead of running them
 #
-# Not yet exercised on a real Windows host in this repo: install.ps1 is written to
-# the same contract as install.sh, but scripts/check_installer_offline.sh covers
-# the POSIX script only. COMPATIBILITY.md records the Windows row as untested.
+# Verified on a real Windows host for v0.1.24: `install.ps1 skill` provisions a
+# pinned runtime, writes a UTF-8 pin under ENVOY_HOME, and `envoy doctor` reports
+# `pinned`. CI runs no PowerShell, so scripts/check_installer_offline.sh still
+# covers only the POSIX script; the ps1 regression tests live in
+# tests/cli/test_installer_ps1_static.py (static) plus this real-host run.
 
 [CmdletBinding()]
 param(
@@ -40,8 +42,13 @@ $Script:ReleasesBase = if ($env:ENVOY_RELEASES_BASE) { $env:ENVOY_RELEASES_BASE 
 }
 $Script:RuntimeHome = if ($env:ENVOY_HOME) { $env:ENVOY_HOME } else { Join-Path $env:LOCALAPPDATA "envoy-dsh\runtime" }
 $Script:RuntimeBin = Join-Path $Script:RuntimeHome "Scripts\envoy.exe"
-$Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else { Join-Path $HOME ".envoy\runtime-path" }
-$Script:ShimDir = Join-Path $HOME ".envoy\bin"
+# The pin must land where `envoy doctor` looks: install_state.pin_file() is
+# <ENVOY_HOME>/runtime-path when ENVOY_HOME is set, else ~/.envoy/runtime-path.
+# Writing it to a fixed ~/.envoy would make doctor report `unpinned` for anyone
+# who relocates the runtime with ENVOY_HOME.
+$Script:EnvoyHome = if ($env:ENVOY_HOME) { $env:ENVOY_HOME } else { Join-Path $HOME ".envoy" }
+$Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else { Join-Path $Script:EnvoyHome "runtime-path" }
+$Script:ShimDir = Join-Path $Script:EnvoyHome "bin"
 $Script:DshProfile = if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { "web" }
 $Script:DryRun = ($env:ENVOY_DRY_RUN -eq "1")
 $Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER } else { "1" }
