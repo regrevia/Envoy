@@ -605,6 +605,13 @@ def test_douyin_note_read_preserves_album_order_and_never_calls_asr(monkeypatch,
     monkeypatch.setattr(reader, "_read_video_asr", lambda *_args, **_kwargs: pytest.fail(
         "an image note must never invoke ASR"
     ))
+    # The asserted album comes from the stub HTML. A douyin note page shorter
+    # than the short-video retry threshold would otherwise re-read through the
+    # isolated browser, which on a machine that has Chromium installed returns
+    # live CDN urls and flips the album identity this test pins down.
+    monkeypatch.setattr(
+        reader, "_read_with_isolated_browser", lambda *_args, **_kwargs: (None, None)
+    )
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
 
     response = reader.read_public_page(ReadRequest.model_validate({
