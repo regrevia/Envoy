@@ -443,7 +443,9 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 | `www.dropbox.com/s/…?raw=1` | 同地址改 `dl=1` |
 
 - 单测 5 条：四条地址改写（含「普通链接不动」），一条用 `httpx.MockTransport`
-  证明读的是导出地址、docx 正文进了文本块（`unit_checked`）。
+  证明读的是导出地址、docx 正文进了文本块，并且响应里的 `locator.source_url`
+  仍是用户给的那条分享链接（`unit_checked`）。
+- 分享链接没有文件名，标题不再取路径最后一段（那是 `edit`），回落成域名。
 - 抓取级证据只到「公开文件不可得」：试过的公开 Drive 样本
   （`0B9P1L--7Wd2vU3VUVlFnbTgtS2c`）实际是 5 字节 `spam\n` + `application/octet-stream`，
   被内容嗅探按设计拒绝；没有找到一个公开的 Docs/Dropbox 文档链接可用。

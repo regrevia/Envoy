@@ -22,7 +22,14 @@ from functools import wraps
 from io import BytesIO
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import (
+    parse_qsl,
+    unquote,
+    urlencode,
+    urljoin,
+    urlparse,
+    urlunparse,
+)
 
 from ._lazy_module import lazy_attr, lazy_module
 
@@ -6037,6 +6044,18 @@ def _office_document_text(data: bytes, name: str, mime_type: str) -> tuple[str, 
     return kind, text
 
 
+def _with_source_url(source: dict, url: str) -> dict:
+    """Report the link the user gave us, not the endpoint the reader hit.
+
+    A share link is rewritten to an export URL before the fetch; the response
+    should still name the material by the address that was handed in.
+    """
+
+    if str(source.get("url") or "") == url:
+        return source
+    return {**source, "url": url}
+
+
 def _parse_office_source(request: ReadRequest, source: dict) -> ReadResponse:
     """Read a .docx/.pptx/.epub/.odt/.xlsx/.ods link as text."""
 
@@ -6052,6 +6071,20 @@ def _parse_office_source(request: ReadRequest, source: dict) -> ReadResponse:
     for item in coverage.modalities.values():
         item.details = {**item.details, "reader": f"document:{kind}", "document_format": kind}
     return response.model_copy(update={"coverage": coverage})
+
+
+def _text_document_title(url: str) -> str:
+    """Name a text block by its file name, or by the host when the link has none.
+
+    A share link such as …/document/d/<id>/edit carries no file name, and calling
+    the block "edit" would be noise, so those fall back to the host.
+    """
+
+    parsed = urlparse(url)
+    name = unquote(Path(parsed.path).name)
+    if "." in name:
+        return name
+    return (parsed.hostname or "").lower() or "Text document"
 
 
 def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
@@ -6083,7 +6116,7 @@ def _parse_text_source(request: ReadRequest, source: dict) -> ReadResponse:
         text = _pretty_json_text(text)
     source_truncated = len(text) > MAX_TEXT_CHARS
     text = text[:MAX_TEXT_CHARS]
-    title = Path(urlparse(source["url"]).path).name or "Text document"
+    title = _text_document_title(source["url"])
     title_block = MaterialBlock(
         id="blk-title",
         kind=MaterialKind.HEADING,
@@ -8299,11 +8332,17 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     dns_cache,
                 )
             except DetectedPDF as detected_pdf:
-                return _parse_pdf_source(request, detected_pdf.source)
+                return _parse_pdf_source(
+                    request, _with_source_url(detected_pdf.source, source_url)
+                )
             except DetectedOffice as detected_office:
-                return _parse_office_source(request, detected_office.source)
+                return _parse_office_source(
+                    request, _with_source_url(detected_office.source, source_url)
+                )
             except DetectedText as detected_text:
-                return _parse_text_source(request, detected_text.source)
+                return _parse_text_source(
+                    request, _with_source_url(detected_text.source, source_url)
+                )
             except DetectedImage:
                 if request.host_capabilities.image_input.value != "uri":
                     return _blocked(

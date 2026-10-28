@@ -99,3 +99,9 @@ def test_a_shared_document_link_is_read_as_text(monkeypatch):
     assert "Shared report body" in _text(response)
     assert seen == [f"https://docs.google.com/document/d/{FILE_ID}/export?format=docx"]
     assert response.coverage.modalities["text"].details["document_format"] == "docx"
+    # The response names the material by the link the user handed in, not by the
+    # export endpoint that was actually fetched.
+    assert response.blocks[0].locator.source_url == (
+        f"https://docs.google.com/document/d/{FILE_ID}/edit"
+    )
+    assert response.blocks[0].content.text == "docs.google.com"
