@@ -305,3 +305,36 @@ def test_unknown_profile_is_rejected(tmp_path):
     result = _run(["--profile", "ultra", "mcp"], env)
     assert result.returncode != 0
     assert "unknown profile 'ultra'" in result.stderr
+
+
+def test_a_full_install_that_leaves_the_profile_incomplete_fails(tmp_path):
+    """`envoy asr install` can exit 0 and still leave no model. Exit status has
+    to match what the profile promised, or the user's first video is the 140 MB
+    download the installer was supposed to absorb."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    envoy = bin_dir / "envoy"
+    envoy.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        '  --version) echo "envoy 0.1.23" ;;\n'
+        "  doctor) printf '%s\\n' "
+        "'{\"cli_version\":\"0.1.23\",\"protocol_version\":\"1\","
+        "\"runtime\":{\"browser\":{\"ready\":false},"
+        "\"asr_model\":\"base\",\"asr_model_available\":false}}' ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    envoy.chmod(0o755)
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path / "home")
+    env["ENVOY_VERSION"] = "0.1.23"
+    env["ENVOY_DRY_RUN"] = "0"
+    env["ENVOY_SETUP_BROWSER"] = "1"
+    env["ENVOY_SETUP_MEDIA"] = "1"
+    env["ENVOY_RUNTIME_BIN"] = str(envoy)
+    result = _run(["mcp"], env)
+    assert result.returncode != 0, result.stdout
+    assert "install incomplete" in result.stderr
+    assert "envoy asr install --model base" in result.stderr
+

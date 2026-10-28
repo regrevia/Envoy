@@ -66,6 +66,9 @@ $Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER 
 $Script:SetupMedia = if ($env:ENVOY_SETUP_MEDIA) { $env:ENVOY_SETUP_MEDIA } elseif ($Script:Profile -eq "full") { "1" } else { "0" }
 $Script:AsrModel = if ($env:ENVOY_ASR_MODEL) { $env:ENVOY_ASR_MODEL } else { "base" }
 $Script:RuntimeVersion = ""
+# A profile that promises Chromium or Whisper and leaves them missing has not
+# installed: the user would meet that download on their first link instead.
+$Script:CapabilityMissing = $false
 
 function Stop-Install {
     param([string]$Message)
@@ -556,6 +559,13 @@ function Confirm-Health {
     $model = if ($data.runtime.asr_model) { $data.runtime.asr_model } else { "base" }
     $asr = if ($data.runtime.asr_model_available) { "ready" } else { "missing: run envoy asr install --model $model" }
     Write-Host "envoy install: runtime $version, protocol $protocol, browser $browser, asr $asr"
+    $needed = @()
+    if ($Script:SetupBrowser -eq "1" -and -not $data.runtime.browser.ready) { $needed += "browser runtime: envoy browser setup" }
+    if ($Script:SetupMedia -eq "1" -and -not $data.runtime.asr_model_available) { $needed += "speech recognition: envoy asr install --model $model" }
+    if ($needed.Count -gt 0) {
+        Write-Host "envoy install: install incomplete, still missing $($needed -join ' and ')" -ForegroundColor Red
+        $Script:CapabilityMissing = $true
+    }
     $install = $data.runtime.install
     if ($install -and $install.status -and $install.status -ne "pinned") {
         $pinned = if ($install.pinned_runtime) { $install.pinned_runtime } else { "none" }
@@ -588,10 +598,10 @@ switch ($command) {
     "" { Install-Auto }
     "auto" { Install-Auto }
     "all" { Install-Auto }
-    "dsh" { Confirm-Runtime; Ensure-Profile; Install-Dsh }
-    "claude-code" { Confirm-Runtime; Ensure-Profile; Install-ClaudeCode }
-    "claude" { Confirm-Runtime; Ensure-Profile; Install-ClaudeCode }
-    "codex" { Confirm-Runtime; Ensure-Profile; Install-Codex }
+    "dsh" { Confirm-Runtime; Ensure-Profile; Install-Dsh; Confirm-Health }
+    "claude-code" { Confirm-Runtime; Ensure-Profile; Install-ClaudeCode; Confirm-Health }
+    "claude" { Confirm-Runtime; Ensure-Profile; Install-ClaudeCode; Confirm-Health }
+    "codex" { Confirm-Runtime; Ensure-Profile; Install-Codex; Confirm-Health }
     "mcp" { Confirm-Runtime; Ensure-Profile; Install-Mcp; Confirm-Health }
     "skill" { Confirm-Runtime; Ensure-Profile; Install-Skill; Confirm-Health }
     "path" {
@@ -607,4 +617,8 @@ switch ($command) {
         Write-Host "usage: install.ps1 [-Profile minimal|standard|full] [dsh|claude-code|codex|mcp|skill|all|path]" -ForegroundColor Red
         exit 2
     }
+}
+
+if ($Script:CapabilityMissing) {
+    Stop-Install "install incomplete: run the command above, then this installer again"
 }

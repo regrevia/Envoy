@@ -182,3 +182,25 @@ def test_profile_provisioning_runs_outside_the_runtime_install(text: str):
     runtime = text[text.index("function Install-Runtime"):]
     runtime = runtime[: runtime.index("function ", 10)]
     assert "Provision-Browser $Script:RuntimeBin" not in runtime
+
+
+def test_a_missing_profile_capability_fails_the_install(text: str):
+    """A full install that leaves Chromium or Whisper out is not a success: the
+    user would meet that download on their first link, inside the host's tool
+    deadline. The doctor result decides, not the provisioning exit code."""
+    assert "$Script:CapabilityMissing = $false" in text
+    assert "$Script:CapabilityMissing = $true" in text
+    assert 'Stop-Install "install incomplete' in text
+    assert 'if ($Script:SetupBrowser -eq "1" -and -not $data.runtime.browser.ready)' in text
+    assert 'if ($Script:SetupMedia -eq "1" -and -not $data.runtime.asr_model_available)' in text
+
+
+def test_every_provisioning_branch_also_verifies_the_profile(text: str):
+    branches = [
+        line for line in text.splitlines()
+        if line.strip().startswith('"') and "Ensure-Profile" in line
+    ]
+    assert len(branches) >= 6, branches
+    for line in branches:
+        assert "Confirm-Health" in line, line
+

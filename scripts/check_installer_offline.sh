@@ -25,7 +25,7 @@ fake_envoy() {
 #!/bin/sh
 case "\$1" in
   --version) echo "envoy $2" ;;
-  doctor) printf '{"cli_version":"%s","protocol_version":"1","runtime":{"browser":{"ready":false},"install":{"status":"%s","pinned_runtime":"%s","path_envoy":null}}}\n' "$2" "\${FAKE_INSTALL_STATUS:-pinned}" "$1" ;;
+  doctor) printf '{"cli_version":"%s","protocol_version":"1","runtime":{"browser":{"ready":%s},"asr_model":"base","asr_model_available":%s,"install":{"status":"%s","pinned_runtime":"%s","path_envoy":null}}}\n' "$2" "\${FAKE_BROWSER_READY:-false}" "\${FAKE_ASR_READY:-false}" "\${FAKE_INSTALL_STATUS:-pinned}" "$1" ;;
   browser) echo "browser setup (fake)" ;;
   *) echo "fake envoy \$*" ;;
 esac
@@ -98,7 +98,7 @@ fake_envoy "$WORK/fake-runtime/envoy" 0.1.23
 pybin="$WORK/pybin-health"
 mkdir -p "$pybin"
 ln -sf "$(command -v python3)" "$pybin/python3"
-if output="$(HOME="$home" ENVOY_VERSION=0.1.23 ENVOY_DRY_RUN=0 ENVOY_SETUP_BROWSER=0 \
+if output="$(HOME="$home" ENVOY_VERSION=0.1.23 ENVOY_DRY_RUN=0 ENVOY_SETUP_BROWSER=0 ENVOY_SETUP_MEDIA=0 \
     ENVOY_RUNTIME_BIN="$WORK/fake-runtime/envoy" FAKE_INSTALL_STATUS=shadowed \
     PATH="$pybin:/usr/bin:/bin" sh "$INSTALL" mcp 2>&1)" \
   && printf '%s' "$output" | grep -q 'browser missing: envoy browser setup' \
@@ -106,6 +106,46 @@ if output="$(HOME="$home" ENVOY_VERSION=0.1.23 ENVOY_DRY_RUN=0 ENVOY_SETUP_BROWS
   ok "mcp install reports browser and install state"
 else
   bad "mcp install health (out=$output)"
+fi
+
+# --- case: a full install that leaves the profile incomplete fails loudly ---
+# `envoy asr install` exiting 0 while the model is still missing is the failure
+# mode that used to end with a green install and a 140 MB download on the user's
+# first video. Exit status now has to match what the profile promised.
+case_start
+home="$(new_home incomplete)"
+fake_envoy "$WORK/fake-incomplete/envoy" 0.1.23
+pybin="$WORK/pybin-incomplete"
+mkdir -p "$pybin"
+ln -sf "$(command -v python3)" "$pybin/python3"
+set +e
+output="$(HOME="$home" ENVOY_VERSION=0.1.23 ENVOY_DRY_RUN=0 ENVOY_SETUP_BROWSER=1 ENVOY_SETUP_MEDIA=1 \
+    ENVOY_RUNTIME_BIN="$WORK/fake-incomplete/envoy" FAKE_BROWSER_READY=false FAKE_ASR_READY=false \
+    PATH="$pybin:/usr/bin:/bin" sh "$INSTALL" mcp 2>&1)"
+status=$?
+set -e
+if [ "$status" -ne 0 ] \
+  && printf '%s' "$output" | grep -q 'install incomplete, still missing browser runtime: envoy browser setup and speech recognition' \
+  && printf '%s' "$output" | grep -q 'envoy install: install incomplete; run the command above'; then
+  ok "a full install with a missing capability exits non-zero"
+else
+  bad "incomplete full install (status=$status, out=$output)"
+fi
+
+# --- case: the same install passes once the profile really is provisioned ---
+case_start
+home="$(new_home complete)"
+fake_envoy "$WORK/fake-complete/envoy" 0.1.23
+set +e
+output="$(HOME="$home" ENVOY_VERSION=0.1.23 ENVOY_DRY_RUN=0 ENVOY_SETUP_BROWSER=1 ENVOY_SETUP_MEDIA=1 \
+    ENVOY_RUNTIME_BIN="$WORK/fake-complete/envoy" FAKE_BROWSER_READY=true FAKE_ASR_READY=true \
+    PATH="$pybin:/usr/bin:/bin" sh "$INSTALL" mcp 2>&1)"
+status=$?
+set -e
+if [ "$status" -eq 0 ] && printf '%s' "$output" | grep -q 'browser ready, asr ready'; then
+  ok "a fully provisioned install exits zero"
+else
+  bad "complete full install (status=$status, out=$output)"
 fi
 
 # --- case: installing a runtime pins it and prints the browser step --------

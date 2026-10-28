@@ -333,8 +333,10 @@ report_health() {
   if [ -x "$RUNTIME_HOME/bin/python" ]; then
     summarizer="$RUNTIME_HOME/bin/python"
   fi
-  printf '%s' "$report" | "$summarizer" -c '
-import json, sys
+  summary_status=0
+  printf '%s' "$report" | ENVOY_EXPECT_BROWSER="$SETUP_BROWSER" ENVOY_EXPECT_MEDIA="$SETUP_MEDIA" \
+    "$summarizer" -c '
+import json, os, sys
 try:
     data = json.load(sys.stdin)
 except Exception:
@@ -342,17 +344,36 @@ except Exception:
 version = data.get("cli_version") or data.get("version") or "unknown"
 protocol = data.get("protocol_version") or "unknown"
 runtime = data.get("runtime") or {}
-browser = "ready" if (runtime.get("browser") or {}).get("ready") else "missing: envoy browser setup"
+browser_ready = bool((runtime.get("browser") or {}).get("ready"))
+browser = "ready" if browser_ready else "missing: envoy browser setup"
 install = runtime.get("install") or {}
 model = runtime.get("asr_model") or "base"
-asr = "ready" if runtime.get("asr_model_available") else f"missing: run envoy asr install --model {model}"
+asr_ready = bool(runtime.get("asr_model_available"))
+asr = "ready" if asr_ready else f"missing: run envoy asr install --model {model}"
 print(f"envoy install: runtime {version}, protocol {protocol}, browser {browser}, asr {asr}")
 status = install.get("status")
 if status and status != "pinned":
     pinned = install.get("pinned_runtime") or "none"
     on_path = install.get("path_envoy") or "none"
     print(f"envoy install: install state {status}: pinned {pinned}, PATH runs {on_path}; rerun install.sh if that is wrong")
-' 2>/dev/null || printf 'envoy install: could not summarize envoy doctor output\n' >&2
+# The profile promised these at install time; an exit code of 0 that leaves them
+# missing is how "it installed but the first video downloaded 140 MB" happens.
+missing = []
+if os.environ.get("ENVOY_EXPECT_BROWSER") == "1" and not browser_ready:
+    missing.append("browser runtime: envoy browser setup")
+if os.environ.get("ENVOY_EXPECT_MEDIA") == "1" and not asr_ready:
+    missing.append(f"speech recognition: envoy asr install --model {model}")
+if missing:
+    print("envoy install: install incomplete, still missing " + " and ".join(missing), file=sys.stderr)
+    raise SystemExit(3)
+' || summary_status=$?
+  if [ "$summary_status" -eq 3 ]; then
+    printf 'envoy install: install incomplete; run the command above and then this installer again\n' >&2
+    exit 1
+  fi
+  if [ "$summary_status" -ne 0 ]; then
+    printf 'envoy install: could not summarize envoy doctor output\n' >&2
+  fi
 }
 
 RUNTIME_VERSION=""
@@ -569,7 +590,6 @@ ENVOY_SKILL
 
 install_auto() {
   ensure_runtime
-  ensure_profile
   ensure_profile
   installed=0
   if find_dsh >/dev/null 2>&1; then install_dsh; installed=1; fi

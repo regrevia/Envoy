@@ -23,6 +23,10 @@
 - 表格和富文本链接也直接读：`.xlsx` / `.xlsm` / `.ods` 按工作表还原成「A | B | C」行，
   `.rtf` 去掉控制字取正文（中文按 `\u` 还原）；公开 xlsx 样本实测 15 列财务数据、
   全篇 96109 字。旧的 `.doc` / `.xls` / `.ppt` 会直接提示「另存为 .docx/.xlsx 再读」。
+- 安装完整性用 `envoy doctor` 判定，不再只看命令退出码：选了 `standard`/`full`
+  却拿不到 Chromium 或 Whisper 模型时，安装以非零退出并说明补救命令，
+  不会留下「装好了、第一次用视频再下 140 MB」；
+  离线安装检查覆盖这两种结果（12/12）。
 - 需要登录时可以把认证交给用户，默认关闭：`envoy auth handoff on|status|off`（或
   一次性 `ENVOY_CREDENTIAL_HANDOFF=1`）。关着时 `envoy_auth` 不出现在工具列表里，
   读到的登录墙只给「用户在终端自己登录」一条路，已导入的会话也不会被自动使用。
@@ -62,6 +66,10 @@
   `A | B | C` rows per worksheet and `.rtf` is reduced to its text (CJK restored from
   `\u`), measured against a public xlsx sample with 15 columns and 96109 characters.
   Legacy `.doc`/`.xls`/`.ppt` files answer with "save it as .docx/.xlsx".
+- Install completeness is judged by `envoy doctor`, not by a command's exit
+  code: a `standard`/`full` run that ends without Chromium or the Whisper model
+  now exits non-zero and names the repair, instead of leaving the download for
+  the first video. The offline installer check covers both outcomes (12/12).
 - Sign-in can be handed to the user, and it ships off: `envoy auth handoff on|status|off`
   (or `ENVOY_CREDENTIAL_HANDOFF=1` for one shell). While it is off `envoy_auth` is not
   advertised, a blocked read offers only the terminal sign-in, and a stored session is
