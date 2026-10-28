@@ -923,3 +923,23 @@ douyin 相册顺序用例失败。
 - 回归：`pytest tests/cli` → 670 passed / 4 failed（已知 reportlab 缺依赖）/ 1 deselected；
   分类+路由+语料 157 passed；`tests/cli/test_login_wall.py` 13 passed（含新增的导航错误归类）。
 
+
+## 第二十九轮（凭据转交：当轮实测记录）
+
+目标里把「凭据/登录快速转交」列为核心项，本轮在真实进程里重测一遍，确认四条性质：
+
+- 默认关闭：`tools_for_toolset("core")` = `[envoy_read, envoy_expand, envoy_search, envoy_observe]`，
+  不含 `envoy_auth`；`ENVOY_CREDENTIAL_HANDOFF=1` 后同一调用多出 `envoy_auth`；
+  写进 `$ENVOY_CONFIG_DIR/config.json` 的 `credential_handoff: true` 同样生效。
+- 存储只在本机：写入后文件 `/tmp/…/.envoy/imported-cookies.json` 权限 `0600`，
+  所在目录 `0700`（`mkstemp` + `os.replace` 原子替换）。
+- 回报不含值：`_save_cookies` 的返回值只有 `{source, imported, domains, path, cookies: [名字]}`，
+  实测把 `SECRET-VALUE-123` 放进 jar，序列化后的回报里搜不到该串。
+- 读取链路真的用上：同一 URL、同一份存储，开关关闭时请求头无 `Cookie`，
+  开关打开时请求头出现 `sid=SECRET-VALUE-123`；cookie 不进入读结果的 blocks/coverage。
+
+- 探针隔离注意：`cookies.cookie_store_path()` 走 `envoy_home()` = `~/.envoy`，
+  **不受 `ENVOY_CONFIG_DIR` 影响**；离线探针要覆盖 `HOME`（在导入 envoy 之前设），
+  否则会写进真实用户目录。
+- `unit_checked`：`tests/cli/test_credential_handoff.py` 已有 14 条覆盖上述四点（含
+  「禁用时不附带 cookie」「启用时静态抓取带头」「值不进读结果」）。
