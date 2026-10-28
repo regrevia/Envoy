@@ -88,8 +88,8 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          # 自托管机到 codeload 的出口不稳定时 artifact 会下载失败；把断言结果
-          # 先写进 job 日志，日志本身就是可查的证据。
+          # codeload is flaky from this node; put the assertion output in the log
+          # so the log itself is the evidence.
           $file = Join-Path $env:RUNNER_TEMP "envoy-windows-acceptance-ps5.json"
           if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | Out-Host }
           else { Write-Host "no evidence file at $file" }
@@ -124,7 +124,9 @@ jobs:
         run: |
           $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
           if (-not $pwsh) {
-            Write-Host "::warning::节点上没有 PowerShell 7，尝试安装"
+            # ASCII only: PowerShell 5.1 parses this file as ANSI, so CJK text here
+            # turns into a parse error before the script ever runs.
+            Write-Host "::warning::no PowerShell 7 on this node, trying winget"
             if (Get-Command winget -ErrorAction SilentlyContinue) {
               winget install --id Microsoft.PowerShell -e --silent --accept-source-agreements --accept-package-agreements
               Start-Sleep -Seconds 5
@@ -133,13 +135,13 @@ jobs:
             }
           }
           if (-not $pwsh) {
-            Write-Host "::error::节点缺 PowerShell 7：按 docs/windows-acceptance.md 装 MSI 后重跑，本次未验证 7.x"
+            Write-Host "::error::PowerShell 7 missing: install the MSI (docs/windows-acceptance.md) and rerun; 7.x not verified"
             exit 1
           }
           $version = [version](& $pwsh.Source -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')
           Write-Host "pwsh $version"
           if ($version -lt [version]"7.4.0") {
-            Write-Host "::error::pwsh $version 低于 7.4：验收基线要求 7.4+"
+            Write-Host "::error::pwsh $version is below the 7.4 baseline"
             exit 1
           }
       - name: 验收 / Acceptance
@@ -160,8 +162,8 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          # 自托管机到 codeload 的出口不稳定时 artifact 会下载失败；把断言结果
-          # 先写进 job 日志，日志本身就是可查的证据。
+          # codeload is flaky from this node; put the assertion output in the log
+          # so the log itself is the evidence.
           $file = Join-Path $env:RUNNER_TEMP "envoy-windows-acceptance-ps7.json"
           if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | Out-Host }
           else { Write-Host "no evidence file at $file" }
@@ -191,8 +193,8 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          # 自托管机到 codeload 的出口不稳定时 artifact 会下载失败；把断言结果
-          # 先写进 job 日志，日志本身就是可查的证据。
+          # codeload is flaky from this node; put the assertion output in the log
+          # so the log itself is the evidence.
           Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Filter "envoy-windows-acceptance-ps*.json" -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host ("--- " + $_.Name); Get-Content -LiteralPath $_.FullName -Raw | Out-Host }
       - name: 证据 / Evidence
