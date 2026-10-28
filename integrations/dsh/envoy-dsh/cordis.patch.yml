@@ -1,4 +1,4 @@
-# DeepSeek Harness bundle for Envoy.
+# DSH bundle for Envoy.
 #
 # The first row mounts Envoy's stdio MCP bridge. It starts with no toolset
 # flag, so the `core` default applies and ordinary sessions do not pay for
@@ -8,9 +8,10 @@
 # Runtime pairing: this bundle is released with the Envoy CLI in
 # `integrations/release-manifest.json` and needs a runtime at least as new as
 # `min_runtime`. The launcher resolves a runtime in this order: `ENVOY_BIN`,
-# `envoy` on PATH, then a private install under
-# `~/.local/share/envoy-dsh/runtime`. It then compares `envoy --version` with
-# the required version:
+# `envoy` on PATH, then a private install under the Envoy data dir
+# (`%LOCALAPPDATA%\\envoy-dsh\\runtime` on Windows,
+# `~/.local/share/envoy-dsh/runtime` elsewhere). It then compares
+# `envoy --version` with the required version:
 #
 #   * new enough           -> mount it
 #   * private copy too old -> upgrade it in place from the release wheel; the
@@ -19,55 +20,38 @@
 #   * external copy too old-> fail with the upgrade command instead of
 #                             silently running an unsupported CLI
 #
-# The Harness GUI does not inherit a login-shell PATH, so the launcher supplies
-# the usual uv and Homebrew entries before resolving. A machine with neither
-# `envoy` nor uv/python3 gets one actionable line on stderr and a failed mount
-# instead of a bridge that dies on every call. `ENVOY_DSH_VERSION` overrides the
-# provisioned version and `ENVOY_DSH_REQUIRED_RUNTIME` overrides the minimum.
+# One launcher covers every platform: it is plain Node, not a POSIX shell
+# script, so Windows (which ships no such shell) mounts the same bridge macOS
+# and Linux do instead of a child that dies on every call. A machine with
+# neither `envoy` nor uv/python gets one actionable line on stderr and a
+# failed mount. `ENVOY_DSH_VERSION` overrides the provisioned version and
+# `ENVOY_DSH_REQUIRED_RUNTIME` overrides the minimum.
 #
-# The second row registers the DeepSeek Harness adaptation of the Envoy Agent
-# Skill. It depends only on the public `ctx.skills` service.
+# The `-e` argument is a short stub that inflates the real launcher source
+# (`launch.cjs`, kept in this package and tested for byte equality). It travels
+# compressed because a cmd.exe command line is capped at 8191 characters and a
+# `node` on PATH is often a .cmd shim that runs through cmd.exe.
+#
+# The second row registers the DSH adaptation of the Envoy Agent Skill. It
+# depends only on the public `ctx.skills` service.
 - insert:
     - id: envoy-mcp
       name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: envoy
         transport: stdio
-        command: /bin/sh
+        command: node
         args:
-          - -c
-          - >-
-            PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH;
-            RT="$HOME/.local/share/envoy-dsh/runtime"; RTBIN="$RT/bin/envoy";
-            V="${ENVOY_DSH_VERSION:-0.1.24}"; REQ="${ENVOY_DSH_REQUIRED_RUNTIME:-$V}";
-            BIN=""; EXTERNAL=0;
-            if [ -n "${ENVOY_BIN:-}" ]; then BIN="$ENVOY_BIN"; EXTERNAL=1;
-            elif command -v envoy >/dev/null 2>&1; then BIN="$(command -v envoy)"; EXTERNAL=1;
-            elif [ -x "$RTBIN" ]; then BIN="$RTBIN";
-            fi;
-            if [ -n "$BIN" ]; then
-            HAVE="$("$BIN" --version 2>/dev/null | awk '{print $2}')";
-            if [ -n "$HAVE" ] && [ "$(printf '%s\n%s\n' "$REQ" "$HAVE" | sort -V | head -n 1)" = "$REQ" ]; then exec "$BIN" mcp; fi;
-            if [ "$EXTERNAL" = 1 ]; then
-            echo "envoy-dsh: $BIN is Envoy ${HAVE:-unknown}, this DSH bundle needs >=$REQ; upgrade that install (uv tool upgrade envoy-cli, or brew/uv accordingly) or unset ENVOY_BIN / PATH envoy so the bundle provisions its own runtime" >&2; exit 1;
-            fi;
-            echo "envoy-dsh: upgrading the bundled runtime from ${HAVE:-unknown} to $REQ; ~/.envoy settings and models are kept" >&2;
-            fi;
-            URL="https://github.com/regrevia/Envoy/releases/download/v$V/envoy_cli-$V-py3-none-any.whl";
-            if command -v uv >/dev/null 2>&1; then
-            PYOK="import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)";
-            if ! "$RT/bin/python" -c "$PYOK" >/dev/null 2>&1; then rm -rf "$RT"; uv venv --quiet --python "${ENVOY_PYTHON:-3.11}" "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot provision Python ${ENVOY_PYTHON:-3.11} for $RT; install uv and retry" >&2; exit 1; }; fi;
-            uv pip install --quiet --upgrade --python "$RT/bin/python" "$URL" || { echo "envoy-dsh: failed to install $URL" >&2; exit 1; };
-            elif command -v python3 >/dev/null 2>&1; then
-            if ! "$RT/bin/python" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
-            python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" || { echo "envoy-dsh: python3 is $(python3 -c "import platform; print(platform.python_version())" 2>/dev/null), envoy needs >= 3.10; install uv (brew install uv) then restart Harness" >&2; exit 1; };
-            rm -rf "$RT"; python3 -m venv "$RT" >/dev/null 2>&1 || { echo "envoy-dsh: cannot create $RT" >&2; exit 1; };
-            fi;
-            "$RT/bin/python" -m pip install --quiet --upgrade "$URL" || { echo "envoy-dsh: failed to install $URL" >&2; exit 1; };
-            else
-            echo "envoy-dsh: no Envoy runtime and no uv/python3 to install one; install uv from https://docs.astral.sh/uv/ then restart Harness" >&2; exit 1;
-            fi;
-            PATH="$RT/bin:$PATH"; export PATH; exec envoy mcp
+          - '-e'
+          - |
+            // Inflates and runs launch.cjs, the source of truth for this launcher.
+            // The payload is gzipped+base64 because a cmd.exe command line (which a
+            // `node.cmd` shim goes through on Windows) is capped at 8191 characters.
+            const z = require('node:zlib');
+            const code = z.gunzipSync(Buffer.from('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', 'base64')).toString('utf8');
+            new Function('require', 'exports', 'module', '__filename', '__dirname', code)(require, exports, module, __filename, __dirname);
+        env:
+          ENVOY_DSH_VERSION: '0.1.24'
         toolCallTimeoutMs: 300000
         failOnStartupError: true
 

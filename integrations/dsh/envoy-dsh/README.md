@@ -71,18 +71,20 @@ when the page needs one.
 ## Requirements
 
 - DeepSeek Harness with the Plugin Manager (`engines.dsh` is `>=0.1.5`).
-- macOS or Linux today. The launcher runs under `/bin/sh`; a Windows launcher
-  is not shipped yet, so Windows is not supported.
+- macOS, Linux, or Windows. The launcher is plain Node (`node -e <script>`),
+  written once in `launch.cjs`, so every platform mounts the same bridge. On
+  Windows the private runtime lives under `%LOCALAPPDATA%\envoy-dsh\runtime`
+  and its executables are `Scripts\envoy.exe` / `Scripts\python.exe`.
 
 Nothing else. No separate CLI install, no `envoy browser setup`, no Python
 preflight: on first use the bundle provisions the pinned runtime wheel into
-`~/.local/share/envoy-dsh/runtime` with `uv` or `python3 -m venv`, and the
-isolated Chromium is installed the first time a page actually needs a browser.
-An `envoy` already on PATH is used as-is when it is new enough. The one machine
-it cannot cover has neither `envoy` nor `uv` nor `python3`; the mount then fails
-with a single line naming `uv`. Browser profiles, ASR, and OCR stay optional and
-on-demand — see [INSTALL.md](../../skills/envoy/INSTALL.md) when a task needs
-them.
+`~/.local/share/envoy-dsh/runtime` (`%LOCALAPPDATA%\envoy-dsh\runtime` on
+Windows) with `uv` or the system Python's `venv`, and the isolated Chromium is
+installed the first time a page actually needs a browser. An `envoy` already on
+PATH is used as-is when it is new enough. The one machine it cannot cover has
+neither `envoy` nor `uv` nor `python`; the mount then fails with a single line
+naming `uv`. Browser profiles, ASR, and OCR stay optional and on-demand — see
+[INSTALL.md](../../skills/envoy/INSTALL.md) when a task needs them.
 
 ## A visible window is not the agent's to open
 
