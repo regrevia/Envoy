@@ -21,6 +21,12 @@ on:
         default: "both"
         type: choice
         options: [both, fresh, upgrade]
+      profile:
+        description: "安装档位；留空 = 默认完整安装，minimal/standard 只验证该档装了什么"
+        required: false
+        default: ""
+        type: choice
+        options: ["", full, standard, minimal]
   workflow_run:
     workflows: ["Envoy 正式发行 / Envoy Release"]
     types: [completed]
@@ -73,7 +79,7 @@ jobs:
       - name: 验收 / Acceptance
         shell: powershell
         run: |
-          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario "${{ inputs.scenario || 'both' }}" -Version "${{ inputs.version }}" -PreviousVersion "${{ inputs.previous_version || '0.1.23' }}"
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario "${{ inputs.scenario || 'both' }}" -Version "${{ inputs.version }}" -PreviousVersion "${{ inputs.previous_version || '0.1.23' }}" -Profile "${{ inputs.profile }}"
       - name: 还原用户 PATH / Restore PATH
         if: always()
         shell: powershell
@@ -165,7 +171,7 @@ jobs:
       - name: 验收 / Acceptance
         shell: pwsh
         run: |
-          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 7 -Scenario "${{ inputs.scenario || 'both' }}" -Version "${{ inputs.version }}" -PreviousVersion "${{ inputs.previous_version || '0.1.23' }}"
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 7 -Scenario "${{ inputs.scenario || 'both' }}" -Version "${{ inputs.version }}" -PreviousVersion "${{ inputs.previous_version || '0.1.23' }}" -Profile "${{ inputs.profile }}"
       - name: 还原用户 PATH / Restore PATH
         if: always()
         shell: powershell

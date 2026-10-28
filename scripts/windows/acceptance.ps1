@@ -10,6 +10,9 @@ so one file covers Windows PowerShell 5.1 (powershell.exe) and PowerShell 7+
   fresh    no prior install: install -> shim runs -> PATH has the shim once
   upgrade  keep an older install in place: install -> version moved -> no dupes
   both     fresh, then upgrade on top of it (default)
+  -Profile minimal|standard|full  install into that tier and assert what it
+           provisioned through `envoy doctor --json` (blank keeps the bounded
+           default: browser skipped, media provisioned)
 
 State never leaks into the developer desktop: ENVOY_HOME points inside the runner
 temp dir, and the user PATH value and its Kind are snapshotted and restored.
@@ -25,6 +28,7 @@ param(
     [string]$Version = "",
     [string]$PreviousVersion = "0.1.23",
     [string]$Scenario = "both",
+    [string]$Profile = "",
     [string]$EnvoyHome = (Join-Path $env:RUNNER_TEMP "envoy-acceptance"),
     [string]$EvidencePath = "",
     [int]$ExpectShellMajor = 0,
@@ -136,7 +140,14 @@ function Invoke-Installer {
     $shell = (Get-Process -Id $PID).Path
     $env:ENVOY_HOME = $EnvoyHome
     $env:ENVOY_RUNTIME_PIN = Join-Path $EnvoyHome "runtime-path"
-    $env:ENVOY_SETUP_BROWSER = "0"
+    if ($Profile) {
+        # The profile decides what gets provisioned; a stale override would hide it.
+        $env:ENVOY_PROFILE = $Profile
+        Remove-Item Env:ENVOY_SETUP_BROWSER -ErrorAction SilentlyContinue
+        if ($Profile -ne "full") { $env:ENVOY_SETUP_MEDIA = "0" }
+    } else {
+        $env:ENVOY_SETUP_BROWSER = "0"
+    }
     $env:ENVOY_VERSION = $InstallVersion
     Write-Host ("---- install {0} through {1}" -f $InstallVersion, (Mask $shell))
     & $shell -NoProfile -ExecutionPolicy Bypass -File $Installer -Target mcp
@@ -205,6 +216,31 @@ try {
             Check "A3" "fresh: %VARS% in user PATH stay unexpanded" ($after[0] -match "%") "raw value keeps its %VAR% tokens"
         }
         Check "A6" "fresh: no HKLM write" (Test-HklmUntouched) "machine PATH untouched"
+        if ($Profile) {
+            $doctorRaw = & (Get-ShimPath) doctor --json 2>&1 | Out-String
+            $doctor = $null
+            try { $doctor = $doctorRaw | ConvertFrom-Json } catch { $doctor = $null }
+            Check "A8" "profile: doctor answers with JSON" ($null -ne $doctor) ("profile=" + $Profile)
+            if ($doctor) {
+                $browserReady = [bool]$doctor.runtime.browser.ready
+                $asrInstalled = [bool]$doctor.runtime.asr_installed
+                $asrAvailable = [bool]$doctor.runtime.asr_model_available
+                switch ($Profile) {
+                    "minimal" {
+                        Check "A8" "minimal: no browser installed" (-not $browserReady) ("browser.ready=" + $browserReady)
+                        Check "A8" "minimal: no ASR engine installed" (-not $asrInstalled) ("asr_installed=" + $asrInstalled)
+                    }
+                    "standard" {
+                        Check "A8" "standard: browser is ready" $browserReady ("browser.ready=" + $browserReady)
+                        Check "A8" "standard: no ASR engine installed" (-not $asrInstalled) ("asr_installed=" + $asrInstalled)
+                    }
+                    "full" {
+                        Check "A8" "full: browser is ready" $browserReady ("browser.ready=" + $browserReady)
+                        Check "A8" "full: ASR model is available" $asrAvailable ("asr_model_available=" + $asrAvailable)
+                    }
+                }
+            }
+        }
     }
 
     if ($runUpgrade) {
@@ -258,6 +294,7 @@ try {
         target_version = $target
         previous_version = $PreviousVersion
         scenario = $Scenario
+        profile = $(if ($Profile) { $Profile } else { "default(full)" })
         installer_sha256 = $installerHash
         shim_sha256 = (Get-FileSha256 (Get-ShimPath))
         path_kind_before = $pathBefore[1]

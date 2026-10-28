@@ -39,7 +39,9 @@ job 日志和 artifact 在公开仓库里对所有访客可见。所以：
 2. `Python 3.11+` 或 `uv` 在 PATH 上：`install.ps1` 需要其中之一建 venv。
 3. PowerShell 7.4+（`winget install --id Microsoft.PowerShell -e --silent`）。缺失时 `windows-powershell-7` 会先尝试装，装不上直接报错，不会静默当通过。
 4. 能访问 `github.com` / `raw.githubusercontent.com` / PyPI（或用 `ENVOY_RELEASES_BASE`、`ENVOY_MANIFEST_URL` 指向镜像做常规回归）。
-5. 浏览器与转写预取已关（`ENVOY_SETUP_BROWSER=0`、`ENVOY_SETUP_MEDIA=0`，等价于 `--profile minimal`）。验收只测安装器，不测 Chromium 与 Whisper 下载。
+5. 默认那轮关掉 Chromium 下载（`ENVOY_SETUP_BROWSER=0`），但保留转写预取——即默认
+   `full` 档真正会做的事，顺带证明「装完不下载」在 Windows 上也成立。想单独验证某一
+   档，用 `profile` 输入（见下），该档自己决定装什么；`minimal` 才是两样都不装。
 
 ## 注册节点
 
@@ -65,6 +67,7 @@ Actions → Windows 验收 → Run workflow：
 - `version` 留空 = 取 `integrations/release-manifest.json` 的当前版本。
 - `previous_version` 默认 `0.1.23`：升级场景先装它，再装目标版本。
 - `scenario`：`fresh`（无历史）、`upgrade`（在已有安装上覆盖）、`both`（默认）。
+- `profile`：留空 = 默认那轮（见「节点前置条件」第 5 条）；填 `minimal` / `standard` / `full` = 按该档装，并用 `envoy doctor --json` 断言该档到底装了什么（A8）。`standard` / `full` 会真的下 Chromium，耗时更长。
 
 mac 上想直接驱动节点，可走 SSH 跑同一个脚本：
 
@@ -85,6 +88,7 @@ SSH 只验证命令行行为，不验证窗口外观。
 | A5 | 无重复 PATH 项、无旧版本残留、pin 指向存在的 runtime、连跑两次稳定、shim 里没有写死版本号 |
 | A6 | 不写 HKLM（普通用户不需要提权） |
 | A7 | 用户 PATH 还原到跑前值 |
+| A8 | 指定 `profile` 时：`minimal` 无浏览器、无转写引擎；`standard` 浏览器就绪、无转写引擎；`full` 浏览器就绪且 Whisper `base` 可用 |
 
 证据落在 `%RUNNER_TEMP%\envoy-windows-acceptance-ps5.json` / `-ps7.json`，artifact 保留 7 天。
 
