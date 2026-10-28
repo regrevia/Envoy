@@ -15,6 +15,9 @@
   `partial` + `next_seconds`，下一轮从该点续跑。
 - 网页正文里讨论「验证码/安全验证」不再被误判为风控页：整页超过 400 字时不看正文
   标记，只用标题判定（GitHub Release 页此前被误报 `challenge_required`，现在正常读）。
+- 读不到的链接不再白等：连接预算从「直连 20 秒 + 代理 20 秒」降到「10 秒 + 6 秒」。
+- 页面打不开但站点公共接口有正文时照样给出内容：短正文留作最后兜底，报告里标
+  `page_unreachable`（Hacker News 薄条目从 45 秒报错变成 18 秒读到 187 字）。
 
 ### English
 
@@ -30,6 +33,12 @@
 - A page that merely mentions a captcha is no longer reported as a challenge: when the
   body is longer than 400 characters only the title decides (GitHub release pages were
   being misreported as `challenge_required`).
+- An unreachable link no longer burns the budget on connects: the per-attempt budget
+  drops from 20 s direct plus 20 s proxy to 10 s plus 6 s.
+- When a page cannot be opened but the site's public endpoint still has text, that text
+  is the answer: short answers are kept as a last resort and flagged with
+  `page_unreachable` (a thin Hacker News item went from a 45 s error to 187 characters
+  in 18 s).
 
 ## 0.1.26 - 2026-10-28
 

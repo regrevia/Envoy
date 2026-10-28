@@ -443,7 +443,7 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 | `github-release` | code | 7979 字 / 6.4s（partial） |
 | `arxiv-pdf` | document | 7387 字 / 29.0s（partial） |
 | `reddit-sub` | forum | unreachable / 25.5s（`network_error`） |
-| `hackernews-item` | forum | unreachable / 28.9s（`network_error`） |
+| `hackernews-item` | forum | unreachable / 28.9s（`network_error`，本轮修后见下条） |
 | `medium-tag` | blog | unreachable / 25.4s（`network_error`） |
 | `quora-question` | forum | blocked / 30.4s（precheck 403） |
 | `imdb-title` | web | blocked / 11.4s（precheck 202） |
@@ -461,6 +461,19 @@ X/Unsplash `challenge_required`、微信与 Instagram `auth_required`、kuaishou
 - 延迟：mean 21.6s、p50 25.5s、max 50.4s，零超时。
 - 不作过度声称：`bilibili-read` 从上一轮 165 字变成 4166 字，原因未定（页面结构或出口
   变化都可能），不计入能力变化。
+- 全量复跑（同一语料 133 行，4 并发）：1 行判死（`amazon` 404）后分母 132，可用 105
+  （79.5%：`readable` 30 + `partial` 75），`blocked` 11、`unreachable` 16、`failed` 0；
+  只算 precheck 可达的分母则是 116 行里 105 行可用（90.5%）。16 条 `unreachable` 全部
+  在 precheck 阶段就连接失败（BBC/Reuters/NYT/Guardian/Medium/gist/HN/Reddit/
+  Mastodon/Bluesky/TED/SoundCloud/HN RSS/archive.org），是本机出口被拦，不是解析缺陷。
+- 全量跑暴露了两处可省的成本，本轮已修并复测：
+  - 死链连接预算从「直连 20s + 代理 20s」降到「10s + 6s」：`_fetch_html` 里直连超时
+    曾实测整 20.0s 才失败，加代理再 5.3s，一条死链要 30–48s 才报错。
+  - 公共端点只回很短的正文时（HN 薄条目约 187 字，低于替换页面的 200 字门槛），
+    以前页面不可达就整条 `blocked`；现在这答案留作最后兜底，页面确认不可达时改用
+    它并在 `coverage.details` 标 `page_unreachable`。`news.ycombinator.com/item?id=1`
+    从 `blocked / network_error` 45.5s 变成 `ready` 17.9s、187 字；同批 `arxiv.org`
+    1.5s / 4728 字、`sspai.com` 0.8s / 154 字，未受影响。
 
 ## 第十九轮（113 行 / 可用 81.4%，判定前置挡掉注定读不到的链接，audio/web 各补一行）
 

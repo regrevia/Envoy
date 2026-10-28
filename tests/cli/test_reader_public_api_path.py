@@ -247,3 +247,83 @@ def test_a_full_page_does_not_hijack_its_declared_feed(monkeypatch):
     assert "real article sentence" in "".join(
         block.content.text for block in response.blocks if getattr(block.content, "text", None)
     )
+
+
+def _short_hackernews_answer(url: str) -> dict:
+    return {
+        "backend": "hackernews",
+        "title": "Y Combinator",
+        "text": "Y Combinator\nhttps://news.ycombinator.com/item?id=1\nscore: 57",
+        "url": url,
+    }
+
+
+def test_a_short_endpoint_answer_rescues_an_unreachable_page(monkeypatch):
+    _allow_url(monkeypatch)
+    monkeypatch.setattr(reader, "fetch_feed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        reader, "public_api_fallback", lambda url, **_kwargs: _short_hackernews_answer(url)
+    )
+    monkeypatch.setattr(
+        reader,
+        "_fetch_html",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            reader.PublicPageError("unreachable", reader.ErrorCode.NETWORK_ERROR)
+        ),
+    )
+
+    response = reader.read_public_page(_request("https://news.ycombinator.com/item?id=1"))
+
+    assert response.result != reader.ReadResult.BLOCKED
+    text = "".join(block.content.text or "" for block in response.blocks)
+    assert "Y Combinator" in text
+    details = response.coverage.modalities["text"].details
+    assert details["page_unreachable"] is True
+    assert details["page_unreachable_cause"] == "network_error"
+
+
+def test_a_short_endpoint_answer_does_not_rescue_a_challenge(monkeypatch):
+    _allow_url(monkeypatch)
+
+    def blocked_with_a_short_answer(_request):
+        reader._SHORT_PUBLIC_FALLBACK.set(
+            _short_hackernews_answer("https://news.ycombinator.com/item?id=1")
+        )
+        return reader._blocked(
+            _request,
+            reader.ErrorCode.CHALLENGE_REQUIRED,
+            "The page wants a verification step",
+            action_required=True,
+        )
+
+    monkeypatch.setattr(reader, "_read_public_page_once", blocked_with_a_short_answer)
+
+    response = reader.read_public_page(_request("https://news.ycombinator.com/item?id=1"))
+
+    assert response.result == reader.ReadResult.BLOCKED
+    assert [error.code for error in response.errors] == [reader.ErrorCode.CHALLENGE_REQUIRED]
+
+
+def test_the_short_answer_does_not_leak_into_the_next_read(monkeypatch):
+    _allow_url(monkeypatch)
+    calls = []
+
+    def once(_request):
+        calls.append(1)
+        if len(calls) == 1:
+            reader._SHORT_PUBLIC_FALLBACK.set(
+                _short_hackernews_answer("https://news.ycombinator.com/item?id=1")
+            )
+        return reader._blocked(
+            _request,
+            reader.ErrorCode.NETWORK_ERROR,
+            "unreachable",
+        )
+
+    monkeypatch.setattr(reader, "_read_public_page_once", once)
+
+    first = reader.read_public_page(_request("https://news.ycombinator.com/item?id=1"))
+    second = reader.read_public_page(_request("https://example.com/article"))
+
+    assert first.result != reader.ReadResult.BLOCKED
+    assert second.result == reader.ReadResult.BLOCKED

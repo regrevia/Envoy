@@ -1066,6 +1066,15 @@ _SKIP_MEDIA_FIRST: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "envoy_skip_media_first", default=False
 )
 
+# A public endpoint sometimes answers with real but short material (a three
+# comment forum item, a one line package description). That answer is below the
+# floor for *replacing* a page, but when the page itself turns out to be
+# unreachable it is strictly better than a block, so it is kept here and only
+# used as the last resort.
+_SHORT_PUBLIC_FALLBACK: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "envoy_short_public_fallback", default=None
+)
+
 
 def _url_is_video_page(value: str) -> bool:
     return (
@@ -4457,9 +4466,15 @@ def _fetch_html(
     dns_cache = dns_cache if dns_cache is not None else {}
     last_error: Exception | None = None
     for proxy in proxy_plan():
+        # The direct attempt already proved the exit is slow or dead, so the
+        # fallback proxy gets a shorter connect timeout. A dead link used to
+        # cost 20s + 20s of connects before failing (measured 46s on
+        # news.ycombinator.com while the network path was down); 10s + 6s keeps
+        # a live server on a slow link reachable and a dead one cheap.
+        connect_timeout = 10 if proxy is None else 6
         try:
             with httpx.Client(
-                timeout=httpx.Timeout(20, read=45),
+                timeout=httpx.Timeout(connect_timeout, read=45),
                 follow_redirects=False,
                 trust_env=False,
                 proxy=proxy,
@@ -7360,6 +7375,14 @@ def _read_video_page_text(request: ReadRequest, source_url: str) -> ReadResponse
 
 
 def read_public_page(request: ReadRequest) -> ReadResponse:
+    token = _SHORT_PUBLIC_FALLBACK.set(None)
+    try:
+        return _read_public_page_with_retries(request)
+    finally:
+        _SHORT_PUBLIC_FALLBACK.reset(token)
+
+
+def _read_public_page_with_retries(request: ReadRequest) -> ReadResponse:
     response = _read_public_page_once(request)
     for attempt in range(1, 2):
         if response.result != ReadResult.BLOCKED:
@@ -7390,6 +7413,38 @@ def read_public_page(request: ReadRequest) -> ReadResponse:
                 for error in retried.errors
             ],
         })
+    short_fallback = _SHORT_PUBLIC_FALLBACK.get()
+    if (
+        short_fallback is not None
+        and response.result == ReadResult.BLOCKED
+        and any(
+            error.code in {ErrorCode.NETWORK_ERROR, ErrorCode.SOURCE_UNAVAILABLE}
+            for error in response.errors
+        )
+    ):
+        rescued = _public_api_fallback_response(
+            request, str(request.source.url), short_fallback
+        )
+        unreachable = next(
+            (
+                error
+                for error in response.errors
+                if error.code in {ErrorCode.NETWORK_ERROR, ErrorCode.SOURCE_UNAVAILABLE}
+            ),
+            None,
+        )
+        coverage = rescued.coverage.model_copy(deep=True)
+        for item in coverage.modalities.values():
+            item.details = {
+                **item.details,
+                "page_unreachable": True,
+                "page_unreachable_cause": unreachable.code.value if unreachable else None,
+                "note": (
+                    "The page itself could not be reached; this text is what the "
+                    "site's public endpoint returned, and it is short"
+                ),
+            }
+        return rescued.model_copy(update={"coverage": coverage})
     return response
 
 
@@ -7444,10 +7499,10 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             )
         except Exception:  # noqa: BLE001 - a fallback must never fail a read
             fallback = None
-        if fallback is not None and len(str(fallback.get("text") or "")) >= (
-            _fallback_min_chars(fallback)
-        ):
-            return _public_api_fallback_response(request, source_url, fallback)
+        if fallback is not None:
+            if len(str(fallback.get("text") or "")) >= _fallback_min_chars(fallback):
+                return _public_api_fallback_response(request, source_url, fallback)
+            _SHORT_PUBLIC_FALLBACK.set(fallback)
 
     if (
         not direct_video_path
