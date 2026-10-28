@@ -131,3 +131,79 @@ holdout pending_sample`、`SHA256SUMS` 通过；离线安装检查 10/10、本�
 
 两平台安装脚本的宿主分派目标现在有静态一致性用例兜底：`install.ps1` 的 switch 目标必须覆盖
 `install.sh` 用法行里的 `dsh|claude-code|codex|mcp|skill|all|path`，某一边新增宿主却漏掉另一边会直接失败。
+
+## CI 转绿、发行 v0.1.24、留出集冻结（2026-10-28 09:41–10:07）
+
+这一段是三件互相咬合的事，任何一件没做完，前面 20 多轮的交付都停在「打包好但没发行」。
+
+**一、CI 两次红都不是产品逻辑坏，而是「测试环境假设没写进流水线」。**
+
+- `e226b8c` 的 `backend` / `standalone-macos` / `standalone-windows` 一共 11 条
+  `test_browser_runtime.py` 全部 `BrowserRuntimeUnavailable`：用例要真 Chromium，
+  runner 上没装。修法是三个装真包的作业在 `pip install -e` 之后各加一步
+  `python -m playwright install chromium`（`.github/workflows/ci.yml`）。这批用例
+  以前在 CI 上一直是红的，只是被别的红盖住，不是这次改出来的。
+- 同一轮 Windows 还有 2 条 `test_collect_budget.py` 失败：`collect.py` 用
+  `time.monotonic()` 计阶段耗时，Windows 上它只有约 15.6 ms 的分辨率，同一 tick 里
+  起止测得 0.0，阶段于是不计数（`work_seconds` 1 对 2）。改成 `time.perf_counter()`，
+  并把 `seconds <= 0` 的门改宽到 `seconds < 0`，同 tick 的完成阶段仍按最少 1 秒计费。
+  本机 macOS 复现不出来，补了一条把 `_clock` 钉成常量的用例模拟粗粒度时钟。
+- `506e628` 之后 CI 仍红，三条失败其实是同一条：
+  `test_douyin_note_read_preserves_album_order_and_never_calls_asr`。原因是
+  「装了 Chromium 的机器上，这条用例会自己再抓一次真页面」：图文笔记正文 33 字，
+  低于 `_SHORT_VIDEO_RETRY_CHARS = 400` 的抖音短链重试阈值，于是走
+  `_read_with_isolated_browser` 拿到真页面，资源 uri 变成抖 CDN 地址与 `data:` 占位图，
+  断言里的 `/note/one.jpg` 自然对不上。用例要断言的是 HTML 图库解析出的稳定身份，
+  所以把浏览器回退钉成 `(None, None)`（`e93983f`）。这条用例以前在 CI 上「绿」
+  是因为浏览器装不上、回退直接失败，属于运气，不是覆盖。
+
+最终 `40618511712`（`e93983f`）**8 个作业全绿**：backend、lint、standalone-windows、
+standalone-macos、dsh-plugin、frontend、compose 加自动发布。
+
+**二、发行包真的出去了。**
+
+版本没动，`auto-release` 按设计跳过（它只认版本号变化），所以改为直接在绿提交上打标签：
+`v0.1.24 -> e93983f`，`release.yml` 走 tags 触发器（`40618840139`）构建并发布。结果：
+
+- `https://github.com/regrevia/Envoy/releases/tag/v0.1.24`，7 个资产：`envoy-dsh-0.1.24.tgz`、
+  `envoy-skill.zip`、`envoy_cli-0.1.24-py3-none-any.whl`、`install.ps1`、`install.sh`、
+  `release-manifest.json`、`SHA256SUMS`；
+- 从 Release 下载回来跑 `shasum -a 256 -c SHA256SUMS` **6/6 OK**，且与本地
+  `envoy-delivery/0.1.24/` 里同名文件的 sha256 **逐字节一致**——发行资产就是交付包那一份，
+  没有第二条构建路径；
+- `release-manifest.json` 的 `source_commit` 仍写打包提交 `6b5928…`，而标签指向
+  `e93983f`；两者之间只差测试与 CI 配置（wheel 摘要一致可以证明发行物内容没变）。
+
+**npm 没发出去，这是唯一没做完的一步**：`release.yml` 的 `npm publish` 有
+`if [ -z "$NPM_TOKEN" ]` 守卫，仓库没配这个 secret，日志明写
+`NPM_TOKEN is not configured; the bundle is attached to the release but not published to npm`，
+所以 `npm view envoy-dsh version` 还是 `0.1.23`。两条补法：配 `NPM_TOKEN` 后重跑
+`gh workflow run release.yml -f release_tag=v0.1.24`，或本机 `npm login` 后
+`npm publish dist/envoy-dsh-*.tgz --access public`。前者要仓库管理员给 secret，后者要一次交互登录，
+都不是无人值守能替用户做的。
+
+**三、留出集冻结了，但一条实测都没跑。**
+
+`freeze_holdout.py --size 12 --id H12-2026-10-28` 冻结出
+`holdout-H12-2026-10-28.json`（sha256 `8c04af16fe97…`，12 行），并
+`--apply-plan` 写回计划：`holdout.status` 从 `pending_sample` 变 `frozen`。
+候选来自 `holdout-candidates.txt`：6 条公开视频样本（`test-videos.co.uk` 的
+Big Buck Bunny 1080/720 与 Jellyfish 1080，`filesamples.com` 的 640×360 / 960×540 /
+1920×1080）+ 6 篇 arXiv PDF（`1706.03762`、`2005.14165`、`1910.10683`、`2203.02155`、
+`1810.04805`、`2302.13971`），每条都在本机用 range GET 探过（视频 206/200，PDF 200）。
+google 的 `commondatastorage` 样本桶、`sample-videos.com`、`archive.org`、`download.blender.org`
+都不可用（000/403/404），所以没进候选。
+
+冻结只解锁了 V/D 轴的门控，**没有代替实测**：35 条条目仍是 `not_run`，长视频与长 PDF
+要真下载、真跑 ASR/OCR/解析，必须在有人在场、允许长时间联网的那一次按
+`DEV/RUN-WHEN-PRESENT.md` §3–§9 逐条跑。两个交付目录 `verify_delivery.py` 仍是
+**13 checks** 通过（发行 `delivery ok`、预览 `--allow-preview` 同样 13 checks）。
+
+Windows PowerShell 7 那台机器现在可以直接从 Release 装，不用再传包：
+
+```powershell
+iwr https://github.com/regrevia/Envoy/releases/download/v0.1.24/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun   # 先看计划
+powershell -ExecutionPolicy Bypass -File .\install.ps1           # 真装
+where.exe envoy; envoy --version                                 # 期望 0.1.24
+```

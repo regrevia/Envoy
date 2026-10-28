@@ -171,8 +171,10 @@ python3 dry_run_experiments.py --render V02  # 打印该条的确切命令与待
 
 ## 8. 冻结留出集（跑指标前唯一允许的「取样本」动作）
 
-`EXPERIMENT-PLAN.json` 的 H12 现在还是 `pending_sample`。先在公开站点上收集多于 12 条候选
-（一行一个 URL，`#` 开头为注释）写成 `candidates.txt`，然后一次冻结：
+`EXPERIMENT-PLAN.json` 的 H12 现在是 `frozen`：12 行取自
+`holdout-candidates.txt`（6 条公开视频样本 + 6 篇 arXiv PDF，均在本机用
+range GET 探过可达），冻结结果在 `holdout-H12-2026-10-28.json`，sha256 `8c04af16fe97…`。
+**已经冻结过，不要再跑一次**——下面是万一要重放的形态，正常执行直接从 §9 记结果开始：
 
 ```sh
 cd /Users/apple/Desktop/2026/envoy-delivery/0.1.24
