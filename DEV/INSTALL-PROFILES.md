@@ -84,3 +84,22 @@ uv run --offline --python 3.11 --with pytest pytest -q tests/test_install_script
   `pytest -q tests/test_install_script.py tests/cli/test_installer_ps1_static.py`
   14 通过 + 2 条环境缺口（见上）；`ruff check .` 全部通过；`check_versions.py --check`
   11 项一致；`check_release_manifest.py --check` 一致。
+
+## 七、Windows 真机验收（2026-10-28）
+
+三档都在真 Windows 上验过，证据是 Actions 日志，不是推断：
+
+| 跑的档 | 运行 | 结果 |
+| --- | --- | --- |
+| 默认那轮（Chromium 关、转写开） | `40705581883` | PS 5.1 真机 / PS 7 / 托管新机 三个 job 全 success，共 68 条 `OK`、0 条 `FAIL`；托管新机实测下载 Whisper `base` 145,262,807 B、sha256 `ed3a0b6b…`、`asr ready`，同机第二次装 `downloaded_bytes=0`（缓存在） |
+| `minimal` | `40707304663` | 两台真机 A8 全 OK（`browser.ready=False`、`asr_installed=False`）；安装器原话 `skipped browser setup (profile minimal)` / `skipped speech recognition (profile minimal)` |
+| `standard` | `40707667395` | 三个 job A8 全 OK，`browser.ready=True`；托管新机实际下了 `chromium-1248` 与 `chromium_headless_shell-1248`，真机上这段约 5 分钟 |
+
+- 做法：`scripts/windows/acceptance.ps1` 加 `-Profile`（有档位时不强塞
+  `ENVOY_SETUP_BROWSER=0`，非 `full` 档显式 `ENVOY_SETUP_MEDIA=0`），
+  `.github/workflows/windows-acceptance.yml` 加 `profile` 输入并透传给三个 job，
+  装完跑 `envoy doctor --json` 做 A8 断言。落地提交 `cd449e3`、`1fe4113`。
+- 没做：Windows 上把 Chromium 与 Whisper 一起装的 `full` 一整轮（默认那轮 Chromium
+  是关的，`standard` 那轮转写是关的）；托管机有一次转写 `did not finish`，安装器照常
+  退出 0 并打印 `run envoy asr install --model base later` —— 这是容错行为，不是失败，
+  但也说明首次装并不总能一次装完，修复命令得保留。
