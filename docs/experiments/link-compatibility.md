@@ -1070,8 +1070,20 @@ uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解
   `$Script:UvHome`、`Ensure-Uv` 里不再出现 `$Script:EnvoyHome`。
 - 两次都确认了 `install.ps1` 的其它 A 项（A1/A3/A7）正常：PATH 可读、用户 PATH 被正确还原，
   说明问题只在这条自举链上，不是验收夹具。
-- `not_run`：0.1.29 的托管干净机重跑（run 40806377769）在写这轮时仍 `pending` 排队，
-  通过与否尚未拿到证据；本轮的 `unit_checked` 结论不依赖它是否已跑完。
+- `verified`（0.1.29，run 40810394272，同一台托管干净机、`profile=full scenario=fresh`，
+  `include_self_hosted=false`）：`干净机 / Hosted clean machine` 成功，PowerShell 5.1 与 7 两段都过。
+  日志实测：`03:08:41` 开装 → `03:08:42` `fetching uv 0.13.6 (no Python on this machine)`
+  → `03:10:44` `install: runtime 0.1.29, protocol envoy.read/1, browser ready, asr ready`
+  （PS 5.1 首装约 123 秒，含 uv 下载）；同一 runner 上 PS 7 复跑 `03:10:48` → `03:11:12`
+  只用 24 秒，说明 `ENVOY_UV_HOME`（`$RUNNER_TEMP\envoy-uv`）的缓存被复用、没有二次下载。
+  A8 断言全过：`profile=full`、`browser.ready=True`、`asr_model_available=True`。
+- 排队事故（同轮修掉）：旧 run 40803073176 的托管作业已失败，但两个自托管作业一直等不到
+  runner，整个 run 停在 `queued`；`concurrency.cancel-in-progress` 原为 `false`，
+  于是新派发的 40806377769 被压了 20 多分钟。修法：`cancel-in-progress: true`，
+  并给 `workflow_dispatch` 加 `include_self_hosted`（默认 `true`，只验托管机时传 `false`），
+  自托管作业的 `if` 读这个输入；回归断言见
+  `tests/test_windows_acceptance_workflow.py::test_a_dispatch_can_skip_the_self_hosted_jobs`
+  （12 passed）。
 
 ## 第三十七轮（公共 .docx / .pptx 在线读取：真实文件，不是夹具）
 
