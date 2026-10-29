@@ -253,3 +253,23 @@ def test_a_well_formed_id_with_no_stored_material_is_reported_missing():
     assert result.resolution == "unmatched"
     assert result.reason == "material_missing"
     assert "envoy_read" in " ".join(result.notes)
+
+
+def test_a_scoped_miss_says_the_rest_of_the_material_was_not_checked():
+    material_id = _material()
+    start, end = _slice_of("herons")
+    block_id = "blk-search-%d-%d-0123456789abcdef" % (start, end)
+
+    result = _check(material_id=material_id, block_id=block_id, quote="beavers")
+
+    assert result.reason == "quote_missing"
+    assert "not its whole text" in " ".join(result.notes)
+
+
+def test_a_whole_text_miss_does_not_claim_the_check_was_partial():
+    material_id = _material()
+
+    result = _check(material_id=material_id, block_id="blk-body-0001", quote="wombats")
+
+    assert result.reason == "quote_missing"
+    assert "not its whole text" not in " ".join(result.notes)

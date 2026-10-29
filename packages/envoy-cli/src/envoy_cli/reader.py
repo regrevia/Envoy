@@ -3478,12 +3478,21 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             reason="quote_not_provided",
             notes=["material resolves; pass block_id and the quoted sentence for a locatable check"],
         )
+    missing_notes = ["quoted text does not occur in the checked block"]
+    if target is not None and len(target["text"]) < len(str(stored.get("text") or "")):
+        # A block id narrows the check to one range, so a miss here is not a
+        # statement about the whole source; say that instead of letting the host
+        # read "absent" into a scoped answer.
+        missing_notes.append(
+            "the check covered only one block of this material, not its whole text; "
+            "the sentence may occur elsewhere — verify again without block_id"
+        )
     return reply(
         resolution="unmatched",
         quote_match="none",
         locator_valid=locator_valid,
         reason="quote_missing",
-        notes=notes + ["quoted text does not occur in the checked block"],
+        notes=notes + missing_notes,
     )
 
 
