@@ -1101,3 +1101,23 @@ uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解
 - 边界：样本本身很小，只证明「公网 Office 下载 → 解析 → 有正文」这条链通，
   不证明 64 MiB 解压上限、4000 条目上限的在线拒绝路径；那两个上限仍只有
   `unit_checked`（本地夹具），标记 `not_run`。
+
+## 第三十八轮（凭据转交开关：真 CLI + 真 MCP 进程的端到端门禁）
+
+开关本身以前只有单测和 `features.py` 层的断言，没有一条「用户按文档操作 → 宿主派发目录真的变」
+的证据。这一轮全部用真进程跑（临时 `HOME` + `ENVOY_CONFIG_DIR`，不碰真实 `~/.envoy`，
+全程没有任何真实凭据）：
+
+| 步骤 | 命令 | 实测 |
+| --- | --- | --- |
+| 默认 | `envoy auth handoff --json` | `enabled=False`、`source=default`、`config_path=<tmp>/config.json` |
+| 打开 | `envoy auth handoff on --json` | `enabled=True`、`source=config`、`changed=True` |
+| 宿主目录 | `envoy mcp` 读 stdin 的 `tools/list` | 5 个工具，末位 `envoy_auth` |
+| 关闭 | `envoy auth handoff off` | `Credential handoff: off (source: config)` |
+| 宿主目录 | `envoy mcp` 再读 `tools/list` | 4 个工具，`envoy_auth` 消失 |
+
+- 补充：环境变量覆盖也验了 —— `ENVOY_CREDENTIAL_HANDOFF=1`（不写配置）直接让 `tools/list`
+  变成 5 个；不设该变量时为 4 个。默认关闭、两种开启方式、关闭后立刻回收，都由真进程证明。
+- 落盘权限：开关写出的 `config.json` 是 `-rw-------`（0600），目录在临时 HOME 下。
+- 仍未证明的部分（保持 `not_run`）：用真凭据完成一次「认证页交给用户 → 会话被读取链路复用」的
+  全链路；这需要一个真实的登录站点和用户本人操作，自动化里只能用夹具，不能算实测。
