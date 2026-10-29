@@ -219,3 +219,15 @@ def test_every_provisioning_branch_also_verifies_the_profile(text: str):
     for line in branches:
         assert "Confirm-Health" in line, line
 
+
+
+def test_the_venv_wipe_runs_before_uv_is_fetched(text: str):
+    """The uv cache lives under the envoy home; wiping the home after the fetch
+    deleted the freshly downloaded uv.exe (hosted clean machine, run 40800453718)."""
+    runtime = text[text.index("function Install-Runtime"):]
+    runtime = runtime[: runtime.index("function ", 10)]
+    wipe = runtime.index("Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force")
+    assert wipe < runtime.index("Ensure-Uv"), "wipe must happen before the uv bootstrap"
+    assert runtime.count("Remove-Item -LiteralPath $Script:RuntimeHome") == 1, (
+        "the wipe moved up front; a second copy would reintroduce the race"
+    )

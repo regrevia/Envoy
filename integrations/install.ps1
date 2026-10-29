@@ -346,6 +346,13 @@ function Install-Runtime {
         Set-PinnedRuntime $Script:RuntimeBin
         return
     }
+    # A runtime home with no interpreter is a half-written venv; wipe it before
+    # uv is fetched, because the uv cache lives under the same home and would be
+    # deleted right after the download.
+    $pythonOk = Test-Path -LiteralPath (Join-Path $Script:RuntimeHome "Scripts\python.exe")
+    if (-not $pythonOk -and (Test-Path -LiteralPath $Script:RuntimeHome)) {
+        Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force
+    }
     $uv = Get-Command uv -ErrorAction SilentlyContinue
     if (-not $uv) {
         $bootstrapped = Ensure-Uv
@@ -355,9 +362,7 @@ function Install-Runtime {
         }
     }
     if ($uv) {
-        $pythonOk = Test-Path -LiteralPath (Join-Path $Script:RuntimeHome "Scripts\python.exe")
         if (-not $pythonOk) {
-            if (Test-Path -LiteralPath $Script:RuntimeHome) { Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force }
             Invoke-Step $uv.Source @("venv", "--quiet", "--python", "3.11", $Script:RuntimeHome)
         }
         # Download and verify before installing, so the uv path gets the same
@@ -377,8 +382,7 @@ function Install-Runtime {
     } else {
         $python = Get-Command python -ErrorAction SilentlyContinue
         if (-not $python) { Stop-Install "neither uv nor python is available; install Python 3.11+ (or uv) and re-run" }
-        if (-not (Test-Path -LiteralPath (Join-Path $Script:RuntimeHome "Scripts\python.exe"))) {
-            if (Test-Path -LiteralPath $Script:RuntimeHome) { Remove-Item -LiteralPath $Script:RuntimeHome -Recurse -Force }
+        if (-not $pythonOk) {
             Invoke-Step $python.Source @("-m", "venv", $Script:RuntimeHome)
         }
         $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("envoy-dl-" + [guid]::NewGuid().ToString("N"))
