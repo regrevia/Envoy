@@ -1185,3 +1185,41 @@ source-checkout 入口，未装 media extra）核对 `envoy doctor --json` 的�
 - 因此本机**没有**做真实 ASR 转录（装 media extra 属于额外依赖下载，用户离开期间不做），
   该项对 macOS 本机保持 `not_run`；Windows 托管干净机的 `asr_model_available=True` 已由
   run 40810394272 证明（第四十轮前的记录）。
+
+## 第四十二轮（B 站空间：能拿到候选，但标题曾经是错的）
+
+本机（装有 Chromium 的 `~/.local/bin/envoy`）对 `https://space.bilibili.com/2` 连跑两次，结果不同 ——
+这说明上一轮记的 `source_unavailable` 是**上游限流**，不是永久不支持：
+
+- 第一次：`yt-dlp` 侧 `[BilibiliSpaceVideo] 2: Request is blocked by server (412)`，
+  隔离浏览器快照也没拿到卡片 → `{"result":"blocked", code:"source_unavailable"}`。
+- 第二次：同样的命令直接成功，返回 `has_more=true`、`next_cursor=0eda1a9350fe44e98769:5`、
+  `stop_reason=page_limit`，候选是真实视频（`BV1ujNV6qEXg`、`BV172421f7Km`、`BV1Sh411N7pH`…）。
+
+**发现并修掉的缺陷**：成功那次候选的 `title` 是 `"167.5万 3992 00:19"` 这种统计条文字，`creator` 空、
+`duration_seconds` 为 null。原因是空间卡片对同一个视频有两个 `<a>`（封面一个、标题一个），旧代码
+按 id 去重时只留了第一个，把封面那块 `div` 的文字拼成了标题。现在的解析（`_bilibili_candidates`）：
+先用封面 `img[alt]`，否则取第一个「数字占比 < 40%」的标签（挡掉统计条/时长），时长从卡片文字里
+按 `mm:ss` / `hh:mm:ss` 解析。
+
+真实 HTML（`/tmp/bili_space.html`，408327 字节，现场抓的）复验：
+
+| URL | title | duration_seconds |
+| --- | --- | --- |
+| `BV1ujNV6qEXg` | 帮不帮？ | 22 |
+| `BV172421f7Km` | 极限竞速:地平线 新疆DLC | 299 |
+| `BV1Sh411N7pH` | 给B站第一个UP主改造房间是什么体验？「桌面改造计划第二季Vol.1」 | 849 |
+
+**顺带把「需要登录」说清楚**：被 412/352 挡住时，报错不再只说「没发现候选」，而是补一句下一步 ——
+开关关着时 `… run \`envoy auth handoff on\` and retry, or import existing cookies with \`envoy auth import\`.`，
+开关开着时改成「让用户完成登录页（envoy_auth）后重试」。实测输出：
+
+```
+{"result": "blocked", "error": {"code": "source_unavailable", "message":
+ "No public profile candidates were discovered in the Bilibili space. This space only answers a
+  signed-in session: run `envoy auth handoff on` and retry, or import existing cookies with `envoy auth import`."}}
+```
+
+回归：`pytest -q tests/cli`（带 `reportlab`/`yt-dlp`/`pyyaml`）= **979 passed**，
+新增 `tests/cli/test_bilibili_candidates.py` 6 个用例（封面 alt 优先、时长解析、无封面兜底、
+412 提示的两种开关状态、普通空页面不加提示）。

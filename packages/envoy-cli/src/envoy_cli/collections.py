@@ -240,6 +240,43 @@ def candidate_id(source_url: str) -> str:
     return prefix + hashlib.sha256(canonical.encode()).hexdigest()[:24]
 
 
+_SESSION_BLOCKED_MARKERS = (
+    "412",
+    "352",
+    "blocked by server",
+    "rejected by server",
+    "sign in",
+    "登录",
+    "captcha",
+    "risk control",
+)
+
+
+def _session_required_hint(platform: str, extractor_error: object, html: str) -> str:
+    """Say what the user can do when a profile only answers a signed-in session.
+
+    Only the server's own wording is inspected; no cookie value is read here, so
+    the hint cannot echo credentials back into a message.
+    """
+
+    if platform != "bilibili":
+        return ""
+    text = f"{extractor_error or ''} {(html or '')[:4000]}".lower()
+    if not any(marker in text for marker in _SESSION_BLOCKED_MARKERS):
+        return ""
+    from . import features
+
+    if features.credential_handoff_enabled():
+        return (
+            ". This space only answers a signed-in session: ask for the sign-in page "
+            "(envoy_auth) and retry after the user finishes it."
+        )
+    return (
+        ". This space only answers a signed-in session: run `envoy auth handoff on` and retry, "
+        "or import existing cookies with `envoy auth import`."
+    )
+
+
 def canonical_profile_url(value: str) -> tuple[str, str]:
     """Return the canonical profile URL and the platform that serves it."""
     parts = urlsplit(str(value or "").strip())
@@ -310,20 +347,59 @@ _BILIBILI_LINK = re.compile(
 _HTML_TAG = re.compile(r"<[^>]+>")
 
 
+_BILIBILI_ALT = re.compile(r"""alt\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
+_BILIBILI_DURATION = re.compile(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b")
+
+
+def _bilibili_card_text(inner: str) -> str:
+    return " ".join(_HTML_TAG.sub(" ", inner).split())
+
+
+def _bilibili_card_title(inners: list[str]) -> str:
+    """Prefer the cover alt text, then the shortest non-empty label.
+
+    A space card links the same video twice: once through the cover (whose alt
+    text is the title) and once through the title link. Keeping the first match
+    used to concatenate the stats strip and the duration into the title.
+    """
+
+    for inner in inners:
+        for alt in _BILIBILI_ALT.findall(inner):
+            text = " ".join(alt.split())
+            if text:
+                return text[:200]
+    labels = [t for t in (_bilibili_card_text(inner) for inner in inners) if t]
+    if not labels:
+        return ""
+    for label in labels:
+        compact = label.replace(" ", "")
+        if compact and sum(ch.isdigit() for ch in compact) / len(compact) < 0.4:
+            return label[:200]
+    return labels[0][:200]
+
+
+def _bilibili_card_duration(inners: list[str]) -> int | None:
+    for inner in inners:
+        for match in _BILIBILI_DURATION.finditer(_bilibili_card_text(inner)):
+            hours, minutes, seconds = match.groups()
+            if seconds is None:
+                return int(hours) * 60 + int(minutes)
+            return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+    return None
+
+
 def _bilibili_candidates(html: str, *, limit: int = 100) -> list[dict]:
     """Read the video links a rendered Bilibili space actually shows."""
-    rows: list[dict] = []
-    seen: set[str] = set()
+    cards: dict[str, list[str]] = {}
     for video_id, inner in _BILIBILI_LINK.findall(str(html or "")):
-        if video_id in seen:
-            continue
-        seen.add(video_id)
-        title = " ".join(_HTML_TAG.sub(" ", inner).split())[:200]
+        cards.setdefault(video_id, []).append(inner)
+    rows: list[dict] = []
+    for video_id, inners in cards.items():
         rows.append({
             "url": f"https://www.bilibili.com/video/{video_id}",
-            "title": title,
+            "title": _bilibili_card_title(inners),
+            "duration": _bilibili_card_duration(inners),
         })
-    
     return _candidate_records(rows, limit=limit)
 
 
@@ -489,6 +565,9 @@ def discover_profile(
         if not candidates:
             raise CollectionError(
                 "No public profile candidates were discovered in the Bilibili space"
+                + _session_required_hint(
+                    platform, extractor_error, str(getattr(page, "html", "") or "")
+                )
             )
     else:
         from . import browser
