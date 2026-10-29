@@ -1263,3 +1263,10 @@ MCP 的 read 预算里 `max_response_chars` 允许到 1_000_000，但 `max_total
 
 诚实边界：以上是**本机生成的文本型 PDF**，不代表真实扫描件（无 OCR）；真实长新闻/论文 PDF 的在线抓取
 仍是 `not_run`（用户离开期间不做大文件下载）。ASR 在 macOS 本机依旧是 `not_run`。
+
+**发行（0.1.30）**：上述修改随 `c1e1d08` / 发布提交 `4732a52` 打标签 `v0.1.30`，
+`Envoy Release` run 40815016762 成功，7 个资产齐全（`envoy_cli-0.1.30-py3-none-any.whl`、
+`envoy-dsh-0.1.30.tgz`、`envoy-skill.zip`、`install.ps1`、`install.sh`、`release-manifest.json`、
+`SHA256SUMS`）；下载 whl 后用 `SHA256SUMS` 校验为 `OK`。Windows 验收 run 40815166638：
+托管干净机 job 成功，两个自托管 job（PowerShell 7 / 5.1，`both` 场景 = 全新装 + 从 0.1.23 升级各一遍
+全量档）在 12:30 仍在执行中，结果待定 —— 这一项本轮记为 `not_run`（进行中），不写作成功。
