@@ -9,7 +9,7 @@
 - 没有任何 Python 的 Windows 机器上的完整安装修好了：自取的 `uv.exe` 不再放进 venv 目标目录、也不会被「清理半成品运行目录」删掉，缓存改到 `%LOCALAPPDATA%\envoy-dsh\tools\uv`（可用 `ENVOY_UV_HOME` 指定）；托管干净机的 0.1.27 / 0.1.28 验收依次死在这两步。
 - A red CI run no longer strands a version: when the tag is missing, the release is retried even though the package version did not change.
 - Full install on a Windows machine with no Python works: the fetched `uv.exe` no longer lands inside the venv target and is no longer wiped with a half-written runtime; it is cached under `%LOCALAPPDATA%\envoy-dsh\tools\uv` (override with `ENVOY_UV_HOME`).
-- 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `~/.envoy/tools/uv/`，`envoy asr install --model base` 因此在干净机器上也能装好。
+- 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `%LOCALAPPDATA%\envoy-dsh\tools\uv`，`envoy asr install --model base` 因此在干净机器上也能装好。
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
   （A8：`minimal` 无浏览器无转写引擎、`standard` 浏览器就绪、`full` 两者都在）。
@@ -70,7 +70,7 @@
   with `icacls` and grant only the running account (POSIX keeps 0600/0700; unit
   tests cover both paths).
 - A full install no longer needs `uv` to exist first: Envoy downloads the official
-  binary, verifies its published SHA-256, and keeps it in `~/.envoy/tools/uv/`, so
+  binary, verifies its published SHA-256, and keeps it in its own tools cache, so
   `envoy asr install --model base` also works on a clean machine.
 - Windows acceptance can now verify one install profile on its own: `acceptance.ps1`
   takes `-Profile`, the workflow takes a `profile` input, and the run asserts what that
@@ -140,11 +140,11 @@
 
 ## 0.1.27
 
-- 完整安装时如果机器上没有 `uv`，Envoy 自己下好它（按官方发布包的 SHA-256 校验，存到 `~/.envoy/tools/uv/`），ASR 模型因此不再需要用户先装工具链——GitHub 托管干净机上 `envoy asr install --model base` 因缺 uv 而失败的路径已修。
+- 完整安装时如果机器上没有 `uv`，Envoy 自己下好它（按官方发布包的 SHA-256 校验，存进 Envoy 的 tools 缓存（0.1.29 起位置见上）），ASR 模型因此不再需要用户先装工具链——GitHub 托管干净机上 `envoy asr install --model base` 因缺 uv 而失败的路径已修。
 - YouTube 播放列表可用 `envoy_discover` 枚举（只取元数据，不下载媒体）。
 ## 0.1.27
 
-- A full install no longer needs `uv` to be present first: Envoy downloads the official binary once, verifies its published SHA-256, and keeps it in `~/.envoy/tools/uv/`, so `envoy asr install --model base` works on a clean machine.
+- A full install no longer needs `uv` to be present first: Envoy downloads the official binary once, verifies its published SHA-256, and keeps it in Envoy's tools cache (relocated in 0.1.29), so `envoy asr install --model base` works on a clean machine.
 - A YouTube playlist is enumerable through `envoy_discover` (metadata only, no media download).
 
 ## 0.1.26 - 2026-10-28
