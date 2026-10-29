@@ -12,6 +12,7 @@ from typing import Any, Iterable, TextIO
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse
 
 from envoy_core.schemas.read_v1 import (
+    EvidenceCheckRequest,
     ExpandRequest,
     LocalVideoReadRequest,
     MaterialReplayRequest,
@@ -50,6 +51,7 @@ from .reader import (
     PublicPageError,
     _estimated_tokens,
     _redact_url,
+    check_evidence,
     expand_material,
     read_public_page,
     record_visual_observation,
@@ -239,13 +241,22 @@ SEARCH_SCHEMA = {
 REPLAY_SCHEMA = {
     "type": "object",
     "additionalProperties": True,
-    "required": ["material_id", "source_revision", "session_id"],
+    "required": ["material_id", "source_revision"],
     "properties": {
         "material_id": {"type": "string"},
-        "source_revision": {"type": "string"},
+        "source_revision": {
+            "type": "string",
+            "description": (
+                "The 64-char source_revision from the earlier read receipt; a "
+                "different revision is refused rather than silently re-read."
+            ),
+        },
         "session_id": {
             "type": "string",
-            "description": "Target session; must differ from the source session.",
+            "description": (
+                "Target session; omit it and the bridge replays into this host "
+                "session. Must differ from the source session."
+            ),
         },
         "source_session_id": {"type": ["string", "null"]},
         "max_chars": {"type": "integer", "minimum": 256, "maximum": 100000},
@@ -270,6 +281,17 @@ OBSERVE_VISUAL_SCHEMA = {
                 "answering from a different process or surface."
             ),
         },
+    },
+}
+
+EVIDENCE_CHECK_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["material_id"],
+    "properties": {
+        "material_id": {"type": "string"},
+        "block_id": {"type": "string"},
+        "quote": {"type": "string"},
     },
 }
 
@@ -476,6 +498,19 @@ TOOLS = [
             "searches omit passages already returned by search."
         ),
         "inputSchema": SEARCH_SCHEMA,
+    },
+    {
+        "name": "envoy_verify",
+        "description": (
+            "Check a citation against material Envoy still holds on this "
+            "machine: does the material lease exist, does the cited block "
+            "resolve, does the quote occur in it, and does its locator name a "
+            "place that was really extracted. resolution/quote_match/locator_valid "
+            "are deterministic; semantic_support is always not_evaluated because "
+            "whether the passage supports the claim is your judgement, not "
+            "Envoy's. Requires the 'full' MCP toolset."
+        ),
+        "inputSchema": EVIDENCE_CHECK_SCHEMA,
     },
     {
         "name": "envoy_doctor",
@@ -932,15 +967,20 @@ def _needs_lines(
             "inspect the delivered video with native video input; this is a handoff, "
             "not a terminal state"
         )
-    if "inspect_visual" in action_types or "inspect_video" not in action_types:
+    # Frames, image resources and envoy_observe apply only to a visual read. A login
+    # wall is a text read with a human step; pointing the caller at resources it
+    # never got sends it looking for files that do not exist.
+    visual = bool(resources) or bool(action_types & {"inspect_visual", "inspect_video"})
+    if visual and "inspect_visual" in action_types:
         lines.append(
             "inspect each listed resource before its lease expires; this is a handoff, "
             "not a terminal state"
         )
-    lines.append(
-        "call envoy_observe once per inspected resource with its matching material_id, "
-        "resource_id, source_block_id and original session_id"
-    )
+    if visual:
+        lines.append(
+            "call envoy_observe once per inspected resource with its matching material_id, "
+            "resource_id, source_block_id and original session_id"
+        )
     resource_ids: list[str] = []
     source_block_ids: list[str] = []
     for need in needs[:6]:
@@ -985,6 +1025,12 @@ def _needs_lines(
             "each path above is an absolute file on this machine: open it with an image or "
             "file tool to view the original frame, and quote the locator when you cite it"
         )
+    if not visual:
+        lines.append(
+            "this read delivered no material: complete the step above for this source, "
+            "then call envoy_read again for the same URL"
+        )
+        return lines
     lines.append(
         "source URL may be omitted when the material is retained because Envoy derives "
         "and verifies it from the delivered resource"
@@ -1035,6 +1081,8 @@ def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: 
         lines.append(f"unresolved: {note}")
     if material_id:
         offset = "<chars already delivered>"
+        next_offset = None
+        reason = ""
         for error in errors[:1]:
             details = error.get("details")
             if isinstance(details, dict):
@@ -1043,15 +1091,32 @@ def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: 
                     last = delivered[-1]
                     if isinstance(last, list) and len(last) == 2:
                         offset = str(last[1])
+                if details.get("next_offset") is not None:
+                    next_offset = str(details["next_offset"])
+                reason = str(details.get("reason") or "")
         lines.append("")
+        if reason == "material_fully_delivered":
+            lines.append(
+                "this material is fully delivered; no offset adds new text — answer "
+                "from the blocks above, or envoy_read with refresh=true for a new revision"
+            )
+            return lines
+        if next_offset is not None:
+            offset = next_offset
         lines.append(
             f"next: envoy_expand material_id={material_id} offset={offset} "
             f"max_chars={budget}"
         )
-        lines.append(
-            "re-reading the URL is blocked; call envoy_replay with this material_id "
-            "in a new session, or envoy_expand for more of the retained material"
-        )
+        if reason == "range_already_delivered":
+            lines.append(
+                "that offset is the next range not yet delivered; the range this call "
+                "asked for was already returned earlier"
+            )
+        else:
+            lines.append(
+                "re-reading the URL is blocked; call envoy_replay with this material_id "
+                "in a new session, or envoy_expand for more of the retained material"
+            )
     return lines
 
 
@@ -1078,7 +1143,24 @@ def _empty_lines(payload: dict) -> list[str]:
         terms = details.get("query_terms")
         if isinstance(terms, list) and terms:
             lines.append("query terms: " + ", ".join(str(term) for term in terms))
-        lines.append("next: envoy_search with different query terms, or envoy_expand for a raw range")
+        # Re-searching cannot produce what was already handed over: the passages
+        # exist in an earlier response, and a search response never re-delivers
+        # them. Say where to look instead of recommending another search.
+        next_offset = details.get("next_offset")
+        if next_offset is None:
+            next_offset = text.get("next_offset")
+        if next_offset is None:
+            next_offset = coverage.get("next_offset")
+        if next_offset is not None:
+            lines.append(
+                f"next: read the matching passages from the earlier response; "
+                f"envoy_expand offset={next_offset} returns the raw text from there"
+            )
+        else:
+            lines.append(
+                "next: read the matching passages from the earlier response; it "
+                "reports the coverage.next_offset to pass to envoy_expand for raw text"
+            )
         return lines
     return ["no content returned for this request"]
 
@@ -1172,6 +1254,11 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
                 f"next: envoy_expand material_id={material_id} offset={delivered} "
                 f"max_chars={budget} (or envoy_search material_id=… query=…); "
                 "do not re-read the URL"
+            )
+            tail.append(
+                "citations that must outlive the lease: keep the quoted words and "
+                "the source URL, because material_id expires and envoy_verify will "
+                "then answer material_expired rather than resolve it"
             )
         else:
             tail.append(
@@ -2129,6 +2216,10 @@ def handle_message(
         elif name == "envoy_search":
             response = search_material(MaterialSearchRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_verify":
+            payload = check_evidence(
+                EvidenceCheckRequest.model_validate(arguments)
+            ).model_dump(mode="json")
         elif name == "envoy_doctor":
             payload = {
                 "tool": "envoy",

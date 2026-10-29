@@ -1,5 +1,7 @@
 from .read_v1 import (
     ErrorCode,
+    EvidenceCheckRequest,
+    EvidenceCheckResponse,
     ImageRegionLocator,
     MaterialBlock,
     ReadRequest,
@@ -12,6 +14,8 @@ from .read_v1 import (
 
 __all__ = [
     "ErrorCode",
+    "EvidenceCheckRequest",
+    "EvidenceCheckResponse",
     "ImageRegionLocator",
     "MaterialBlock",
     "ReadRequest",

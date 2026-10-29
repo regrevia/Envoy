@@ -68,6 +68,9 @@ def test_content_text_carries_the_material_handle_and_next_step() -> None:
     assert "session_id=sess-1" in text
     assert "envoy_expand material_id=mat-abc123" in text
     assert "do not re-read the URL" in text
+    # A retained handle is a lease, not a permanent citation: say so where the
+    # model is told to keep the handle instead of the words.
+    assert "keep the quoted words" in text
 
 
 def test_search_text_carries_hit_text_and_offsets() -> None:
@@ -79,7 +82,7 @@ def test_search_text_carries_hit_text_and_offsets() -> None:
         "session_id": "sess-1",
         "blocks": [
             {
-                "id": "blk-search-0001",
+                "id": "blk-search-4f0b9d2c77aa10e5",
                 "kind": "paragraph",
                 "order": 512,
                 "content": {"type": "text", "text": "Hit: NEEDLE=42 near the offset."},
@@ -93,7 +96,7 @@ def test_search_text_carries_hit_text_and_offsets() -> None:
 
     assert "Hit: NEEDLE=42 near the offset." in text
     assert "mat-abc123" in text
-    assert "512" in text or "0-512" in text or "blk-search-0001" in text
+    assert "512" in text or "0-512" in text or "blk-search-4f0b9d2c77aa10e5" in text
 
 
 def test_needs_host_text_carries_the_observe_call_shape() -> None:

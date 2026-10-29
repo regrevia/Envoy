@@ -59,11 +59,16 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
         "envoy_doctor",
         "envoy_observe",
         "envoy_visual_history",
+        "envoy_verify",
     }
     assert "needs_host response is a handoff, not a terminal state" in tools["envoy_read"]["description"]
     assert "inspect every" in tools["envoy_read"]["description"]
     assert "one observation per inspected resource" in tools["envoy_observe"]["description"]
     assert "idempotency_key" in tools["envoy_read_local_video"]["inputSchema"]["required"]
+    # A string match proves the words are in the material, never that they back
+    # the claim, so the tool must say the semantic half stays unjudged.
+    assert "not_evaluated" in tools["envoy_verify"]["description"]
+    assert "semantic_support is always not_evaluated" in tools["envoy_verify"]["description"]
 
 
 def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):

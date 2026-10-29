@@ -72,6 +72,8 @@ from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
     ErrorCode,
+    EvidenceCheckRequest,
+    EvidenceCheckResponse,
     ExpandRequest,
     ExecutionState,
     HostDelivery,
@@ -2980,6 +2982,280 @@ def _cached_material_read_response(
     )
 
 
+def _stable_evidence_digest(*parts: object) -> str:
+    """Content/locator-derived suffix so a block id survives a re-query.
+
+    Position-based ids (``blk-search-0001``) change whenever a different query
+    touches the same material, which makes a citation unverifiable later. The
+    digest covers the material, the offset and the text itself.
+    """
+
+    identity = "\0".join(str(part) for part in parts)
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+def _evidence_text(content: object) -> str:
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _normalize_quote_text(value: str) -> str:
+    """Whitespace-insensitive comparison form; punctuation and wording stay exact."""
+
+    return re.sub(r"\s+", "", value.replace("\u200b", "").replace("\ufeff", ""))
+
+
+def _coverage_pages(stored: dict) -> set[int]:
+    pages: set[int] = set()
+    for key in ("page_spans", "pdf_page_spans", "text_pages"):
+        spans = stored.get(key)
+        if not isinstance(spans, list):
+            continue
+        for span in spans:
+            if isinstance(span, dict):
+                page = span.get("page_number", span.get("page"))
+                if isinstance(page, int) and page >= 1:
+                    pages.add(page)
+            elif isinstance(span, int):
+                pages.add(span)
+    return pages
+
+
+def _stored_evidence_blocks(stored: dict) -> list[dict]:
+    """Return the block view a citation check can resolve against.
+
+    Web, video and office records keep their blocks on disk. PDF records keep
+    only the flat text plus per-page character spans, so the block view has to
+    be rebuilt exactly as a replay rebuilds it; otherwise every page citation
+    would be reported as a missing block.
+    """
+
+    raw = stored.get("blocks")
+    if isinstance(raw, list) and raw:
+        return [block for block in raw if isinstance(block, dict)]
+    spans = stored.get("page_spans")
+    if not isinstance(spans, list):
+        return []
+    text = str(stored.get("text") or "")
+    blocks: list[dict] = []
+    title_text = str(stored.get("title_text") or "").strip()
+    if title_text:
+        blocks.append(
+            {
+                "id": "blk-title",
+                "content": {"type": "text", "text": title_text},
+                "locator": None,
+            }
+        )
+    for span in spans:
+        if not isinstance(span, dict):
+            continue
+        try:
+            page_number = int(span.get("page_number") or 0)
+            start = int(span.get("start") or 0)
+            end = int(span.get("end") or 0)
+        except (TypeError, ValueError):
+            continue
+        if page_number < 1 or end <= start or start < 0 or end > len(text):
+            continue
+        blocks.append(
+            {
+                "id": f"blk-pdf-page-{page_number:04d}",
+                "content": {"type": "text", "text": text[start:end]},
+                "locator": {
+                    "type": "pdf_page",
+                    "page_number": page_number,
+                    "locator_valid": True,
+                },
+            }
+        )
+    return blocks
+
+
+def _evidence_revision_kind(stored: dict, source_revision: str | None) -> str:
+    """Say what the stored revision string traces to, not more.
+
+    PDF reads hash the file bytes; several media paths fall back to hashing the
+    URL. Both are 64 hex characters, so the length proves nothing — only the
+    source kind and a comparison against the URL digest separate them.
+    """
+
+    if not source_revision:
+        return "unknown"
+    if stored.get("source_kind") == "pdf":
+        return "byte_digest"
+    source_url = stored.get("source_url")
+    if isinstance(source_url, str) and source_url:
+        if source_revision == hashlib.sha256(source_url.encode("utf-8")).hexdigest():
+            return "url_digest"
+    return "unknown"
+
+
+def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
+    """Settle the deterministic half of a citation check on this machine.
+
+    Envoy answers three questions and refuses the fourth: does the material still
+    exist, does the cited block resolve, does the quote occur in it, and does the
+    locator name a place that was actually extracted. Whether the cited text
+    *supports* the claim stays with the host model; ``semantic_support`` is
+    always ``not_evaluated``.
+    """
+
+    material_id = request.material_id.strip()
+    block_id = request.block_id.strip() if isinstance(request.block_id, str) else None
+    quote = request.quote if isinstance(request.quote, str) else None
+    base = {
+        "material_id": material_id,
+        "block_id": block_id,
+        "evidence_id": "ev-" + (hashlib.sha256(
+            "\0".join((material_id, block_id or "", quote or "")).encode("utf-8")
+        ).hexdigest()[:24]),
+    }
+
+    def reply(**kwargs) -> EvidenceCheckResponse:
+        return EvidenceCheckResponse(**base, **kwargs)
+
+    if not re.fullmatch(r"mat-[a-f0-9]{24}", material_id):
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_missing",
+            notes=["material_id is not one Envoy issued; copy it from a read or search response"],
+        )
+    # Deliberately skip the expiry sweeper: it deletes an expired lease before a
+    # check could report that it expired, which would turn "your lease ran out,
+    # re-read the source" into an indistinguishable "no such material".
+    root = storage.resolve_material_root()
+    source_path = root / f"{material_id}.json"
+    expiry_path = root / f"{material_id}.expires"
+    if source_path.is_symlink() or expiry_path.is_symlink() or not source_path.is_file():
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_missing",
+            notes=["no retained material under this id on this machine"],
+        )
+    try:
+        stored = json.loads(source_path.read_text(encoding="utf-8"))
+        expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError, TypeError):
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_missing",
+            notes=["retained material is unreadable"],
+        )
+    if not isinstance(stored, dict):
+        return reply(
+            resolution="unmatched", quote_match="none", locator_valid=False,
+            reason="material_missing", notes=["retained material is not a material record"],
+        )
+    source_revision = str(stored.get("source_revision") or "") or None
+    base["source_revision"] = source_revision
+    base["source_revision_kind"] = _evidence_revision_kind(stored, source_revision)
+    blocks = _stored_evidence_blocks(stored)
+    by_id = {str(block.get("id")): block for block in blocks if block.get("id")}
+    if expires_at <= time.time():
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_expired",
+            notes=["material lease expired; re-read the source to cite it again"],
+        )
+
+    target = by_id.get(block_id) if block_id else None
+    if block_id and target is None:
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="block_missing",
+            notes=["this material holds no block with that id; block ids are not portable across materials"],
+        )
+    search_text = _evidence_text(target.get("content")) if target else "\n".join(
+        _evidence_text(block.get("content")) for block in blocks
+    )
+    quote_match = "none"
+    if quote:
+        if quote in search_text:
+            quote_match = "exact"
+        elif _normalize_quote_text(quote) and _normalize_quote_text(quote) in _normalize_quote_text(search_text):
+            quote_match = "normalized"
+    found_quote = quote_match in ("exact", "normalized")
+    locator = target.get("locator") if target else None
+    notes: list[str] = []
+    locator_valid = False
+    if isinstance(locator, dict):
+        locator_type = str(locator.get("type") or "")
+        if locator_type == "pdf_page":
+            page = locator.get("page_number")
+            pages = _coverage_pages(stored)
+            locator_valid = (
+                locator.get("locator_valid", True) is not False
+                and isinstance(page, int)
+                and page >= 1
+                and (not pages or page in pages)
+            )
+            if not locator_valid:
+                notes.append(
+                    "PDF text offset falls outside the extracted page spans; "
+                    "re-read with page_start/page_end to obtain a page locator"
+                )
+        elif locator_type in ("web", "video_time", "audio_time", "image_region", "office_location"):
+            locator_valid = True
+            if locator_type == "web" and locator.get("block_id") and str(locator["block_id"]) not in by_id:
+                locator_valid = False
+                notes.append("locator points at a block this material no longer holds")
+
+    if target is not None and not quote:
+        return reply(
+            resolution="matched",
+            quote_match="none",
+            locator_valid=locator_valid,
+            reason="block_found" if locator_valid else "quote_not_provided",
+            notes=notes + (["quote not provided; pass the sentence you intend to cite to check it here"] if quote is None else []),
+        )
+    if found_quote:
+        if locator_valid:
+            reason = "quote_found"
+        else:
+            reason = "no_locator" if locator is None else "locator_unverifiable"
+            if locator is None:
+                notes.append(
+                    "this block carries no locator; the words are in the material "
+                    "but the passage cannot be pinned to a page, time or region"
+                )
+        return reply(
+            resolution="matched",
+            quote_match=quote_match,
+            locator_valid=locator_valid,
+            reason=reason,
+            notes=notes,
+        )
+    if quote is None:
+        return reply(
+            resolution="matched" if blocks else "unmatched",
+            quote_match="none",
+            locator_valid=locator_valid,
+            reason="quote_not_provided",
+            notes=["material resolves; pass block_id and the quoted sentence for a locatable check"],
+        )
+    return reply(
+        resolution="unmatched",
+        quote_match="none",
+        locator_valid=locator_valid,
+        reason="quote_missing",
+        notes=notes + ["quoted text does not occur in the checked block"],
+    )
+
+
 def replay_material(request: MaterialReplayRequest) -> ReadResponse:
     """Replay retained evidence into a fresh host session without mutating its ledger."""
     root = _material_root()
@@ -3618,18 +3894,28 @@ def _expand_blocked(
     request: ExpandRequest,
     message: str,
     stored: dict | None = None,
+    code: ErrorCode = ErrorCode.BUDGET_EXCEEDED,
+    reason: str | None = None,
 ) -> ReadResponse:
     source_unresolved = _source_coverage_unresolved(stored or {})
     material = stored or {}
     text_length = len(str(material.get("text") or ""))
     state = material.get("budget_state")
+    delivered_ranges = _material_returned_ranges(
+        state if isinstance(state, dict) else {},
+        text_length,
+    )
     details = {
         "text_length": text_length,
-        "delivered_ranges": _material_returned_ranges(
-            state if isinstance(state, dict) else {},
-            text_length,
-        ),
+        "delivered_ranges": delivered_ranges,
     }
+    # A refusal that is not about budget still has to say where the unread text
+    # resumes, or the caller has nowhere to go next.
+    undelivered = _unseen_ranges(0, text_length, delivered_ranges)
+    if undelivered:
+        details["next_offset"] = undelivered[0][0]
+    if reason:
+        details["reason"] = reason
     return ReadResponse(
         request_id=request.request_id,
         material_id=request.material_id,
@@ -3637,7 +3923,7 @@ def _expand_blocked(
         result=ReadResult.BLOCKED,
         errors=[
             ReadError(
-                code=ErrorCode.BUDGET_EXCEEDED,
+                code=code,
                 message=message,
                 details=details,
             )
@@ -4159,7 +4445,8 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             )
             locator = PdfLocator(
                 type="pdf_page",
-                page_number=int(span["page_number"]) if span else 1,
+                page_number=int(span["page_number"]) if span else None,
+                locator_valid=span is not None,
             )
         elif stored.get("source_kind") == "image":
             ocr_span = next(
@@ -4208,7 +4495,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 quote=content[:MAX_LOCATOR_QUOTE_CHARS],
             )
         blocks.append(MaterialBlock(
-            id=f"blk-search-{len(blocks) + 1:04d}",
+            id=f"blk-search-{_stable_evidence_digest(material_id, start, content)}",
             kind=(
                 MaterialKind.TRANSCRIPT
                 if stored.get("source_kind") == "video"
@@ -4407,7 +4694,26 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             else total_token_remaining
         )
     if _unseen_ranges(offset, end, all_returned_ranges) != [(offset, end)]:
-        return _expand_blocked(request, "The requested material range overlaps an earlier response", stored)
+        remaining = _unseen_ranges(0, len(total_text), all_returned_ranges)
+        if not remaining:
+            # Nothing is left unread: repeating "call envoy_expand" here sends the
+            # caller in a circle.
+            return _expand_blocked(
+                request,
+                "The material has already been delivered in full; this range adds "
+                "no new text",
+                stored,
+                code=ErrorCode.RANGE_ALREADY_DELIVERED,
+                reason="material_fully_delivered",
+            )
+        return _expand_blocked(
+            request,
+            "The requested range overlaps an earlier response; the next undelivered "
+            f"range starts at character {remaining[0][0]}",
+            stored,
+            code=ErrorCode.RANGE_ALREADY_DELIVERED,
+            reason="range_already_delivered",
+        )
     if stored.get("source_kind") == "pdf":
         spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
         page_blocks: list[MaterialBlock] = []
