@@ -1320,3 +1320,11 @@ SDK/CLI 这条路没抬）→ 把抬平逻辑放进 `Budget.validate_totals`：�
   `tests/cli` + `tests/core_protocol` 1007 passed / 58.36 秒。
 
 ## 发行（0.1.33）
+- 0.1.33 wheel 与 core 在 `/tmp/envoy-tools33` 隔离安装：`envoy --version` = `envoy-cli 0.1.33 (core 0.1.33)`，
+  `envoy cache status` 多出 `browser cache 5 items 1.6 MB (reclaimable)` 一行
+  （一次回收后 Chromium 在十几分钟内又长出来的量），`envoy cache prune --dry-run` 说 `would remove 5 entries (1.6 MB)`，
+  实跑 `removed 5 entries (1.6 MB freed)`，`Default/Cookies` 仍在。
+- 发行链：tag `v0.1.33`，Auto Release 40824523890 success → Envoy Release 40824794024 success，
+  7 个资产齐全（`envoy-dsh-0.1.33.tgz`、`envoy-skill.zip`、`envoy_cli-0.1.33-py3-none-any.whl`、
+  `install.ps1`、`install.sh`、`release-manifest.json`、`SHA256SUMS`）。
+- 托管干净机验收 40825123260 success（Windows Server 2022，`profile=full`、`scenario=fresh`，PS5.1+PS7 两种都过）。
