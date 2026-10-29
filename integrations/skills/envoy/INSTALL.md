@@ -1,7 +1,7 @@
 # Envoy 安装 / Install
 
 Envoy 由三部分组成：Skill 指令、本地 CLI runtime、宿主 MCP 连接。当前开发版
-`0.1.30`，发行说明以 `CHANGELOG.md` 为准。
+`0.1.31`，发行说明以 `CHANGELOG.md` 为准。
 
 装哪个宿主都只需要一条命令：脚本先确认 `PATH` 上有够新的 `envoy`（已装且够新
 就复用），再装该宿主的插件。**不需要先手动装 CLI**，也不需要先跑
@@ -65,7 +65,7 @@ Windows 路径本身还没在真机上跑过，结果以 `COMPATIBILITY.md` 的�
 ```bash
 dsh plugin --profile web add envoy-dsh
 # 或装发行包，不经过 npm
-dsh plugin --profile web add https://github.com/regrevia/Envoy/releases/download/v0.1.30/envoy-dsh-0.1.30.tgz
+dsh plugin --profile web add https://github.com/regrevia/Envoy/releases/download/v0.1.31/envoy-dsh-0.1.31.tgz
 ```
 
 桌面版把 CLI 装在应用包内，用脚本时它会自己找到。
@@ -101,12 +101,12 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 `~/.envoy/skill/envoy`（`ENVOY_SKILL_DIR` 可改目标）。要手工来一遍：
 
 ```bash
-gh release download v0.1.30 --repo regrevia/Envoy --dir envoy-v0.1.30
-cd envoy-v0.1.30
-uv tool install --python 3.11 ./envoy_cli-0.1.30-py3-none-any.whl
+gh release download v0.1.31 --repo regrevia/Envoy --dir envoy-v0.1.31
+cd envoy-v0.1.31
+uv tool install --python 3.11 ./envoy_cli-0.1.31-py3-none-any.whl
 ```
 
-也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.30)
+也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.31)
 页面上直接下载 wheel 与 `SHA256SUMS` 手工核对。下载慢或装依赖超时，给
 `install.sh` 设 `ENVOY_PYPI_INDEX_URL` 指向可用镜像即可。
 
@@ -185,7 +185,7 @@ of it) varies by platform and is not measured here.
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 
 # 单独换 wheel
-uv tool install --force --python 3.11 ./envoy_cli-0.1.30-py3-none-any.whl
+uv tool install --force --python 3.11 ./envoy_cli-0.1.31-py3-none-any.whl
 
 # 卸载
 claude plugin uninstall envoy
@@ -211,7 +211,9 @@ PyPI 上；且 CLI 要 Python >= 3.10，macOS 自带的 `python3` 是 3.9。脚�
   `envoy browser setup`。
 - **ASR（本地视频转写）**：需要时按提示装 FFmpeg 与对应模型；没有它时视频页
   会退化成读页面正文并标 `partial`，不是整条失败。手工装可跑
-  `envoy asr install --model base`。
+  `envoy asr install --model base`。下载可以断点续跑：默认 10 分钟没下完就停下并保留断点，
+  再跑一次同一命令从断点继续，网络慢时可调大 `ENVOY_ASR_DOWNLOAD_SECONDS`；
+  不想现在装就在启动安装器前设 `ENVOY_SETUP_MEDIA=0`。
 - **OCR**：截图里的文字在缺 OCR 时不可用，装好后再读同一 `material_id`。
 
 ## Scope and license

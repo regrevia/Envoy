@@ -680,6 +680,45 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+_ASR_DOWNLOAD_CHUNK_BYTES = 256 * 1024
+_ASR_DOWNLOAD_REPORT_SECONDS = 8.0
+
+
+class _AsrDownloadBudgetExceeded(Exception):
+    def __init__(self, downloaded: int, total: int = 0) -> None:
+        super().__init__(downloaded, total)
+        self.downloaded = downloaded
+        self.total = total
+
+
+def _asr_download_seconds_budget() -> float:
+    raw = os.environ.get("ENVOY_ASR_DOWNLOAD_SECONDS", "")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 600.0
+    return value if value > 0 else 600.0
+
+
+def _format_download_size(value: int) -> str:
+    return f"{value / (1024 * 1024):.1f} MB"
+
+
+def _format_download_eta(seconds: float) -> str:
+    if seconds < 90:
+        return f"{max(int(seconds), 1)}s"
+    return f"{int(round(seconds / 60))}m"
+
+
+def _response_total_bytes(response, offset: int) -> int:
+    content_length = response.headers.get("Content-Length", "")
+    try:
+        length = int(content_length)
+    except (TypeError, ValueError):
+        return 0
+    return offset + length if length > 0 else 0
+
+
 def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[str, Any]:
     url = str(whisper._MODELS[model_name])
     parsed = urlsplit(url)
@@ -692,14 +731,17 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
     if target.is_file() and _sha256_file(target) == expected_sha256:
         return {"downloaded_bytes": 0, "resumed": False, "sha256": expected_sha256}
 
+    budget = _asr_download_seconds_budget()
+    deadline = time.monotonic() + budget
     partial = target.with_name(target.name + ".part")
     resumed = partial.is_file() and partial.stat().st_size > 0
     last_error = None
-    last_progress = 0
     for attempt in range(20):
         offset = partial.stat().st_size if partial.exists() else 0
         headers = {"Range": f"bytes={offset}-"} if offset else {}
         request = urllib.request.Request(url, headers=headers)
+        total = 0
+        attempt_started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 status = getattr(response, "status", None)
@@ -712,21 +754,36 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
                 content_range = response.headers.get("Content-Range", "")
                 if append and content_range and not content_range.startswith(f"bytes {offset}-"):
                     raise MediaProcessingError("Whisper model server returned an unexpected range")
+                total = _response_total_bytes(response, offset)
                 mode = "ab" if append else "wb"
+                last_report = time.monotonic()
                 with partial.open(mode) as destination:
                     while True:
-                        chunk = response.read(1024 * 1024)
+                        if time.monotonic() >= deadline:
+                            raise _AsrDownloadBudgetExceeded(destination.tell(), total)
+                        chunk = response.read(_ASR_DOWNLOAD_CHUNK_BYTES)
                         if not chunk:
                             break
                         destination.write(chunk)
-                        downloaded = destination.tell()
-                        if downloaded - last_progress >= 16 * 1024 * 1024:
-                            print(
-                                f"Whisper model download checkpoint: {downloaded} bytes",
-                                file=sys.stderr,
-                                flush=True,
+                        now = time.monotonic()
+                        if now - last_report >= _ASR_DOWNLOAD_REPORT_SECONDS:
+                            downloaded = destination.tell()
+                            elapsed = max(now - attempt_started, 1e-6)
+                            rate = max(downloaded - offset, 0) / elapsed
+                            message = (
+                                f"Whisper model download: {_format_download_size(downloaded)}"
                             )
-                            last_progress = downloaded
+                            if total > downloaded:
+                                message += f" of {_format_download_size(total)}"
+                            if rate > 0:
+                                message += f" ({_format_download_size(int(rate))}/s"
+                                if total > downloaded:
+                                    message += ", eta " + _format_download_eta(
+                                        (total - downloaded) / rate
+                                    )
+                                message += ")"
+                            print(message, file=sys.stderr, flush=True)
+                            last_report = now
                     destination.flush()
                     os.fsync(destination.fileno())
             if _sha256_file(partial) == expected_sha256:
@@ -738,6 +795,17 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
                 }
             last_error = "downloaded model checksum does not match"
             resumed = True
+        except _AsrDownloadBudgetExceeded as exc:
+            downloaded = max(exc.downloaded, partial.stat().st_size if partial.exists() else 0)
+            where = f"{_format_download_size(downloaded)} downloaded"
+            if exc.total > 0:
+                where += f" of {_format_download_size(exc.total)}"
+            raise MediaProcessingError(
+                f"Whisper {model_name} model download stopped after "
+                f"{_format_download_eta(budget)} ({where}); the partial file is kept, so "
+                f"rerun `envoy asr install --model {model_name}` to resume, or lower the "
+                "profile with ENVOY_SETUP_MEDIA=0"
+            ) from None
         except (OSError, urllib.error.URLError, MediaProcessingError) as exc:
             last_error = _safe_error(exc)
             resumed = resumed or (partial.is_file() and partial.stat().st_size > 0)

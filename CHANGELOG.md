@@ -14,9 +14,19 @@
 - Windows 上「仅自己可读」原来等于没设：`os.chmod(0o600)` 在 NTFS 上不生效，开关配置与导入的 cookie 存储改为用 `icacls` 断继承、只授权当前账户（POSIX 仍是 0600/0700，有单测覆盖两种平台）。
 - 发版不再因为一次红灯 CI 把版本永久卡住：标签不存在时，即使包版本未变也会补发。
 - 没有任何 Python 的 Windows 机器上的完整安装修好了：自取的 `uv.exe` 不再放进 venv 目标目录、也不会被「清理半成品运行目录」删掉，缓存改到 `%LOCALAPPDATA%\envoy-dsh\tools\uv`（可用 `ENVOY_UV_HOME` 指定）；托管干净机的 0.1.27 / 0.1.28 验收依次死在这两步。
+- A speech model download no longer waits forever: one download is capped at 10 minutes by default,
+  keeps the resumable partial file and exits with a retry instruction; on slow links it prints
+  downloaded/total, rate and remaining time roughly every 8 seconds (`ENVOY_ASR_DOWNLOAD_SECONDS`
+  overrides the cap). The Windows self-hosted acceptance used to be killed by its 60-minute timeout
+  exactly here: that machine got about 32 KB/s from the model source, i.e. 75 minutes for the 145 MB
+  `base` model.
 - A red CI run no longer strands a version: when the tag is missing, the release is retried even though the package version did not change.
 - Full install on a Windows machine with no Python works: the fetched `uv.exe` no longer lands inside the venv target and is no longer wiped with a half-written runtime; it is cached under `%LOCALAPPDATA%\envoy-dsh\tools\uv` (override with `ENVOY_UV_HOME`).
 - 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `%LOCALAPPDATA%\envoy-dsh\tools\uv`，`envoy asr install --model base` 因此在干净机器上也能装好。
+- 语音模型下载不再无限等：单次下载默认最多 10 分钟，超时保留断点文件、按可续跑的方式报错，
+  慢链路上每约 8 秒报一次「已下/总量、速率、预计剩余」（`ENVOY_ASR_DOWNLOAD_SECONDS` 可调）。
+  Windows 自托管验收从前就是被这一步按 60 分钟超时杀掉的：那台机器从模型源只有约 32 KB/s，
+  145 MB 的 `base` 要下 75 分钟。
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
   （A8：`minimal` 无浏览器无转写引擎、`standard` 浏览器就绪、`full` 两者都在）。
