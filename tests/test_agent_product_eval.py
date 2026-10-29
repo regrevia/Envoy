@@ -112,6 +112,11 @@ def test_agent_product_eval_requires_real_scale_and_reports_actual_usage(tmp_pat
     assert report["schema_version"] == "envoy.agent-product-eval/1"
     assert report["validation_status"] == "passed"
     assert report["gate_status"] == "passed"
+    assert report["protocol_valid"] is True
+    assert report["data_complete"] is True
+    assert report["quality_reviewed"] is True
+    assert report["claim_eligible"] is True
+    assert report["claim_blockers"] == []
     assert report["source_count"] == 20
     assert report["task_count"] == 40
     assert report["actual_usage_status"] == "paired_actual"
@@ -265,6 +270,11 @@ def test_agent_product_eval_withholds_savings_when_cache_is_confounded(tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert report["gate_status"] == "incomplete"
+    assert report["protocol_valid"] is False
+    assert report["data_complete"] is True
+    assert report["quality_reviewed"] is True
+    assert report["claim_eligible"] is False
+    assert "cache_isolation_not_verified" in report["claim_blockers"]
     assert report["input_token_savings_fraction"] is None
     assert report["input_token_savings_ci_support"] is False
     assert report["token_savings_eligible"] is False
@@ -658,6 +668,12 @@ def test_agent_product_eval_withholds_savings_if_answer_quality_drops(tmp_path):
     assert result.returncode == 0
     assert report["quality_non_inferior"] is False
     assert report["input_token_savings_fraction"] is None
+    assert report["gate_status"] == "complete"
+    assert report["protocol_valid"] is True
+    assert report["data_complete"] is True
+    assert report["quality_reviewed"] is True
+    assert report["claim_eligible"] is False
+    assert "quality_non_inferior_not_supported" in report["claim_blockers"]
 
 
 def test_agent_product_eval_reports_fact_recall_and_withholds_savings_on_fact_loss(tmp_path):
@@ -684,6 +700,9 @@ def test_agent_product_eval_reports_fact_recall_and_withholds_savings_on_fact_lo
     assert report["fact_recall"] < report["baseline_fact_recall"]
     assert report["quality_non_inferior"] is False
     assert report["input_token_savings_fraction"] is None
+    assert report["gate_status"] == "complete"
+    assert report["claim_eligible"] is False
+    assert "quality_non_inferior_not_supported" in report["claim_blockers"]
 
 
 def test_agent_product_eval_rejects_placeholder_and_incomplete_records(tmp_path):
@@ -841,6 +860,13 @@ def test_incomplete_pilot_allows_unknown_usage_but_never_reports_savings(tmp_pat
     assert draft.returncode == 0
     assert report["validation_status"] == "passed"
     assert report["gate_status"] == "incomplete"
+    assert report["protocol_valid"] is False
+    assert report["data_complete"] is False
+    assert report["claim_eligible"] is False
+    assert any(
+        blocker.startswith("model_identity_unverified:")
+        for blocker in report["claim_blockers"]
+    )
     assert report["actual_usage_status"] == "incomplete"
     assert report["input_token_savings_fraction"] is None
 
@@ -1063,6 +1089,14 @@ def test_incomplete_draft_serializes_unmeasured_metrics_as_null(tmp_path):
     report = json.loads(result.stdout)
     assert result.returncode == 0, result.stderr
     assert report["gate_status"] == "incomplete"
+    assert report["protocol_valid"] is False
+    assert report["data_complete"] is False
+    assert report["quality_reviewed"] is False
+    assert any(
+        blocker.startswith("quality_review_inputs_missing:")
+        for blocker in report["claim_blockers"]
+    )
+    assert report["claim_eligible"] is False
     assert report["answer_accuracy"] is None
     assert report["fact_recall"] is None
     assert report["median_first_evidence_ms"] is None
@@ -1117,6 +1151,10 @@ def test_real_mdn_pilot_is_recorded_but_does_not_pass_release_gate(tmp_path):
         assert report["source_count"] == 1
         assert report["task_count"] == 2
         assert report["gate_status"] == "incomplete"
+        assert report["protocol_valid"] is False
+        assert report["data_complete"] is False
+        assert report["quality_reviewed"] is False
+        assert report["claim_eligible"] is False
         assert report["answer_accuracy"] == 1.0
         assert report["answer_reviewed_task_count"] == 2
         assert report["citation_accuracy"] == 1.0
@@ -1146,8 +1184,137 @@ def test_combined_public_documentation_pilots_are_incomplete():
     assert report["source_count"] == 6
     assert report["task_count"] == 12
     assert report["gate_status"] == "incomplete"
+    assert report["protocol_valid"] is False
+    assert report["data_complete"] is False
+    assert report["quality_reviewed"] is False
     assert report["fact_recall"] == 1.0
     assert report["followup_reuse_rate"] == 1.0
     assert report["baseline_fact_recall"] is None
     assert report["envoy_actual_input_tokens"] is None
     assert report["input_token_savings_fraction"] is None
+
+
+def test_data_complete_experiment_without_savings_stays_complete(tmp_path):
+    """Validity and claim entitlement are different questions.
+
+    A run whose protocol, data and review layers are complete but whose token
+    saving is not statistically supported is a finished experiment with no
+    efficiency claim: the report is ``complete`` and ``claim_eligible`` false.
+    """
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    lines = records.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for line in lines:
+        item = json.loads(line)
+        if item["record_type"] == "task":
+            item["input_tokens"] = 1200
+        rewritten.append(json.dumps(item))
+    records.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report["protocol_valid"] is True
+    assert report["data_complete"] is True
+    assert report["quality_reviewed"] is True
+    assert report["quality_non_inferior"] is True
+    assert report["input_token_savings_ci_support"] is False
+    assert report["claim_eligible"] is False
+    assert "no_token_saving_signal" in report["claim_blockers"]
+    assert report["gate_status"] == "complete"
+    assert report["input_token_savings_fraction"] is None
+
+    markdown = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records), "--markdown"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert markdown.returncode == 0, markdown.stderr
+    assert "| 输入 token | 48,000 | 48,000 | N/A |" in markdown.stdout
+    assert "配对任务：40；来源：20；门槛：complete" in markdown.stdout
+    assert "实验数据完整，但统计证据不支持效率结论" in markdown.stdout
+
+
+def test_quality_review_layer_blocks_claim_when_review_is_missing(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    base_lines = records.read_text(encoding="utf-8").splitlines()
+
+    def write_case(name, mutate, allow_incomplete=False):
+        rewritten = [json.loads(line) for line in base_lines]
+        mutate(rewritten)
+        path = tmp_path / name
+        path.write_text(
+            "\n".join(json.dumps(item) for item in rewritten) + "\n",
+            encoding="utf-8",
+        )
+        command = [sys.executable, str(SCRIPT), "--records", str(path)]
+        if allow_incomplete:
+            command.append("--allow-incomplete")
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def weak_review_method(items):
+        items[0]["quality_review_method"] = "single_human"
+
+    def missing_review_fields(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item["answer_correct"] = None
+                item["citation_correct"] = None
+                item["baseline_answer_correct"] = None
+                item["baseline_citation_correct"] = None
+                break
+
+    weak = write_case("weak-review.jsonl", weak_review_method)
+    assert weak["protocol_valid"] is True
+    assert weak["data_complete"] is True
+    assert weak["quality_reviewed"] is False
+    assert weak["claim_eligible"] is False
+    assert "quality_review_not_completed:single_human" in weak["claim_blockers"]
+    assert weak["gate_status"] == "incomplete"
+
+    missing = write_case(
+        "missing-review.jsonl", missing_review_fields, allow_incomplete=True
+    )
+    assert missing["data_complete"] is True
+    assert missing["quality_reviewed"] is False
+    assert missing["quality_non_inferior"] is None
+    assert missing["claim_eligible"] is False
+    assert any(
+        blocker.startswith("quality_review_inputs_missing:")
+        for blocker in missing["claim_blockers"]
+    )
+    assert missing["gate_status"] == "incomplete"
+
+
+def test_claim_eligible_when_all_layers_are_green(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--records", str(records)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report["protocol_valid"] is True
+    assert report["data_complete"] is True
+    assert report["quality_reviewed"] is True
+    assert report["claim_eligible"] is True
+    assert report["claim_blockers"] == []
+    assert report["gate_status"] == "passed"

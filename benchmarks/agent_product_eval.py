@@ -1263,7 +1263,16 @@ def summarize(run: dict, sources: list[dict], tasks: list[dict]) -> dict:
         "minimum_source_gate": MIN_SOURCES,
         "minimum_task_gate": MIN_TASKS,
         "scale_gate_status": "passed" if len(sources) >= MIN_SOURCES and len(tasks) >= MIN_TASKS else "incomplete",
+        # The release decision is reported as four independent layers (filled by
+        # the CLI): protocol_valid, data_complete, quality_reviewed,
+        # claim_eligible. They are kept unset here so a caller of summarize can
+        # tell "not evaluated yet" apart from a genuine false.
         "gate_status": "pending_validation",
+        "protocol_valid": None,
+        "data_complete": None,
+        "quality_reviewed": None,
+        "claim_eligible": None,
+        "claim_blockers": [],
         "answer_accuracy": answer_accuracy if run.get("quality_review_method") else None,
         "answer_reviewed_task_count": _reviewed_count(tasks, "answer_correct"),
         "baseline_answer_accuracy": baseline_answer_accuracy if run.get("quality_review_method") else None,
@@ -1485,7 +1494,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"({report.get('usage_breakdown_task_count', 0)}/{report.get('task_count', 0)} tasks)"
         ),
     ])
-    if not strict_gate:
+    if not strict_gate and report.get("gate_status") == "complete":
+        lines.append("实验数据完整，但统计证据不支持效率结论；节省率不作结论。")
+    elif not strict_gate:
         lines.append("当前数据未通过正式评测门槛，效率变化率不作结论。")
     strata = report.get("stratified_bootstrap") or {}
     if strata:
@@ -1518,6 +1529,214 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Review methods that count as the release-grade review of answer, citation and
+# coverage claims. A run that only logs a weaker method (or no method at all)
+# fails this layer instead of inheriting the old "reviewed unless proven
+# otherwise" assumption.
+RELEASE_QUALITY_REVIEW_METHODS = {"dual_human", "reference_rubric"}
+
+
+def _source_records_complete(sources: list[dict]) -> list[str]:
+    """Provenance blockers for the data layer.
+
+    The ledger has no separate attempts table: one task record represents one
+    attempt, and a source record represents the material that attempt ran on.
+    A missing revision/timestamp/observed state means the provenance entry was
+    never written, so the data layer stays false rather than inferring it.
+    """
+    blockers = []
+    for source in sources:
+        source_id = str(source.get("source_id") or "<unknown-source>")
+        revision = source.get("source_revision")
+        if not isinstance(revision, str) or not revision:
+            blockers.append(f"source_provenance_missing:{source_id}")
+        if not source.get("revalidated_at"):
+            blockers.append(f"source_revalidation_missing:{source_id}")
+        if source.get("accepted_state") not in {
+            "accepted", "partial", "blocked", "unverified", "failed"
+        }:
+            blockers.append(f"source_state_missing:{source_id}")
+    return blockers
+
+
+def _task_order_blockers(sources: list[dict], tasks: list[dict]) -> list[str]:
+    """Protocol layer: scripted turns must run initial -> followup per source."""
+    blockers = []
+    for source in sources:
+        source_id = str(source.get("source_id") or "")
+        roles = [
+            task.get("task_role")
+            for task in tasks
+            if str(task.get("source_id") or "") == source_id
+        ]
+        if not roles:
+            continue
+        if "followup" in roles and "initial" not in roles:
+            blockers.append(f"task_order_missing_initial:{source_id}")
+        elif roles[0] != "initial":
+            blockers.append(f"task_order_followup_first:{source_id}")
+    return blockers
+
+
+def _protocol_blockers(
+    run: dict,
+    sources: list[dict],
+    tasks: list[dict],
+    report: dict,
+    errors: list[str],
+) -> list[str]:
+    """Layer 1: model/budget/order/tool environment match the pre-agreed protocol."""
+    blockers = []
+    if errors:
+        blockers.append("protocol_validation_failed")
+    if len(sources) < MIN_SOURCES:
+        blockers.append(f"source_scale_below_minimum:{len(sources)}<{MIN_SOURCES}")
+    if len(tasks) < MIN_TASKS:
+        blockers.append(f"task_scale_below_minimum:{len(tasks)}<{MIN_TASKS}")
+    if not report.get("cache_isolation_verified"):
+        blockers.append("cache_isolation_not_verified")
+    blockers.extend(_task_order_blockers(sources, tasks))
+    # Model identity: every recorded arm must resolve to the run's agreed
+    # provider/model. Unknown or missing identity is unverified, not "fine",
+    # because a release claim needs a known model.
+    unknown_markers = {"unknown", "draft", "not exposed"}
+    run_identity = tuple(str(run.get(field) or "").strip() for field in ("provider", "model"))
+    for task in tasks:
+        task_id = str(task.get("task_id") or "<unknown-task>")
+        for arm in ("envoy", "baseline"):
+            prefix = "" if arm == "envoy" else "baseline_"
+            identity = tuple(
+                str(task.get(f"{prefix}{field}") or "").strip()
+                for field in ("provider", "model")
+            )
+            if not all(identity) or any(value.lower() in unknown_markers for value in identity):
+                blockers.append(f"model_identity_unverified:{arm}:{task_id}")
+            elif identity != run_identity:
+                blockers.append(f"model_identity_mismatch:{arm}:{task_id}")
+    return blockers
+
+
+def _data_blockers(sources: list[dict], tasks: list[dict]) -> list[str]:
+    """Layer 2: attempts, failures, actual usage, artifacts and provenance recorded.
+
+    "Attempts" here are the per-task ledger rows themselves: an attempt with
+    unknown usage or without its artifacts/citations was not recorded, so it
+    counts as a missing attempt rather than a passing one. A failed/blocked
+    package attempt must still carry a recorded outcome.
+    """
+    blockers = _source_records_complete(sources)
+    if not tasks:
+        blockers.append("attempt_records_missing")
+    for task in tasks:
+        task_id = str(task.get("task_id") or "<unknown-task>")
+        if task.get("usage_status") != "actual":
+            blockers.append(f"usage_not_actual:envoy:{task_id}")
+        if task.get("baseline_usage_status") != "actual":
+            blockers.append(f"usage_not_actual:baseline:{task_id}")
+        for arm in ("envoy", "baseline"):
+            citations = task.get(f"{arm}_citations")
+            if not isinstance(citations, list) or not citations:
+                blockers.append(f"artifacts_missing:{arm}:{task_id}")
+        if not isinstance(task.get("evidence_locators"), list) or not task["evidence_locators"]:
+            blockers.append(f"artifacts_missing:evidence:{task_id}")
+        if "envoy_task_outcome" in task and task.get("envoy_task_outcome") not in {
+            "completed", "partial", "blocked", "failed"
+        }:
+            blockers.append(f"failure_record_missing:envoy:{task_id}")
+        if "baseline_task_outcome" in task and task.get("baseline_task_outcome") not in {
+            "completed", "partial", "blocked", "failed"
+        }:
+            blockers.append(f"failure_record_missing:baseline:{task_id}")
+    return blockers
+
+
+def _quality_blockers(run: dict, tasks: list[dict]) -> list[str]:
+    """Layer 3: answer/citation/coverage claims got their required review.
+
+    Reuses the existing human-rating and fact-coverage fields. Missing review
+    fields are a blocker; they are never defaulted to reviewed.
+    """
+    blockers = []
+    method = run.get("quality_review_method")
+    if method not in RELEASE_QUALITY_REVIEW_METHODS:
+        blockers.append(
+            "quality_review_not_completed"
+            + (f":{method}" if isinstance(method, str) and method else "")
+        )
+    unreviewed = [
+        str(task.get("task_id") or "<unknown-task>")
+        for task in tasks
+        if any(_arm_fact_metrics(task, arm) is None for arm in ("envoy", "baseline"))
+    ]
+    for task_id in unreviewed:
+        blockers.append(f"quality_review_inputs_missing:{task_id}")
+    return blockers
+
+
+def gate_layers(
+    run: dict,
+    sources: list[dict],
+    tasks: list[dict],
+    report: dict,
+    errors: list[str],
+) -> dict:
+    """Split the single release gate into four independently reported layers.
+
+    Old-field mapping (the fields below stay in the report unchanged):
+    - ``validation_status`` / ``validation_errors``: machine schema check only.
+      It feeds the protocol layer and is not the release decision itself.
+    - ``scale_gate_status``: the source/task scale subset of the protocol layer.
+    - ``quality_inputs_complete``-equivalent metrics: folded into
+      ``quality_reviewed`` via ``answer_reviewed_task_count`` and the existing
+      fact/citation review fields.
+    - ``actual_usage_status``, ``usage_breakdown_status``: evidence inputs for
+      ``data_complete``.
+    - ``token_savings_eligible`` / ``input_token_savings_ci_support`` /
+      ``quality_non_inferior``: still the statistical evidence, but they now
+      only decide ``claim_eligible``; they no longer block an otherwise complete
+      experiment.
+    """
+    protocol_blockers = _protocol_blockers(run, sources, tasks, report, errors)
+    data_blockers = _data_blockers(sources, tasks)
+    quality_blockers = _quality_blockers(run, tasks)
+    claim_blockers = protocol_blockers + data_blockers + quality_blockers
+    if not report.get("input_token_savings_ci_support"):
+        claim_blockers.append("no_token_saving_signal")
+    if report.get("quality_non_inferior") is not True:
+        # A token saving that comes with a quality regression is not a claim the
+        # run may make; the experiment itself can still be complete.
+        claim_blockers.append("quality_non_inferior_not_supported")
+
+    protocol_valid = not protocol_blockers
+    data_complete = not data_blockers
+    quality_reviewed = not quality_blockers
+    claim_eligible = (
+        protocol_valid
+        and data_complete
+        and quality_reviewed
+        and report.get("quality_non_inferior") is True
+        and bool(report.get("input_token_savings_ci_support"))
+    )
+    if errors:
+        gate_status = "failed"
+    elif not (protocol_valid and data_complete and quality_reviewed):
+        # Incomplete means the experiment itself is not usable yet; a missing
+        # improvement is not incompleteness, it only blocks the claim.
+        gate_status = "incomplete"
+    elif claim_eligible:
+        gate_status = "passed"
+    else:
+        gate_status = "complete"
+    return {
+        "protocol_valid": protocol_valid,
+        "data_complete": data_complete,
+        "quality_reviewed": quality_reviewed,
+        "claim_eligible": claim_eligible,
+        "claim_blockers": sorted(set(claim_blockers)),
+        "gate_status": gate_status,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--records", type=Path, required=True)
@@ -1534,16 +1753,13 @@ def main(argv: list[str] | None = None) -> int:
             allow_unknown_usage=args.allow_incomplete,
         )
         report = summarize(run, sources, tasks)
-        release_eval_ready = (
-            not errors
-            and len(sources) >= MIN_SOURCES
-            and len(tasks) >= MIN_TASKS
-            and report["actual_usage_status"] == "paired_actual"
-            and report["quality_non_inferior"]
-            and report["input_token_savings_ci_support"]
-            and run.get("quality_review_method") in {"dual_human", "reference_rubric"}
-        )
-        report["gate_status"] = "passed" if release_eval_ready else "incomplete"
+        layers = gate_layers(run, sources, tasks, report, errors)
+        report.update(layers)
+        # Migration note: the old single release gate was equivalent to
+        # protocol+data+quality+statistics all being true. The four layers above
+        # keep that decision but report it per layer, so "no measured saving"
+        # only removes claim eligibility and leaves the experiment complete.
+        release_eval_ready = layers["claim_eligible"]
         if (
             release_eval_ready
             and report["baseline_actual_input_tokens"] is not None
