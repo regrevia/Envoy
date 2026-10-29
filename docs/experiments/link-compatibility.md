@@ -1165,3 +1165,23 @@ Envoy 每次都是真抓；两次的差异只能反映网络抖动）：
   Envoy 反而在 13–17 秒内拿到了 20 字符正文 —— 它是走了自己的取回路径，不是简单直连。
   归因到 Envoy 的解析开销没有依据，标记为「上游慢」。
 - 全量回归：`pytest -q tests/cli tests/test_windows_acceptance_workflow.py` = **985 passed in 77.47s**。
+
+## 第四十一轮（能力自述是否诚实：ASR / 模型的真实状态）
+
+目标里「读取效率与稳定性」之外还有一条隐含要求：**不能谎报能力**。这轮在本机（`~/.local/bin/envoy`，
+source-checkout 入口，未装 media extra）核对 `envoy doctor --json` 的自述：
+
+- `runtime.asr_installed=false`、`asr_engine=null`、`asr_operational="not_checked"`、
+  `asr_next_step="rerun envoy asr install --model <model>; runtime updates may replace injected media dependencies"`
+  —— 引擎缺失时它没有声称能转录，还给了下一步动作。`capabilities.inputs.conditional` 里也写清
+  `local_video_asr` 的 requires（yt-dlp、FFmpeg/FFprobe、openai-whisper、已备模型）。
+- `asr_model_available=false` 而 `asr_model_file_present=true` 看着矛盾，实测解释得通：
+  `asr_model_cache_dir()=/Users/apple/.cache/whisper`，`base.pt` 确实在（145262807 字节，
+  sha256 `ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e`，即官方 base 权重）；
+  而 `~/.envoy/asr.json` 里记的 `sha256=eca4af68…` 与它对不上，所以 `asr_model_verified=false`。
+  代码里 `asr_installed` 为假时 `available` 恒假，这个状态本身是**正确**的（引擎都没装，模型可用无意义）；
+  一旦装上引擎，`_model_expected_sha256()` 会用 whisper 自带的官方摘要复核，与现有文件匹配后
+  `verified` 会自愈，不需要用户删缓存。
+- 因此本机**没有**做真实 ASR 转录（装 media extra 属于额外依赖下载，用户离开期间不做），
+  该项对 macOS 本机保持 `not_run`；Windows 托管干净机的 `asr_model_available=True` 已由
+  run 40810394272 证明（第四十轮前的记录）。
