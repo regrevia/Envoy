@@ -1283,3 +1283,8 @@ MCP 的 read 预算里 `max_response_chars` 允许到 1_000_000，但 `max_total
 用本地 HTTP 服务覆盖完成/续传/超时保留断点/默认值/进度输出 5 例；`tests/cli` 全量
 987 passed。托管干净机同一运行 03:59:12→04:01:09 成功，说明模型源本身可用，
 慢的是那台自托管机的出网。
+
+**发行（0.1.31）**：tag `v0.1.31`，Auto Release 40821504926 success → Envoy Release 40821742445 success，
+`gh release view v0.1.31` = 7 个资产（`envoy_cli-0.1.31-py3-none-any.whl` 等）；Windows 托管干净机验收
+40821893675 success（05:10:58Z→05:13:34Z，PowerShell 5.1 + 7 两档 fresh 全过，含 A8 完整档 ASR 模型就绪），
+自托管双 job 本次按 `include_self_hosted=false` 跳过。
