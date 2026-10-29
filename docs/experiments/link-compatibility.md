@@ -1341,3 +1341,10 @@ SDK/CLI 这条路没抬）→ 把抬平逻辑放进 `Budget.validate_totals`：�
   随后 `envoy read` 默认预算读该 PDF 的 1–2 页：15 页里提取 2 页、7116 字符、`not_processed_ranges [[3, 15]]`，未触预算。
 
 ## 发行（0.1.34）
+
+- 提交 `c656b1f`；`tests/cli` + `tests/core_protocol` 1012 passed（新增 5 例）。
+- Auto Release run 40826527116 success 打 tag `v0.1.34`；Envoy Release run 40826848446 success，7 个资产齐全
+  （`envoy-dsh-0.1.34.tgz`、`envoy-skill.zip`、`envoy_cli-0.1.34-py3-none-any.whl`、`install.ps1`、`install.sh`、`release-manifest.json`、`SHA256SUMS`）。
+- 干净机验收 run 40827867094 success（`windows-2022`，`profile=full`，`scenario=fresh`，PS5.1 + PS7）。
+- 隔离安装：从 release 下载的 `envoy_cli-0.1.34-py3-none-any.whl` 过 `SHA256SUMS`，`uv tool install` 后 `envoy --version` 输出
+  `envoy-cli 0.1.34 (core 0.1.34)`。
