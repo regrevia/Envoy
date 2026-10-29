@@ -27,6 +27,12 @@ on:
         default: ""
         type: choice
         options: ["", full, standard, minimal]
+      include_self_hosted:
+        description: "是否同时跑自托管真机（托管干净机已能验证安装时选 false，否则真机离线会让整个 run 一直排队）"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
   workflow_run:
     workflows: ["Envoy 正式发行 / Envoy Release"]
     types: [completed]
@@ -36,7 +42,9 @@ permissions:
 
 concurrency:
   group: windows-acceptance-${{ github.event.workflow_run.head_sha || github.ref }}
-  cancel-in-progress: false
+  # A run whose self-hosted job never gets a runner stays queued forever and
+  # would block every later acceptance; a newer dispatch supersedes it.
+  cancel-in-progress: true
 
 env:
   ENVOY_SETUP_BROWSER: "0"
@@ -45,7 +53,11 @@ env:
 jobs:
   windows-powershell-5-1:
     name: Windows PowerShell 5.1
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # A self-hosted job with no runner online keeps the whole run queued, which
+    # used to block every later acceptance run in the same concurrency group.
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.include_self_hosted != 'false')
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: [self-hosted, windows, x64, regrevia-win]
     timeout-minutes: 60
     steps:
@@ -102,7 +114,11 @@ jobs:
 
   windows-powershell-7:
     name: PowerShell 7
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # A self-hosted job with no runner online keeps the whole run queued, which
+    # used to block every later acceptance run in the same concurrency group.
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.include_self_hosted != 'false')
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: [self-hosted, windows, x64, regrevia-win]
     timeout-minutes: 60
     steps:

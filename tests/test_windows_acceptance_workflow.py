@@ -105,3 +105,21 @@ def test_runner_registration_is_not_owned_by_this_repository():
 
     workflow = (ROOT / ".github" / "workflows" / "windows-acceptance.yml").read_text(encoding="utf-8")
     assert "[self-hosted, windows, x64, regrevia-win]" in workflow
+
+
+def test_a_dispatch_can_skip_the_self_hosted_jobs():
+    """Run 40803073176 stayed queued on its self-hosted jobs and, with
+    cancel-in-progress false, blocked every later dispatch."""
+    import yaml
+
+    data = yaml.safe_load(workflow())
+    # PyYAML turns the bare `on:` key into True.
+    triggers = data.get(True) or data["on"]
+    assert triggers["workflow_dispatch"]["inputs"]["include_self_hosted"]["default"] == "true"
+    assert data["concurrency"]["cancel-in-progress"] is True
+    for name, job in data["jobs"].items():
+        condition = str(job.get("if", ""))
+        if "self-hosted" in str(job.get("runs-on")):
+            assert "inputs.include_self_hosted" in condition, name
+        else:
+            assert "include_self_hosted" not in condition, name
