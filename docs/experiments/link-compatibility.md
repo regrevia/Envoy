@@ -1134,8 +1134,10 @@ uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解
   `yt-dlp space enumeration unavailable (DownloadError: Request is blocked by server (412))` +
   `isolated-browser discovery failed (BrowserRuntimeUnavailable)`，整体 `result=blocked`、
   `code=source_unavailable`，并明确写了补救动作（`envoy browser setup` 一次）。
-  结论：B 站合集**不是**「装上就能用」，需要先装浏览器运行时（或导入 Cookie）；
-  文档要求把这条前置条件写明，不能宣称开箱即用。
+  结论（限定范围）：这条失败只证明「没有隔离浏览器运行时」时 B 站合集读不了；
+  README 写明正式安装器会一并装好浏览器（`envoy browser setup` 只用于补装/修），
+  所以安装版用户的真实行为本轮没有验证到，标记 `not_run`，不能据此说 B 站合集开箱可用
+  或不可用。能确定的补救动作只有一个：缺浏览器时先 `envoy browser setup`。
 - `failed|blocked`：同站单视频 `https://www.bilibili.com/video/BV1GJ411x7h7` 在未装
   `envoy-cli[media]` 的环境里 `result=blocked`、`errors[0].code=missing_capability`、
   `action_required=true`，消息指明 `install envoy-cli[media] to enable local ASR`。
