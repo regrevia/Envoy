@@ -1628,6 +1628,92 @@ def test_envoy_read_text_always_carries_the_material_handle_and_replay_path():
     assert "envoy_replay" in blocked
 
 
+def test_read_text_reports_the_absolute_offset_a_partial_read_left_off():
+    """The expand hint must name an offset into the material, not the printed length."""
+    from envoy_cli import mcp
+
+    text = mcp._tool_content_text(
+        {
+            "result": "partial",
+            "material_id": "mat-x",
+            "source_revision": "rev-x",
+            "blocks": [{"content": {"text": "abc"}}],
+            "coverage": {"modalities": {"text": {"details": {"next_offset": 40}}}},
+        },
+        modern=True,
+    )
+    assert "offset=40" in text
+    assert "offset=3 " not in text
+
+    # With no coverage record there is no honest number to print; the hint must
+    # stop naming one instead of reverting to the printed length.
+    unknown = mcp._tool_content_text(
+        {
+            "result": "partial",
+            "material_id": "mat-y",
+            "source_revision": "rev-y",
+            "blocks": [{"content": {"text": "abc"}}],
+        },
+        modern=True,
+    )
+    assert "offset=3" not in unknown
+    assert "envoy_expand material_id=mat-y" in unknown
+    assert "do not re-read" in unknown
+
+
+def test_verify_verdict_is_rendered_as_a_verdict_not_a_read():
+    from envoy_cli import mcp
+
+    unmatched = mcp._tool_content_text(
+        {
+            "protocol_version": "envoy.evidence/1",
+            "resolution": "unmatched",
+            "evidence_id": "ev-1",
+            "quote_match": "none",
+            "reason": "block_missing",
+            "material_id": "mat-x",
+        },
+        modern=True,
+    )
+    assert "Envoy verify unmatched" in unmatched
+    assert "why: block_missing" in unmatched
+    assert "semantic_support=not_evaluated" in unmatched
+    # A verdict is not an empty material: no block counter and no expand hint.
+    assert "blocks /" not in unmatched
+    assert "envoy_expand" not in unmatched
+    assert "quote a contiguous passage" in unmatched
+
+    matched = mcp._tool_content_text(
+        {
+            "protocol_version": "envoy.evidence/1",
+            "resolution": "matched",
+            "quote_match": "normalized",
+            "evidence_id": "ev-2",
+        },
+        modern=True,
+    )
+    assert "Envoy verify matched" in matched
+    assert "not Envoy's" in matched
+    assert "quote_match is not exact" in matched
+
+
+def test_replay_text_shows_the_full_revision_it_asks_the_host_to_carry():
+    from envoy_cli import mcp
+
+    revision = "a1b2c3d4" * 8
+    text = mcp._tool_content_text(
+        {
+            "tool": "envoy_replay",
+            "result": "ok",
+            "material_id": "mat-x",
+            "source_revision": revision,
+            "blocks": [{"content": {"text": "abc"}}],
+        },
+        modern=True,
+    )
+    assert revision in text
+
+
 def test_mcp_output_survives_a_cp1252_host_codec(monkeypatch):
     """A Windows host can pin PYTHONIOENCODING=cp1252; Chinese text must still ship."""
     from envoy_cli import mcp

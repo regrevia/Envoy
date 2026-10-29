@@ -3267,11 +3267,35 @@ def replay_material(request: MaterialReplayRequest) -> ReadResponse:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except (FileNotFoundError, OSError, ValueError, TypeError) as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={
+                "next_action": "read the source URL again with envoy_read; a material can only be replayed while its lease is alive"
+            },
+        ) from exc
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
-    if str(stored.get("source_revision") or "") != request.source_revision:
-        raise PublicPageError("Material source revision does not match", ErrorCode.INVALID_REQUEST)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={
+                "next_action": "read the source URL again with envoy_read; a material can only be replayed while its lease is alive"
+            },
+        )
+    stored_revision = str(stored.get("source_revision") or "")
+    if stored_revision != request.source_revision:
+        raise PublicPageError(
+            "Material source revision does not match",
+            ErrorCode.INVALID_REQUEST,
+            details={
+                "expected_source_revision": stored_revision,
+                "next_action": (
+                    "pass the exact source_revision printed by the read that returned "
+                    "this material_id; it is a full hex digest and a shortened prefix "
+                    "is rejected"
+                ),
+            },
+        )
     stored_session = str(stored.get("session_id") or "")
     # A model only holds its own host session id, never the id Envoy minted for
     # the old material, so an omitted source_session_id means "the material's
@@ -3287,6 +3311,9 @@ def replay_material(request: MaterialReplayRequest) -> ReadResponse:
         raise PublicPageError(
             "Replay requires a new session_id distinct from source_session_id",
             ErrorCode.INVALID_REQUEST,
+            details={
+                "next_action": "pass the new host session's id as session_id; replay exists to move evidence into a different session"
+            },
         )
 
     source_url = _redact_url(str(stored.get("source_url") or ""))

@@ -66,8 +66,11 @@ def test_content_text_carries_the_material_handle_and_next_step() -> None:
     assert "material_id=mat-abc123" in text
     assert "source_revision=0123456789ab" in text
     assert "session_id=sess-1" in text
-    assert "envoy_expand material_id=mat-abc123" in text
-    assert "do not re-read the URL" in text
+    # This payload reports full text coverage and no next_offset, so the receipt
+    # must say the material was delivered whole instead of inventing an offset
+    # that would send the caller back over text it already has.
+    assert "delivered the rest of the material" in text
+    assert "offset=58" not in text
     # A retained handle is a lease, not a permanent citation: say so where the
     # model is told to keep the handle instead of the words.
     assert "keep the quoted words" in text

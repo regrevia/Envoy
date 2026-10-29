@@ -484,8 +484,11 @@ TOOLS = [
         "name": "envoy_replay",
         "description": (
             "Replay retained source-located evidence into a new host session "
-            "under a fresh bounded response budget. Does not re-download or "
-            "reuse the previous session's returned-range ledger."
+            "under a fresh bounded response budget, without re-downloading. "
+            "material_id and the full source_revision come from the read receipt "
+            "that returned the material; a shortened revision, an expired lease, "
+            "or the material's own session_id is refused with the remedy in "
+            "error.details.next_action."
         ),
         "inputSchema": REPLAY_SCHEMA,
     },
@@ -828,6 +831,12 @@ def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
         return _discover_content_text(payload)
     if tool == "envoy_collection_checkpoint":
         return _collection_content_text(payload)
+    # A verification verdict is not a read: rendering it as one prints an empty
+    # material with an expand hint, and the verdict itself never reaches the
+    # caller. The payload has no tool key of its own, so the protocol tag is
+    # what identifies it.
+    if _is_evidence_check(payload):
+        return _evidence_check_text(payload, request)
     return _material_content_text(payload, tool, request)
 
 
@@ -948,7 +957,10 @@ def _material_header(payload: dict, tool: str) -> str:
         parts.append(f"material_id={payload['material_id']}")
     revision = str(payload.get("source_revision") or "")
     if revision:
-        parts.append(f"source_revision={revision[:12]}")
+        # Replay is addressed by the full revision: a shortened value cannot be
+        # copied back into the request, so that step shows all of it.
+        shown = revision if tool == "envoy_replay" else revision[:12]
+        parts.append(f"source_revision={shown}")
     if payload.get("session_id"):
         parts.append(f"session_id={payload['session_id']}")
     return " · ".join(parts)
@@ -1197,6 +1209,123 @@ def _material_retained(payload: dict) -> bool:
         return True
 
 
+def _is_evidence_check(payload: dict) -> bool:
+    """Whether this payload is an envoy_verify verdict rather than a read."""
+    return (
+        str(payload.get("protocol_version") or "") == "envoy.evidence/1"
+        and "resolution" in payload
+    )
+
+
+def _evidence_check_text(payload: dict, request=None) -> str:
+    """Render a verification verdict, and nothing that looks like a read.
+
+    Envoy checks whether the quoted words occur in the retained material and
+    reports where. Whether the quotation supports the claim is the host's
+    judgement, so the text says that outright instead of implying support. The
+    next step depends on which side of the check failed: an unmatched quote
+    needs the words as the material prints them, not another expand of a
+    material that does not contain them.
+    """
+    budget = _content_char_budget(request)
+    resolution = str(payload.get("resolution") or "unknown")
+    parts = [f"Envoy verify {resolution}"]
+    if payload.get("evidence_id"):
+        parts.append(f"evidence_id={payload['evidence_id']}")
+    if payload.get("quote_match"):
+        parts.append(f"quote_match={payload['quote_match']}")
+    parts.append("semantic_support=not_evaluated")
+    lines = [" · ".join(parts)]
+    reason = str(payload.get("reason") or "")
+    if reason:
+        lines.append(f"why: {reason}")
+    locator = payload.get("locator") if isinstance(payload.get("locator"), dict) else {}
+    if locator:
+        where = ", ".join(str(value) for value in locator.values() if value not in (None, ""))
+        if where:
+            lines.append(f"locator: {where}")
+    block_id = str(payload.get("block_id") or "")
+    if block_id:
+        lines.append(f"block: {block_id}")
+    quote_match = str(payload.get("quote_match") or "")
+    if resolution == "matched":
+        lines.append(
+            "the quoted words occur in this material and the locator above says "
+            "where; whether they support the claim is your judgement, not Envoy's"
+        )
+        if quote_match and quote_match != "exact":
+            lines.append(
+                "quote_match is not exact: the words matched after normalisation, "
+                "so quote the material's spelling if the difference matters"
+            )
+        lines.append(
+            "next: cite the source URL together with the quoted words; the material "
+            "lease expires, so keep the quotation itself"
+        )
+    else:
+        lines.append(
+            "the quoted words were not found in this material; Envoy did not judge "
+            "whether the claim is supported"
+        )
+        lines.append(
+            "next: quote a contiguous passage exactly as the material prints it, or "
+            "read the material again and pick the passage from the returned blocks"
+        )
+    return "\n".join(_fit_content(lines, budget))
+
+
+def _delivery_reported(payload: dict) -> bool:
+    """Whether this payload carried the reader's own coverage record.
+
+    Without one, a response cannot say it delivered "the rest": it only knows
+    what it printed. The distinction keeps the closing notice from asserting a
+    completeness the payload never reported.
+    """
+    coverage = payload.get("coverage")
+    if isinstance(coverage, dict) and coverage:
+        return True
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    local = usage.get("local") if isinstance(usage.get("local"), dict) else {}
+    return bool(local.get("returned_ranges"))
+
+
+def _next_offset(payload: dict) -> str | None:
+    """Absolute character offset that continues this material, or None.
+
+    The reader records where its delivered window ended. That number is an
+    offset into the material; a count of characters this response happened to
+    print is not, and echoing it sends the caller back over text it has already
+    read. A printed length is only a last resort, taken from the delivered
+    ranges the reader reported.
+    """
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    text = modalities.get("text") if isinstance(modalities.get("text"), dict) else {}
+    text_details = text.get("details") if isinstance(text.get("details"), dict) else {}
+    payload_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    for holder in (coverage, text, text_details, payload_details):
+        value = holder.get("next_offset")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return str(value)
+    ranges = text_details.get("delivered_ranges")
+    if not isinstance(ranges, list):
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        local = usage.get("local") if isinstance(usage.get("local"), dict) else {}
+        ranges = local.get("returned_ranges")
+    if isinstance(ranges, list):
+        ends = [
+            pair[1]
+            for pair in ranges
+            if isinstance(pair, list)
+            and len(pair) == 2
+            and isinstance(pair[1], int)
+            and not isinstance(pair[1], bool)
+        ]
+        if ends:
+            return str(max(ends))
+    return None
+
+
 def _material_content_text(payload: dict, tool: str, request=None) -> str:
     result = str(payload.get("result") or "unknown")
     blocks = [block for block in payload.get("blocks") or [] if isinstance(block, dict)]
@@ -1247,13 +1376,39 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
         ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
         tail.append(f"resources: {ids}")
     retained = _material_retained(payload) if material_id else False
+    next_offset = _next_offset(payload) if material_id else None
     if material_id:
-        delivered = sum(len(_block_text(block)) for block in blocks)
-        if retained:
+        if retained and next_offset is not None:
             tail.append(
-                f"next: envoy_expand material_id={material_id} offset={delivered} "
+                f"next: envoy_expand material_id={material_id} offset={next_offset} "
                 f"max_chars={budget} (or envoy_search material_id=… query=…); "
                 "do not re-read the URL"
+            )
+            tail.append(
+                "citations that must outlive the lease: keep the quoted words and "
+                "the source URL, because material_id expires and envoy_verify will "
+                "then answer material_expired rather than resolve it"
+            )
+        elif retained and _delivery_reported(payload):
+            tail.append(
+                "this response delivered the rest of the material; no offset adds new "
+                "text — answer from the blocks above, or envoy_read with refresh=true "
+                "for a new revision"
+            )
+            tail.append(
+                "citations that must outlive the lease: keep the quoted words and "
+                "the source URL, because material_id expires and envoy_verify will "
+                "then answer material_expired rather than resolve it"
+            )
+        elif retained:
+            # No coverage record travelled with this payload, so there is no
+            # number to print. An offset invented from the printed length sends
+            # the caller back over text it has already read; expand reports its
+            # own next_offset when it is asked.
+            tail.append(
+                f"next: envoy_expand material_id={material_id} max_chars={budget} "
+                "(it reports the offset it delivered from) or envoy_search "
+                "material_id=… query=…; do not re-read the URL"
             )
             tail.append(
                 "citations that must outlive the lease: keep the quoted words and "
@@ -1272,10 +1427,15 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
     def continuation(shown: int) -> str:
         if not material_id:
             return ""
+        if retained and next_offset is not None:
+            return (
+                f"next: envoy_expand material_id={material_id} offset={next_offset} "
+                f"max_chars={budget} to read the rest"
+            )
         if retained:
             return (
-                f"next: envoy_expand material_id={material_id} offset={shown} "
-                f"max_chars={budget} to read the rest"
+                f"next: envoy_expand material_id={material_id} max_chars={budget} "
+                "to continue (it reports the offset it delivered from)"
             )
         return "next: envoy_read with refresh=true for the same URL to read it again"
 

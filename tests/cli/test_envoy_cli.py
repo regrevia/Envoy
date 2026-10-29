@@ -1893,7 +1893,15 @@ def test_material_search_does_not_lock_the_same_range_out_of_expand(tmp_path, mo
     assert expanded.blocks
     # A range an expand already delivered stays closed.
     assert repeated.result.value == "blocked"
-    assert "overlaps an earlier response" in repeated.errors[0].message
+    blocked = repeated.errors[0]
+    assert "overlaps an earlier response" in blocked.message
+    # The refusal is machine-readable, and the place to resume is in details so
+    # the caller does not have to parse the sentence.
+    assert blocked.code.value == "range_already_delivered"
+    assert blocked.details["reason"] == "range_already_delivered"
+    assert blocked.details["next_offset"] == int(
+        blocked.message.rsplit("character ", 1)[1]
+    )
 
 
 def test_retained_material_followup_rejects_different_session(tmp_path, monkeypatch):
@@ -2154,6 +2162,44 @@ def test_material_replay_rejects_wrong_source_session_and_repeated_target_sessio
             "request_id": "replay-session-check-again",
         }))
     assert exc_info.value.details["material_id"] == first.material_id
+
+
+def test_replay_refusals_name_the_remedy_in_details(tmp_path, monkeypatch):
+    """A refused replay must say what to pass next, not only that it is wrong."""
+    import pytest
+    from envoy_cli import reader
+    from envoy_core.schemas.read_v1 import MaterialReplayRequest
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "9" * 24
+    source_revision = "9" * 64
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/replay-remedy",
+        "source_revision": source_revision,
+        "session_id": "remedy-source",
+        "text": "Remedy text.",
+        "budget_state": {"returned_ranges": []},
+    })
+
+    with pytest.raises(reader.PublicPageError, match="revision does not match") as exc_info:
+        reader.replay_material(MaterialReplayRequest.model_validate({
+            "request_id": "replay-remedy-short-revision",
+            "material_id": material_id,
+            "source_revision": "a" * 64,
+            "session_id": "remedy-target",
+        }))
+    details = exc_info.value.details
+    assert details["expected_source_revision"] == source_revision
+    assert "source_revision printed by the read" in details["next_action"]
+
+    with pytest.raises(reader.PublicPageError, match="new session_id") as exc_info:
+        reader.replay_material(MaterialReplayRequest.model_validate({
+            "request_id": "replay-remedy-same-session",
+            "material_id": material_id,
+            "source_revision": source_revision,
+            "session_id": "remedy-source",
+        }))
+    assert "different session" in exc_info.value.details["next_action"]
 
 
 def test_material_replay_honors_minimum_token_budget_without_expand_schema_error(
