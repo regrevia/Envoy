@@ -1270,3 +1270,15 @@ MCP 的 read 预算里 `max_response_chars` 允许到 1_000_000，但 `max_total
 `SHA256SUMS`）；下载 whl 后用 `SHA256SUMS` 校验为 `OK`。Windows 验收 run 40815166638：
 托管干净机 job 成功，两个自托管 job（PowerShell 7 / 5.1，`both` 场景 = 全新装 + 从 0.1.23 升级各一遍
 全量档）在 12:30 仍在执行中，结果待定 —— 这一项本轮记为 `not_run`（进行中），不写作成功。
+
+**第四十四轮：语音模型下载卡 60 分钟**。Windows 自托管验收 40815166638 的 PowerShell 7 job
+在 03:59:13 启动、04:59:41 被 60 分钟超时杀掉，日志（job 123254416344）显示卡在
+`envoy asr install` → `prepare_asr_model` → `_download_whisper_model`：
+`Whisper model download checkpoint` 每约 2 分钟只前进 16 MiB（16→33→50→67→84 MiB，≈32 KB/s），
+145 MiB 的 `base` 要 ~75 分钟，脚本里原本没有任何总时长上限。
+改法：单次下载默认 10 分钟封顶（`ENVOY_ASR_DOWNLOAD_SECONDS` 可调），到点保留 `.part`
+并以「重跑即可续传」报错；慢链路每约 8 秒打一行「已下/总量（速率，eta）」；
+读块从 1 MiB 降到 256 KiB 让封顶更准。`tests/cli/test_asr_model_download_budget.py`
+用本地 HTTP 服务覆盖完成/续传/超时保留断点/默认值/进度输出 5 例；`tests/cli` 全量
+987 passed。托管干净机同一运行 03:59:12→04:01:09 成功，说明模型源本身可用，
+慢的是那台自托管机的出网。
