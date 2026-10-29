@@ -4,6 +4,13 @@
 
 ### 中文
 
+- 长 PDF 续读一次交一窗，而不是一页：`envoy_expand` 把还能装进本次响应的页一起给出，
+  `expansion_rounds` 按一次回答计 1；500 页样本默认预算下 1 次读 + 3 次续读、0.52 秒读完。
+- 调用方把 `max_response_chars` 调到 48k 以上不再被总预算卡住校验：未显式给总预算时自动抬到同值，
+  显式给的与小于 48k 的旧行为都不变；一份 500 页 PDF 可以一次读到全文（51892/52890 字符，0.26 秒）。
+- 复用已存材料读 PDF 时，`continuation_available` 不再配一个空的 `next_offset`。
+- B 站空间候选的标题取自封面 `img[alt]`，不再是「167.5万 3992 00:19」这类统计条；
+  `creator`/`duration_seconds` 一并修正，被 412 挡住时补一句登录/导入 cookie 的下一步。
 - Windows 上「仅自己可读」原来等于没设：`os.chmod(0o600)` 在 NTFS 上不生效，开关配置与导入的 cookie 存储改为用 `icacls` 断继承、只授权当前账户（POSIX 仍是 0600/0700，有单测覆盖两种平台）。
 - 发版不再因为一次红灯 CI 把版本永久卡住：标签不存在时，即使包版本未变也会补发。
 - 没有任何 Python 的 Windows 机器上的完整安装修好了：自取的 `uv.exe` 不再放进 venv 目标目录、也不会被「清理半成品运行目录」删掉，缓存改到 `%LOCALAPPDATA%\envoy-dsh\tools\uv`（可用 `ENVOY_UV_HOME` 指定）；托管干净机的 0.1.27 / 0.1.28 验收依次死在这两步。
@@ -65,6 +72,15 @@
 
 ### English
 
+- A long PDF continues by a window of pages per expand instead of one page: everything that still fits the
+  response is handed over at once, and `expansion_rounds` counts one answer as one round (500-page sample:
+  1 read + 3 expands, 0.52 s under the default budget).
+- Raising `max_response_chars` past 48k is no longer rejected: the total budget is derived from it when the
+  caller did not pass one, while an explicit total and budgets under 48k keep the old behaviour (a 500-page
+  PDF reads in one call, 51892/52890 chars, 0.26 s).
+- Reusing a stored PDF material now reports a real continuation offset instead of a null one.
+- Bilibili space candidates take the title from the cover `img[alt]` instead of the statistics strip, fix
+  `creator`/`duration_seconds`, and a 412 block now points at the sign-in or cookie-import next step.
 - "Owner-only" was a no-op on Windows: `os.chmod(0o600)` does nothing on NTFS,
   so the switch config and the imported cookie store now break ACL inheritance
   with `icacls` and grant only the running account (POSIX keeps 0600/0700; unit
