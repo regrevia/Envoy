@@ -443,8 +443,10 @@ TOOLS = [
             "max_response_chars}. Raise max_work_seconds for long audio or video "
             "(a one-hour recording needs several hundred seconds; the ceiling is "
             "3600) and raise max_response_chars up to 1000000 only when you really "
-            "need the whole text in one reply; refresh true re-reads instead of "
-            "replaying retained material."
+            "need the whole text in one reply; raising it also raises the "
+            "implied cumulative response budget, so one call can carry a whole long "
+            "document, while an explicit max_total_response_chars always wins. "
+            "refresh true re-reads instead of replaying retained material."
         ),
         "inputSchema": READ_SCHEMA,
     },
