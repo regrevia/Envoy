@@ -745,7 +745,7 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             else:
                 print(cache_storage.render_status(report))
             return 0
-        report = cache_storage.prune_cache(dry_run=args.dry_run)
+        report = cache_storage.prune_cache(dry_run=args.dry_run, home=cache_storage.envoy_home())
         if args.json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:

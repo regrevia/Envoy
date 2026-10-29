@@ -268,7 +268,7 @@ assert schema["title"] == "ReadRequest"
 assert "envoy.read/1" in json.dumps(schema)
 assert not any(name.startswith("fastapi") for name in sys.modules)
 assert not any(name.startswith("sqlalchemy") for name in sys.modules)
-assert envoy_core.__version__ == "0.1.32"
+assert envoy_core.__version__ == "0.1.33"
 """
     env = dict(os.environ)
     env["PYTHONPATH"] = str(CORE_SRC)

@@ -5,13 +5,20 @@ Materials expire on read (``reader._material_root`` drops anything past its
 kinds of data never were reclaimed: the OCR download and result caches, and the
 idempotency ledgers, both of which keep growing because nothing ever deletes
 them. ``envoy cache status`` reports what is on disk and ``envoy cache prune``
-deletes the reclaimable part; the isolated browser profile is reported but never
-touched, because removing it forces a fresh Chromium download.
+deletes the reclaimable part.
+
+The isolated browser profile is mostly Chromium's own HTTP and code caches,
+which are regenerable and grow without limit: on the measured macOS host they
+were 830 MB of an 858 MB profile. Prune removes exactly those cache directories
+and leaves cookies, logins and local storage alone, so neither a Chromium
+download nor a sign-in is repeated; while a browser on that profile is alive,
+nothing inside it is touched.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import time
@@ -23,6 +30,18 @@ MATERIAL_DIR = "materials"
 FRAMES_PREFIX = "frames-"
 OCR_CACHE_DIRS = ("ocr-cache", "ocr-inputs")
 MEDIA_PREFIX = "video-"
+BROWSER_PROFILE_ENV = "ENVOY_BROWSER_PROFILE_DIR"
+# Chromium's regenerable caches. Everything else in the profile — Cookies,
+# Login Data, Local Storage, IndexedDB — is a session and is never deleted here.
+BROWSER_CACHE_DIRS = (
+    "Default/Cache",
+    "Default/Code Cache",
+    "Default/GPUCache",
+    "Default/Service Worker/CacheStorage",
+    "GraphiteDawnCache",
+    "Default/DawnGraphiteCache",
+    "Default/DawnWebGPUCache",
+)
 
 _MATERIAL_ID = re.compile(r"mat-[a-f0-9]{24}")
 
@@ -134,6 +153,89 @@ def _summary(paths: list[Path]) -> dict:
     return {"count": len(paths), "bytes": sum(_size(path) for path in paths)}
 
 
+def browser_profile_root(home: Path | None = None) -> Path:
+    """The profile Envoy's isolated browser uses, honoring its env override.
+
+    ``home`` is Envoy's own home (``~/.envoy``), the same directory the rest of
+    this module inspects; without it the default location is used.
+    """
+
+    configured = os.getenv(BROWSER_PROFILE_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return (home or (Path.home() / ".envoy")) / "browser-profile"
+
+
+def browser_cache_paths(profile: Path) -> list[Path]:
+    return [profile / relative for relative in BROWSER_CACHE_DIRS]
+
+
+def _browser_profile_in_use(profile: Path) -> bool:
+    """True while a Chromium is running on this profile.
+
+    Chromium keeps ``SingletonLock`` as a symlink to ``<hostname>-<pid>`` on
+    POSIX; deleting a live HTTP cache under a running browser is not worth the
+    risk, so any readable lock whose pid is alive counts as in use.
+    """
+
+    lock = profile / "SingletonLock"
+    try:
+        target = os.readlink(lock)
+    except (OSError, AttributeError):
+        target = str(lock) if lock.exists() else ""
+    pid_text = str(target).rsplit("-", 1)[-1]
+    if not pid_text.isdigit():
+        return bool(pid_text)
+    from . import process_control
+
+    return process_control.pid_alive(int(pid_text))
+
+
+def browser_cache_state(
+    profile: Path | None = None, home: Path | None = None
+) -> dict:
+    profile = profile or browser_profile_root(home)
+    paths = [path for path in browser_cache_paths(profile) if path.exists()]
+    return {
+        "profile": str(profile),
+        "present": profile.is_dir(),
+        "in_use": _browser_profile_in_use(profile) if profile.is_dir() else False,
+        **_summary(paths),
+        "paths": [str(path) for path in paths],
+    }
+
+
+def clear_browser_cache(
+    profile: Path | None = None,
+    *,
+    home: Path | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Delete Chromium's regenerable caches, keeping every stored session."""
+
+    state = browser_cache_state(profile, home)
+    if state["in_use"]:
+        return {
+            "profile": state["profile"],
+            "dry_run": dry_run,
+            "skipped_in_use": True,
+            "removed": [],
+            "freed_bytes": 0,
+        }
+    removed: list[dict] = []
+    for path in browser_cache_paths(Path(state["profile"])):
+        if not path.exists():
+            continue
+        removed.append({**_remove(path, path.parent, dry_run), "path": str(path)})
+    return {
+        "profile": state["profile"],
+        "dry_run": dry_run,
+        "skipped_in_use": False,
+        "removed": removed,
+        "freed_bytes": sum(entry["bytes"] for entry in removed),
+    }
+
+
 def _other_entries(home: Path, materials: Path) -> list[dict]:
     if not home.is_dir():
         return []
@@ -214,9 +316,16 @@ def cache_status(
             "expired_count": len(expired_operations),
             "expired_bytes": sum(_size(path) for path in expired_operations),
         },
+        "browser_cache": browser_cache_state(home=home),
     }
     others = _other_entries(home, root)
-    total = sum(category["bytes"] for category in categories.values())
+    # The browser profile already appears whole under ``other``; its cache
+    # category is the reclaimable part of it, so counting both would lie.
+    total = sum(
+        category["bytes"]
+        for key, category in categories.items()
+        if key != "browser_cache"
+    )
     total += sum(entry["bytes"] for entry in others)
     return {
         "materials_root": str(root),
@@ -232,18 +341,23 @@ def prune_cache(
     *,
     dry_run: bool = False,
     now: float | None = None,
+    home: Path | None = None,
 ) -> dict:
     """Delete expired materials, orphan frames, OCR caches and spent ledgers."""
 
     root = root or data_root()
     current = time.time() if now is None else now
+    browser = clear_browser_cache(home=home, dry_run=dry_run) if home is not None else None
     removed: list[dict] = []
+    if browser and not browser["skipped_in_use"]:
+        removed.extend(browser["removed"])
     if not root.is_dir():
         return {
             "materials_root": str(root),
             "dry_run": dry_run,
             "removed": removed,
-            "freed_bytes": 0,
+            "freed_bytes": sum(entry["bytes"] for entry in removed),
+            "browser_cache": browser,
         }
 
     live, stale = _material_state(root, current)
@@ -284,6 +398,7 @@ def prune_cache(
         "dry_run": dry_run,
         "removed": removed,
         "freed_bytes": sum(entry["bytes"] for entry in removed),
+        "browser_cache": browser,
     }
 
 
@@ -305,6 +420,7 @@ def render_status(report: dict) -> str:
         "ocr_cache": "ocr results",
         "video_media": "raw video media",
         "operations": "operation ledgers",
+        "browser_cache": "browser cache",
     }
     for key, label in labels.items():
         category = report["categories"][key]
@@ -313,6 +429,8 @@ def render_status(report: dict) -> str:
             note = f"  ({category['expired_count']} expired, {human_bytes(category['expired_bytes'])})"
         elif category.get("orphan_count"):
             note = f"  ({category['orphan_count']} orphaned, {human_bytes(category['orphan_bytes'])})"
+        elif key == "browser_cache":
+            note = "  (in use)" if category.get("in_use") else "  (reclaimable)"
         lines.append(
             f"  {label:<18} {category['count']:>4} items  {human_bytes(category['bytes']):>9}{note}"
         )

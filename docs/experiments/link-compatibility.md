@@ -1302,3 +1302,21 @@ SDK/CLI 这条路没抬）→ 把抬平逻辑放进 `Budget.validate_totals`：�
 7 个资产；Windows 托管干净机验收 40823496457 success（PowerShell 5.1 + 7 两档 fresh）。
 本轮改动即上面第四十五轮的 `Budget.validate_totals` 抬平：只调 `max_response_chars` 的调用方
 不再被总预算校验拒掉。
+
+## 第四十六轮：浏览器 profile 里的缓存是可以回收的
+
+测量对象是本机 `~/.envoy/browser-profile`（不需联网、不下载任何东西）：
+
+- `envoy cache status` 之前把这 858 MB 只报成一行 `browser-profile`，看不出里面哪部分可再生。
+  逐目录量：`Default/Cache` 753 MB、`Default/Code Cache` 82 MB、`GraphiteDawnCache` 5.7 MB、
+  `Default/GPUCache` 5.3 MB、Dawn 两个目录与 `Service Worker/CacheStorage` 合计约 1 MB，
+  即 837 MB / 858 MB 是 Chromium 自己的缓存。
+- 新增 `browser_cache` 分类后：`envoy cache prune` 实测释放 839 769 993 字节（其中浏览器缓存
+  836 747 346 字节），耗时 3.64 秒，总量 857 880 066 → 18 110 073 字节。
+- 回收后 `Default/Cookies`（102400 字节，10-29 13:21）与 `Default/Login Data`（40960 字节，10-20 13:39）
+  仍在原处，`~/.cache/ms-playwright` 未变——不需要重下 Chromium，也不需要重新登录。
+- 浏览器正在运行时（`SingletonLock` 指向活进程）整段跳过，单测用当前进程 pid 覆盖这条。
+- 单测 5 例（tests/cli/test_cache_browser.py）：分类字节、prune 保留会话、运行中跳过、dry-run 不删；
+  `tests/cli` + `tests/core_protocol` 1007 passed / 58.36 秒。
+
+## 发行（0.1.33）

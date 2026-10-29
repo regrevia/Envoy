@@ -4,6 +4,9 @@
 
 ### 中文
 
+- 浏览器 profile 里能再生、也会无限长大的部分现在可以回收了：`envoy cache status` 新增 `browser_cache` 一行，
+  `envoy cache prune` 只删 Chromium 的 HTTP/代码/GPU 缓存目录，cookies、登录态、Local Storage 一律不动；
+  浏览器正在运行时整体跳过。本机实测 858 MB 的 profile 里 837 MB 是这类缓存，回收耗时 3.6 秒，之后 cookies 与登录数据仍在原处。
 - 只调 `max_response_chars` 的调用方（CLI 直传请求、第三方 SDK 也一样）不会再被
   「总预算必须 ≥ 单次预算」卡在校验上：没显式给总预算就自动抬到同值，显式给了仍按旧规则判。
   补两例单测；0.1.31 wheel 隔离安装后 MCP 读 500 页 PDF 仍是 500 页 / 51892 字符 / 0.19 秒。
@@ -85,6 +88,11 @@
 
 ### English
 
+- The part of the browser profile that is regenerable — and grew without limit — is reclaimable now:
+  `envoy cache status` reports a `browser_cache` row and `envoy cache prune` deletes only Chromium's
+  HTTP, code and GPU cache directories, leaving cookies, logins and local storage alone, and skips the
+  whole profile while a browser is running on it. Measured here: 837 MB of an 858 MB profile, 3.6 s to
+  reclaim, with the stored cookies and login data still in place afterwards.
 - A caller that only raises `max_response_chars` (a raw CLI request, a third-party SDK) is no longer
   rejected by the "cumulative budget must be at least the reply budget" check: an omitted cumulative
   budget is lifted to match, while an explicit smaller one is still rejected. Two unit tests cover it;
