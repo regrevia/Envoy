@@ -18,15 +18,15 @@
   keeps the resumable partial file and exits with a retry instruction; on slow links it prints
   downloaded/total, rate and remaining time roughly every 8 seconds (`ENVOY_ASR_DOWNLOAD_SECONDS`
   overrides the cap). The Windows self-hosted acceptance used to be killed by its 60-minute timeout
-  exactly here: that machine got about 32 KB/s from the model source, i.e. 75 minutes for the 145 MB
-  `base` model.
+  exactly here: that machine got about 130 KB/s from the model source, i.e. 18 minutes for the 145 MB
+  `base` model while only 12 minutes of the job budget were left when the download started.
 - A red CI run no longer strands a version: when the tag is missing, the release is retried even though the package version did not change.
 - Full install on a Windows machine with no Python works: the fetched `uv.exe` no longer lands inside the venv target and is no longer wiped with a half-written runtime; it is cached under `%LOCALAPPDATA%\envoy-dsh\tools\uv` (override with `ENVOY_UV_HOME`).
 - 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `%LOCALAPPDATA%\envoy-dsh\tools\uv`，`envoy asr install --model base` 因此在干净机器上也能装好。
 - 语音模型下载不再无限等：单次下载默认最多 10 分钟，超时保留断点文件、按可续跑的方式报错，
   慢链路上每约 8 秒报一次「已下/总量、速率、预计剩余」（`ENVOY_ASR_DOWNLOAD_SECONDS` 可调）。
-  Windows 自托管验收从前就是被这一步按 60 分钟超时杀掉的：那台机器从模型源只有约 32 KB/s，
-  145 MB 的 `base` 要下 75 分钟。
+  Windows 自托管验收从前就是被这一步按 60 分钟超时杀掉的：那台机器从模型源约 130 KB/s，
+  145 MB 的 `base` 要 18 分钟，而下载开始时 job 预算只剩 12 分钟，旧代码没有单次下载上限。
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么
   （A8：`minimal` 无浏览器无转写引擎、`standard` 浏览器就绪、`full` 两者都在）。

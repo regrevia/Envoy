@@ -1274,8 +1274,9 @@ MCP 的 read 预算里 `max_response_chars` 允许到 1_000_000，但 `max_total
 **第四十四轮：语音模型下载卡 60 分钟**。Windows 自托管验收 40815166638 的 PowerShell 7 job
 在 03:59:13 启动、04:59:41 被 60 分钟超时杀掉，日志（job 123254416344）显示卡在
 `envoy asr install` → `prepare_asr_model` → `_download_whisper_model`：
-`Whisper model download checkpoint` 每约 2 分钟只前进 16 MiB（16→33→50→67→84 MiB，≈32 KB/s），
-145 MiB 的 `base` 要 ~75 分钟，脚本里原本没有任何总时长上限。
+`Whisper model download checkpoint` 每约 2 分钟前进 16 MiB（16→33→50→67→84 MiB，≈130 KB/s），
+145 MB 的 `base` 需要约 18 分钟；下载 04:47 左右才开始（前面装 uv/torch/Playwright 用掉约 47 分钟），
+到 60 分钟 job 上限只剩 12 分钟，旧代码没有单次下载时长上限，只能被超时杀掉。
 改法：单次下载默认 10 分钟封顶（`ENVOY_ASR_DOWNLOAD_SECONDS` 可调），到点保留 `.part`
 并以「重跑即可续传」报错；慢链路每约 8 秒打一行「已下/总量（速率，eta）」；
 读块从 1 MiB 降到 256 KiB 让封顶更准。`tests/cli/test_asr_model_download_budget.py`
