@@ -88,6 +88,10 @@
 - 凭据只在本机：cookie 存 `~/.envoy/imported-cookies.json`（0600、原子替换），
   开关存 `~/.envoy/config.json`（0600、目录 0700），工具返回里只有数量、域名和
   cookie 名，值不出现、不入日志、不上传（有测试驱动 401 读取并断言值不在结果里）。
+- 插件市场介绍重写：开头直接说覆盖哪些平台（小红书笔记、抖音与 B 站视频、微信公众号文章，
+  连同文章 / PDF / 音频）和产出什么（可引用的 Markdown，进知识库或 wiki），
+  列表卡片只渲染前 160 字符，所以平台与产物放在最前；60 轮 A/B、123 条真实链接的测量数字留在后面，
+  A/B 的探索性注脚照旧保留。npm 包的 description 同步成同一版。
 
 ### English
 
@@ -186,6 +190,12 @@
   (0600, atomic replace), the switch in `~/.envoy/config.json` (0600, directory 0700),
   and tool output carries counts, domains, and cookie names only — never values, which
   a test drives through a 401 read to prove absent from the result.
+- Rewrote the marketplace and npm description: it now opens with the platforms it covers
+  (Xiaohongshu notes, Douyin and Bilibili videos, WeChat official posts, plus articles, PDFs
+  and audio) and what they become (citable Markdown for a wiki or knowledge base). The list card
+  renders only the first 160 characters, so platforms and outcomes come first and the 60-turn
+  A/B plus the 123-live-link numbers follow, still labelled exploratory.
+
 
 ## 0.1.27
 
