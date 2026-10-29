@@ -155,6 +155,10 @@ _PUBLIC_API_FALLBACK_SECONDS = 15
 _PUBLIC_API_FALLBACK_MIN_CHARS = 200
 # Below this a platform page is a script shell rather than content.
 _THIN_PLATFORM_PAGE_CHARS = 300
+_EXPIRED_MATERIAL_NEXT_ACTION = (
+    "read the source URL again with envoy_read; a retained material can only be reused while its lease is alive"
+)
+
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
@@ -3024,55 +3028,276 @@ def _coverage_pages(stored: dict) -> set[int]:
     return pages
 
 
-def _stored_evidence_blocks(stored: dict) -> list[dict]:
-    """Return the block view a citation check can resolve against.
+_EVIDENCE_RANGE_SUFFIX = re.compile(r"^(?P<base>[a-z0-9][a-z0-9-]*?)-range-(?P<offset>\d+)$")
+_EVIDENCE_SEARCH_ID = re.compile(r"^blk-search-(?P<start>\d+)-(?P<end>\d+)-[a-f0-9]+$")
+_EVIDENCE_WHOLE_TEXT_IDS = (
+    "blk-body-0001",
+    "blk-video-0001",
+    "blk-video-transcript",
+    "blk-office-0001",
+)
 
-    Web, video and office records keep their blocks on disk. PDF records keep
-    only the flat text plus per-page character spans, so the block view has to
-    be rebuilt exactly as a replay rebuilds it; otherwise every page citation
-    would be reported as a missing block.
+
+def _evidence_locator_dict(locator) -> dict | None:
+    """Keep locators in the stored shape a check reads, not as pydantic objects."""
+
+    if locator is None:
+        return None
+    if isinstance(locator, dict):
+        return locator
+    dump = getattr(locator, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json")
+    return None
+
+
+def _evidence_text_slice(stored: dict, start: int, end: int) -> str:
+    text = str(stored.get("text") or "")
+    start = max(0, min(int(start), len(text)))
+    end = max(start, min(int(end), len(text)))
+    return text[start:end]
+
+
+def _evidence_text_locator(stored: dict, block_id: str, content: str, start: int, end: int):
+    """Return the best locator this material can honestly attach to a range.
+
+    A citation check must answer "is this range locatable" from what was stored,
+    not from the shape of the id the host typed. PDF page spans, video cue spans
+    and OCR regions are the only things that pin a range to a place in the
+    source; everything else falls back to a web locator that names the block.
     """
 
+    source_url = _redact_url(str(stored.get("source_url") or ""))
+    source_kind = stored.get("source_kind")
+    if source_kind == "pdf":
+        spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
+        span = next(
+            (
+                item for item in spans
+                if isinstance(item, dict)
+                and int(item.get("start") or 0) <= start < int(item.get("end") or 0)
+            ),
+            None,
+        )
+        return PdfLocator(
+            type="pdf_page",
+            page_number=int(span["page_number"]) if span else None,
+            locator_valid=span is not None,
+        )
+    if source_kind == "video":
+        locator = _video_locator_for_range(
+            source_url,
+            stored.get("video_spans") if isinstance(stored.get("video_spans"), list) else [],
+            start,
+            end,
+        )
+        if locator is not None:
+            return locator
+    if source_kind == "image":
+        spans = stored.get("ocr_spans") if isinstance(stored.get("ocr_spans"), list) else []
+        span = next(
+            (
+                item for item in spans
+                if isinstance(item, dict)
+                and int(item.get("end") or 0) > start
+                and int(item.get("start") or 0) < end
+            ),
+            None,
+        )
+        if span is not None:
+            return ImageRegionLocator(
+                type="image_region",
+                resource_id=str(span.get("resource_id") or ""),
+                coordinate_system="normalized_top_left",
+                bbox=[float(value) for value in span.get("bbox") or []],
+            )
+    return WebLocator(
+        type="web",
+        source_url=source_url,
+        block_id=block_id,
+        quote=content[:MAX_LOCATOR_QUOTE_CHARS],
+    )
+
+
+def _material_evidence_blocks(stored: dict) -> dict[str, dict]:
+    """Build the block view a citation check resolves against.
+
+    One index feeds every locator question, so a block id printed by read,
+    search, expand or replay resolves against the same stored material record
+    instead of each path inventing its own idea of what a block is. Explicitly
+    stored blocks win; page, cue and OCR spans are rebuilt from the flat text;
+    whole-document blocks are synthesised so later ``-range-`` ids have a base.
+    """
+
+    records: dict[str, dict] = {}
+
+    def add(block_id: str, content: str, locator, order: int) -> None:
+        if not block_id or block_id in records:
+            return
+        records[block_id] = {
+            "text": content,
+            "locator": _evidence_locator_dict(locator),
+            "order": order,
+        }
+
     raw = stored.get("blocks")
-    if isinstance(raw, list) and raw:
-        return [block for block in raw if isinstance(block, dict)]
-    spans = stored.get("page_spans")
-    if not isinstance(spans, list):
-        return []
+    if isinstance(raw, list):
+        for position, block in enumerate(raw):
+            if not isinstance(block, dict):
+                continue
+            try:
+                order = int(block.get("order"))
+            except (TypeError, ValueError):
+                order = position
+            add(
+                str(block.get("id") or ""),
+                _evidence_text(block.get("content")),
+                block.get("locator"),
+                order,
+            )
+
     text = str(stored.get("text") or "")
-    blocks: list[dict] = []
+    source_kind = stored.get("source_kind")
     title_text = str(stored.get("title_text") or "").strip()
     if title_text:
-        blocks.append(
-            {
-                "id": "blk-title",
-                "content": {"type": "text", "text": title_text},
-                "locator": None,
-            }
-        )
-    for span in spans:
-        if not isinstance(span, dict):
-            continue
-        try:
-            page_number = int(span.get("page_number") or 0)
-            start = int(span.get("start") or 0)
-            end = int(span.get("end") or 0)
-        except (TypeError, ValueError):
-            continue
-        if page_number < 1 or end <= start or start < 0 or end > len(text):
-            continue
-        blocks.append(
-            {
-                "id": f"blk-pdf-page-{page_number:04d}",
-                "content": {"type": "text", "text": text[start:end]},
-                "locator": {
-                    "type": "pdf_page",
-                    "page_number": page_number,
-                    "locator_valid": True,
-                },
-            }
-        )
-    return blocks
+        # A title is not a place in the source, so it carries no locator at all;
+        # inventing one would let a check claim a passage is pinned when it is not.
+        add("blk-title", title_text, None, 0)
+
+    page_spans = stored.get("page_spans")
+    if isinstance(page_spans, list):
+        for span in page_spans:
+            if not isinstance(span, dict):
+                continue
+            try:
+                page_number = int(span.get("page_number") or 0)
+                start = int(span.get("start") or 0)
+                end = int(span.get("end") or 0)
+            except (TypeError, ValueError):
+                continue
+            if page_number < 1 or end <= start or start < 0 or end > len(text):
+                continue
+            add(
+                f"blk-pdf-page-{page_number:04d}",
+                text[start:end],
+                PdfLocator(
+                    type="pdf_page",
+                    page_number=page_number,
+                    locator_valid=True,
+                ),
+                page_number,
+            )
+
+    video_spans = stored.get("video_spans")
+    if isinstance(video_spans, list):
+        for index, span in enumerate(video_spans):
+            if not isinstance(span, dict):
+                continue
+            try:
+                start = int(span.get("start_offset") or 0)
+                end = int(span.get("end_offset") or 0)
+                start_seconds = float(span.get("start_seconds") or 0)
+                end_seconds = float(span.get("end_seconds") or 0)
+            except (TypeError, ValueError):
+                continue
+            if end <= start or start < 0 or end > len(text):
+                continue
+            add(
+                f"blk-video-asr-{index + 1:04d}",
+                text[start:end],
+                VideoLocator(
+                    type="video_time",
+                    source_url=_redact_url(str(stored.get("source_url") or "")),
+                    start_seconds=start_seconds,
+                    end_seconds=max(end_seconds, start_seconds + 0.001),
+                ),
+                index + 1,
+            )
+
+    if text:
+        if source_kind == "video":
+            whole_ids = ("blk-video-transcript", "blk-video-0001")
+        elif source_kind == "pdf":
+            whole_ids = ()
+        elif source_kind == "image":
+            whole_ids = ("blk-image-0001", "blk-body-0001")
+        else:
+            whole_ids = ("blk-body-0001", "blk-office-0001")
+        for block_id in whole_ids:
+            add(
+                block_id,
+                text,
+                _evidence_text_locator(stored, block_id, text, 0, len(text)),
+                1,
+            )
+    return records
+
+
+def _resolve_evidence_block(stored: dict, block_id: str | None, records: dict[str, dict]) -> dict | None:
+    """Resolve any id a receipt can print back to text plus a locator.
+
+    Read prints ``blk-body-0001``/``blk-video-transcript``, search prints
+    ``blk-search-{start}-{end}-{digest}`` and expand prints
+    ``{base}-range-{offset}``. All three encode a character range, so a check can
+    rebuild the same block without the earlier response still being in hand.
+    """
+
+    if not block_id:
+        return None
+    record = records.get(block_id)
+    if record is not None:
+        return record
+    text = str(stored.get("text") or "")
+    search = _EVIDENCE_SEARCH_ID.match(block_id)
+    if search:
+        start = int(search.group("start"))
+        end = int(search.group("end"))
+        content = _evidence_text_slice(stored, start, end)
+        if not content:
+            return None
+        return {
+            "text": content,
+            "locator": _evidence_locator_dict(
+                _evidence_text_locator(stored, block_id, content, start, end)
+            ),
+            "order": start,
+        }
+    ranged = _EVIDENCE_RANGE_SUFFIX.match(block_id)
+    if ranged:
+        base = str(ranged.group("base"))
+        offset = int(ranged.group("offset"))
+        base_record = records.get(base)
+        if base_record is None and base not in _EVIDENCE_WHOLE_TEXT_IDS:
+            return None
+        if offset < 0 or offset > len(text):
+            return None
+        end = len(text)
+        budget_state = stored.get("budget_state")
+        if isinstance(budget_state, dict):
+            for delivered_start, delivered_end in _material_returned_ranges(budget_state, len(text)):
+                if delivered_start <= offset < delivered_end:
+                    end = delivered_end
+                    break
+        content = _evidence_text_slice(stored, offset, end)
+        if not content:
+            return None
+        return {
+            "text": content,
+            "locator": _evidence_locator_dict(
+                _evidence_text_locator(stored, base or block_id, content, offset, end)
+            ),
+            "order": offset,
+        }
+    return None
+
+
+def _stored_evidence_blocks(stored: dict) -> list[dict]:
+    """The block index in the list shape older callers expect."""
+
+    return [
+        {"id": block_id, **record}
+        for block_id, record in _material_evidence_blocks(stored).items()
+    ]
 
 
 def _evidence_revision_kind(stored: dict, source_revision: str | None) -> str:
@@ -3138,7 +3363,9 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             quote_match="none",
             locator_valid=False,
             reason="material_missing",
-            notes=["no retained material under this id on this machine"],
+            notes=[
+                "no retained material under this id on this machine; read the source URL again with envoy_read to get a live material_id"
+            ],
         )
     try:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
@@ -3159,18 +3386,18 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
     source_revision = str(stored.get("source_revision") or "") or None
     base["source_revision"] = source_revision
     base["source_revision_kind"] = _evidence_revision_kind(stored, source_revision)
+    records = _material_evidence_blocks(stored)
     blocks = _stored_evidence_blocks(stored)
-    by_id = {str(block.get("id")): block for block in blocks if block.get("id")}
     if expires_at <= time.time():
         return reply(
             resolution="unmatched",
             quote_match="none",
             locator_valid=False,
             reason="material_expired",
-            notes=["material lease expired; re-read the source to cite it again"],
+            notes=["material lease expired; read the source URL again with envoy_read to cite it"],
         )
 
-    target = by_id.get(block_id) if block_id else None
+    target = _resolve_evidence_block(stored, block_id, records) if block_id else None
     if block_id and target is None:
         return reply(
             resolution="unmatched",
@@ -3179,8 +3406,8 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             reason="block_missing",
             notes=["this material holds no block with that id; block ids are not portable across materials"],
         )
-    search_text = _evidence_text(target.get("content")) if target else "\n".join(
-        _evidence_text(block.get("content")) for block in blocks
+    search_text = target["text"] if target else "\n".join(
+        record["text"] for record in records.values()
     )
     quote_match = "none"
     if quote:
@@ -3210,7 +3437,11 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
                 )
         elif locator_type in ("web", "video_time", "audio_time", "image_region", "office_location"):
             locator_valid = True
-            if locator_type == "web" and locator.get("block_id") and str(locator["block_id"]) not in by_id:
+            if (
+                locator_type == "web"
+                and locator.get("block_id")
+                and _resolve_evidence_block(stored, str(locator["block_id"]), records) is None
+            ):
                 locator_valid = False
                 notes.append("locator points at a block this material no longer holds")
 
@@ -4151,9 +4382,17 @@ def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadRe
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except (FileNotFoundError, ValueError, OSError) as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        ) from exc
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if stored.get("session_id") and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     source_unresolved = _source_coverage_unresolved(stored)
@@ -4308,9 +4547,17 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except (FileNotFoundError, ValueError, OSError) as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        ) from exc
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if stored.get("session_id") and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
 
@@ -4522,7 +4769,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 quote=content[:MAX_LOCATOR_QUOTE_CHARS],
             )
         blocks.append(MaterialBlock(
-            id=f"blk-search-{_stable_evidence_digest(material_id, start, content)}",
+            id=f"blk-search-{start}-{end}-{_stable_evidence_digest(material_id, start, content)}",
             kind=(
                 MaterialKind.TRANSCRIPT
                 if stored.get("source_kind") == "video"
@@ -4662,11 +4909,19 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except FileNotFoundError:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if expires_at <= time.time():
         source_path.unlink(missing_ok=True)
         expiry_path.unlink(missing_ok=True)
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if stored.get("session_id") and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     source_unresolved = _pdf_source_unresolved(stored)

@@ -217,8 +217,9 @@ def test_search_ids_name_the_passage_not_the_query(tmp_path):
     ids = []
     for block, _entry in blocks:
         content = block.content.text
-        expected = "blk-search-" + reader._stable_evidence_digest(
-            material_id, start_offset(content), content
+        expected = (
+            f"blk-search-{start_offset(content)}-{start_offset(content) + len(content)}-"
+            + reader._stable_evidence_digest(material_id, start_offset(content), content)
         )
         assert block.id == expected
         ids.append(block.id)
@@ -247,7 +248,7 @@ def test_missing_and_expired_material_stay_unmatched_and_say_why(tmp_path):
     expired = _check(material_id=material_id, block_id=block_id, quote=text[:20])
     assert expired.resolution == "unmatched"
     assert expired.reason == "material_expired"
-    assert "re-read" in " ".join(expired.notes)
+    assert "read the source URL again with envoy_read" in " ".join(expired.notes)
 
 
 def test_unknown_block_id_is_reported_as_block_missing(tmp_path):
