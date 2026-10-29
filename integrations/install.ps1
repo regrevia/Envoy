@@ -11,6 +11,7 @@
 # Environment overrides:
 #   ENVOY_VERSION       runtime version to install (default: release manifest)
 #   ENVOY_HOME          private runtime root (default: %LOCALAPPDATA%\envoy-dsh\runtime)
+#   ENVOY_UV_HOME       where the self-fetched uv binary is cached (default: %LOCALAPPDATA%\envoy-dsh\tools\uv)
 #   ENVOY_RUNTIME_BIN   explicit runtime to reuse instead of installing one
 #   ENVOY_PROFILE       minimal | standard | full (default: full, the recommended one)
 #                       minimal: runtime only, about 180 MB
@@ -54,6 +55,12 @@ $Script:RuntimeBin = Join-Path $Script:RuntimeHome "Scripts\envoy.exe"
 # Writing it to a fixed ~/.envoy would make doctor report `unpinned` for anyone
 # who relocates the runtime with ENVOY_HOME.
 $Script:EnvoyHome = if ($env:ENVOY_HOME) { $env:ENVOY_HOME } else { Join-Path $HOME ".envoy" }
+# The uv binary is a tool, not the runtime: it must never sit inside the venv
+# target, or uv refuses to create the venv in a non-empty directory (and the
+# wipe of a half-written runtime used to delete it right after the download).
+$Script:UvHome = if ($env:ENVOY_UV_HOME) { $env:ENVOY_UV_HOME }
+    elseif ($env:ENVOY_HOME) { Join-Path (Split-Path -Parent $env:ENVOY_HOME) "envoy-uv" }
+    else { Join-Path $env:LOCALAPPDATA "envoy-dsh\tools\uv" }
 $Script:RuntimePin = if ($env:ENVOY_RUNTIME_PIN) { $env:ENVOY_RUNTIME_PIN } else { Join-Path $Script:EnvoyHome "runtime-path" }
 $Script:ShimDir = Join-Path $Script:EnvoyHome "bin"
 $Script:DshProfile = if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { "web" }
@@ -211,7 +218,7 @@ function Ensure-Uv {
     if ($onPath) { return $onPath.Source }
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64" } else { "x86_64" }
     $asset = "uv-$arch-pc-windows-msvc.zip"
-    $cached = Join-Path $Script:EnvoyHome "tools\uv\$($Script:UvVersion)\uv.exe"
+    $cached = Join-Path $Script:UvHome "$($Script:UvVersion)\uv.exe"
     if (Test-Path -LiteralPath $cached) { return $cached }
     if ($Script:DryRun) {
         Write-Host ("  + download {0}/{1}/{2}" -f $Script:UvRelease, $Script:UvVersion, $asset)

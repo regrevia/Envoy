@@ -6,9 +6,9 @@
 
 - Windows 上「仅自己可读」原来等于没设：`os.chmod(0o600)` 在 NTFS 上不生效，开关配置与导入的 cookie 存储改为用 `icacls` 断继承、只授权当前账户（POSIX 仍是 0600/0700，有单测覆盖两种平台）。
 - 发版不再因为一次红灯 CI 把版本永久卡住：标签不存在时，即使包版本未变也会补发。
-- 没有任何 Python 的 Windows 机器上完整安装不再把自己刚下好的 `uv.exe` 删掉：清理半成品运行目录挪到下载之前（托管干净机的 0.1.27 验收就是死在这一步）。
+- 没有任何 Python 的 Windows 机器上的完整安装修好了：自取的 `uv.exe` 不再放进 venv 目标目录、也不会被「清理半成品运行目录」删掉，缓存改到 `%LOCALAPPDATA%\envoy-dsh\tools\uv`（可用 `ENVOY_UV_HOME` 指定）；托管干净机的 0.1.27 / 0.1.28 验收依次死在这两步。
 - A red CI run no longer strands a version: when the tag is missing, the release is retried even though the package version did not change.
-- A Windows machine with no Python no longer deletes the `uv.exe` it just downloaded: the half-written runtime home is wiped before the fetch.
+- Full install on a Windows machine with no Python works: the fetched `uv.exe` no longer lands inside the venv target and is no longer wiped with a half-written runtime; it is cached under `%LOCALAPPDATA%\envoy-dsh\tools\uv` (override with `ENVOY_UV_HOME`).
 - 完整安装不再要求机器上先有 `uv`：缺了就由 Envoy 自己下载官方发布的二进制、按它的 SHA-256 校验后放进 `~/.envoy/tools/uv/`，`envoy asr install --model base` 因此在干净机器上也能装好。
 - Windows 验收可以只验一档：`scripts/windows/acceptance.ps1` 新增 `-Profile`，
   Actions 里新增 `profile` 输入，装完用 `envoy doctor --json` 断言这一档到底装了什么

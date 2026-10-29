@@ -139,6 +139,8 @@ function Invoke-Installer {
     param([string]$InstallVersion)
     $shell = (Get-Process -Id $PID).Path
     $env:ENVOY_HOME = $EnvoyHome
+    # The uv cache must not land in the user profile of a self-hosted runner.
+    $env:ENVOY_UV_HOME = Join-Path $env:RUNNER_TEMP "envoy-uv"
     $env:ENVOY_RUNTIME_PIN = Join-Path $EnvoyHome "runtime-path"
     if ($Profile) {
         # The profile decides what gets provisioned; a stale override would hide it.

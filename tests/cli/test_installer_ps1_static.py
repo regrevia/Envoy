@@ -231,3 +231,15 @@ def test_the_venv_wipe_runs_before_uv_is_fetched(text: str):
     assert runtime.count("Remove-Item -LiteralPath $Script:RuntimeHome") == 1, (
         "the wipe moved up front; a second copy would reintroduce the race"
     )
+
+
+def test_the_uv_cache_lives_outside_the_runtime_home(text: str):
+    """Run 40803073176: uv landed inside the venv target, so `uv venv` refused a
+    non-empty directory."""
+    assert "$Script:UvHome" in text
+    body = text[text.index("function Ensure-Uv"):]
+    body = body[: body.index("function ", 10)]
+    assert "Join-Path $Script:UvHome" in body
+    assert "$Script:EnvoyHome" not in body, "the cache must not sit inside the venv target"
+    head = text[: text.index("function Stop-Install")]
+    assert 'Join-Path (Split-Path -Parent $env:ENVOY_HOME) "envoy-uv"' in head
