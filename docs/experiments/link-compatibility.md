@@ -1144,3 +1144,24 @@ uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解
   即没有字幕轨时它会告诉用户装什么，而不是静默返回空正文——这条是可接受的失败形态。
 - 复现环境：临时 `HOME` + `ENVOY_CONFIG_DIR`，`packages/envoy-cli/.venv/bin/envoy`（无 media extra、
   无浏览器运行时），故上述两条失败都是「最小安装」视角下的真实行为。
+
+## 第四十轮（读取耗时基线 + 全量套件）
+
+同一台机器、临时 `HOME`、`packages/envoy-cli/.venv`，每条 URL 连读两次（第二次不是缓存命中，
+Envoy 每次都是真抓；两次的差异只能反映网络抖动）：
+
+| 目标 | 第一次 | 第二次 | 正文 |
+| --- | --- | --- | --- |
+| GitHub raw TSV | 1.24 s `READY` | 3.39 s `READY` | 1498 字符 |
+| GitHub raw docx | 4.88 s `READY` | 0.94 s `READY` | 57 字符 |
+| Google Drive 公开文本 | 17.02 s `READY` | 13.12 s `READY` | 20 字符 |
+
+- 结论 1（效率）：raw.githubusercontent 这类直连目标在 1–5 秒内出正文，Office 与纯文本同量级；
+  同一目标两次差 4 倍（docx 4.88 → 0.94），说明当前方差主要来自网络而不是解析。
+- 结论 2（Drive 是慢路径）：`drive.google.com` 一次读取要 13–17 秒，比直连目标慢一个数量级。
+  对照实验：在**这台机器**上用 `curl -L` 直接打 Envoy 改写出的同一条
+  `https://drive.google.com/uc?export=download&id=…`，两次都在 45 秒超时（`http_code=000`，
+  `curl: (28) Connection timed out`）。所以这段延迟主要是上游对这台机器的可达性问题，
+  Envoy 反而在 13–17 秒内拿到了 20 字符正文 —— 它是走了自己的取回路径，不是简单直连。
+  归因到 Envoy 的解析开销没有依据，标记为「上游慢」。
+- 全量回归：`pytest -q tests/cli tests/test_windows_acceptance_workflow.py` = **985 passed in 77.47s**。
