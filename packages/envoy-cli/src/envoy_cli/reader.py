@@ -5032,6 +5032,39 @@ def _fetch_pdf_source(
     remaining_bytes = int(max_bytes)
     temp_path: Path | None = None
     handle = None
+    size = 0
+    digest = hashlib.sha256()
+    resumed_bytes = 0
+
+    def discard_partial() -> None:
+        """Drop bytes from an earlier attempt instead of appending to garbage."""
+
+        nonlocal temp_path, handle, size, digest
+        if handle is not None and not handle.closed:
+            handle.close()
+        handle = None
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        temp_path = None
+        size = 0
+        digest = hashlib.sha256()
+
+    def finish_partial() -> None:
+        """Flush what arrived so the next attempt can continue from it."""
+
+        nonlocal handle
+        if handle is not None and not handle.closed:
+            try:
+                handle.flush()
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+            handle.close()
+        handle = None
+
     try:
         with httpx.Client(timeout=httpx.Timeout(20, read=60), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
             for _ in range(5):
@@ -5044,8 +5077,16 @@ def _fetch_pdf_source(
                 attempt = 0
                 while attempt < MAX_FETCH_ATTEMPTS:
                     check_deadline()
+                    # A read timeout used to throw away a 20 MB partial download
+                    # and ask for the whole file again; a third attempt on a
+                    # flaky link could never finish. Ask for the missing tail
+                    # instead and let the server say whether it agrees.
+                    resumable = temp_path is not None and size > 0
+                    request_headers = dict(headers)
+                    if resumable:
+                        request_headers["Range"] = f"bytes={size}-"
                     try:
-                        with client.stream("GET", current_url, headers=headers) as response:
+                        with client.stream("GET", current_url, headers=request_headers) as response:
                             if response.status_code in {301, 302, 303, 307, 308}:
                                 location = response.headers.get("location")
                                 if not location:
@@ -5056,11 +5097,17 @@ def _fetch_pdf_source(
                                     check_deadline()
                                     if remaining_bytes < 0:
                                         raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                discard_partial()
                                 current_url = urljoin(current_url, location)
                                 redirected = True
                                 break
                             if response.status_code in {401, 403}:
                                 raise PublicPageError("The PDF source requires authentication", ErrorCode.AUTH_REQUIRED)
+                            if response.status_code == 416 and resumable:
+                                # The range no longer matches the resource: start over.
+                                discard_partial()
+                                attempt += 1
+                                continue
                             if response.status_code in {408, 425, 429} or response.status_code >= 500:
                                 attempt += 1
                                 if attempt < MAX_FETCH_ATTEMPTS:
@@ -5073,34 +5120,41 @@ def _fetch_pdf_source(
                                     continue
                             response.raise_for_status()
                             content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                            resuming = resumable and response.status_code == 206
+                            if resuming:
+                                content_range = response.headers.get("content-range", "")
+                                if not content_range.replace(" ", "").startswith(f"bytes{size}-"):
+                                    discard_partial()
+                                    attempt += 1
+                                    continue
+                            else:
+                                discard_partial()
                             content_length = response.headers.get("content-length")
                             if content_length:
                                 try:
-                                    if int(content_length) > remaining_bytes:
+                                    if size + int(content_length) > max_bytes:
                                         raise PublicPageError("The PDF exceeds Envoy's size limit")
                                 except ValueError:
                                     pass
-                            handle = tempfile.NamedTemporaryFile(
-                                "wb",
-                                prefix="envoy-pdf-",
-                                suffix=".pdf",
-                                delete=False,
-                            )
-                            temp_path = Path(handle.name)
-                            digest = hashlib.sha256()
-                            size = 0
+                            if resuming:
+                                resumed_bytes += size
+                                handle = open(temp_path, "ab")
+                            else:
+                                handle = tempfile.NamedTemporaryFile(
+                                    "wb",
+                                    prefix="envoy-pdf-",
+                                    suffix=".pdf",
+                                    delete=False,
+                                )
+                                temp_path = Path(handle.name)
                             for chunk in response.iter_bytes():
                                 check_deadline()
-                                remaining_bytes -= len(chunk)
                                 size += len(chunk)
-                                if remaining_bytes < 0:
+                                if size > max_bytes:
                                     raise PublicPageError("The PDF exceeds Envoy's size limit")
                                 digest.update(chunk)
                                 handle.write(chunk)
-                            handle.flush()
-                            os.fsync(handle.fileno())
-                            handle.close()
-                            handle = None
+                            finish_partial()
                             with temp_path.open("rb") as check:
                                 head = check.read(5)
                             if not head.startswith(b"%PDF-"):
@@ -5115,12 +5169,16 @@ def _fetch_pdf_source(
                                 "size_bytes": size,
                                 "sha256": digest.hexdigest(),
                                 "input_kind": "remote_pdf",
+                                "resumed_bytes": resumed_bytes,
                             }
                     except httpx.TransportError as exc:
                         attempt += 1
+                        finish_partial()
                         if _is_connect_failure(exc) or attempt >= MAX_FETCH_ATTEMPTS:
+                            discard_partial()
                             raise
                         if deadline is not None and deadline - time.monotonic() <= 0.25 * attempt:
+                            discard_partial()
                             raise PublicPageError(
                                 "PDF download exhausted max_work_seconds",
                                 ErrorCode.BUDGET_EXCEEDED,

@@ -1328,3 +1328,16 @@ SDK/CLI 这条路没抬）→ 把抬平逻辑放进 `Budget.validate_totals`：�
   7 个资产齐全（`envoy-dsh-0.1.33.tgz`、`envoy-skill.zip`、`envoy_cli-0.1.33-py3-none-any.whl`、
   `install.ps1`、`install.sh`、`release-manifest.json`、`SHA256SUMS`）。
 - 托管干净机验收 40825123260 success（Windows Server 2022，`profile=full`、`scenario=fresh`，PS5.1+PS7 两种都过）。
+
+## 第四十七轮：远程 PDF 断流后从断点续
+
+- 旧行为：`_fetch_pdf_source` 在 `httpx.TransportError`（含 45–60 秒读超时）后删掉部分文件、重新 `GET` 整份；
+  实测本机到 arxiv 只有 11–19 KB/s，一份 2.2 MB 的论文下载 118 秒，断一次就基本吃满 180 秒默认预算。
+- 新行为：保留已落盘字节，下一次尝试带 `Range: bytes=<size>-`；返回 206 且 `Content-Range` 与本地 size 对齐才追加，
+  否则丢弃重下（200/416/区间不符都走这条）；`size` 统一计入 `max_download_bytes`，续传不会绕过上限。
+- 单测 5 例（tests/cli/test_pdf_resume.py，`httpx.MockTransport`，不联网）：截断后续传只请求尾部且 sha256 与整份一致、
+  无视 Range 的服务器重下、`Content-Range` 不符不拼接、416 从零、续传仍守字节上限。
+- 真实链接回归（本机网络）：arxiv 1706.03762v7，2 215 244 字节 / sha256 `bdfaa68d…` / 下载 118.45 秒，
+  随后 `envoy read` 默认预算读该 PDF 的 1–2 页：15 页里提取 2 页、7116 字符、`not_processed_ranges [[3, 15]]`，未触预算。
+
+## 发行（0.1.34）
