@@ -154,6 +154,15 @@ class Budget(ContractModel):
 
     @model_validator(mode="after")
     def validate_totals(self):
+        # A caller that only raises the per-reply budget means "let one reply be
+        # bigger", not "keep the old cumulative cap"; lift the cumulative budget
+        # with it unless the caller set that field explicitly (then it wins and
+        # the contract still rejects an impossible pair).
+        if (
+            self.max_total_response_chars < self.max_response_chars
+            and "max_total_response_chars" not in getattr(self, "model_fields_set", ())
+        ):
+            object.__setattr__(self, "max_total_response_chars", self.max_response_chars)
         if self.max_total_response_chars < self.max_response_chars:
             raise ValueError("max_total_response_chars must be >= max_response_chars")
         if self.max_total_visual_pixels < self.max_visual_pixels_per_input:

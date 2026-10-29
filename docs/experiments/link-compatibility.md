@@ -1288,3 +1288,12 @@ MCP 的 read 预算里 `max_response_chars` 允许到 1_000_000，但 `max_total
 `gh release view v0.1.31` = 7 个资产（`envoy_cli-0.1.31-py3-none-any.whl` 等）；Windows 托管干净机验收
 40821893675 success（05:10:58Z→05:13:34Z，PowerShell 5.1 + 7 两档 fresh 全过，含 A8 完整档 ASR 模型就绪），
 自托管双 job 本次按 `include_self_hosted=false` 跳过。
+
+**第四十五轮：0.1.31 成品自己装一遍**。从 `v0.1.31` 下 `envoy_cli-0.1.31-py3-none-any.whl`，
+在空 `UV_TOOL_DIR` 里 `uv tool install` 成功、`envoy --version` = 0.1.31；用这个隔离安装的
+`envoy mcp` 读 `file:///tmp/long2.pdf`：result=ready、500 个 pdf_page 块、51892 字符、
+page_window 1–500、0.19 秒。同一次还发现 `envoy read --request-json` 直传
+`{"max_response_chars":60000}` 仍被「总预算必须 ≥ 单次预算」拒掉（MCP 那条路早就抬平了，
+SDK/CLI 这条路没抬）→ 把抬平逻辑放进 `Budget.validate_totals`：总预算没显式给就跟着单次预算抬，
+显式给小了照旧报错；补 2 例单测，`tests/core_protocol + tests/cli` 1002 passed。
+

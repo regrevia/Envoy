@@ -201,6 +201,28 @@ def test_total_token_budget_may_be_lower_than_per_response_ceiling():
     assert budget.max_total_response_tokens == 128
 
 
+def test_raising_the_reply_budget_raises_the_implicit_cumulative_budget():
+    from envoy_core.schemas.read_v1 import Budget
+
+    budget = Budget.model_validate({"max_response_chars": 60_000})
+
+    assert budget.max_response_chars == 60_000
+    assert budget.max_total_response_chars == 60_000
+    # Untouched defaults stay untouched.
+    assert Budget.model_validate({}).max_total_response_chars == 48_000
+
+
+def test_an_explicit_cumulative_budget_still_rejects_an_impossible_pair():
+    from pydantic import ValidationError
+    from envoy_core.schemas.read_v1 import Budget
+
+    with pytest.raises(ValidationError):
+        Budget.model_validate({"max_response_chars": 60_000, "max_total_response_chars": 48_000})
+
+    budget = Budget.model_validate({"max_response_chars": 60_000, "max_total_response_chars": 80_000})
+    assert budget.max_total_response_chars == 80_000
+
+
 def test_visual_observation_history_request_has_bounded_query_limits():
     from envoy_core.schemas.read_v1 import VisualObservationHistoryRequest
 
@@ -246,7 +268,7 @@ assert schema["title"] == "ReadRequest"
 assert "envoy.read/1" in json.dumps(schema)
 assert not any(name.startswith("fastapi") for name in sys.modules)
 assert not any(name.startswith("sqlalchemy") for name in sys.modules)
-assert envoy_core.__version__ == "0.1.31"
+assert envoy_core.__version__ == "0.1.32"
 """
     env = dict(os.environ)
     env["PYTHONPATH"] = str(CORE_SRC)

@@ -26,7 +26,7 @@ const { homedir, tmpdir } = require('node:os')
 const { delimiter, join } = require('node:path')
 
 const IS_WINDOWS = process.platform === 'win32'
-const VERSION = process.env.ENVOY_DSH_VERSION || '0.1.31'
+const VERSION = process.env.ENVOY_DSH_VERSION || '0.1.32'
 const REQUIRED = process.env.ENVOY_DSH_REQUIRED_RUNTIME || VERSION
 const WHEEL =
   'https://github.com/regrevia/Envoy/releases/download/v' + VERSION +

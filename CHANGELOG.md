@@ -4,6 +4,9 @@
 
 ### 中文
 
+- 只调 `max_response_chars` 的调用方（CLI 直传请求、第三方 SDK 也一样）不会再被
+  「总预算必须 ≥ 单次预算」卡在校验上：没显式给总预算就自动抬到同值，显式给了仍按旧规则判。
+  补两例单测；0.1.31 wheel 隔离安装后 MCP 读 500 页 PDF 仍是 500 页 / 51892 字符 / 0.19 秒。
 - 长 PDF 续读一次交一窗，而不是一页：`envoy_expand` 把还能装进本次响应的页一起给出，
   `expansion_rounds` 按一次回答计 1；500 页样本默认预算下 1 次读 + 3 次续读、0.52 秒读完。
 - 调用方把 `max_response_chars` 调到 48k 以上不再被总预算卡住校验：未显式给总预算时自动抬到同值，
@@ -82,6 +85,10 @@
 
 ### English
 
+- A caller that only raises `max_response_chars` (a raw CLI request, a third-party SDK) is no longer
+  rejected by the "cumulative budget must be at least the reply budget" check: an omitted cumulative
+  budget is lifted to match, while an explicit smaller one is still rejected. Two unit tests cover it;
+  the 0.1.31 wheel, installed in isolation, still reads a 500-page PDF as 500 pages / 51892 chars / 0.19 s.
 - A long PDF continues by a window of pages per expand instead of one page: everything that still fits the
   response is handed over at once, and `expansion_rounds` counts one answer as one round (500-page sample:
   1 read + 3 expands, 0.52 s under the default budget).
