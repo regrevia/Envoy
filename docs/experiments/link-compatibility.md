@@ -1072,3 +1072,20 @@ uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解
   说明问题只在这条自举链上，不是验收夹具。
 - `not_run`：0.1.29 的托管干净机重跑（run 40806377769）在写这轮时仍 `pending` 排队，
   通过与否尚未拿到证据；本轮的 `unit_checked` 结论不依赖它是否已跑完。
+
+## 第三十七轮（公共 .docx / .pptx 在线读取：真实文件，不是夹具）
+
+以前 Office 支持只有单测覆盖率（本地造的 zip），没有一条真实公网文件的读数。
+这一轮用两个公开的小样本各读一次（均 < 40 KB，下载的是被读文件本身，不是语料集）：
+
+- `https://raw.githubusercontent.com/python-openxml/python-docx/master/tests/test_files/test.docx`
+  → `execution_state=COMPLETED`、`result=READY`、2 个块、58 字符，正文为
+  `test.docx python-docx was here!` / `python-docx was here too!`。
+- `https://raw.githubusercontent.com/scanny/python-pptx/master/tests/test_files/test.pptx`
+  → `execution_state=COMPLETED`、`result=READY`、2 个块、55 字符，正文为
+  `test.pptx Slide 1` / `Presentation Title TextSubtitle Text`。
+- 复现方式：临时 `HOME` + `ENVOY_CONFIG_DIR`（不碰真实 `~/.envoy`），
+  `packages/envoy-cli/.venv/bin/python` 直接调 `envoy_cli.reader.read_public_page(ReadRequest(...))`。
+- 边界：样本本身很小，只证明「公网 Office 下载 → 解析 → 有正文」这条链通，
+  不证明 64 MiB 解压上限、4000 条目上限的在线拒绝路径；那两个上限仍只有
+  `unit_checked`（本地夹具），标记 `not_run`。
