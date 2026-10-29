@@ -1121,3 +1121,24 @@ uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解
 - 落盘权限：开关写出的 `config.json` 是 `-rw-------`（0600），目录在临时 HOME 下。
 - 仍未证明的部分（保持 `not_run`）：用真凭据完成一次「认证页交给用户 → 会话被读取链路复用」的
   全链路；这需要一个真实的登录站点和用户本人操作，自动化里只能用夹具，不能算实测。
+
+## 第三十九轮（集合发现与 B 站：真实公网结果，含两条失败路径）
+
+- `verified`：YouTube 播放列表仍是可用的基线 ——
+  `envoy discover --url https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI --limit 3`
+  返回 3 条候选（`platform=youtube`、`duration_seconds` 有值、`has_more=true`、
+  `next_cursor=4e5ec93734ff4a83a3a3:3`、`stop_reason=page_limit`、`discovered_at=2026-10-29T03:15:02Z`），
+  出现在本轮新 cursor 分页语义下。
+- `failed|blocked`（真实缺陷暴露面）：B 站 UP 主合集 `https://space.bilibili.com/2` 在无 Cookie、
+  未装隔离浏览器的机器上被服务端 412 拦掉：
+  `yt-dlp space enumeration unavailable (DownloadError: Request is blocked by server (412))` +
+  `isolated-browser discovery failed (BrowserRuntimeUnavailable)`，整体 `result=blocked`、
+  `code=source_unavailable`，并明确写了补救动作（`envoy browser setup` 一次）。
+  结论：B 站合集**不是**「装上就能用」，需要先装浏览器运行时（或导入 Cookie）；
+  文档要求把这条前置条件写明，不能宣称开箱即用。
+- `failed|blocked`：同站单视频 `https://www.bilibili.com/video/BV1GJ411x7h7` 在未装
+  `envoy-cli[media]` 的环境里 `result=blocked`、`errors[0].code=missing_capability`、
+  `action_required=true`，消息指明 `install envoy-cli[media] to enable local ASR`。
+  即没有字幕轨时它会告诉用户装什么，而不是静默返回空正文——这条是可接受的失败形态。
+- 复现环境：临时 `HOME` + `ENVOY_CONFIG_DIR`，`packages/envoy-cli/.venv/bin/envoy`（无 media extra、
+  无浏览器运行时），故上述两条失败都是「最小安装」视角下的真实行为。
