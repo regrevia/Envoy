@@ -107,6 +107,14 @@ USAGE_BREAKDOWN_FIELDS = {
     ),
 }
 
+# Per-arm wall-clock caps are ledger fields, not required fields: legacy pilot
+# files may omit them and stay parseable, but a release claim needs both values
+# recorded and equal. Missing values are unverified, never defaulted.
+ARM_BUDGET_FIELDS = {
+    "envoy": "budget_seconds",
+    "baseline": "baseline_budget_seconds",
+}
+
 
 def _load_records(path: Path) -> tuple[dict, list[dict], list[dict]]:
     runs: list[dict] = []
@@ -1559,22 +1567,70 @@ def _source_records_complete(sources: list[dict]) -> list[str]:
     return blockers
 
 
-def _task_order_blockers(sources: list[dict], tasks: list[dict]) -> list[str]:
-    """Protocol layer: scripted turns must run initial -> followup per source."""
+def _task_order_blockers(
+    sources: list[dict],
+    tasks: list[dict],
+    package_schema: bool = False,
+) -> list[str]:
+    """Protocol layer: scripted turns must run initial -> followup per unit.
+
+    Legacy runs group turns by source_id. Task packages group three turns per
+    package and may spread them over two sources, so there the package_id is
+    the ordering unit; grouping by source_id would flag every multi-source
+    package as missing its initial turn.
+    """
     blockers = []
-    for source in sources:
-        source_id = str(source.get("source_id") or "")
-        roles = [
-            task.get("task_role")
-            for task in tasks
-            if str(task.get("source_id") or "") == source_id
+    if package_schema:
+        units: dict[str, list[dict]] = defaultdict(list)
+        for task in tasks:
+            units[str(task.get("package_id") or "")].append(task)
+        ordered_units = list(units.items())
+    else:
+        tasks_by_source: dict[str, list[dict]] = defaultdict(list)
+        for task in tasks:
+            tasks_by_source[str(task.get("source_id") or "")].append(task)
+        source_ids = [str(source.get("source_id") or "") for source in sources]
+        ordered_units = [
+            (source_id, tasks_by_source[source_id]) for source_id in source_ids
         ]
+    for unit_id, unit_tasks in ordered_units:
+        roles = [task.get("task_role") for task in unit_tasks]
         if not roles:
             continue
         if "followup" in roles and "initial" not in roles:
-            blockers.append(f"task_order_missing_initial:{source_id}")
+            blockers.append(f"task_order_missing_initial:{unit_id}")
         elif roles[0] != "initial":
-            blockers.append(f"task_order_followup_first:{source_id}")
+            blockers.append(f"task_order_followup_first:{unit_id}")
+    return blockers
+
+
+def _budget_blockers(tasks: list[dict]) -> list[str]:
+    """Protocol layer: both arms must record the wall-clock cap they ran under.
+
+    The ledger has no run-level agreed budget, so the per-task records are the
+    contract: ``budget_seconds`` for the envoy arm and
+    ``baseline_budget_seconds`` for the baseline arm, in the same style as the
+    other per-arm fields. A missing, unknown or non-positive value is
+    unverified, never assumed equal to the other arm; two recorded values that
+    differ mean the arms did not run the pre-agreed protocol.
+    """
+    blockers = []
+    for task in tasks:
+        task_id = str(task.get("task_id") or "<unknown-task>")
+        recorded: dict[str, float] = {}
+        for arm, field in ARM_BUDGET_FIELDS.items():
+            value = task.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                blockers.append(f"budget_unverified:{arm}:{task_id}")
+            else:
+                recorded[arm] = float(value)
+        if len(recorded) == 2 and recorded["envoy"] != recorded["baseline"]:
+            blockers.append(f"arm_budget_mismatch:{task_id}")
     return blockers
 
 
@@ -1595,7 +1651,14 @@ def _protocol_blockers(
         blockers.append(f"task_scale_below_minimum:{len(tasks)}<{MIN_TASKS}")
     if not report.get("cache_isolation_verified"):
         blockers.append("cache_isolation_not_verified")
-    blockers.extend(_task_order_blockers(sources, tasks))
+    blockers.extend(
+        _task_order_blockers(
+            sources,
+            tasks,
+            package_schema=run.get("task_package_schema_version") == "envoy.task-package/1",
+        )
+    )
+    blockers.extend(_budget_blockers(tasks))
     # Model identity: every recorded arm must resolve to the run's agreed
     # provider/model. Unknown or missing identity is unverified, not "fine",
     # because a release claim needs a known model.
@@ -1623,6 +1686,11 @@ def _data_blockers(sources: list[dict], tasks: list[dict]) -> list[str]:
     unknown usage or without its artifacts/citations was not recorded, so it
     counts as a missing attempt rather than a passing one. A failed/blocked
     package attempt must still carry a recorded outcome.
+
+    An empty citation list is only an artifact gap when the attempt did not
+    record a failed/blocked outcome: a blocked or failed attempt can honestly
+    produce no citations, and the explicit empty list records that. The field
+    itself must still be present; a missing field stays missing.
     """
     blockers = _source_records_complete(sources)
     if not tasks:
@@ -1635,7 +1703,11 @@ def _data_blockers(sources: list[dict], tasks: list[dict]) -> list[str]:
             blockers.append(f"usage_not_actual:baseline:{task_id}")
         for arm in ("envoy", "baseline"):
             citations = task.get(f"{arm}_citations")
-            if not isinstance(citations, list) or not citations:
+            if not isinstance(citations, list):
+                blockers.append(f"artifacts_missing:{arm}:{task_id}")
+            elif not citations and task.get(f"{arm}_task_outcome") not in {
+                "blocked", "failed"
+            }:
                 blockers.append(f"artifacts_missing:{arm}:{task_id}")
         if not isinstance(task.get("evidence_locators"), list) or not task["evidence_locators"]:
             blockers.append(f"artifacts_missing:evidence:{task_id}")

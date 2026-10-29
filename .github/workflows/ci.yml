@@ -51,6 +51,7 @@ jobs:
           tests/test_ocr_quality_eval.py
           tests/test_paired_experiment_plan.py
           tests/test_usage_ledger.py
+          tests/test_agent_product_eval.py
           tests/test_platform_video_probe.py
           tests/test_envoy_cli_distribution.py
           tests/test_skill_bundle.py

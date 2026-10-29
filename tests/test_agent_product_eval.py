@@ -88,11 +88,13 @@ def _write_records(path: Path, source_count: int = 20, tasks_per_source: int = 2
                     "usage_status": "actual",
                     "provider": "test-provider",
                     "model": "test-model",
+                    "budget_seconds": 900,
                     "input_tokens": 1000,
                     "output_tokens": 100,
                     "baseline_usage_status": "actual",
                     "baseline_provider": "test-provider",
                     "baseline_model": "test-model",
+                    "baseline_budget_seconds": 900,
                     "baseline_input_tokens": 1200,
                     "baseline_output_tokens": 110,
                 }) + "\n")
@@ -447,6 +449,12 @@ def test_task_package_schema_uses_package_cluster_and_accepts_multi_source_three
     assert report["envoy_server_reported_cost"] is None
     assert report["paired_bootstrap"]["cluster_unit"] == "package_id"
     assert report["paired_bootstrap"]["cluster_count"] == 20
+    # Ordering is checked per package, not per source: two of the three turns
+    # can live on different sources without looking like a missing initial turn.
+    assert report["protocol_valid"] is True
+    assert not any(
+        blocker.startswith("task_order_") for blocker in report["claim_blockers"]
+    )
 
 
 def test_task_package_completion_and_human_intervention_are_intention_to_treat(tmp_path):
@@ -1318,3 +1326,124 @@ def test_claim_eligible_when_all_layers_are_green(tmp_path):
     assert report["claim_eligible"] is True
     assert report["claim_blockers"] == []
     assert report["gate_status"] == "passed"
+
+
+def test_protocol_layer_requires_recorded_and_matching_arm_budgets(tmp_path):
+    records = tmp_path / "budgets.jsonl"
+    _write_records(records)
+    base_lines = records.read_text(encoding="utf-8").splitlines()
+
+    def write_case(name, mutate, allow_incomplete=False):
+        rewritten = [json.loads(line) for line in base_lines]
+        mutate(rewritten)
+        path = tmp_path / name
+        path.write_text(
+            "\n".join(json.dumps(item) for item in rewritten) + "\n",
+            encoding="utf-8",
+        )
+        command = [sys.executable, str(SCRIPT), "--records", str(path)]
+        if allow_incomplete:
+            command.append("--allow-incomplete")
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def drop_baseline_budget(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item.pop("baseline_budget_seconds")
+                break
+
+    def unknown_envoy_budget(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item["budget_seconds"] = "unknown"
+                break
+
+    def mismatched_budgets(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item["baseline_budget_seconds"] = 1200
+                break
+
+    missing = write_case("budget-missing.jsonl", drop_baseline_budget)
+    assert missing["validation_status"] == "passed"
+    assert missing["protocol_valid"] is False
+    assert "budget_unverified:baseline:source-00-task-0" in missing["claim_blockers"]
+    assert missing["gate_status"] == "incomplete"
+
+    unknown = write_case("budget-unknown.jsonl", unknown_envoy_budget)
+    assert unknown["protocol_valid"] is False
+    assert "budget_unverified:envoy:source-00-task-0" in unknown["claim_blockers"]
+
+    mismatch = write_case("budget-mismatch.jsonl", mismatched_budgets)
+    assert mismatch["protocol_valid"] is False
+    assert "arm_budget_mismatch:source-00-task-0" in mismatch["claim_blockers"]
+    assert mismatch["gate_status"] == "incomplete"
+
+
+def test_data_layer_accepts_recorded_empty_citations_for_failed_attempt(tmp_path):
+    records = tmp_path / "records.jsonl"
+    _write_records(records)
+    base_lines = records.read_text(encoding="utf-8").splitlines()
+
+    def write_case(name, mutate, allow_incomplete=False):
+        rewritten = [json.loads(line) for line in base_lines]
+        mutate(rewritten)
+        path = tmp_path / name
+        path.write_text(
+            "\n".join(json.dumps(item) for item in rewritten) + "\n",
+            encoding="utf-8",
+        )
+        command = [sys.executable, str(SCRIPT), "--records", str(path)]
+        if allow_incomplete:
+            command.append("--allow-incomplete")
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def failed_without_citations(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item["envoy_task_outcome"] = "failed"
+                item["envoy_citations"] = []
+                item["citation_correct"] = False
+                break
+
+    failed = write_case("failed.jsonl", failed_without_citations)
+    assert failed["validation_status"] == "passed"
+    assert failed["data_complete"] is True
+    assert "artifacts_missing:envoy:source-00-task-0" not in failed["claim_blockers"]
+
+    def completed_without_citations(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item["envoy_task_outcome"] = "completed"
+                item["envoy_citations"] = []
+                item["citation_correct"] = False
+                break
+
+    completed = write_case("completed.jsonl", completed_without_citations)
+    assert completed["data_complete"] is False
+    assert "artifacts_missing:envoy:source-00-task-0" in completed["claim_blockers"]
+
+    def missing_citation_field(items):
+        for item in items:
+            if item["record_type"] == "task":
+                item.pop("envoy_citations")
+                item["citation_correct"] = False
+                break
+
+    missing = write_case("missing.jsonl", missing_citation_field, allow_incomplete=True)
+    assert missing["data_complete"] is False
+    assert "artifacts_missing:envoy:source-00-task-0" in missing["claim_blockers"]
