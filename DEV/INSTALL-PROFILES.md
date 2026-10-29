@@ -83,6 +83,15 @@ uv run --offline --python 3.11 --with pytest pytest -q tests/test_install_script
   `repository.url` 指回本仓库，市场探针能认。发版用的是本机 Keychain 里的 automation token
   （`dsh-npm`），仓库 secret 仍然空着 —— 所以流水线不会自动发 npm，要么补 `NPM_TOKEN`，要么
   以后都走本机 `dsh-npm publish`。0.1.24/0.1.25 没有补发，`latest` 直接跳 0.1.23 → 0.1.26。
+- npm 已补齐到 **0.1.29**（2026-10-29）：用本机 `dsh-npm` 发布**发行版里那一份** tarball
+  （`releases/download/v0.1.29/envoy-dsh-0.1.29.tgz`，`shasum -a 256` =
+  `51028d72709f2c94708b054df6eace0d7a0ad13a46a361c76b35a57592f17e40`，与资产 `SHA256SUMS` 一致）。
+  发布后 registry `dist-tags.latest = 0.1.29`，`versions` 里出现 0.1.29；
+  `registry.npmjs.org/envoy-dsh/0.1.29` 的 `dist.shasum` = `46e1083570a040e3baff6c42377a66b884b6cac0`，
+  与本地那份文件的 sha1 逐字节相同 —— 即线上安装拿到的就是发行资产本身。
+  0.1.27/0.1.28 未补发（它们没通过 Windows 验收），`latest` 由 0.1.26 直接跳到 0.1.29。
+- 插件市场：市场徽章按站点机制从 npm probe 回填，现在 npm `latest` 已是 0.1.29，
+  卡片会随之更新，不需要手动 dispatch。
 - 插件市场：条目已在（`data/plugins/regrevia__Envoy--integrations-dsh-envoy-dsh.yml`，无版本号
   字段），线上 `plugins.json` 目前还是 `version 0.1.23 / downloads 473`（构建日期 2026-10-27）。
   按站点机制，npm 版本只在带 probe 的 nightly 构建回填，白天的 push 构建不探测，所以卡片徽章
