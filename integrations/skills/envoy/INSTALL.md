@@ -50,7 +50,7 @@ $env:ENVOY_DRY_RUN = "1"; powershell -ExecutionPolicy Bypass -File install.ps1 d
 `%USERPROFILE%\.envoy\runtime-path`，在 `%USERPROFILE%\.envoy\bin` 放一个 `envoy.cmd` 转发到
 那份 runtime（不改系统级 PATH），再装宿主插件、准备一次浏览器。只装 MCP 条目的
 宿主（Claude Desktop / Cursor / Windsurf）会写用户级配置，改动前自动备份。
-Windows 路径本身还没在真机上跑过，结果以 `COMPATIBILITY.md` 的平台矩阵为准。
+Windows 侧已在托管干净机 `windows-2022` 上跑过一次完整档 `install.ps1` 全新安装（GitHub Actions run 40825123260，版本 0.1.33）：PowerShell 5.1 与 PowerShell 7 两种都装完，`envoy doctor` 通过。这次只证明安装与自检，没有跑真实读取，读取结果仍以 `COMPATIBILITY.md` 的平台矩阵为准。
 
 装完随时可跑 `envoy doctor` 自查：第一行 `runtime` 显示当前跑的是不是安装时
 固定下来的那份 `envoy`；显示 `shadowed` 说明 PATH 里另有旧 `envoy`，按提示重跑
@@ -218,5 +218,6 @@ PyPI 上；且 CLI 要 Python >= 3.10，macOS 自带的 `python3` 是 3.9。脚�
 
 ## Scope and license
 
-见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。Envoy 只读取公开可访问的内容；
-需要登录的站点走 `envoy_auth` 让用户自己扫码，不代持凭据。
+见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。Envoy 只读取公开可访问的内容。
+
+登录态默认不碰：Envoy 不读取个人浏览器会话。用户自己授权后（`envoy auth handoff on`），可以在 Envoy 自己的浏览器里登录一次，或按域导入已有会话（`envoy auth import --from chrome --domain <站点>`）。登录态只保存在本机，可以查看（`envoy auth status`）、停用（`envoy auth handoff off`）、清除（`envoy auth clear`）。关掉开关只是停止使用，不删除历史登录态；删除需要走清除入口。
