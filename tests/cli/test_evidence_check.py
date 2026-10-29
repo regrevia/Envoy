@@ -249,6 +249,10 @@ def test_missing_and_expired_material_stay_unmatched_and_say_why(tmp_path):
     assert expired.resolution == "unmatched"
     assert expired.reason == "material_expired"
     assert "read the source URL again with envoy_read" in " ".join(expired.notes)
+    # The host must be able to act on the verdict without reading the prose: an
+    # unmatchable citation is only useful if it names the call that fixes it.
+    assert missing.next_action and "envoy_read" in missing.next_action
+    assert expired.next_action and "envoy_read" in expired.next_action
 
 
 def test_unknown_block_id_is_reported_as_block_missing(tmp_path):
@@ -260,6 +264,7 @@ def test_unknown_block_id_is_reported_as_block_missing(tmp_path):
     assert result.resolution == "unmatched"
     assert result.reason == "block_missing"
     assert result.block_id == "blk-body-9999"
+    assert result.next_action and "without block_id" in result.next_action
 
 
 def test_pdf_locator_without_a_page_span_is_invalid_instead_of_page_one():

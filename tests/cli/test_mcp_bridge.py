@@ -1673,6 +1673,7 @@ def test_verify_verdict_is_rendered_as_a_verdict_not_a_read():
             "quote_match": "none",
             "reason": "block_missing",
             "material_id": "mat-x",
+            "next_action": "envoy_verify again without block_id",
         },
         modern=True,
     )
@@ -1682,7 +1683,9 @@ def test_verify_verdict_is_rendered_as_a_verdict_not_a_read():
     # A verdict is not an empty material: no block counter and no expand hint.
     assert "blocks /" not in unmatched
     assert "envoy_expand" not in unmatched
-    assert "quote a contiguous passage" in unmatched
+    # The receipt prints the reader's own next action, so the text and the
+    # structured field cannot tell the host different things.
+    assert "next: envoy_verify again without block_id" in unmatched
 
     matched = mcp._tool_content_text(
         {

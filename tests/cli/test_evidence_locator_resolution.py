@@ -264,6 +264,9 @@ def test_a_scoped_miss_says_the_rest_of_the_material_was_not_checked():
 
     assert result.reason == "quote_missing"
     assert "not its whole text" in " ".join(result.notes)
+    # And the structured answer names the same recovery, so a host that never
+    # reads the notes still knows the scoped check can be widened.
+    assert result.next_action and "without block_id" in result.next_action
 
 
 def test_a_whole_text_miss_does_not_claim_the_check_was_partial():

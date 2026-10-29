@@ -3363,6 +3363,10 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             quote_match="none",
             locator_valid=False,
             reason="material_missing",
+            next_action=(
+                "envoy_read the source URL again: material ids are per-machine "
+                "and per-lease, so this citation cannot be resolved without a new read"
+            ),
             notes=[
                 "no retained material under this id on this machine; read the source URL again with envoy_read to get a live material_id"
             ],
@@ -3394,6 +3398,10 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             quote_match="none",
             locator_valid=False,
             reason="material_expired",
+            next_action=(
+                "envoy_read the source URL again to get a live material_id, then "
+                "envoy_verify with the quoted words; an expired lease cannot be reopened"
+            ),
             notes=["material lease expired; read the source URL again with envoy_read to cite it"],
         )
 
@@ -3404,6 +3412,10 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             quote_match="none",
             locator_valid=False,
             reason="block_missing",
+            next_action=(
+                "envoy_verify again without block_id: the check then covers the "
+                "whole material, whose text may still contain the quotation"
+            ),
             notes=["this material holds no block with that id; block ids are not portable across materials"],
         )
     search_text = target["text"] if target else "\n".join(
@@ -3476,6 +3488,7 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
             quote_match="none",
             locator_valid=locator_valid,
             reason="quote_not_provided",
+            next_action="pass block_id and the quoted sentence to get a locatable check",
             notes=["material resolves; pass block_id and the quoted sentence for a locatable check"],
         )
     missing_notes = ["quoted text does not occur in the checked block"]
@@ -3492,6 +3505,13 @@ def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
         quote_match="none",
         locator_valid=locator_valid,
         reason="quote_missing",
+        next_action=(
+            "envoy_verify again without block_id to check the whole material, "
+            "then read the material if the quotation is still absent"
+            if missing_notes[1:] else
+            "quote a contiguous passage exactly as the material prints it, or "
+            "envoy_read the source again and pick the passage from the returned blocks"
+        ),
         notes=notes + missing_notes,
     )
 

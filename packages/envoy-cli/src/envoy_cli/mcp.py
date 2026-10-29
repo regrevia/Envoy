@@ -1264,13 +1264,14 @@ def _evidence_check_text(payload: dict, request=None) -> str:
         )
     else:
         lines.append(
-            "the quoted words were not found in this material; Envoy did not judge "
-            "whether the claim is supported"
+            f"the quote could not be checked here ({reason or 'unknown'}); Envoy did "
+            "not judge whether the claim is supported"
         )
-        lines.append(
-            "next: quote a contiguous passage exactly as the material prints it, or "
-            "read the material again and pick the passage from the returned blocks"
-        )
+    # The reader already decided what the caller can do; printing its answer keeps
+    # the receipt and the structured next_action from drifting apart.
+    next_action = payload.get("next_action")
+    if isinstance(next_action, str) and next_action.strip():
+        lines.append(f"next: {next_action.strip()}")
     return "\n".join(_fit_content(lines, budget))
 
 

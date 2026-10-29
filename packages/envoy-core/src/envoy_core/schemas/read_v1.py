@@ -563,6 +563,11 @@ class EvidenceCheckResponse(ContractModel):
         "no_locator",
         "locator_unverifiable",
     ]
+    # What the caller can do next when the check did not settle. It is a
+    # concrete tool call the host can issue, not prose it has to interpret:
+    # a citation that no longer resolves needs the source read again, and a
+    # block id that is not in this material needs the check widened.
+    next_action: Optional[str] = None
     notes: list[str] = Field(default_factory=list)
 
 
