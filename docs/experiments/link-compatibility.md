@@ -1043,3 +1043,32 @@ id）与 `youtu.be/<id>`，扁平元数据里的条目按其 `ie_key` 还原成 
   → `platform=youtube`、`cursor_mode=yt_dlp_flat_metadata`、`has_more=true`、
   `stop_reason=page_limit`，前三条为 `watch?v=fOT0BUpITw8` / `NFvDHYMzj9U` / `8c7KOGxeY3w`。
 - 全套件：`tests/cli` 962 passed。
+
+## 第三十六轮（Windows 干净机完整安装：没有 Python 也要一次装好）
+
+用户要求「完整安装不依赖外部东西」，于是把 `uv` 也纳入自举：机器上既没 Python 也没
+uv 时，`install.ps1` 自己下载 uv 0.13.6、按官方 `.sha256` 校验、解压后用它建 venv。
+这条路径在 GitHub 托管干净机（无 Python 的 Windows）上连挂两次，两次都是真实用户会
+踩的路径，不是夹具问题：
+
+- `failed|blocked`（0.1.27，run 40800453718，`干净机 / Hosted clean machine`，PowerShell 5.1，
+  `scenario=fresh profile=full`）：`FAIL A2 … install.ps1 exited 1`，根错为
+  `The term 'D:\a\_temp\envoy-acceptance\tools\uv\0.13.6\uv.exe' is not recognized`。
+  日志时序：`01:27:02.364` 开装 → `01:27:02.574` `fetching uv 0.13.6` → 约 21.8 秒后
+  （`01:27:24.335`）报找不到该文件。原因是验收把 `ENVOY_HOME` 指到 `D:\a\_temp\envoy-acceptance`，
+  而 `$RuntimeHome` 与 `$EnvoyHome` 是同一个目录：uv 缓存刚写进 `tools\uv\`，
+  「清掉半成品运行目录」那一步就把整个目录（含刚下好的 uv.exe）删了。
+  修法：把清理挪到下载之前（`unit_checked`，`tests/cli/test_installer_ps1_static.py`
+  新增断言「清理出现在 `Ensure-Uv` 之前，且只有一处清理」）。
+- `failed|blocked`（0.1.28，run 40803073176，同 job 同 profile）：这次 uv 找到了，仍失败：
+  `envoy install: failed: …\tools\uv\0.13.6\uv.exe venv --quiet --python 3.11 D:\a\_temp\envoy-acceptance`。
+  原因同上一条的反面——uv 缓存放在 venv 目标目录里面，`uv venv` 拒绝在非空目录建环境。
+  修法：缓存移出运行目录，新增 `ENVOY_UV_HOME`（默认 `%LOCALAPPDATA%\envoy-dsh\tools\uv`；
+  设了 `ENVOY_HOME` 时默认取它的同级 `envoy-uv`，自托管 runner 不会写进用户配置目录），
+  验收脚本显式把 `ENVOY_UV_HOME` 指到 `$env:RUNNER_TEMP\envoy-uv`。
+  `unit_checked`：`tests/cli/test_installer_ps1_static.py` 19 passed，断言缓存路径来自
+  `$Script:UvHome`、`Ensure-Uv` 里不再出现 `$Script:EnvoyHome`。
+- 两次都确认了 `install.ps1` 的其它 A 项（A1/A3/A7）正常：PATH 可读、用户 PATH 被正确还原，
+  说明问题只在这条自举链上，不是验收夹具。
+- `not_run`：0.1.29 的托管干净机重跑（run 40806377769）在写这轮时仍 `pending` 排队，
+  通过与否尚未拿到证据；本轮的 `unit_checked` 结论不依赖它是否已跑完。
