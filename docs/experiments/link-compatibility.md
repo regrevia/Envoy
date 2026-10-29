@@ -1297,3 +1297,8 @@ page_window 1–500、0.19 秒。同一次还发现 `envoy read --request-json` 
 SDK/CLI 这条路没抬）→ 把抬平逻辑放进 `Budget.validate_totals`：总预算没显式给就跟着单次预算抬，
 显式给小了照旧报错；补 2 例单测，`tests/core_protocol + tests/cli` 1002 passed。
 
+
+**发行（0.1.32）**：tag `v0.1.32`，Auto Release 40823023046 success → Envoy Release 40823369119 success，
+7 个资产；Windows 托管干净机验收 40823496457 success（PowerShell 5.1 + 7 两档 fresh）。
+本轮改动即上面第四十五轮的 `Budget.validate_totals` 抬平：只调 `max_response_chars` 的调用方
+不再被总预算校验拒掉。
