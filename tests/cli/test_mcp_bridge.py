@@ -1276,6 +1276,39 @@ def test_mcp_bridge_explicit_scope_and_budget_win_over_defaults(monkeypatch):
     assert request.request_id == "caller-chosen"
 
 
+def test_mcp_bridge_lifts_the_response_total_when_a_caller_raises_the_response_budget():
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    prepared = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.org/"},
+            "goal": "g",
+            "budget": {"max_response_chars": 200_000},
+        },
+    )
+    request = ReadRequest.model_validate(prepared)
+    assert request.budget.max_response_chars == 200_000
+    assert request.budget.max_total_response_chars == 200_000, "a long document must not fail validation"
+
+    explicit = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.org/"},
+            "goal": "g",
+            "budget": {"max_response_chars": 200_000, "max_total_response_chars": 250_000},
+        },
+    )
+    assert ReadRequest.model_validate(explicit).budget.max_total_response_chars == 250_000
+
+    small = mcp._server_arguments(
+        "envoy_read",
+        {"source": {"url": "u"}, "goal": "g", "budget": {"max_response_chars": 600}},
+    )
+    assert ReadRequest.model_validate(small).budget.max_total_response_chars == 48_000
+
+
 def test_mcp_bridge_undeclared_advanced_blocks_are_still_accepted():
     from envoy_cli import mcp
     from envoy_core.schemas.read_v1 import (

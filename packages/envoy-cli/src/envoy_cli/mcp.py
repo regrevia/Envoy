@@ -1760,15 +1760,25 @@ def _default_budget_for(name: str, prepared: dict) -> None:
 
     if name != "envoy_read":
         return
+    budget = prepared.get("budget")
+    if isinstance(budget, dict):
+        budget = dict(budget)
+        # The tool description tells callers to raise max_response_chars for long
+        # documents, but an untouched max_total_response_chars (48k) then fails
+        # request validation. Lift only the derived total, never an explicit one.
+        if budget.get("max_total_response_chars") is None:
+            requested = int(budget.get("max_response_chars") or 12_000)
+            if requested > 48_000:
+                budget["max_total_response_chars"] = requested
     source = prepared.get("source")
     url = source.get("url") if isinstance(source, dict) else None
-    if not _media_source_host(url):
-        return
-    budget = prepared.get("budget")
-    if budget is None:
-        prepared["budget"] = {"max_work_seconds": _MEDIA_DEFAULT_WORK_SECONDS}
-    elif isinstance(budget, dict) and budget.get("max_work_seconds") is None:
-        prepared["budget"] = {**budget, "max_work_seconds": _MEDIA_DEFAULT_WORK_SECONDS}
+    if _media_source_host(url):
+        if budget is None:
+            budget = {"max_work_seconds": _MEDIA_DEFAULT_WORK_SECONDS}
+        elif budget.get("max_work_seconds") is None:
+            budget = {**budget, "max_work_seconds": _MEDIA_DEFAULT_WORK_SECONDS}
+    if budget is not None:
+        prepared["budget"] = budget
 
 
 def _server_arguments(name: str, arguments: dict) -> dict:

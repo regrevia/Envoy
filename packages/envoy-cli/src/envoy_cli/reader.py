@@ -3728,6 +3728,23 @@ def _record_material_range(stored: dict, state: dict, start: int, end: int, cont
     stored["budget_state"] = state
 
 
+def _record_material_ranges(
+    stored: dict,
+    state: dict,
+    ranges: list[tuple[int, int]],
+    content_chars: int,
+    content_tokens: int,
+) -> None:
+    """Record every range one answer delivered as a single expansion round."""
+
+    for start, end in ranges:
+        state["returned_ranges"] = _merge_ranges(state["returned_ranges"] + [[start, end]])
+    state["returned_chars"] += content_chars
+    state["returned_tokens"] += content_tokens
+    state["expansion_rounds"] += 1
+    stored["budget_state"] = state
+
+
 @_serialize_material_id_first
 def record_visual_observation(
     material_id: str | None,
@@ -4393,32 +4410,55 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         return _expand_blocked(request, "The requested material range overlaps an earlier response", stored)
     if stored.get("source_kind") == "pdf":
         spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
-        span = next(
-            (
-                item for item in spans
-                if isinstance(item, dict) and int(item.get("end") or 0) > offset
-            ),
-            None,
-        )
-        if span is None:
-            raise PublicPageError("No more PDF page text is available", ErrorCode.EXPIRED_RESOURCE)
-        span_start = int(span.get("start") or 0)
-        span_end = int(span.get("end") or 0)
-        page_offset = max(offset, span_start)
-        if end <= page_offset:
+        page_blocks: list[MaterialBlock] = []
+        page_numbers: list[int] = []
+        recorded: list[tuple[int, int]] = []
+        cursor = offset
+        tokens_left = response_token_limit
+        delivered_chars = 0
+        delivered_tokens = 0
+        # Pack every page that still fits the response budget into this one
+        # answer: advancing a page per call turns a long report into dozens of
+        # rounds, and the caller never needs a page at a time when a window fits.
+        for item in spans:
+            if not isinstance(item, dict):
+                continue
+            span_start = int(item.get("start") or 0)
+            span_end = int(item.get("end") or 0)
+            if span_end <= cursor:
+                continue
+            page_offset = max(cursor, span_start)
+            room = min(end, span_end) - page_offset
+            if room <= 0:
+                break
+            content, page_end = _take_text_budgeted(total_text, page_offset, room, tokens_left)
+            if not content:
+                break
+            page_number = int(item.get("page_number") or 0)
+            page_numbers.append(page_number)
+            recorded.append((page_offset, page_end))
+            delivered_chars += page_end - page_offset
+            page_tokens = _estimated_tokens(content)
+            delivered_tokens += page_tokens
+            if tokens_left is not None:
+                tokens_left = max(0, tokens_left - page_tokens)
+            page_blocks.append(MaterialBlock(
+                id=f"blk-pdf-page-{page_number:04d}-range-{page_offset}",
+                kind=MaterialKind.PARAGRAPH,
+                content=TextContent(type="text", text=content),
+                origin=MaterialOrigin.SOURCE_TEXT,
+                locator=PdfLocator(type="pdf_page", page_number=page_number),
+                order=page_offset,
+            ))
+            cursor = page_end
+        if not page_blocks:
             raise PublicPageError(
                 "The cumulative response character budget has been reached",
                 ErrorCode.BUDGET_EXCEEDED,
             )
-        content, page_end = _take_text_budgeted(
-            total_text,
-            page_offset,
-            min(end, span_end) - page_offset,
-            response_token_limit,
-        )
-        _record_material_range(stored, budget_state, page_offset, page_end, content)
+        _record_material_ranges(stored, budget_state, recorded, delivered_chars, delivered_tokens)
         has_more = any(
-            isinstance(item, dict) and int(item.get("end") or 0) > page_end
+            isinstance(item, dict) and int(item.get("end") or 0) > cursor
             for item in spans
         )
         # The delivery gap tracks only what this material has not yet handed
@@ -4428,15 +4468,6 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             _store_material(material_id, stored)
         except OSError:
             return _expand_blocked(request, "The material budget ledger could not be persisted", stored)
-        page_number = int(span["page_number"])
-        block = MaterialBlock(
-            id=f"blk-pdf-page-{page_number:04d}-range-{page_offset}",
-            kind=MaterialKind.PARAGRAPH,
-            content=TextContent(type="text", text=content),
-            origin=MaterialOrigin.SOURCE_TEXT,
-            locator=PdfLocator(type="pdf_page", page_number=page_number),
-            order=page_offset,
-        )
         return ReadResponse(
             request_id=request.request_id,
             session_id=stored.get("session_id"),
@@ -4444,22 +4475,24 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             source_revision=str(stored["source_revision"]),
             execution_state=ExecutionState.COMPLETED,
             result=ReadResult.PARTIAL if has_more or source_unresolved else ReadResult.READY,
-            blocks=[block],
+            blocks=page_blocks,
             coverage=Coverage(modalities={
                 "text": CoverageItem(
                     discovered=len(spans),
                     extracted=len(spans),
-                    returned=1,
+                    returned=len(page_blocks),
                     extraction="partial" if has_more else "complete",
                     unresolved=(
                         ["More PDF text is available"] if has_more else []
                     ),
                     details={
-                        "offset": page_offset,
-                        "returned_chars": len(content),
+                        "offset": recorded[0][0],
+                        "returned_chars": delivered_chars,
                         "total_chars": len(total_text),
-                        "next_offset": page_end if has_more else None,
-                        "page_number": page_number,
+                        "next_offset": cursor if has_more else None,
+                        "page_number": page_numbers[-1],
+                        "page_numbers": page_numbers,
+                        "pages_returned": len(page_numbers),
                         **_pdf_page_coverage_details(stored),
                         "continuation_available": has_more,
                         "remaining_chars": max(0, budget_state["max_total_response_chars"] - budget_state["returned_chars"]),
@@ -5566,13 +5599,18 @@ def _reuse_pdf_material(request: ReadRequest, source_url: str) -> ReadResponse |
             order=page_number,
         ))
         returned_chars += len(page_text)
+    next_offset = None
+    if len(blocks) < len(page_spans):
+        pending = page_spans[len(blocks)]
+        if isinstance(pending, dict):
+            next_offset = int(pending.get("start") or 0)
     unresolved = [str(item) for item in (stored.get("source_coverage_unresolved") or [])]
     details = {
         **stored_pages,
         "returned_chars": returned_chars,
         "total_chars": len(text),
-        "continuation_available": len(blocks) < len(page_spans),
-        "next_offset": None,
+        "continuation_available": next_offset is not None,
+        "next_offset": next_offset,
         "input_kind": "retained_material",
         "downloaded_bytes": 0,
         "max_download_bytes": 0,

@@ -1223,3 +1223,43 @@ source-checkout 入口，未装 media extra）核对 `envoy doctor --json` 的�
 回归：`pytest -q tests/cli`（带 `reportlab`/`yt-dlp`/`pyyaml`）= **979 passed**，
 新增 `tests/cli/test_bilibili_candidates.py` 6 个用例（封面 alt 优先、时长解析、无封面兜底、
 412 提示的两种开关状态、普通空页面不加提示）。
+
+## 第四十三轮（长 PDF：一次读全文，续读按窗口而不是按页）
+
+本轮的靶子是「长文档」这条链路：500 页的 PDF 既不该让调用方一轮一轮翻，也不该因为预算参数写不进去而
+直接失败。用本地生成的 500 页文本 PDF（`/tmp/long2.pdf`，cupsfilter 生成，52890 字符）走真实 MCP 通道实测。
+
+**缺陷 1：调用方把 `max_response_chars` 调到 48k 以上会直接校验失败。**
+MCP 的 read 预算里 `max_response_chars` 允许到 1_000_000，但 `max_total_response_chars` 从未被推导，
+一直是默认 48_000，于是 `max_total_response_chars must be >= max_response_chars` 报 `-32602`。
+修在 `mcp.py::_default_budget_for`：只在调用方**没有**给总预算时，把总预算抬到响应预算同值；
+显式给了总预算的不动，小于 48k 的响应预算仍保持 48_000 的旧行为。
+
+**缺陷 2：PDF 续读一次只交一页。** `envoy_expand` 的 PDF 分支原来只取「第一个还没交的页」，
+而 `max_expansion_rounds` 默认 3 —— 500 页文档读不到 1/4 就被轮次限制挡住。
+现在一次把「还能装进本次响应」的页全部交出（每页仍是独立 `pdf_page` 定位块），
+`expansion_rounds` 按**一次回答**计 1，不按页累加。
+
+**缺陷 3：复用已存材料的 PDF 报 `continuation_available=true` 却是 `next_offset=null`**，
+调用方无从续读。`_reuse_pdf_material` 现在给出下一未交付页的起始字符偏移。
+
+实测（`~/.local/bin/envoy mcp`，本机，逐条记录）：
+
+| 路径 | 结果 | 页 | 字符 | 用时 |
+| --- | --- | --- | --- | --- |
+| 一次读全文（只给 `max_response_chars=200000`） | `ready` | 500 / 500（1–500） | 51892 / 52890 | 0.26 s |
+| 默认预算读 | `partial` | 1–111 | 11338 | 0.08 s |
+| 续读 1 | `partial` | 111–299（189 块） | 15300，`remaining_chars=21142` | 同次 |
+| 续读 2 | `partial` | 299–488（190 块） | — | 同次 |
+| 续读 3 | `ready` | 488–500（13 块） | — | 同次 |
+
+默认预算下整条链 = 1 次 read + 3 次 expand，共 **0.52 s** 交完 500 页（`expansion_rounds` 用满 3 次，
+第 3 次已 `ready`）。旧行为是每次 expand 1 页，同样 500 页要 389 次 expand，且远早于读完就会被轮次挡住。
+
+回归：`pytest -q tests/cli`（带 `reportlab`/`yt-dlp`/`pyyaml`）= **982 passed in 52.43s**，
+`ruff check packages/envoy-core/src packages/envoy-cli/src tests/cli` 干净。新增：
+`tests/cli/test_pdf_retention_continuation.py`（复用材料给出真实 `next_offset`；一次 expand 交出 20 页窗口）
+与 `tests/cli/test_mcp_bridge.py::test_mcp_bridge_lifts_the_response_total_when_a_caller_raises_the_response_budget`。
+
+诚实边界：以上是**本机生成的文本型 PDF**，不代表真实扫描件（无 OCR）；真实长新闻/论文 PDF 的在线抓取
+仍是 `not_run`（用户离开期间不做大文件下载）。ASR 在 macOS 本机依旧是 `not_run`。
