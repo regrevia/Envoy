@@ -4,7 +4,7 @@
 
 ## 这个 Docker 栈负责什么
 
-Docker 只跑仓库里这套旧的 Web 界面（FastAPI + Next.js + MySQL + Redis）。`envoy` CLI、DSH 插件和三个宿主的 skill 全部跑在宿主机上，用 `install.sh` / `install.ps1` 安装脚本装（或从 GitHub Release 下 `envoy_cli-0.1.35-py3-none-any.whl` 交给 `uv tool install`；PyPI 上还没有发布包），不需要 Docker、也不需要这套 compose；只读网页/视频时本机装 FFmpeg 和 Chromium 就够。两套东西版本号相同但互不依赖，Web 栈只是可选的图形界面。
+Docker 只跑仓库里这套旧的 Web 界面（FastAPI + Next.js + MySQL + Redis）。`envoy` CLI、DSH 插件和三个宿主的 skill 全部跑在宿主机上，用 `install.sh` / `install.ps1` 安装脚本装（或从 GitHub Release 下 `envoy_cli-0.1.36-py3-none-any.whl` 交给 `uv tool install`；PyPI 上还没有发布包），不需要 Docker、也不需要这套 compose；只读网页/视频时本机装 FFmpeg 和 Chromium 就够。两套东西版本号相同但互不依赖，Web 栈只是可选的图形界面。
 
 ## 启动
 

@@ -141,7 +141,7 @@ envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存
 
 ## 本地 Web 界面（Docker）
 
-**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-0.1.35-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
+**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-0.1.36-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
 
 需要 Docker Desktop，仓库根目录：
 
@@ -302,7 +302,7 @@ Rerun with `scripts/acceptance/link_coverage.py`; reports and definitions are in
 
 ### Local web interface (Docker)
 
-**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-0.1.35-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
+**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-0.1.36-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
 
 With Docker Desktop running, from the repository root:
 

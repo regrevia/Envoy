@@ -1,7 +1,7 @@
 {
   "schema": "envoy.release-manifest/1",
-  "version": "0.1.35",
-  "min_runtime": "0.1.35",
+  "version": "0.1.36",
+  "min_runtime": "0.1.36",
   "protocols": {
     "read": "envoy.read/1",
     "observe": "envoy.observe/1"

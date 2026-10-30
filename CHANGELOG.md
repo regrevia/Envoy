@@ -1,6 +1,28 @@
 # 更新日志 / Changelog
 
-## Unreleased
+## 0.1.36 - 2026-10-30
+
+### 中文
+
+- 在 Envoy 自己的浏览器窗口里登录之后，`envoy read` 终于能用上这次登录：过去读取只查导入的 cookie 存储，
+  登录态落在 `~/.envoy/browser-profile` 里没人看，同一个链接明明已经登录仍返回 `auth_required`。
+  现在导入的 cookie 优先，为空时读该 profile 针对目标域名的会话；交接开关关闭时不打开 profile。
+  实测同一 URL：开关打开 `ready`（7982 字符），关闭 `blocked`/`auth_required`。
+- 未登录的 GitHub 设置页不再被当成内容页：登录表单页补标题行首锚定与独立长度上限后判为登录墙，
+  返回 `blocked`/`auth_required`；带正文的正常页面不受影响。
+- `envoy auth status` 的 `signed_in_sites` 改名为 `cookie_domains`：它数的是 cookie 行数，不是「已登录站点数」。
+
+### English
+
+- After signing in inside Envoy's own browser window, `envoy read` can finally use that session: reads consulted
+  only the imported cookie store while the session lived in `~/.envoy/browser-profile`, so an already signed-in
+  URL still came back `auth_required`. Imported cookies win; when there are none, reads use the profile's cookies
+  for the target host, and the profile is never opened while the handoff switch is off. Measured on one URL:
+  switch on gives `ready` (7982 chars), switch off gives `blocked`/`auth_required`.
+- A signed-out GitHub settings page is no longer mistaken for content: the sign-in form is detected by a
+  title-line anchor with its own length cap and reported as a login wall (`blocked`/`auth_required`).
+- `envoy auth status` renames `signed_in_sites` to `cookie_domains`: it counts cookie rows, not signed-in sites.
+
 
 ### 中文
 
