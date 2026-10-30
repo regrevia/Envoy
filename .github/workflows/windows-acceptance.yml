@@ -276,6 +276,17 @@ jobs:
           foreach ($value in @($env:USERNAME, $env:COMPUTERNAME, $env:USERPROFILE, $env:LOCALAPPDATA, $env:RUNNER_TEMP)) {
             if ($value) { Write-Host "::add-mask::$value" }
           }
+      - name: 快照用户 PATH / Snapshot PATH
+        shell: powershell
+        run: |
+          $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+          $raw = $key.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+          $kind = "REG_SZ"
+          if ($null -ne $key.GetValueKind("Path") -and $key.GetValueKind("Path") -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) { $kind = "REG_EXPAND_SZ" }
+          $key.Close()
+          $file = Join-Path $env:RUNNER_TEMP "path.before.json"
+          [pscustomobject]@{ kind = $kind; value = [string]$raw } | ConvertTo-Json | Set-Content -LiteralPath $file -Encoding UTF8
+          Write-Host "snapshot written"
       - name: 安装最小档 / Install minimal profile
         shell: powershell
         run: |
