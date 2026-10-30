@@ -305,12 +305,3 @@ jobs:
           $reg = Join-Path $env:SystemRoot "System32\reg.exe"
           & $reg add "HKCU\Environment" /v Path /t $snapshot.kind /d $snapshot.value /f | Out-Null
           Write-Host ("user PATH restored ({0})" -f $snapshot.kind)
-      - name: 证据 / Evidence
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-read-acceptance
-          path: ${{ runner.temp }}/envoy-windows-read-acceptance.json
-          if-no-files-found: warn
-          retention-days: 7
