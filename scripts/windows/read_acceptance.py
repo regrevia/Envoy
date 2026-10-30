@@ -45,6 +45,10 @@ PDF_READ_BUDGET_CHARS = 12000
 PDF_READ_TOTAL_CHARS = 48000
 PDF_EXPAND_BUDGET_CHARS = 8000
 PDF_MAX_EXPANDS = 3
+# Task rounds stay small on purpose: the check is about which offsets are claimed,
+# not about how much text one round can carry.
+TASK_BUDGET_CHARS = 900
+TASK_EXPAND_BUDGET_CHARS = 900
 
 PDF_PAGE_BLOCK = re.compile(r"^blk-pdf-page-(\d+)(?:-range-\d+)?$")
 
@@ -627,6 +631,234 @@ def check_resume_after_interrupt(prefix, workdir, source_url, evidence):
     return ok
 
 
+def check_task_checkpoint_resume(prefix, workdir, source_url, evidence):
+    """Create a task, read part of it, then resume from the checkpoint.
+
+    The resume request must carry the retained material and the first unseen
+    offset, and the expanded text must be new: a resume that silently re-reads
+    the source would still look successful, so both are asserted here.
+    """
+    task_id = "win-task-%s" % uuid.uuid4().hex[:8]
+    detail = {"task_id": task_id}
+    ok = False
+
+    code, created, err = _run_json(
+        prefix,
+        "task-checkpoint",
+        _request_file(
+            workdir,
+            "task-create-request.json",
+            {
+                "action": "create",
+                "task_id": task_id,
+                "goal": "Windows acceptance: finish a long read in a second round",
+                "sources": [source_url],
+            },
+        ),
+        workdir,
+    )
+    if code != 0 or not created:
+        detail.update({"step": "create", "rc": code, "stderr": (err or "").strip()[:200]})
+        evidence.append(
+            {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": False, "detail": detail}
+        )
+        return False
+    detail["created_state"] = created.get("state")
+
+    read_code, receipt, read_err = _read_document(
+        prefix,
+        workdir,
+        source_url,
+        TASK_BUDGET_CHARS,
+        "task-read",
+        "Windows acceptance: first round of a resumable task",
+    )
+    first_text = _delivered_text(receipt) if read_code == 0 else ""
+    if read_code != 0 or not receipt.get("material_id") or not first_text:
+        detail.update({"step": "read", "rc": read_code, "stderr": (read_err or "").strip()[:200]})
+        evidence.append(
+            {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": False, "detail": detail}
+        )
+        return False
+    material_id = receipt["material_id"]
+    detail["material_id"] = material_id
+
+    apply_code, applied, apply_err = _run_json(
+        prefix,
+        "task-checkpoint",
+        _request_file(
+            workdir,
+            "task-apply-request.json",
+            {
+                "action": "apply",
+                "task_id": task_id,
+                "source": source_url,
+                "offset": 0,
+                "receipt": receipt,
+            },
+        ),
+        workdir,
+    )
+    if apply_code != 0 or not applied:
+        detail.update({"step": "apply", "rc": apply_code, "stderr": (apply_err or "").strip()[:200]})
+        evidence.append(
+            {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": False, "detail": detail}
+        )
+        return False
+    materials = applied.get("materials") or []
+    detail["applied_state"] = materials[0].get("state") if materials else applied.get("state")
+
+    next_code, planned, next_err = _run_json(
+        prefix,
+        "task-checkpoint",
+        _request_file(
+            workdir,
+            "task-next-request.json",
+            {
+                "action": "next",
+                "task_id": task_id,
+                "source": source_url,
+                "max_chars": TASK_EXPAND_BUDGET_CHARS,
+            },
+        ),
+        workdir,
+    )
+    request = (planned or {}).get("request") or {}
+    offset_from = request.get("offset")
+    good_request = (
+        next_code == 0
+        and planned.get("result") == "ready"
+        and request.get("material_id") == material_id
+        and "source" not in request
+        and isinstance(offset_from, int)
+        and offset_from > 0
+        and bool(planned.get("source_revision"))
+    )
+    detail.update(
+        {
+            "next_result": planned.get("result"),
+            "next_offset": offset_from,
+            "request_carries_material": request.get("material_id") == material_id,
+            "request_has_no_source": "source" not in request,
+            "revision_reported": bool(planned.get("source_revision")),
+        }
+    )
+    if not good_request:
+        detail.update({"step": "next", "rc": next_code, "stderr": (next_err or "").strip()[:200]})
+        evidence.append(
+            {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": False, "detail": detail}
+        )
+        return False
+
+    expand_code, expanded, expand_err = _run_json(
+        prefix, "expand", _request_file(workdir, "task-expand-request.json", request), workdir
+    )
+    second_text = _delivered_text(expanded) if expand_code == 0 else ""
+    same_material = expanded.get("material_id") == material_id
+    detail.update(
+        {
+            "expand_rc": expand_code,
+            "same_material": same_material,
+            "second_chars": len(second_text),
+            "changed_text": bool(second_text) and second_text != first_text,
+            "expand_errors": _first_error(expanded),
+        }
+    )
+    if expand_code != 0 or not same_material or not second_text or second_text == first_text:
+        detail.update({"step": "expand", "stderr": (expand_err or "").strip()[:200]})
+        evidence.append(
+            {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": False, "detail": detail}
+        )
+        return False
+
+    apply2_code, applied2, apply2_err = _run_json(
+        prefix,
+        "task-checkpoint",
+        _request_file(
+            workdir,
+            "task-apply2-request.json",
+            {
+                "action": "apply",
+                "task_id": task_id,
+                "source": source_url,
+                "offset": offset_from,
+                "receipt": expanded,
+            },
+        ),
+        workdir,
+    )
+    next2_code, planned2, next2_err = _run_json(
+        prefix,
+        "task-checkpoint",
+        _request_file(
+            workdir,
+            "task-next2-request.json",
+            {
+                "action": "next",
+                "task_id": task_id,
+                "source": source_url,
+                "max_chars": TASK_EXPAND_BUDGET_CHARS,
+            },
+        ),
+        workdir,
+    )
+    offset_to = ((planned2 or {}).get("request") or {}).get("offset")
+    advanced = apply2_code == 0 and next2_code == 0 and isinstance(offset_to, int) and offset_to > offset_from
+    detail.update(
+        {
+            "apply2_rc": apply2_code,
+            "next2_result": planned2.get("result"),
+            "next2_offset": offset_to,
+            "offset_advanced": advanced,
+        }
+    )
+    if not advanced:
+        detail.update(
+            {
+                "step": "apply2",
+                "apply2_stderr": (apply2_err or "").strip()[:120],
+                "next2_stderr": (next2_err or "").strip()[:120],
+            }
+        )
+        evidence.append(
+            {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": False, "detail": detail}
+        )
+        return False
+
+    guard_code, guarded, guard_err = _run_json(
+        prefix,
+        "task-checkpoint",
+        _request_file(
+            workdir,
+            "task-guard-request.json",
+            {
+                "action": "next",
+                "task_id": task_id,
+                "source": source_url,
+                "observed_revision": "0" * 64,
+            },
+        ),
+        workdir,
+    )
+    guard_code_value = ((guarded or {}).get("error") or {}).get("code")
+    guarded_ok = guard_code == 0 and guarded.get("result") == "blocked" and guard_code_value == "source_revision_changed"
+    detail.update(
+        {
+            "mismatched_revision_blocked": guarded_ok,
+            "guard_code": guard_code_value,
+            "guard_rc": guard_code,
+        }
+    )
+    if not guarded_ok:
+        detail["guard_stderr"] = (guard_err or "").strip()[:150]
+    ok = bool(guarded_ok)
+    detail["step"] = "done"
+    evidence.append(
+        {"id": "task_checkpoint", "name": "a task resumes without re-reading", "ok": ok, "detail": detail}
+    )
+    return ok
+
+
 def check_unicode_home(prefix, workdir, source_url, evidence):
     """A path with a space and non-ASCII characters must keep working."""
     home = Path(workdir) / "验收 目录" / ".envoy"
@@ -694,6 +926,9 @@ def main(argv=None):
     # The chain lists both right after expand; keep that order in the report.
     _insert_after(evidence, "expand_continues", extra)
     check_unicode_home(prefix, workdir, args.source, evidence)
+    task_extra = []
+    check_task_checkpoint_resume(prefix, workdir, args.source, task_extra)
+    _insert_after(evidence, "unicode_home", task_extra)
 
     payload = {
         "kind": "envoy-windows-read-acceptance",

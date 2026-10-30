@@ -1,6 +1,6 @@
 {
   "name": "envoy-dsh",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "description": "Paste a link; the agent reads it. Xiaohongshu, Douyin, Bilibili, WeChat, articles, PDFs and audio become citable Markdown for a wiki or knowledge base. On 60 turns with vs without: finishes reading 22% -> 92% (+70 points), times out 68% -> 0%, answer quotes a real source fact 23% -> 82% (the A/B is exploratory: different time caps, no human correctness review). On 123 live links 80% came back usable (93% of the pages that answered); an unreachable link reports in 26 s. Codex, Claude Code, DSH.",
   "type": "module",
   "license": "Apache-2.0",

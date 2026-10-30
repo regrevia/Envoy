@@ -280,11 +280,13 @@ class MaterialCheckpoint:
             raise TaskBlocked(
                 "no_resume_offset", "material %s has no delivered ranges to resume from" % self.url
             )
+        # This is an expand request, so it carries no source and no revision:
+        # the retained material is the source. The revision travels beside the
+        # request so the caller can still compare it with what it observes.
         return {
             "protocol_version": "envoy.read/1",
             "request_id": request_id,
             "material_id": self.material_id,
-            "source_revision": self.source_revision,
             "offset": offset,
             "max_chars": max_chars,
             "max_total_response_chars": max_total_response_chars,

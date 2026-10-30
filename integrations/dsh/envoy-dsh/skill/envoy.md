@@ -638,8 +638,10 @@ delivered instead of starting over.
 | list | `mcp__envoy__envoy_task` `action=list` | tasks an earlier session left unfinished |
 
 Apply takes the receipt verbatim; do not restate its offsets or lengths. The
-returned `request` is sent unchanged — it carries the retained `material_id` and
-`source_revision`, so continuing costs no re-download and no re-extraction. When
+returned `request` is sent unchanged to `envoy expand`; it names the retained
+`material_id` and the first unseen offset, so continuing costs no re-download and
+no re-extraction. `next` reports the pinned `source_revision` beside the request;
+pass it back as `observed_revision` when a round read the source directly. When
 the source moved between rounds, `next` answers `source_revision_changed` and no
 range is claimed; read it again under a new revision rather than resuming the old
 one.

@@ -1,12 +1,43 @@
 # 更新日志 / Changelog
 
+## 0.1.38 - 2026-10-31
+
+### 中文
+
+- 修 `0.1.37` 的续读请求形状：`envoy_task` 的 `next` 交回的请求带着 `source_revision`，而 `envoy expand`
+  的请求模型禁止这个字段，于是恢复的第一步就被 6 条校验错误拒绝（`material_id: Extra inputs are not permitted`）。
+  现在请求只带 `material_id`、`offset`、`max_chars`、`max_total_response_chars` 和协议头；`source_revision`
+  放在 `next` 回执的顶层，作为下次 `observed_revision` 的校验依据，恢复仍然不重下、不重新解析。
+- 三份 `SKILL.md` 与 `references/protocol.md` 同步改写：revision 在回执上，不在请求里。
+- 真机验收脚本新增 `task_checkpoint` 检查：`create → read → apply → next → expand → apply → next`，
+  并且错 revision 必须 `blocked`；本地 macOS 跑 9 项全过（含该项），Windows 真机为 `not_run`，
+  等 `regrevia-win` 上这次版本跑完才算 `verified`。
+- 证据级别：修复本身 `unit_checked`（离线单测 + 本机端到端 CLI 链）；`0.1.38` 的 Windows 真机验收 `not_run`。
+
+### English
+
+- Fixed the resume-request shape shipped in `0.1.37`: the request returned by `envoy_task` `next` carried
+  `source_revision`, which `ExpandRequest` forbids, so the first resume step was rejected by six validation
+  errors (`material_id: Extra inputs are not permitted`). The request now carries only `material_id`, `offset`,
+  `max_chars`, `max_total_response_chars` and the protocol header; `source_revision` moved to the top level of the
+  `next` receipt and remains the guard for `observed_revision`, so resuming still neither re-downloads nor
+  re-extracts.
+- All three `SKILL.md` files and `references/protocol.md` were rewritten to say the revision lives on the receipt,
+  not in the request.
+- The real-machine acceptance script gained a `task_checkpoint` check:
+  `create → read → apply → next → expand → apply → next`, plus a mismatched revision that must come back
+  `blocked`. It passes 9 of 9 locally on macOS (this check included); Windows is `not_run` until the
+  `regrevia-win` run for this version finishes.
+- Evidence: the fix is `unit_checked` (offline unit tests + an end-to-end CLI chain on this machine); the
+  `0.1.38` Windows acceptance is `not_run`.
+
 ## 0.1.37 - 2026-10-31
 
 ### 中文
 
 - 长读现在是一条可恢复的任务，而不是一次会话：`envoy_task`（`create` / `get` / `apply` / `next` / `list`）
   只记「实际交付过的区间」，`next` 交回的请求从第一个没交付过的偏移继续，带原 `material_id` 与
-  `source_revision`，因此恢复不需要重下、也不需要重新解析材料。收到 `source_revision_changed` 或材料已过期时
+  `source_revision`（该版本发出的续读请求形状有误，见 `0.1.38`），因此恢复不需要重下、也不需要重新解析材料。收到 `source_revision_changed` 或材料已过期时
   明确返回 `blocked`，不猜偏移。
 - 状态落盘方式沿用 collection checkpoint：原子写、进程锁、按 revision 校验的 `apply`；
   checkpoint 里刻意不含租约、`session_id`、`expires_at`，所以换一个模型、换一个会话也能接着做完。
@@ -20,7 +51,7 @@
 
 - A long read is now a resumable task rather than a session: `envoy_task` (`create` / `get` / `apply` / `next` /
   `list`) records only the ranges actually delivered, and `next` hands back the request that continues from the
-  first unseen offset carrying the retained `material_id` and `source_revision` — so resuming neither re-downloads
+  first unseen offset carrying the retained `material_id` and `source_revision` (that request shape was wrong; see `0.1.38`) — so resuming neither re-downloads
   nor re-extracts the material. A moved revision or an expired material returns `blocked`; it never guesses an offset.
 - State is persisted the way collection checkpoints already are: atomic write, interprocess lock, revision-checked
   `apply`. The checkpoint deliberately carries no lease, `session_id`, or `expires_at`, so another model in another

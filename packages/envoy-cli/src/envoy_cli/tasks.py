@@ -182,6 +182,7 @@ def next_request(
         "result": "ready",
         "delivered_chars": material.delivered_chars,
         "remaining_chars": material.remaining_chars(),
+        "source_revision": material.source_revision,
         "request": request,
     }
 

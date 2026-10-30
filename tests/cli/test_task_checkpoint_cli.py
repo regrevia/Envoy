@@ -109,7 +109,8 @@ def test_a_real_receipt_becomes_the_resume_position(monkeypatch, tmp_path, capsy
     assert code == 0
     assert nxt["result"] == "ready"
     assert nxt["request"]["material_id"] == "mat-1"
-    assert nxt["request"]["source_revision"] == "rev-1"
+    assert nxt["source_revision"] == "rev-1"
+    assert "source_revision" not in nxt["request"]
     assert nxt["request"]["offset"] == 12000
     assert "source" not in nxt["request"]
 

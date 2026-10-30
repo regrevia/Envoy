@@ -468,3 +468,132 @@ def test_long_pdf_pages_fails_when_expands_never_reach_a_new_page(
     assert detail["expand_rounds"] == 2
     assert "did not advance" in detail["stderr"]
     assert fake.subcommands() == ["read", "expand", "expand"]
+
+
+class TaskFake:
+    """Scripted task-checkpoint answers, routed by the action in the request file."""
+
+    def __init__(self, offset_after_expand=1500, next_request=None, expand_text="second round body"):
+        self.calls = []
+        self.offset_after_expand = offset_after_expand
+        self.next_request = next_request
+        self.expand_text = expand_text
+        self.applied = 0
+
+    def __call__(self, prefix, argv, cwd=None, timeout=240, env=None):
+        self.calls.append(list(argv))
+        if argv[0] == "task-checkpoint":
+            request = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+            action = request.get("action")
+            if action == "create":
+                return 0, json.dumps({"task_id": request["task_id"], "state": "created"}), ""
+            if action == "apply":
+                self.applied += 1
+                return 0, json.dumps(
+                    {"task_id": request["task_id"], "state": "partial", "materials": [{"state": "partial"}]}
+                ), ""
+            if action == "next":
+                if request.get("observed_revision"):
+                    return 0, json.dumps(
+                        {
+                            "task_id": request["task_id"],
+                            "result": "blocked",
+                            "error": {"code": "source_revision_changed", "message": "the source moved"},
+                        }
+                    ), ""
+                offset = 900 if self.applied == 1 else self.offset_after_expand
+                body = self.next_request or {
+                    "protocol_version": "envoy.read/1",
+                    "request_id": "task-next",
+                    "material_id": MATERIAL,
+                    "offset": offset,
+                    "max_chars": 900,
+                    "max_total_response_chars": 48000,
+                }
+                return 0, json.dumps(
+                    {
+                        "task_id": request["task_id"],
+                        "result": "ready",
+                        "source_revision": REVISION,
+                        "request": body,
+                    }
+                ), ""
+        if argv[0] == "read":
+            return 0, json.dumps(_read_receipt(returned_chars=900, next_offset=900)), ""
+        if argv[0] == "expand":
+            receipt = {"material_id": MATERIAL, "source_revision": REVISION, "errors": [],
+                       "blocks": [_block("blk-body-0001-range-900", self.expand_text)]}
+            receipt.update(_text_coverage(returned_chars=len(self.expand_text)))
+            return 0, json.dumps(receipt), ""
+        raise AssertionError("unexpected envoy call: %s" % (argv,))
+
+
+def test_task_checkpoint_resumes_with_the_retained_material(driver, monkeypatch, tmp_path):
+    fake = TaskFake()
+    monkeypatch.setattr(driver, "_invoke", fake)
+    evidence = []
+
+    ok = driver.check_task_checkpoint_resume(["envoy"], tmp_path, driver.DEFAULT_SOURCE, evidence)
+
+    assert ok is True
+    detail = evidence[0]["detail"]
+    assert evidence[0]["id"] == "task_checkpoint"
+    assert detail["request_carries_material"] is True
+    assert detail["request_has_no_source"] is True
+    assert detail["same_material"] is True
+    assert detail["changed_text"] is True
+    assert detail["offset_advanced"] is True
+    assert detail["mismatched_revision_blocked"] is True
+    assert fake.calls[0][0] == "task-checkpoint"
+    assert fake.calls[1][0] == "read"
+    assert fake.calls[3][0] == "task-checkpoint"
+    assert fake.calls[4][0] == "expand"
+
+
+def test_task_checkpoint_flags_a_resume_request_that_re_reads_the_source(driver, monkeypatch, tmp_path):
+    # A request carrying a URL instead of the retained material would pay for
+    # the whole document again, so the check must not call that success.
+    fake = TaskFake(
+        next_request={
+            "protocol_version": "envoy.read/1",
+            "request_id": "task-next",
+            "source": {"url": driver.DEFAULT_SOURCE},
+        }
+    )
+    monkeypatch.setattr(driver, "_invoke", fake)
+    evidence = []
+
+    ok = driver.check_task_checkpoint_resume(["envoy"], tmp_path, driver.DEFAULT_SOURCE, evidence)
+
+    assert ok is False
+    detail = evidence[0]["detail"]
+    assert detail["request_carries_material"] is False
+    assert detail["request_has_no_source"] is False
+    assert detail["step"] == "next"
+
+
+def test_task_checkpoint_rejects_an_expand_that_replays_the_first_round(driver, monkeypatch, tmp_path):
+    fake = TaskFake(expand_text="first range body")
+    monkeypatch.setattr(driver, "_invoke", fake)
+    evidence = []
+
+    ok = driver.check_task_checkpoint_resume(["envoy"], tmp_path, driver.DEFAULT_SOURCE, evidence)
+
+    assert ok is False
+    detail = evidence[0]["detail"]
+    assert detail["same_material"] is True
+    assert detail["changed_text"] is False
+    assert detail["step"] == "expand"
+
+
+def test_task_checkpoint_rejects_a_second_round_that_claims_no_new_offset(driver, monkeypatch, tmp_path):
+    fake = TaskFake(offset_after_expand=900)
+    monkeypatch.setattr(driver, "_invoke", fake)
+    evidence = []
+
+    ok = driver.check_task_checkpoint_resume(["envoy"], tmp_path, driver.DEFAULT_SOURCE, evidence)
+
+    assert ok is False
+    detail = evidence[0]["detail"]
+    assert detail["offset_advanced"] is False
+    assert detail["step"] == "apply2"

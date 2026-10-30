@@ -12,6 +12,7 @@ import inspect
 import pytest
 
 from envoy_core import long_task as lt
+from envoy_core.schemas import read_v1
 
 
 def _read_receipt(
@@ -133,10 +134,30 @@ def test_resume_after_interrupt_expands_instead_of_downloading_again():
     )
 
     assert request["material_id"] == "mat-abc"
-    assert request["source_revision"] == "rev-1"
+    assert "source_revision" not in request
     assert request["offset"] == 11212
     assert request["max_chars"] == 8000
     assert "source" not in request
+
+
+def test_a_resume_request_is_a_request_the_reader_accepts():
+    material = lt.MaterialCheckpoint(
+        url="https://example.test/a.pdf",
+        state=lt.PARTIAL,
+        material_id="mat-%s" % ("a" * 24),
+        source_revision="b" * 64,
+        total_chars=20000,
+        delivered_ranges=((0, 5000),),
+    )
+
+    request = material.resume_request(
+        request_id="resume-shape", max_chars=8000, max_total_response_chars=48000
+    )
+
+    parsed = read_v1.ExpandRequest.model_validate(request)
+    assert parsed.material_id == material.material_id
+    assert parsed.offset == 5000
+    assert parsed.max_chars == 8000
 
 
 def test_resume_refuses_after_the_source_revision_moved():
