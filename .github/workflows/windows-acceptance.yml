@@ -290,7 +290,7 @@ jobs:
       - name: 安装最小档 / Install minimal profile
         shell: powershell
         run: |
-          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario fresh -Profile minimal -Version "${{ inputs.version }}"
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario fresh -Profile minimal -KeepRuntime -Version "${{ inputs.version }}"
       - name: 读取验收 / Read acceptance
         shell: powershell
         run: |

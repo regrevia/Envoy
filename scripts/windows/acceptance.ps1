@@ -33,7 +33,11 @@ param(
     [string]$EvidencePath = "",
     [int]$ExpectShellMajor = 0,
     [bool]$Redact = $true,
-    [switch]$KeepState
+    [switch]$KeepState,
+    # KeepState also skips the PATH restore, which is what a nested job needs to
+    # avoid; KeepRuntime keeps only the installed tree so a caller can use the
+    # shim right after this script returns.
+    [switch]$KeepRuntime
 )
 
 $ErrorActionPreference = "Stop"
@@ -272,12 +276,13 @@ try {
 } catch {
     Check "A2" "acceptance completed without an exception" $false (Mask $_.Exception.Message)
 } finally {
+    $keepHome = $KeepState -or $KeepRuntime
     if (-not $KeepState) {
         $pathRestore = Get-RawUserPath
         if ($pathRestore[0] -ne $pathBefore[0]) {
             Set-RawUserPath -Value $pathBefore[0] -Kind $pathBefore[1]
         }
-        if (-not $envoyHomeExisted -and (Test-Path -LiteralPath $EnvoyHome)) {
+        if (-not $keepHome -and -not $envoyHomeExisted -and (Test-Path -LiteralPath $EnvoyHome)) {
             Remove-Item -LiteralPath $EnvoyHome -Recurse -Force -ErrorAction SilentlyContinue
         }
         if (-not $mcpTemplateExisted -and (Test-Path -LiteralPath $mcpTemplate)) {
