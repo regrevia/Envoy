@@ -16,6 +16,16 @@ INSTAGRAM_WALL = (
 )
 
 
+GITHUB_SIGN_IN_FORM = (
+    "Skip to content\n\nYou signed in with another tab or window.\nReload\n"
+    "to refresh your session.\nYou signed out in another tab or window.\nReload\n"
+    "to refresh your session.\nYou switched accounts on another tab or window.\n"
+    "Reload\nto refresh your session.\nDismiss alert\n\nSign in to GitHub\n\n"
+    "Username or email address\n\nPassword\nForgot password?\n\nUh oh!\n\n"
+    "There was an error while loading.\nPlease reload this page\n."
+)
+
+
 @pytest.mark.parametrize(
     ("title", "text", "expected"),
     [
@@ -24,6 +34,12 @@ INSTAGRAM_WALL = (
         ("长文", "登录后查看完整内容", True),
         ("A real article", "body text " * 60, False),
         ("A real article", "body text " * 60 + "log in to continue", False),
+        # github.com/settings/profile redirects to /login: 602 characters of form
+        # chrome, no phrase from LOGIN_WALL_MARKERS, and past the 600-char limit.
+        ("Sign in to GitHub · GitHub", GITHUB_SIGN_IN_FORM, True),
+        # A help page that merely mentions signing in is not a wall.
+        ("How to log in to the admin console", "Open the page, enter the password "
+         "you set during setup, and press continue.", False),
     ],
 )
 def test_login_wall_markers(title, text, expected):

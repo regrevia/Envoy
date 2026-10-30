@@ -1031,6 +1031,33 @@ LOGIN_WALL_MARKERS = (
     "扫码登录",
 )
 LOGIN_WALL_MAX_CHARS = 600
+# A redirect-based wall (github.com/settings/profile -> /login) names itself
+# only in the title and the field labels, and the form chrome alone can pass 600
+# characters, so the phrase list above misses it. Its title still starts with
+# the verb of the form, which is what keeps a help article titled "Log in to X"
+# from matching here.
+LOGIN_FORM_TITLE = re.compile(
+    r"^(?:sign\s*in|signin|log\s*in|login|登录|登陆)\b|^(?:登录|登陆)", re.IGNORECASE
+)
+LOGIN_FORM_MAX_CHARS = 1500
+
+
+def _looks_like_login_form(title: str, text: str) -> bool:
+    """True when the page *is* a username/password form, not an article about one."""
+
+    if not LOGIN_FORM_TITLE.match((title or "").strip()):
+        return False
+    stripped = text.strip()
+    if not stripped or len(stripped) > LOGIN_FORM_MAX_CHARS:
+        return False
+    lowered = stripped.lower()
+    has_secret_field = "password" in lowered or "密码" in stripped
+    if not has_secret_field:
+        return False
+    return any(
+        marker in lowered
+        for marker in ("forgot password", "sign in", "log in", "continue", "submit")
+    ) or "忘记密码" in stripped
 
 
 def _looks_like_login_wall(title: str, text: str) -> bool:
@@ -1042,6 +1069,8 @@ def _looks_like_login_wall(title: str, text: str) -> bool:
     wants a session".
     """
 
+    if _looks_like_login_form(title, text):
+        return True
     if len(text.strip()) > LOGIN_WALL_MAX_CHARS:
         return False
     haystack = f"{title}\n{text}".lower()
