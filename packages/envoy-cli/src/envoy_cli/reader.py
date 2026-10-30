@@ -4955,6 +4955,20 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     source_unresolved = _pdf_source_unresolved(stored)
     budget_state = _material_budget_state(stored, request)
+    total_text = str(stored.get("text") or "")
+    all_returned_ranges = _material_returned_ranges(budget_state, len(total_text))
+    if total_text and not _unseen_ranges(0, len(total_text), all_returned_ranges):
+        # Nothing is left to read. Answer that before the budget ledger, or an
+        # exhausted ledger describes content the caller already has as if more
+        # text were waiting behind it.
+        return _expand_blocked(
+            request,
+            "The material has already been delivered in full; this range adds "
+            "no new text",
+            stored,
+            code=ErrorCode.RANGE_ALREADY_DELIVERED,
+            reason="material_fully_delivered",
+        )
     if (
         budget_state["max_expansion_rounds"] is not None
         and budget_state["expansion_rounds"] >= budget_state["max_expansion_rounds"]
@@ -4967,11 +4981,6 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         and budget_state["returned_tokens"] >= budget_state["max_total_response_tokens"]
     ):
         return _expand_blocked(request, "The cumulative response token budget has been exhausted", stored)
-    total_text = str(stored.get("text") or "")
-    all_returned_ranges = _material_returned_ranges(
-        stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {},
-        len(total_text),
-    )
     offset = request.offset
     max_chars = min(
         request.max_chars,

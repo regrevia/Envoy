@@ -104,6 +104,48 @@ def test_expanding_a_fully_delivered_material_does_not_ask_for_another_expand(tm
     assert "next: envoy_expand" not in text
 
 
+def test_a_fully_delivered_material_is_not_reported_as_a_budget_wall(tmp_path, monkeypatch):
+    """Nothing is left to read, so the ledger must not describe hidden text.
+
+    Session d91 read a report to the end and then got "cumulative response
+    character budget has been exhausted" on the next expand, which reads as
+    "more text exists, the budget is in the way" — the opposite of the truth.
+    """
+    from envoy_cli import reader
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "5" * 24
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/report",
+        "source_revision": "b" * 64,
+        "title_text": "Report",
+        "text": TEXT,
+        "budget_state": {
+            "max_total_response_chars": 4000,
+            "max_total_response_tokens": 1000,
+            "max_expansion_rounds": 8,
+            "returned_chars": 4000,
+            "returned_tokens": 1000,
+            "expansion_rounds": 1,
+            "returned_ranges": [[0, len(TEXT)]],
+        },
+    })
+
+    blocked = _expand(material_id, 0, "req-done")
+    assert blocked.result.value == "blocked"
+    error = blocked.errors[0]
+    assert error.details["reason"] == "material_fully_delivered"
+    assert "budget" not in error.message.lower()
+
+    from envoy_cli import mcp
+
+    text = "\n".join(mcp._blocked_lines(
+        _payload(blocked), [error.model_dump(mode="json")], material_id, 800
+    ))
+    assert "fully delivered" in text
+    assert "budget" not in text.lower()
+
+
 def test_a_text_need_gets_no_observe_or_frame_boilerplate():
     from envoy_cli import mcp
 
