@@ -33,6 +33,12 @@ on:
         default: "true"
         type: choice
         options: ["true", "false"]
+      real_read:
+        description: "是否在真机上跑一次真实公网读取、续读与 replay（需要网络，约 10 分钟）"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
   workflow_run:
     workflows: ["Envoy 正式发行 / Envoy Release"]
     types: [completed]
@@ -244,5 +250,56 @@ jobs:
         with:
           name: windows-acceptance-hosted
           path: ${{ runner.temp }}/envoy-windows-acceptance-ps*.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-real-read:
+    name: Windows 真机读取 / Real read
+    # 真机读取读的是公网文档，所以这里只验材料链（read → expand → replay），
+    # 不下载媒体、不起浏览器、不加载 ASR 模型。
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.real_read != 'false')
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: [self-hosted, windows, x64, regrevia-win]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 1
+      - name: 环境准备 / Prepare
+        shell: powershell
+        run: |
+          git config --global core.longpaths true
+          chcp 65001 | Out-Null
+          [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          foreach ($value in @($env:USERNAME, $env:COMPUTERNAME, $env:USERPROFILE, $env:LOCALAPPDATA, $env:RUNNER_TEMP)) {
+            if ($value) { Write-Host "::add-mask::$value" }
+          }
+      - name: 安装最小档 / Install minimal profile
+        shell: powershell
+        run: |
+          ./scripts/windows/acceptance.ps1 -ExpectShellMajor 5 -Scenario fresh -Profile minimal -Version "${{ inputs.version }}"
+      - name: 读取验收 / Read acceptance
+        shell: powershell
+        run: |
+          ./scripts/windows/read-acceptance.ps1 -EnvoyHome (Join-Path $env:RUNNER_TEMP "envoy-acceptance") -OutFile (Join-Path $env:RUNNER_TEMP "envoy-windows-read-acceptance.json")
+      - name: 还原用户 PATH / Restore PATH
+        if: always()
+        shell: powershell
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP "path.before.json"
+          if (-not (Test-Path -LiteralPath $file)) { Write-Host "no snapshot; nothing to restore"; exit 0 }
+          $snapshot = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+          $reg = Join-Path $env:SystemRoot "System32\reg.exe"
+          & $reg add "HKCU\Environment" /v Path /t $snapshot.kind /d $snapshot.value /f | Out-Null
+          Write-Host ("user PATH restored ({0})" -f $snapshot.kind)
+      - name: 证据 / Evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-read-acceptance
+          path: ${{ runner.temp }}/envoy-windows-read-acceptance.json
           if-no-files-found: warn
           retention-days: 7
