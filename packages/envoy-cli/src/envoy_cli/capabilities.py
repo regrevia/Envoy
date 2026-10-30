@@ -98,6 +98,10 @@ def capability_catalog() -> dict:
                 "use": "Persist revision-checked collection progress, idempotent operations, and cumulative usage across process restarts.",
             },
             {
+                "tool": "envoy_task",
+                "use": "Keep one long read resumable: record the ranges actually delivered, then hand back the request that continues from the first unseen offset.",
+            },
+            {
                 "tool": "envoy_read",
                 "use": "Read a public URL toward the user's stated goal; source type is auto-detected.",
             },

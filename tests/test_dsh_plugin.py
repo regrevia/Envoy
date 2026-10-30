@@ -66,6 +66,7 @@ ENVOY_TOOLS = (
     "envoy_read_local_video",
     "envoy_discover",
     "envoy_collection_checkpoint",
+    "envoy_task",
     "envoy_expand",
     "envoy_replay",
     "envoy_search",

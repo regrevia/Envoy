@@ -52,6 +52,7 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
         "envoy_auth",
         "envoy_discover",
         "envoy_collection_checkpoint",
+        "envoy_task",
         "envoy_read_local_video",
         "envoy_read",
         "envoy_expand",
@@ -257,6 +258,70 @@ def test_mcp_local_video_read_forwards_selected_path_and_goal(monkeypatch, tmp_p
         "goal": "Extract spoken product claims",
         "idempotency_key": "local-operation-1",
     }
+
+
+def test_mcp_task_hands_back_the_request_that_continues_it(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    receipt = {
+        "protocol_version": "envoy.read/1",
+        "material_id": "mat-mcp",
+        "source_revision": "rev-mcp",
+        "result": "partial",
+        "errors": [],
+        "coverage": {"modalities": {"text": {"details": {
+            "total_chars": 60000,
+            "returned_chars": 12000,
+            "next_offset": 12000,
+        }}}},
+    }
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "envoy_task", "arguments": {
+                "action": "create",
+                "task_id": "mcp-task",
+                "goal": "read the whole document",
+                "sources": ["https://example.test/long.pdf"],
+            }},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "envoy_task", "arguments": {
+                "action": "apply",
+                "task_id": "mcp-task",
+                "source": "https://example.test/long.pdf",
+                "offset": 0,
+                "receipt": receipt,
+            }},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "envoy_task", "arguments": {
+                "action": "next",
+                "task_id": "mcp-task",
+                "source": "https://example.test/long.pdf",
+                "max_chars": 8000,
+            }},
+        },
+    ])
+
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    ready = responses[-1]["result"]
+    assert ready["isError"] is False
+    continuation = ready["structuredContent"]["request"]
+    assert continuation["material_id"] == "mat-mcp"
+    assert continuation["offset"] == 12000
+    assert "material_id" in ready["content"][0]["text"]
 
 
 def test_mcp_collection_checkpoint_create_update_and_get(tmp_path, monkeypatch, capsys):

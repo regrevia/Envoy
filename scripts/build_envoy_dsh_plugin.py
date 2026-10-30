@@ -40,6 +40,7 @@ DESCRIPTION_RE = re.compile(r"^description:\s*(.*)$", re.MULTILINE)
 TOOL_NAMES = (
     "envoy_read_local_video",
     "envoy_collection_checkpoint",
+    "envoy_task",
     "envoy_observe",
     "envoy_visual_history",
     "envoy_discover",

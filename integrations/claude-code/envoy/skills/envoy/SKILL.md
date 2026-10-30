@@ -96,8 +96,8 @@ search, visual handoff, and handing one sign-in to the user in the chat
 without paying for every advanced schema.
 
 The `full` toolset adds `envoy_read_local_video`, `envoy_discover`,
-`envoy_collection_checkpoint`, `envoy_replay`, `envoy_visual_history`, and
-`envoy_doctor`. If an operation below names a tool that is absent from the
+`envoy_collection_checkpoint`, `envoy_task`, `envoy_replay`,
+`envoy_visual_history`, and `envoy_doctor`. If an operation below names a tool that is absent from the
 catalog, use its CLI equivalent (for example `envoy read-local-video` or
 `envoy doctor --json`) or restart the bridge with `ENVOY_MCP_TOOLSET=full`
 in its environment; do not invent a tool call. The selected toolset is
@@ -624,6 +624,32 @@ the original material budget or expansion-round limit is exhausted.
 The independent runtime stores extracted text locally with restrictive file
 permissions. Retention follows `retention.derived_ttl_seconds`, capped at
 seven days and 100 materials.
+
+## Resume a long read
+
+A read that is too large for one turn is not a session: it is a task. Record it
+before the first read, and let every later round record what was actually
+delivered instead of starting over.
+
+| Step | Call | What it proves |
+| --- | --- | --- |
+| create | `envoy_task` `action=create` with `goal` and `sources` | the task_id and its source list survive the process |
+| read/expand | `envoy_read` / `envoy_expand` as usual | the receipt is the only delivery evidence |
+| apply | `envoy_task` `action=apply` with `source`, `offset`, `receipt` | the delivery record grows by exactly `returned_chars` |
+| next | `envoy_task` `action=next` with `source` | the request that continues from the first unseen offset |
+| list | `envoy_task` `action=list` | tasks an earlier session left unfinished |
+
+Apply takes the receipt verbatim; do not restate its offsets or lengths. The
+returned `request` is sent unchanged — it carries the retained `material_id` and
+`source_revision`, so continuing costs no re-download and no re-extraction. When
+the source moved between rounds, `next` answers `source_revision_changed` and no
+range is claimed; read it again under a new revision rather than resuming the old
+one.
+
+The task checkpoint holds the delivery record only. It holds no lease, no
+session, and no expiry, so a different model in a different session can finish
+the same task as long as it holds the same `task_id`. CLI equivalents are
+`envoy task-checkpoint --request-json <file|->` with the same actions.
 
 ## Current independent runtime
 

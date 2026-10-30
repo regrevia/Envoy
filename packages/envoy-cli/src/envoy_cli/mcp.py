@@ -39,6 +39,7 @@ from .collections import (
     list_collections,
     update_collection,
 )
+from .tasks import TaskError, handle as handle_task
 from .local_source import (
     classify_local_source,
     local_read_request,
@@ -419,6 +420,35 @@ TOOLS = [
                     "max_retries": {"type": "integer", "minimum": 0},
                     "max_work_seconds": {"type": "integer", "minimum": 0},
                 }},
+            },
+        },
+    },
+    {
+        "name": "envoy_task",
+        "description": (
+            "Keep one long read resumable across sessions and models. create records "
+            "the sources and a stable task_id; apply folds a receipt Envoy already "
+            "returned into the delivery record, so later rounds ask only for what was "
+            "never delivered; next returns the request that continues from exactly "
+            "there instead of reading the material again. action=list finds tasks left "
+            "behind by an earlier session."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action"],
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "get", "apply", "next", "list"]},
+                "task_id": {"type": ["string", "null"], "description": "Omit on create to mint one; required by every other action."},
+                "goal": {"type": ["string", "null"], "description": "What the task is trying to establish."},
+                "sources": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 32, "description": "URLs the task reads, in order; create only."},
+                "source": {"type": ["string", "null"], "description": "The one URL this receipt or request belongs to."},
+                "offset": {"type": "integer", "minimum": 0, "default": 0, "description": "Where this receipt starts; apply only."},
+                "receipt": {"type": ["object", "null"], "description": "A read or expand receipt exactly as Envoy returned it; apply only."},
+                "request_id": {"type": ["string", "null"]},
+                "max_chars": {"type": "integer", "minimum": 128, "maximum": 100000, "default": 4000, "description": "Characters the next expand may return."},
+                "max_total_response_chars": {"type": "integer", "minimum": 128, "default": 48000},
+                "observed_revision": {"type": ["string", "null"], "description": "The source revision seen now; the next request is refused as source_revision_changed when it moved."},
             },
         },
     },
@@ -831,6 +861,8 @@ def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
         return _discover_content_text(payload)
     if tool == "envoy_collection_checkpoint":
         return _collection_content_text(payload)
+    if tool == "envoy_task":
+        return _task_content_text(payload)
     # A verification verdict is not a read: rendering it as one prints an empty
     # material with an expand hint, and the verdict itself never reaches the
     # caller. The payload has no tool key of its own, so the protocol tag is
@@ -1472,6 +1504,74 @@ def _collection_content_text(payload: dict) -> str:
             parts.append(f"{run.get('failed')} failed")
         lines.append("- " + " · ".join(parts))
     return "\n".join(lines)
+
+
+def _task_content_text(payload: dict) -> str:
+    """Report progress and hand back the request that continues the task."""
+    if payload.get("result") == "blocked" and isinstance(payload.get("error"), dict):
+        error = payload["error"]
+        return (
+            f"Envoy task blocked: {error.get('code', 'task_error')}; "
+            f"{error.get('message', '')}".rstrip()
+        )
+    tasks = payload.get("tasks")
+    if isinstance(tasks, list):
+        lines = [f"Envoy tasks: {len(tasks)}"]
+        for item in tasks[:20]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "- "
+                + " · ".join([
+                    str(item.get("task_id") or "?"),
+                    str(item.get("state") or "?"),
+                    f"{item.get('delivered_chars', 0)} chars delivered",
+                ])
+            )
+        return "\n".join(lines)
+    request = payload.get("request")
+    if isinstance(request, dict):
+        lines = [
+            f"Envoy task {payload.get('task_id')} ready · "
+            f"{payload.get('delivered_chars', 0)} chars delivered · "
+            f"{payload.get('remaining_chars', 0)} remaining",
+            "Send this request unchanged to continue:",
+            json.dumps(request, ensure_ascii=False, separators=(",", ":")),
+        ]
+        return "\n".join(lines)
+    materials = [item for item in payload.get("materials") or [] if isinstance(item, dict)]
+    lines = [
+        f"Envoy task {payload.get('task_id')} · {payload.get('state', 'unknown')} · "
+        f"{len(materials)} source(s)"
+    ]
+    for item in materials[:20]:
+        parts = [
+            str(item.get("url") or "?"),
+            str(item.get("state") or "?"),
+            f"{sum(_range_len(r) for r in item.get('delivered_ranges') or [])} chars delivered",
+        ]
+        remaining = _material_remaining(item)
+        if remaining is not None:
+            parts.append(f"{remaining} remaining")
+        lines.append("- " + " · ".join(parts))
+    return "\n".join(lines)
+
+
+def _range_len(value) -> int:
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return max(0, int(value[1]) - int(value[0]))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _material_remaining(item: dict) -> int | None:
+    total = item.get("total_chars")
+    if not isinstance(total, int):
+        return None
+    delivered = sum(_range_len(r) for r in item.get("delivered_ranges") or [])
+    return max(0, total - delivered)
 
 
 def _read_payload(response, compact: bool) -> dict:
@@ -2368,6 +2468,17 @@ def handle_message(
                     budget=CollectionBudget(**budget_data) if budget_data else None,
                 )
             payload = {"tool": "envoy_collection_checkpoint", "action": action, **payload}
+        elif name == "envoy_task":
+            request = dict(arguments)
+            request.pop("tool", None)
+            try:
+                payload = {"tool": "envoy_task", **handle_task(request)}
+            except TaskError as exc:
+                payload = {
+                    "tool": "envoy_task",
+                    "result": "blocked",
+                    "error": {"code": "task_error", "message": str(exc)},
+                }
         elif name == "envoy_expand":
             response = expand_material(ExpandRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)

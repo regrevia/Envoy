@@ -57,6 +57,7 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
             b"envoy_read_local_video",
             b"envoy_discover",
             b"envoy_collection_checkpoint",
+        b"envoy_task",
             b"envoy_replay",
         ):
             assert tool_name in skill

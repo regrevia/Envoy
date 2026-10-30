@@ -43,6 +43,7 @@ from .package_install import install_media_dependencies
 from . import __version__
 from . import mcp
 from .collect import collect
+from .tasks import TaskError, handle as handle_task
 from .collections import (
     CollectionBudget,
     CollectionError,
@@ -124,6 +125,16 @@ def _parser() -> argparse.ArgumentParser:
         "--request-json",
         required=True,
         help="read one collection checkpoint request from this path or '-' for stdin",
+    )
+
+    task_checkpoint = subparsers.add_parser(
+        "task-checkpoint",
+        help="create, read, or resume a long reading task from its checkpoint",
+    )
+    task_checkpoint.add_argument(
+        "--request-json",
+        required=True,
+        help="read one task checkpoint request from this path or '-' for stdin",
     )
 
     collect_parser = subparsers.add_parser(
@@ -665,6 +676,34 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                 "error": {"code": "collection_error", "message": str(exc)},
             }, ensure_ascii=False))
             return 2
+    if args.command == "task-checkpoint":
+        try:
+            if args.request_json == "-":
+                raw = stdin if stdin is not None else sys.stdin.read()
+            else:
+                with open(args.request_json, "r", encoding="utf-8") as request_file:
+                    raw = request_file.read()
+            payload = json.loads(raw)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "invalid_request", "message": str(exc)},
+            }, ensure_ascii=False))
+            return 2
+        try:
+            data = handle_task(payload if isinstance(payload, dict) else {})
+            print(json.dumps(
+                {"tool": "envoy_task", "action": (payload or {}).get("action"), **data},
+                ensure_ascii=False,
+            ))
+            return 0
+        except (TaskError, ValueError) as exc:
+            print(json.dumps({
+                "result": "blocked",
+                "error": {"code": "task_error", "message": str(exc)},
+            }, ensure_ascii=False))
+            return 2
+
     if args.command == "collect" and args.list:
         runs = list_collections()
         if args.json:
