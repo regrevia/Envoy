@@ -10,9 +10,10 @@
   放在 `next` 回执的顶层，作为下次 `observed_revision` 的校验依据，恢复仍然不重下、不重新解析。
 - 三份 `SKILL.md` 与 `references/protocol.md` 同步改写：revision 在回执上，不在请求里。
 - 真机验收脚本新增 `task_checkpoint` 检查：`create → read → apply → next → expand → apply → next`，
-  并且错 revision 必须 `blocked`；本地 macOS 跑 9 项全过（含该项），Windows 真机为 `not_run`，
-  等 `regrevia-win` 上这次版本跑完才算 `verified`。
-- 证据级别：修复本身 `unit_checked`（离线单测 + 本机端到端 CLI 链）；`0.1.38` 的 Windows 真机验收 `not_run`。
+  并且错 revision 必须 `blocked`。
+- 证据级别：修复为 `unit_checked`（离线单测 + 本机端到端 CLI 链）；Windows 真机验收为 `verified`
+  （run 41124602040，`regrevia-win`，`task_checkpoint` 通过：material 复用、偏移 248 → 892、错 revision
+  返回 `source_revision_changed`，9 项检查 0 失败；另有 PowerShell 5.1 / 7 与托管干净机 job 全绿）。
 
 ### English
 
@@ -26,10 +27,11 @@
   not in the request.
 - The real-machine acceptance script gained a `task_checkpoint` check:
   `create → read → apply → next → expand → apply → next`, plus a mismatched revision that must come back
-  `blocked`. It passes 9 of 9 locally on macOS (this check included); Windows is `not_run` until the
-  `regrevia-win` run for this version finishes.
+  `blocked`.
 - Evidence: the fix is `unit_checked` (offline unit tests + an end-to-end CLI chain on this machine); the
-  `0.1.38` Windows acceptance is `not_run`.
+  Windows acceptance is `verified` (run 41124602040 on `regrevia-win`: `task_checkpoint` passed with the
+  material reused, offsets 248 → 892, a mismatched revision returning `source_revision_changed`, 0 failed of
+  9 checks; the PowerShell 5.1, PowerShell 7 and hosted clean-machine jobs also passed).
 
 ## 0.1.37 - 2026-10-31
 
