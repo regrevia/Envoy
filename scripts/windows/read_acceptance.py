@@ -5,6 +5,8 @@
 - CLI 只接受公网 HTTP(S) 源（本地文件与 127.0.0.1 会被 source_unavailable 拒绝），
   所以默认读仓库自己的公开 README；不额外起本地服务。
 - 不下载媒体、不起浏览器、不加载 ASR 模型：只验证材料链。
+- Long PDF: honest page accounting, plus a second range that carries new pages.
+- Resume: a fresh process continues an interrupted read on the same material.
 - 每个检查独立产出 {id, name, ok, detail}，一项失败不影响其它项。
 
 用法（真机）：
@@ -27,9 +29,24 @@ from pathlib import Path
 MATERIAL_ID = re.compile(r"^mat-[a-f0-9]{24}$")
 REVISION = re.compile(r"^[a-f0-9]{64}$")
 DEFAULT_SOURCE = "https://raw.githubusercontent.com/regrevia/Envoy/main/README.md"
+PDF_SOURCE = (
+    "https://raw.githubusercontent.com/regrevia/Envoy/main"
+    "/tests/fixtures/pdf/long-120-pages.pdf"
+)
 
 READ_BUDGET_CHARS = 1200
 EXPAND_BUDGET_CHARS = 800
+RESUME_BUDGET_CHARS = 800
+# A fixture page holds ~5350 chars, so these budgets cross page borders:
+# a 12000-char read ends inside page 3, an 8000-char expand reaches page 5.
+PDF_READ_BUDGET_CHARS = 12000
+# The cumulative cap is fixed when the material is first read: an expand can
+# never get past it, so the read has to authorize the whole document up front.
+PDF_READ_TOTAL_CHARS = 48000
+PDF_EXPAND_BUDGET_CHARS = 8000
+PDF_MAX_EXPANDS = 3
+
+PDF_PAGE_BLOCK = re.compile(r"^blk-pdf-page-(\d+)(?:-range-\d+)?$")
 
 
 def _invoke(prefix, argv, cwd=None, timeout=240, env=None):
@@ -95,6 +112,78 @@ def _receipt_head(receipt):
         if text:
             return text[:120]
     return ""
+
+
+def _request_file(workdir, name, payload):
+    """Write one request JSON under the acceptance workdir; return its path."""
+    path = Path(workdir) / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def _run_json(prefix, subcommand, request_path, workdir):
+    """Run one request-bearing subcommand; return (rc, receipt, stderr)."""
+    code, out, err = _invoke(
+        prefix, [subcommand, "--request-json", request_path], cwd=workdir
+    )
+    if code != 0:
+        return code, {}, err
+    try:
+        payload = _loads(out)
+    except ValueError as exc:
+        return code, {}, str(exc)
+    receipt = payload.get("receipt", payload) if isinstance(payload, dict) else {}
+    if not isinstance(receipt, dict):
+        receipt = {}
+    return code, receipt, err
+
+
+def _read_document(
+    prefix, workdir, source_url, budget_chars, tag, goal, total_chars=None
+):
+    """Issue one read request and return (rc, receipt, stderr)."""
+    request = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "win-%s-%s" % (tag, uuid.uuid4().hex[:8]),
+        "source": {"url": source_url},
+        "goal": goal,
+        "budget": {
+            "max_work_seconds": 90,
+            "max_response_chars": budget_chars,
+            "max_total_response_chars": total_chars or budget_chars,
+        },
+    }
+    path = _request_file(workdir, "%s-request.json" % tag, request)
+    return _run_json(prefix, "read", path, workdir)
+
+
+def _delivered_text(receipt):
+    """Every block's text in delivery order, concatenated."""
+    return "".join(_block_text(block) for block in receipt.get("blocks") or [])
+
+
+def _first_error(receipt):
+    """First error entry as short text, or an empty string."""
+    errors = receipt.get("errors") or []
+    return str(errors[0])[:200] if errors else ""
+
+
+def _pdf_pages(blocks):
+    """Sorted, unique page numbers carried by delivered PDF block ids."""
+    pages = set()
+    for block in blocks:
+        match = PDF_PAGE_BLOCK.match(str(block.get("id") or ""))
+        if match:
+            pages.add(int(match.group(1)))
+    return sorted(pages)
+
+
+def _insert_after(evidence, anchor_id, items):
+    """Splice ``items`` right after the check named ``anchor_id``."""
+    ids = [item["id"] for item in evidence]
+    index = ids.index(anchor_id) + 1 if anchor_id in ids else len(evidence)
+    evidence[index:index] = items
+    return evidence
 
 
 def check_version(prefix, workdir, evidence):
@@ -284,6 +373,260 @@ def run_chain(prefix, workdir, source_url, evidence):
     return {"material_id": material_id, "revision": revision, "next_offset": next_offset}
 
 
+
+
+def check_long_pdf_pages(prefix, workdir, pdf_source, evidence):
+    """A long PDF must report honest page accounting and deliver new pages."""
+    code, receipt, err = _read_document(
+        prefix,
+        workdir,
+        pdf_source,
+        PDF_READ_BUDGET_CHARS,
+        "pdf-read",
+        "Windows acceptance: long PDF page accounting",
+        total_chars=PDF_READ_TOTAL_CHARS,
+    )
+    text = _text_details(receipt)
+    material_id = receipt.get("material_id")
+    revision = receipt.get("source_revision")
+    page_count = text.get("page_count")
+    returned_chars = text.get("returned_chars")
+    total_chars = text.get("total_chars")
+    next_offset = text.get("next_offset")
+    pages_after_read = _pdf_pages(receipt.get("blocks") or [])
+    material_ok = isinstance(material_id, str) and bool(MATERIAL_ID.match(material_id))
+    revision_ok = isinstance(revision, str) and bool(REVISION.match(revision))
+    counters_ok = all(
+        isinstance(value, int) for value in (page_count, returned_chars, total_chars)
+    )
+    read_ok = bool(
+        code == 0
+        and not _first_error(receipt)
+        and receipt.get("result") == "partial"
+        and material_ok
+        and revision_ok
+        and counters_ok
+        and page_count >= 100
+        and len(pages_after_read) >= 2
+        and total_chars > returned_chars
+        and isinstance(next_offset, int)
+        and next_offset > 0
+        and text.get("continuation_available") is True
+    )
+    detail = {
+        "rc": code,
+        "result": receipt.get("result") if receipt else None,
+        "page_count": page_count,
+        "next_offset": next_offset,
+        "pages_after_read": pages_after_read,
+        "pages_after_expand": [],
+        "returned_chars": returned_chars,
+    }
+    if not read_ok:
+        # A failed read carries no material id: never make one up.
+        detail["stderr"] = (err.strip() or _first_error(receipt))[:300]
+        evidence.append(
+            {
+                "id": "long_pdf_pages",
+                "name": "long PDF read accounts pages honestly",
+                "ok": False,
+                "detail": detail,
+            }
+        )
+        return False
+    detail["material_id"] = material_id
+
+    # One PDF expand delivers the rest of the page the offset lands in and stops
+    # there, so reaching a later page takes several rounds. Each round is its own
+    # process: the only state carried across is material_id plus the offset.
+    pages_after_expand = []
+    offset = next_offset
+    rounds = 0
+    expand_ok = True
+    expand_rc = None
+    stderr = ""
+    while rounds < PDF_MAX_EXPANDS:
+        rounds += 1
+        expand_request = {
+            "protocol_version": "envoy.read/1",
+            "request_id": "win-pdf-expand-%s" % uuid.uuid4().hex[:8],
+            "material_id": material_id,
+            "offset": offset,
+            "max_chars": PDF_EXPAND_BUDGET_CHARS,
+            # The cap is cumulative for the material, not per call: it has to
+            # cover everything already delivered, or the expand is refused
+            # instead of repeating that text.
+            "max_total_response_chars": PDF_READ_TOTAL_CHARS,
+        }
+        expand_path = _request_file(
+            workdir, "pdf-expand-request-%d.json" % rounds, expand_request
+        )
+        expand_rc, expand_receipt, expand_err = _run_json(
+            prefix, "expand", expand_path, workdir
+        )
+        text_e = _text_details(expand_receipt)
+        pages = _pdf_pages(expand_receipt.get("blocks") or [])
+        pages_after_expand.extend(
+            page for page in pages if page not in pages_after_expand
+        )
+        returned = text_e.get("returned_chars")
+        advanced = (
+            isinstance(text_e.get("next_offset"), int)
+            and text_e["next_offset"] > offset
+        )
+        if not (
+            expand_rc == 0
+            and not _first_error(expand_receipt)
+            and isinstance(returned, int)
+            and returned > 0
+            and advanced
+        ):
+            expand_ok = False
+            stderr = (
+                expand_err.strip()
+                or _first_error(expand_receipt)
+                or "expand did not advance past offset %s" % offset
+            )[:300]
+            break
+        offset = text_e["next_offset"]
+        if any(page > max(pages_after_read) for page in pages):
+            break
+    if expand_ok and not any(
+        page > max(pages_after_read) for page in pages_after_expand
+    ):
+        expand_ok = False
+        stderr = "no page beyond %d after %d expand rounds" % (
+            max(pages_after_read),
+            rounds,
+        )
+    detail["pages_after_expand"] = pages_after_expand
+    detail["expand_rounds"] = rounds
+    detail["expand_rc"] = expand_rc
+    if not expand_ok:
+        detail["stderr"] = stderr
+    ok = bool(read_ok and expand_ok)
+    evidence.append(
+        {
+            "id": "long_pdf_pages",
+            "name": "long PDF read accounts pages honestly",
+            "ok": ok,
+            "detail": detail,
+        }
+    )
+    return ok
+
+
+def check_resume_after_interrupt(prefix, workdir, source_url, evidence):
+    """A fresh process must continue an interrupted read, not start over."""
+    code, receipt_a, err_a = _read_document(
+        prefix,
+        workdir,
+        source_url,
+        RESUME_BUDGET_CHARS,
+        "resume-read",
+        "Windows acceptance: resume an interrupted read",
+    )
+    text_a = _delivered_text(receipt_a)
+    ids_a = [
+        str(block.get("id")) for block in receipt_a.get("blocks") or [] if block.get("id")
+    ]
+    material_id = receipt_a.get("material_id")
+    revision = receipt_a.get("source_revision")
+    offset_from = _text_details(receipt_a).get("next_offset")
+    material_ok = isinstance(material_id, str) and bool(MATERIAL_ID.match(material_id))
+    revision_ok = isinstance(revision, str) and bool(REVISION.match(revision))
+    if code != 0:
+        problem = "step A read failed with rc %s" % code
+    elif not receipt_a:
+        problem = "step A read did not return JSON: %s" % err_a.strip()[:200]
+    elif _first_error(receipt_a):
+        problem = "step A read reported an error: %s" % _first_error(receipt_a)
+    elif not material_ok:
+        problem = "step A read returned no usable material id"
+    elif not revision_ok:
+        problem = "step A read returned no usable source revision"
+    elif not isinstance(offset_from, int) or offset_from <= 0:
+        problem = "step A read returned no positive next_offset"
+    elif not text_a:
+        problem = "step A read delivered no text"
+    else:
+        problem = ""
+    if problem:
+        evidence.append(
+            {
+                "id": "resume_after_interrupt",
+                "name": "a fresh process resumes the interrupted read",
+                "ok": False,
+                "detail": {
+                    "reason": problem,
+                    "rc": code,
+                    "material_id": material_id if material_ok else None,
+                    "revision_kept": False,
+                    "offset_from": None,
+                    "offset_to": None,
+                    "blocks_step_a": len(ids_a),
+                    "blocks_step_b": 0,
+                    "stderr": err_a.strip()[:300],
+                },
+            }
+        )
+        return False
+
+    # A resume passes only the material and the offset: no source, no budget.
+    resume_request = {
+        "protocol_version": "envoy.read/1",
+        "request_id": "win-resume-%s" % uuid.uuid4().hex[:8],
+        "material_id": material_id,
+        "offset": offset_from,
+    }
+    resume_path = _request_file(workdir, "resume-expand-request.json", resume_request)
+    code_b, receipt_b, err_b = _run_json(prefix, "expand", resume_path, workdir)
+    text_b = _delivered_text(receipt_b)
+    ids_b = [
+        str(block.get("id")) for block in receipt_b.get("blocks") or [] if block.get("id")
+    ]
+    material_b = receipt_b.get("material_id")
+    revision_b = receipt_b.get("source_revision")
+    offset_to = _text_details(receipt_b).get("next_offset")
+    if not isinstance(offset_to, int):
+        offset_to = None
+    same_material = isinstance(material_b, str) and material_b == material_id
+    # An expand need not echo the revision; absent means it was not changed.
+    revision_kept = revision_b is None or revision_b == revision
+    changed_text = bool(text_b) and text_b != text_a
+    fresh_blocks = bool(ids_b) and not (set(ids_b) & set(ids_a))
+    ok = bool(
+        code_b == 0
+        and not _first_error(receipt_b)
+        and same_material
+        and changed_text
+        and fresh_blocks
+    )
+    detail = {
+        "rc": code_b,
+        "material_id": material_id,
+        "revision_kept": bool(revision_kept),
+        "offset_from": offset_from,
+        "offset_to": offset_to,
+        "blocks_step_a": len(ids_a),
+        "blocks_step_b": len(ids_b),
+        "same_material": bool(same_material),
+        "changed_text": bool(changed_text),
+        "fresh_blocks": bool(fresh_blocks),
+    }
+    if not ok:
+        detail["stderr"] = (err_b.strip() or _first_error(receipt_b))[:300]
+    evidence.append(
+        {
+            "id": "resume_after_interrupt",
+            "name": "a fresh process resumes the interrupted read",
+            "ok": ok,
+            "detail": detail,
+        }
+    )
+    return ok
+
+
 def check_unicode_home(prefix, workdir, source_url, evidence):
     """A path with a space and non-ASCII characters must keep working."""
     home = Path(workdir) / "验收 目录" / ".envoy"
@@ -320,6 +663,11 @@ def main(argv=None):
     parser.add_argument("--out", help="write the evidence JSON here")
     parser.add_argument("--source", default=DEFAULT_SOURCE, help="public HTTP(S) document")
     parser.add_argument(
+        "--pdf-source",
+        default=PDF_SOURCE,
+        help="public HTTP(S) PDF used by the page-accounting check",
+    )
+    parser.add_argument(
         "--envoy",
         default=os.environ.get("ENVOY_BIN", "envoy"),
         help="shim path; defaults to env ENVOY_BIN or `envoy` on PATH",
@@ -340,6 +688,11 @@ def main(argv=None):
     check_version(prefix, workdir, evidence)
     check_doctor(prefix, workdir, evidence)
     chain = run_chain(prefix, workdir, args.source, evidence)
+    extra = []
+    check_long_pdf_pages(prefix, workdir, args.pdf_source, extra)
+    check_resume_after_interrupt(prefix, workdir, args.source, extra)
+    # The chain lists both right after expand; keep that order in the report.
+    _insert_after(evidence, "expand_continues", extra)
     check_unicode_home(prefix, workdir, args.source, evidence)
 
     payload = {
