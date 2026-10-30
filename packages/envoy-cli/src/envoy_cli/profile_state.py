@@ -84,6 +84,7 @@ def profile_state_status() -> dict:
     profile = browser_profile_dir(create=False)
     database = _cookie_db(profile)
     rows = 0
+    domains = 0
     if database is not None:
         try:
             connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
@@ -91,14 +92,22 @@ def profile_state_status() -> dict:
                 rows = int(
                     connection.execute("SELECT COUNT(*) FROM cookies").fetchone()[0]
                 )
+                domains = int(
+                    connection.execute(
+                        "SELECT COUNT(DISTINCT host_key) FROM cookies"
+                    ).fetchone()[0]
+                )
             finally:
                 connection.close()
         except sqlite3.Error:
             rows = 0
+            domains = 0
     return {
         "profile": str(profile),
         "exists": profile.is_dir(),
         "cookie_rows": rows,
-        "signed_in_sites": rows,
+        # A cookie row is not a signed-in site: a profile that only ever browsed
+        # public pages still holds hundreds of them. Report what was counted.
+        "cookie_domains": domains,
         "env_override": bool(os.environ.get("ENVOY_BROWSER_PROFILE_DIR")),
     }

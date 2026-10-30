@@ -72,6 +72,8 @@ from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
     ErrorCode,
+    EvidenceCheckRequest,
+    EvidenceCheckResponse,
     ExpandRequest,
     ExecutionState,
     HostDelivery,
@@ -153,6 +155,10 @@ _PUBLIC_API_FALLBACK_SECONDS = 15
 _PUBLIC_API_FALLBACK_MIN_CHARS = 200
 # Below this a platform page is a script shell rather than content.
 _THIN_PLATFORM_PAGE_CHARS = 300
+_EXPIRED_MATERIAL_NEXT_ACTION = (
+    "read the source URL again with envoy_read; a retained material can only be reused while its lease is alive"
+)
+
 MATERIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_CACHED_MATERIALS = 100
 MAX_LOCATOR_QUOTE_CHARS = 120
@@ -1025,6 +1031,33 @@ LOGIN_WALL_MARKERS = (
     "扫码登录",
 )
 LOGIN_WALL_MAX_CHARS = 600
+# A redirect-based wall (github.com/settings/profile -> /login) names itself
+# only in the title and the field labels, and the form chrome alone can pass 600
+# characters, so the phrase list above misses it. Its title still starts with
+# the verb of the form, which is what keeps a help article titled "Log in to X"
+# from matching here.
+LOGIN_FORM_TITLE = re.compile(
+    r"^(?:sign\s*in|signin|log\s*in|login|登录|登陆)\b|^(?:登录|登陆)", re.IGNORECASE
+)
+LOGIN_FORM_MAX_CHARS = 1500
+
+
+def _looks_like_login_form(title: str, text: str) -> bool:
+    """True when the page *is* a username/password form, not an article about one."""
+
+    if not LOGIN_FORM_TITLE.match((title or "").strip()):
+        return False
+    stripped = text.strip()
+    if not stripped or len(stripped) > LOGIN_FORM_MAX_CHARS:
+        return False
+    lowered = stripped.lower()
+    has_secret_field = "password" in lowered or "密码" in stripped
+    if not has_secret_field:
+        return False
+    return any(
+        marker in lowered
+        for marker in ("forgot password", "sign in", "log in", "continue", "submit")
+    ) or "忘记密码" in stripped
 
 
 def _looks_like_login_wall(title: str, text: str) -> bool:
@@ -1036,6 +1069,8 @@ def _looks_like_login_wall(title: str, text: str) -> bool:
     wants a session".
     """
 
+    if _looks_like_login_form(title, text):
+        return True
     if len(text.strip()) > LOGIN_WALL_MAX_CHARS:
         return False
     haystack = f"{title}\n{text}".lower()
@@ -2980,6 +3015,536 @@ def _cached_material_read_response(
     )
 
 
+def _stable_evidence_digest(*parts: object) -> str:
+    """Content/locator-derived suffix so a block id survives a re-query.
+
+    Position-based ids (``blk-search-0001``) change whenever a different query
+    touches the same material, which makes a citation unverifiable later. The
+    digest covers the material, the offset and the text itself.
+    """
+
+    identity = "\0".join(str(part) for part in parts)
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+def _evidence_text(content: object) -> str:
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _normalize_quote_text(value: str) -> str:
+    """Whitespace-insensitive comparison form; punctuation and wording stay exact."""
+
+    return re.sub(r"\s+", "", value.replace("\u200b", "").replace("\ufeff", ""))
+
+
+def _coverage_pages(stored: dict) -> set[int]:
+    pages: set[int] = set()
+    for key in ("page_spans", "pdf_page_spans", "text_pages"):
+        spans = stored.get(key)
+        if not isinstance(spans, list):
+            continue
+        for span in spans:
+            if isinstance(span, dict):
+                page = span.get("page_number", span.get("page"))
+                if isinstance(page, int) and page >= 1:
+                    pages.add(page)
+            elif isinstance(span, int):
+                pages.add(span)
+    return pages
+
+
+_EVIDENCE_RANGE_SUFFIX = re.compile(r"^(?P<base>[a-z0-9][a-z0-9-]*?)-range-(?P<offset>\d+)$")
+_EVIDENCE_SEARCH_ID = re.compile(r"^blk-search-(?P<start>\d+)-(?P<end>\d+)-[a-f0-9]+$")
+_EVIDENCE_WHOLE_TEXT_IDS = (
+    "blk-body-0001",
+    "blk-video-0001",
+    "blk-video-transcript",
+    "blk-office-0001",
+)
+
+
+def _evidence_locator_dict(locator) -> dict | None:
+    """Keep locators in the stored shape a check reads, not as pydantic objects."""
+
+    if locator is None:
+        return None
+    if isinstance(locator, dict):
+        return locator
+    dump = getattr(locator, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json")
+    return None
+
+
+def _evidence_text_slice(stored: dict, start: int, end: int) -> str:
+    text = str(stored.get("text") or "")
+    start = max(0, min(int(start), len(text)))
+    end = max(start, min(int(end), len(text)))
+    return text[start:end]
+
+
+def _evidence_text_locator(stored: dict, block_id: str, content: str, start: int, end: int):
+    """Return the best locator this material can honestly attach to a range.
+
+    A citation check must answer "is this range locatable" from what was stored,
+    not from the shape of the id the host typed. PDF page spans, video cue spans
+    and OCR regions are the only things that pin a range to a place in the
+    source; everything else falls back to a web locator that names the block.
+    """
+
+    source_url = _redact_url(str(stored.get("source_url") or ""))
+    source_kind = stored.get("source_kind")
+    if source_kind == "pdf":
+        spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
+        span = next(
+            (
+                item for item in spans
+                if isinstance(item, dict)
+                and int(item.get("start") or 0) <= start < int(item.get("end") or 0)
+            ),
+            None,
+        )
+        return PdfLocator(
+            type="pdf_page",
+            page_number=int(span["page_number"]) if span else None,
+            locator_valid=span is not None,
+        )
+    if source_kind == "video":
+        locator = _video_locator_for_range(
+            source_url,
+            stored.get("video_spans") if isinstance(stored.get("video_spans"), list) else [],
+            start,
+            end,
+        )
+        if locator is not None:
+            return locator
+    if source_kind == "image":
+        spans = stored.get("ocr_spans") if isinstance(stored.get("ocr_spans"), list) else []
+        span = next(
+            (
+                item for item in spans
+                if isinstance(item, dict)
+                and int(item.get("end") or 0) > start
+                and int(item.get("start") or 0) < end
+            ),
+            None,
+        )
+        if span is not None:
+            return ImageRegionLocator(
+                type="image_region",
+                resource_id=str(span.get("resource_id") or ""),
+                coordinate_system="normalized_top_left",
+                bbox=[float(value) for value in span.get("bbox") or []],
+            )
+    return WebLocator(
+        type="web",
+        source_url=source_url,
+        block_id=block_id,
+        quote=content[:MAX_LOCATOR_QUOTE_CHARS],
+    )
+
+
+def _material_evidence_blocks(stored: dict) -> dict[str, dict]:
+    """Build the block view a citation check resolves against.
+
+    One index feeds every locator question, so a block id printed by read,
+    search, expand or replay resolves against the same stored material record
+    instead of each path inventing its own idea of what a block is. Explicitly
+    stored blocks win; page, cue and OCR spans are rebuilt from the flat text;
+    whole-document blocks are synthesised so later ``-range-`` ids have a base.
+    """
+
+    records: dict[str, dict] = {}
+
+    def add(block_id: str, content: str, locator, order: int) -> None:
+        if not block_id or block_id in records:
+            return
+        records[block_id] = {
+            "text": content,
+            "locator": _evidence_locator_dict(locator),
+            "order": order,
+        }
+
+    raw = stored.get("blocks")
+    if isinstance(raw, list):
+        for position, block in enumerate(raw):
+            if not isinstance(block, dict):
+                continue
+            try:
+                order = int(block.get("order"))
+            except (TypeError, ValueError):
+                order = position
+            add(
+                str(block.get("id") or ""),
+                _evidence_text(block.get("content")),
+                block.get("locator"),
+                order,
+            )
+
+    text = str(stored.get("text") or "")
+    source_kind = stored.get("source_kind")
+    title_text = str(stored.get("title_text") or "").strip()
+    if title_text:
+        # A title is not a place in the source, so it carries no locator at all;
+        # inventing one would let a check claim a passage is pinned when it is not.
+        add("blk-title", title_text, None, 0)
+
+    page_spans = stored.get("page_spans")
+    if isinstance(page_spans, list):
+        for span in page_spans:
+            if not isinstance(span, dict):
+                continue
+            try:
+                page_number = int(span.get("page_number") or 0)
+                start = int(span.get("start") or 0)
+                end = int(span.get("end") or 0)
+            except (TypeError, ValueError):
+                continue
+            if page_number < 1 or end <= start or start < 0 or end > len(text):
+                continue
+            add(
+                f"blk-pdf-page-{page_number:04d}",
+                text[start:end],
+                PdfLocator(
+                    type="pdf_page",
+                    page_number=page_number,
+                    locator_valid=True,
+                ),
+                page_number,
+            )
+
+    video_spans = stored.get("video_spans")
+    if isinstance(video_spans, list):
+        for index, span in enumerate(video_spans):
+            if not isinstance(span, dict):
+                continue
+            try:
+                start = int(span.get("start_offset") or 0)
+                end = int(span.get("end_offset") or 0)
+                start_seconds = float(span.get("start_seconds") or 0)
+                end_seconds = float(span.get("end_seconds") or 0)
+            except (TypeError, ValueError):
+                continue
+            if end <= start or start < 0 or end > len(text):
+                continue
+            add(
+                f"blk-video-asr-{index + 1:04d}",
+                text[start:end],
+                VideoLocator(
+                    type="video_time",
+                    source_url=_redact_url(str(stored.get("source_url") or "")),
+                    start_seconds=start_seconds,
+                    end_seconds=max(end_seconds, start_seconds + 0.001),
+                ),
+                index + 1,
+            )
+
+    if text:
+        if source_kind == "video":
+            whole_ids = ("blk-video-transcript", "blk-video-0001")
+        elif source_kind == "pdf":
+            whole_ids = ()
+        elif source_kind == "image":
+            whole_ids = ("blk-image-0001", "blk-body-0001")
+        else:
+            whole_ids = ("blk-body-0001", "blk-office-0001")
+        for block_id in whole_ids:
+            add(
+                block_id,
+                text,
+                _evidence_text_locator(stored, block_id, text, 0, len(text)),
+                1,
+            )
+    return records
+
+
+def _resolve_evidence_block(stored: dict, block_id: str | None, records: dict[str, dict]) -> dict | None:
+    """Resolve any id a receipt can print back to text plus a locator.
+
+    Read prints ``blk-body-0001``/``blk-video-transcript``, search prints
+    ``blk-search-{start}-{end}-{digest}`` and expand prints
+    ``{base}-range-{offset}``. All three encode a character range, so a check can
+    rebuild the same block without the earlier response still being in hand.
+    """
+
+    if not block_id:
+        return None
+    record = records.get(block_id)
+    if record is not None:
+        return record
+    text = str(stored.get("text") or "")
+    search = _EVIDENCE_SEARCH_ID.match(block_id)
+    if search:
+        start = int(search.group("start"))
+        end = int(search.group("end"))
+        content = _evidence_text_slice(stored, start, end)
+        if not content:
+            return None
+        return {
+            "text": content,
+            "locator": _evidence_locator_dict(
+                _evidence_text_locator(stored, block_id, content, start, end)
+            ),
+            "order": start,
+        }
+    ranged = _EVIDENCE_RANGE_SUFFIX.match(block_id)
+    if ranged:
+        base = str(ranged.group("base"))
+        offset = int(ranged.group("offset"))
+        base_record = records.get(base)
+        if base_record is None and base not in _EVIDENCE_WHOLE_TEXT_IDS:
+            return None
+        if offset < 0 or offset > len(text):
+            return None
+        end = len(text)
+        budget_state = stored.get("budget_state")
+        if isinstance(budget_state, dict):
+            for delivered_start, delivered_end in _material_returned_ranges(budget_state, len(text)):
+                if delivered_start <= offset < delivered_end:
+                    end = delivered_end
+                    break
+        content = _evidence_text_slice(stored, offset, end)
+        if not content:
+            return None
+        return {
+            "text": content,
+            "locator": _evidence_locator_dict(
+                _evidence_text_locator(stored, base or block_id, content, offset, end)
+            ),
+            "order": offset,
+        }
+    return None
+
+
+def _stored_evidence_blocks(stored: dict) -> list[dict]:
+    """The block index in the list shape older callers expect."""
+
+    return [
+        {"id": block_id, **record}
+        for block_id, record in _material_evidence_blocks(stored).items()
+    ]
+
+
+def _evidence_revision_kind(stored: dict, source_revision: str | None) -> str:
+    """Say what the stored revision string traces to, not more.
+
+    PDF reads hash the file bytes; several media paths fall back to hashing the
+    URL. Both are 64 hex characters, so the length proves nothing — only the
+    source kind and a comparison against the URL digest separate them.
+    """
+
+    if not source_revision:
+        return "unknown"
+    if stored.get("source_kind") == "pdf":
+        return "byte_digest"
+    source_url = stored.get("source_url")
+    if isinstance(source_url, str) and source_url:
+        if source_revision == hashlib.sha256(source_url.encode("utf-8")).hexdigest():
+            return "url_digest"
+    return "unknown"
+
+
+def check_evidence(request: EvidenceCheckRequest) -> EvidenceCheckResponse:
+    """Settle the deterministic half of a citation check on this machine.
+
+    Envoy answers three questions and refuses the fourth: does the material still
+    exist, does the cited block resolve, does the quote occur in it, and does the
+    locator name a place that was actually extracted. Whether the cited text
+    *supports* the claim stays with the host model; ``semantic_support`` is
+    always ``not_evaluated``.
+    """
+
+    material_id = request.material_id.strip()
+    block_id = request.block_id.strip() if isinstance(request.block_id, str) else None
+    quote = request.quote if isinstance(request.quote, str) else None
+    base = {
+        "material_id": material_id,
+        "block_id": block_id,
+        "evidence_id": "ev-" + (hashlib.sha256(
+            "\0".join((material_id, block_id or "", quote or "")).encode("utf-8")
+        ).hexdigest()[:24]),
+    }
+
+    def reply(**kwargs) -> EvidenceCheckResponse:
+        return EvidenceCheckResponse(**base, **kwargs)
+
+    if not re.fullmatch(r"mat-[a-f0-9]{24}", material_id):
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_missing",
+            notes=["material_id is not one Envoy issued; copy it from a read or search response"],
+        )
+    # Deliberately skip the expiry sweeper: it deletes an expired lease before a
+    # check could report that it expired, which would turn "your lease ran out,
+    # re-read the source" into an indistinguishable "no such material".
+    root = storage.resolve_material_root()
+    source_path = root / f"{material_id}.json"
+    expiry_path = root / f"{material_id}.expires"
+    if source_path.is_symlink() or expiry_path.is_symlink() or not source_path.is_file():
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_missing",
+            next_action=(
+                "envoy_read the source URL again: material ids are per-machine "
+                "and per-lease, so this citation cannot be resolved without a new read"
+            ),
+            notes=[
+                "no retained material under this id on this machine; read the source URL again with envoy_read to get a live material_id"
+            ],
+        )
+    try:
+        stored = json.loads(source_path.read_text(encoding="utf-8"))
+        expires_at = float(expiry_path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError, TypeError):
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_missing",
+            notes=["retained material is unreadable"],
+        )
+    if not isinstance(stored, dict):
+        return reply(
+            resolution="unmatched", quote_match="none", locator_valid=False,
+            reason="material_missing", notes=["retained material is not a material record"],
+        )
+    source_revision = str(stored.get("source_revision") or "") or None
+    base["source_revision"] = source_revision
+    base["source_revision_kind"] = _evidence_revision_kind(stored, source_revision)
+    records = _material_evidence_blocks(stored)
+    blocks = _stored_evidence_blocks(stored)
+    if expires_at <= time.time():
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="material_expired",
+            next_action=(
+                "envoy_read the source URL again to get a live material_id, then "
+                "envoy_verify with the quoted words; an expired lease cannot be reopened"
+            ),
+            notes=["material lease expired; read the source URL again with envoy_read to cite it"],
+        )
+
+    target = _resolve_evidence_block(stored, block_id, records) if block_id else None
+    if block_id and target is None:
+        return reply(
+            resolution="unmatched",
+            quote_match="none",
+            locator_valid=False,
+            reason="block_missing",
+            next_action=(
+                "envoy_verify again without block_id: the check then covers the "
+                "whole material, whose text may still contain the quotation"
+            ),
+            notes=["this material holds no block with that id; block ids are not portable across materials"],
+        )
+    search_text = target["text"] if target else "\n".join(
+        record["text"] for record in records.values()
+    )
+    quote_match = "none"
+    if quote:
+        if quote in search_text:
+            quote_match = "exact"
+        elif _normalize_quote_text(quote) and _normalize_quote_text(quote) in _normalize_quote_text(search_text):
+            quote_match = "normalized"
+    found_quote = quote_match in ("exact", "normalized")
+    locator = target.get("locator") if target else None
+    notes: list[str] = []
+    locator_valid = False
+    if isinstance(locator, dict):
+        locator_type = str(locator.get("type") or "")
+        if locator_type == "pdf_page":
+            page = locator.get("page_number")
+            pages = _coverage_pages(stored)
+            locator_valid = (
+                locator.get("locator_valid", True) is not False
+                and isinstance(page, int)
+                and page >= 1
+                and (not pages or page in pages)
+            )
+            if not locator_valid:
+                notes.append(
+                    "PDF text offset falls outside the extracted page spans; "
+                    "re-read with page_start/page_end to obtain a page locator"
+                )
+        elif locator_type in ("web", "video_time", "audio_time", "image_region", "office_location"):
+            locator_valid = True
+            if (
+                locator_type == "web"
+                and locator.get("block_id")
+                and _resolve_evidence_block(stored, str(locator["block_id"]), records) is None
+            ):
+                locator_valid = False
+                notes.append("locator points at a block this material no longer holds")
+
+    if target is not None and not quote:
+        return reply(
+            resolution="matched",
+            quote_match="none",
+            locator_valid=locator_valid,
+            reason="block_found" if locator_valid else "quote_not_provided",
+            notes=notes + (["quote not provided; pass the sentence you intend to cite to check it here"] if quote is None else []),
+        )
+    if found_quote:
+        if locator_valid:
+            reason = "quote_found"
+        else:
+            reason = "no_locator" if locator is None else "locator_unverifiable"
+            if locator is None:
+                notes.append(
+                    "this block carries no locator; the words are in the material "
+                    "but the passage cannot be pinned to a page, time or region"
+                )
+        return reply(
+            resolution="matched",
+            quote_match=quote_match,
+            locator_valid=locator_valid,
+            reason=reason,
+            notes=notes,
+        )
+    if quote is None:
+        return reply(
+            resolution="matched" if blocks else "unmatched",
+            quote_match="none",
+            locator_valid=locator_valid,
+            reason="quote_not_provided",
+            next_action="pass block_id and the quoted sentence to get a locatable check",
+            notes=["material resolves; pass block_id and the quoted sentence for a locatable check"],
+        )
+    missing_notes = ["quoted text does not occur in the checked block"]
+    if target is not None and len(target["text"]) < len(str(stored.get("text") or "")):
+        # A block id narrows the check to one range, so a miss here is not a
+        # statement about the whole source; say that instead of letting the host
+        # read "absent" into a scoped answer.
+        missing_notes.append(
+            "the check covered only one block of this material, not its whole text; "
+            "the sentence may occur elsewhere — verify again without block_id"
+        )
+    return reply(
+        resolution="unmatched",
+        quote_match="none",
+        locator_valid=locator_valid,
+        reason="quote_missing",
+        next_action=(
+            "envoy_verify again without block_id to check the whole material, "
+            "then read the material if the quotation is still absent"
+            if missing_notes[1:] else
+            "quote a contiguous passage exactly as the material prints it, or "
+            "envoy_read the source again and pick the passage from the returned blocks"
+        ),
+        notes=notes + missing_notes,
+    )
+
+
 def replay_material(request: MaterialReplayRequest) -> ReadResponse:
     """Replay retained evidence into a fresh host session without mutating its ledger."""
     root = _material_root()
@@ -2991,11 +3556,35 @@ def replay_material(request: MaterialReplayRequest) -> ReadResponse:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except (FileNotFoundError, OSError, ValueError, TypeError) as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={
+                "next_action": "read the source URL again with envoy_read; a material can only be replayed while its lease is alive"
+            },
+        ) from exc
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
-    if str(stored.get("source_revision") or "") != request.source_revision:
-        raise PublicPageError("Material source revision does not match", ErrorCode.INVALID_REQUEST)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={
+                "next_action": "read the source URL again with envoy_read; a material can only be replayed while its lease is alive"
+            },
+        )
+    stored_revision = str(stored.get("source_revision") or "")
+    if stored_revision != request.source_revision:
+        raise PublicPageError(
+            "Material source revision does not match",
+            ErrorCode.INVALID_REQUEST,
+            details={
+                "expected_source_revision": stored_revision,
+                "next_action": (
+                    "pass the exact source_revision printed by the read that returned "
+                    "this material_id; it is a full hex digest and a shortened prefix "
+                    "is rejected"
+                ),
+            },
+        )
     stored_session = str(stored.get("session_id") or "")
     # A model only holds its own host session id, never the id Envoy minted for
     # the old material, so an omitted source_session_id means "the material's
@@ -3011,6 +3600,9 @@ def replay_material(request: MaterialReplayRequest) -> ReadResponse:
         raise PublicPageError(
             "Replay requires a new session_id distinct from source_session_id",
             ErrorCode.INVALID_REQUEST,
+            details={
+                "next_action": "pass the new host session's id as session_id; replay exists to move evidence into a different session"
+            },
         )
 
     source_url = _redact_url(str(stored.get("source_url") or ""))
@@ -3618,18 +4210,28 @@ def _expand_blocked(
     request: ExpandRequest,
     message: str,
     stored: dict | None = None,
+    code: ErrorCode = ErrorCode.BUDGET_EXCEEDED,
+    reason: str | None = None,
 ) -> ReadResponse:
     source_unresolved = _source_coverage_unresolved(stored or {})
     material = stored or {}
     text_length = len(str(material.get("text") or ""))
     state = material.get("budget_state")
+    delivered_ranges = _material_returned_ranges(
+        state if isinstance(state, dict) else {},
+        text_length,
+    )
     details = {
         "text_length": text_length,
-        "delivered_ranges": _material_returned_ranges(
-            state if isinstance(state, dict) else {},
-            text_length,
-        ),
+        "delivered_ranges": delivered_ranges,
     }
+    # A refusal that is not about budget still has to say where the unread text
+    # resumes, or the caller has nowhere to go next.
+    undelivered = _unseen_ranges(0, text_length, delivered_ranges)
+    if undelivered:
+        details["next_offset"] = undelivered[0][0]
+    if reason:
+        details["reason"] = reason
     return ReadResponse(
         request_id=request.request_id,
         material_id=request.material_id,
@@ -3637,7 +4239,7 @@ def _expand_blocked(
         result=ReadResult.BLOCKED,
         errors=[
             ReadError(
-                code=ErrorCode.BUDGET_EXCEEDED,
+                code=code,
                 message=message,
                 details=details,
             )
@@ -3838,9 +4440,17 @@ def read_visual_observations(request: VisualObservationHistoryRequest) -> ReadRe
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except (FileNotFoundError, ValueError, OSError) as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        ) from exc
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if stored.get("session_id") and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     source_unresolved = _source_coverage_unresolved(stored)
@@ -3995,9 +4605,17 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except (FileNotFoundError, ValueError, OSError) as exc:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE) from exc
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        ) from exc
     if expires_at <= time.time():
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if stored.get("session_id") and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
 
@@ -4159,7 +4777,8 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
             )
             locator = PdfLocator(
                 type="pdf_page",
-                page_number=int(span["page_number"]) if span else 1,
+                page_number=int(span["page_number"]) if span else None,
+                locator_valid=span is not None,
             )
         elif stored.get("source_kind") == "image":
             ocr_span = next(
@@ -4208,7 +4827,7 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 quote=content[:MAX_LOCATOR_QUOTE_CHARS],
             )
         blocks.append(MaterialBlock(
-            id=f"blk-search-{len(blocks) + 1:04d}",
+            id=f"blk-search-{start}-{end}-{_stable_evidence_digest(material_id, start, content)}",
             kind=(
                 MaterialKind.TRANSCRIPT
                 if stored.get("source_kind") == "video"
@@ -4348,15 +4967,37 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         stored = json.loads(source_path.read_text(encoding="utf-8"))
         expires_at = float(expiry_path.read_text(encoding="ascii").strip())
     except FileNotFoundError:
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if expires_at <= time.time():
         source_path.unlink(missing_ok=True)
         expiry_path.unlink(missing_ok=True)
-        raise PublicPageError("Material is missing or expired", ErrorCode.EXPIRED_RESOURCE)
+        raise PublicPageError(
+            "Material is missing or expired",
+            ErrorCode.EXPIRED_RESOURCE,
+            details={"next_action": _EXPIRED_MATERIAL_NEXT_ACTION},
+        )
     if stored.get("session_id") and request.session_id != stored.get("session_id"):
         raise PublicPageError("Material belongs to a different session", ErrorCode.INVALID_REQUEST)
     source_unresolved = _pdf_source_unresolved(stored)
     budget_state = _material_budget_state(stored, request)
+    total_text = str(stored.get("text") or "")
+    all_returned_ranges = _material_returned_ranges(budget_state, len(total_text))
+    if total_text and not _unseen_ranges(0, len(total_text), all_returned_ranges):
+        # Nothing is left to read. Answer that before the budget ledger, or an
+        # exhausted ledger describes content the caller already has as if more
+        # text were waiting behind it.
+        return _expand_blocked(
+            request,
+            "The material has already been delivered in full; this range adds "
+            "no new text",
+            stored,
+            code=ErrorCode.RANGE_ALREADY_DELIVERED,
+            reason="material_fully_delivered",
+        )
     if (
         budget_state["max_expansion_rounds"] is not None
         and budget_state["expansion_rounds"] >= budget_state["max_expansion_rounds"]
@@ -4369,11 +5010,6 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
         and budget_state["returned_tokens"] >= budget_state["max_total_response_tokens"]
     ):
         return _expand_blocked(request, "The cumulative response token budget has been exhausted", stored)
-    total_text = str(stored.get("text") or "")
-    all_returned_ranges = _material_returned_ranges(
-        stored.get("budget_state") if isinstance(stored.get("budget_state"), dict) else {},
-        len(total_text),
-    )
     offset = request.offset
     max_chars = min(
         request.max_chars,
@@ -4407,7 +5043,26 @@ def expand_material(request: ExpandRequest) -> ReadResponse:
             else total_token_remaining
         )
     if _unseen_ranges(offset, end, all_returned_ranges) != [(offset, end)]:
-        return _expand_blocked(request, "The requested material range overlaps an earlier response", stored)
+        remaining = _unseen_ranges(0, len(total_text), all_returned_ranges)
+        if not remaining:
+            # Nothing is left unread: repeating "call envoy_expand" here sends the
+            # caller in a circle.
+            return _expand_blocked(
+                request,
+                "The material has already been delivered in full; this range adds "
+                "no new text",
+                stored,
+                code=ErrorCode.RANGE_ALREADY_DELIVERED,
+                reason="material_fully_delivered",
+            )
+        return _expand_blocked(
+            request,
+            "The requested range overlaps an earlier response; the next undelivered "
+            f"range starts at character {remaining[0][0]}",
+            stored,
+            code=ErrorCode.RANGE_ALREADY_DELIVERED,
+            reason="range_already_delivered",
+        )
     if stored.get("source_kind") == "pdf":
         spans = stored.get("page_spans") if isinstance(stored.get("page_spans"), list) else []
         page_blocks: list[MaterialBlock] = []
@@ -4631,7 +5286,15 @@ def _credential_cookie_header(url: str) -> str:
         for item in cookies
         if item.get("name") and item.get("value") is not None
     ]
-    return "; ".join(pairs)
+    if pairs:
+        return "; ".join(pairs)
+    try:
+        from . import browser
+
+        host = (urlparse(url).hostname or "").lower()
+        return browser.profile_cookie_header(host)
+    except Exception:  # noqa: BLE001 - the profile is an extra source, not a requirement
+        return ""
 
 
 def _fetch_html(

@@ -8,6 +8,7 @@ from typing import Optional
 
 from envoy_core import __version__ as core_version
 from envoy_core.schemas.read_v1 import (
+    EvidenceCheckRequest,
     ExpandRequest,
     LocalVideoReadRequest,
     MaterialReplayRequest,
@@ -54,6 +55,7 @@ from .collections import (
 from .local_video import read_local_video
 from .reader import (
     PublicPageError,
+    check_evidence,
     expand_material,
     replay_material,
     read_public_page,
@@ -95,6 +97,19 @@ def _parser() -> argparse.ArgumentParser:
 
     search = subparsers.add_parser("search", help="find relevant passages in a local material")
     search.add_argument("--request-json", required=True, help="read an envoy.search/1 request from this path or '-' for stdin")
+
+    evidence = subparsers.add_parser(
+        "evidence",
+        help="check whether a cited block and quote still resolve in retained material",
+    )
+    evidence_commands = evidence.add_subparsers(dest="evidence_command")
+    evidence_check = evidence_commands.add_parser("check", help="check one citation against local material")
+    evidence_check.add_argument(
+        "--request-json",
+        required=True,
+        help="read an envoy.evidence/1 request from this path or '-' for stdin",
+    )
+    evidence_check.add_argument("--json", action="store_true", help="print the response as JSON")
 
     discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
@@ -751,6 +766,19 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         else:
             print(cache_storage.render_prune(report))
         return 0
+    if args.command == "evidence":
+        if args.evidence_command != "check":
+            print(json.dumps({"error": "invalid_request", "message": "choose: envoy evidence check --request-json <file>"}, ensure_ascii=False))
+            return 1
+        try:
+            payload = sys.stdin.read() if args.request_json == "-" else Path(args.request_json).read_text(encoding="utf-8")
+            check_request = EvidenceCheckRequest.model_validate_json(payload)
+            check_response = check_evidence(check_request)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+            return 1
+        print(json.dumps(check_response.model_dump(mode="json"), ensure_ascii=False))
+        return 0 if check_response.resolution == "matched" else 2
     if args.command == "auth":
         return _run_auth(args)
     if args.command == "browser":

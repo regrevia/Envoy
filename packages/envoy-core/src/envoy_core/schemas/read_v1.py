@@ -77,6 +77,7 @@ class ErrorCode(str, Enum):
     NETWORK_ERROR = "network_error"
     EMPTY_CONTENT = "empty_content"
     BUDGET_EXCEEDED = "budget_exceeded"
+    RANGE_ALREADY_DELIVERED = "range_already_delivered"
     BUDGET_ENFORCEMENT_UNAVAILABLE = "budget_enforcement_unavailable"
     EXPIRED_RESOURCE = "expired_resource"
     INVALID_REQUEST = "invalid_request"
@@ -377,10 +378,20 @@ class AudioLocator(ContractModel):
 
 class PdfLocator(ContractModel):
     type: Literal["pdf_page"] = "pdf_page"
-    page_number: int = Field(ge=1)
+    # A page number is only present when the text offset really falls inside a
+    # parsed page. When it does not, the locator is still useful for "this came
+    # from the PDF" but must say so instead of naming a made-up page.
+    page_number: Optional[int] = Field(default=None, ge=1)
+    locator_valid: bool = True
     coordinate_system: Optional[Literal["normalized_top_left", "pixel_top_left"]] = None
     bbox: Optional[list[float]] = Field(default=None, min_length=4, max_length=4)
     rotation_degrees: int = Field(default=0, ge=0, le=359)
+
+    @model_validator(mode="after")
+    def validate_page(self):
+        if self.locator_valid and self.page_number is None:
+            raise ValueError("a valid pdf locator requires page_number")
+        return self
 
     @model_validator(mode="after")
     def validate_bbox(self):
@@ -504,6 +515,60 @@ class Need(ContractModel):
     reason: str
     max_resources: Optional[int] = Field(default=None, ge=0)
     resume_token: Optional[str] = None
+
+
+class EvidenceCheckRequest(ContractModel):
+    """Ask whether one cited piece of material still resolves on this machine."""
+
+    material_id: str = Field(min_length=1, max_length=256)
+    block_id: Optional[str] = Field(default=None, max_length=256)
+    quote: Optional[str] = Field(default=None, max_length=4000)
+
+
+class EvidenceCheckResponse(ContractModel):
+    """Deterministic half of citation checking; support judgement stays with the host.
+
+    ``resolution`` / ``quote_match`` / ``locator_valid`` are what Envoy can settle
+    by itself. ``semantic_support`` is deliberately fixed to ``not_evaluated``:
+    whether the cited text supports the claim is a host-model or human decision.
+    """
+
+    protocol_version: Literal["envoy.evidence/1"] = "envoy.evidence/1"
+    # Stable identity of the cited piece: material + block + revision. The same
+    # citation checked twice on the same lease yields the same evidence_id.
+    evidence_id: str
+    material_id: str
+    block_id: Optional[str] = None
+    source_revision: Optional[str] = None
+    # What that revision string actually traces to. The value differs by source
+    # kind, so a caller must not read "same revision" as "same bytes" unless the
+    # kind says the revision covers content.
+    source_revision_kind: Literal[
+        "byte_digest",
+        "url_digest",
+        "unknown",
+    ] = "unknown"
+    resolution: Literal["matched", "unmatched"]
+    quote_match: Literal["exact", "normalized", "none"]
+    locator_valid: bool
+    semantic_support: Literal["not_evaluated"] = "not_evaluated"
+    reason: Literal[
+        "block_found",
+        "quote_found",
+        "material_expired",
+        "material_missing",
+        "block_missing",
+        "quote_missing",
+        "quote_not_provided",
+        "no_locator",
+        "locator_unverifiable",
+    ]
+    # What the caller can do next when the check did not settle. It is a
+    # concrete tool call the host can issue, not prose it has to interpret:
+    # a citation that no longer resolves needs the source read again, and a
+    # block id that is not in this material needs the check widened.
+    next_action: Optional[str] = None
+    notes: list[str] = Field(default_factory=list)
 
 
 class ReadError(ContractModel):

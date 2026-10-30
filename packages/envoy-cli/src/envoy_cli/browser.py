@@ -1090,3 +1090,53 @@ def _install_media_capture(page) -> None:
         page.on("response", on_response)
     except Exception:
         pass
+
+
+_COOKIE_HEADER_CACHE: dict[str, str] = {}
+
+
+def _profile_cookie_matches(domain: str, host: str) -> bool:
+    value = str(domain or "").strip().lower().lstrip(".")
+    return bool(value) and (host == value or host.endswith("." + value))
+
+
+def profile_cookie_header(host: str) -> str:
+    """The Cookie header Envoy's own profile holds for one host.
+
+    The visible sign-in window is the only place a human can hand Envoy a
+    session, and it writes that session into this profile. A read that needs
+    the session must therefore ask the same profile, not a stale copy.
+    """
+
+    key = str(host or "").strip().lower()
+    if not key:
+        return ""
+    if key in _COOKIE_HEADER_CACHE:
+        return _COOKIE_HEADER_CACHE[key]
+    header = ""
+    profile = browser_profile_dir(create=False)
+    if profile.is_dir():
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return ""
+        try:
+            with sync_playwright() as playwright:
+                context = playwright.chromium.launch_persistent_context(
+                    str(profile),
+                    headless=True,
+                    args=["--disable-dev-shm-usage", "--no-proxy-server"],
+                )
+                try:
+                    pairs = [
+                        f"{item['name']}={item['value']}"
+                        for item in context.cookies()
+                        if item.get("value") and _profile_cookie_matches(item.get("domain"), key)
+                    ]
+                finally:
+                    context.close()
+            header = "; ".join(pairs)
+        except Exception:  # noqa: BLE001 - a profile that will not open is no session
+            header = ""
+    _COOKIE_HEADER_CACHE[key] = header
+    return header

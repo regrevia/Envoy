@@ -172,6 +172,8 @@ now reads with `mcp__envoy__envoy_read`, and a still-`waiting` status means show
 again instead of re-reading. The browser stays alive between calls, so one scan
 covers every pause for the same site in the batch; `action: "cancel"` closes it.
 The session stays in Envoy's separate local browser profile on the machine.
+Turning the switch off stops Envoy from using that session; it does not delete
+it — `envoy auth clear` (optionally `--host <site>`) removes the stored state.
 
 Handoff is opt-in: `envoy_auth` is not in `tools/list` until the user runs
 `envoy auth handoff on` (or sets `ENVOY_CREDENTIAL_HANDOFF=1`). If a blocked read

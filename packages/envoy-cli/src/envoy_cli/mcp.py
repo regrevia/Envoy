@@ -12,6 +12,7 @@ from typing import Any, Iterable, TextIO
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse
 
 from envoy_core.schemas.read_v1 import (
+    EvidenceCheckRequest,
     ExpandRequest,
     LocalVideoReadRequest,
     MaterialReplayRequest,
@@ -50,6 +51,7 @@ from .reader import (
     PublicPageError,
     _estimated_tokens,
     _redact_url,
+    check_evidence,
     expand_material,
     read_public_page,
     record_visual_observation,
@@ -239,13 +241,22 @@ SEARCH_SCHEMA = {
 REPLAY_SCHEMA = {
     "type": "object",
     "additionalProperties": True,
-    "required": ["material_id", "source_revision", "session_id"],
+    "required": ["material_id", "source_revision"],
     "properties": {
         "material_id": {"type": "string"},
-        "source_revision": {"type": "string"},
+        "source_revision": {
+            "type": "string",
+            "description": (
+                "The 64-char source_revision from the earlier read receipt; a "
+                "different revision is refused rather than silently re-read."
+            ),
+        },
         "session_id": {
             "type": "string",
-            "description": "Target session; must differ from the source session.",
+            "description": (
+                "Target session; omit it and the bridge replays into this host "
+                "session. Must differ from the source session."
+            ),
         },
         "source_session_id": {"type": ["string", "null"]},
         "max_chars": {"type": "integer", "minimum": 256, "maximum": 100000},
@@ -270,6 +281,17 @@ OBSERVE_VISUAL_SCHEMA = {
                 "answering from a different process or surface."
             ),
         },
+    },
+}
+
+EVIDENCE_CHECK_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["material_id"],
+    "properties": {
+        "material_id": {"type": "string"},
+        "block_id": {"type": "string"},
+        "quote": {"type": "string"},
     },
 }
 
@@ -462,8 +484,11 @@ TOOLS = [
         "name": "envoy_replay",
         "description": (
             "Replay retained source-located evidence into a new host session "
-            "under a fresh bounded response budget. Does not re-download or "
-            "reuse the previous session's returned-range ledger."
+            "under a fresh bounded response budget, without re-downloading. "
+            "material_id and the full source_revision come from the read receipt "
+            "that returned the material; a shortened revision, an expired lease, "
+            "or the material's own session_id is refused with the remedy in "
+            "error.details.next_action."
         ),
         "inputSchema": REPLAY_SCHEMA,
     },
@@ -476,6 +501,19 @@ TOOLS = [
             "searches omit passages already returned by search."
         ),
         "inputSchema": SEARCH_SCHEMA,
+    },
+    {
+        "name": "envoy_verify",
+        "description": (
+            "Check a citation against material Envoy still holds on this "
+            "machine: does the material lease exist, does the cited block "
+            "resolve, does the quote occur in it, and does its locator name a "
+            "place that was really extracted. resolution/quote_match/locator_valid "
+            "are deterministic; semantic_support is always not_evaluated because "
+            "whether the passage supports the claim is your judgement, not "
+            "Envoy's. Requires the 'full' MCP toolset."
+        ),
+        "inputSchema": EVIDENCE_CHECK_SCHEMA,
     },
     {
         "name": "envoy_doctor",
@@ -793,6 +831,12 @@ def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
         return _discover_content_text(payload)
     if tool == "envoy_collection_checkpoint":
         return _collection_content_text(payload)
+    # A verification verdict is not a read: rendering it as one prints an empty
+    # material with an expand hint, and the verdict itself never reaches the
+    # caller. The payload has no tool key of its own, so the protocol tag is
+    # what identifies it.
+    if _is_evidence_check(payload):
+        return _evidence_check_text(payload, request)
     return _material_content_text(payload, tool, request)
 
 
@@ -913,7 +957,10 @@ def _material_header(payload: dict, tool: str) -> str:
         parts.append(f"material_id={payload['material_id']}")
     revision = str(payload.get("source_revision") or "")
     if revision:
-        parts.append(f"source_revision={revision[:12]}")
+        # Replay is addressed by the full revision: a shortened value cannot be
+        # copied back into the request, so that step shows all of it.
+        shown = revision if tool == "envoy_replay" else revision[:12]
+        parts.append(f"source_revision={shown}")
     if payload.get("session_id"):
         parts.append(f"session_id={payload['session_id']}")
     return " · ".join(parts)
@@ -932,15 +979,20 @@ def _needs_lines(
             "inspect the delivered video with native video input; this is a handoff, "
             "not a terminal state"
         )
-    if "inspect_visual" in action_types or "inspect_video" not in action_types:
+    # Frames, image resources and envoy_observe apply only to a visual read. A login
+    # wall is a text read with a human step; pointing the caller at resources it
+    # never got sends it looking for files that do not exist.
+    visual = bool(resources) or bool(action_types & {"inspect_visual", "inspect_video"})
+    if visual and "inspect_visual" in action_types:
         lines.append(
             "inspect each listed resource before its lease expires; this is a handoff, "
             "not a terminal state"
         )
-    lines.append(
-        "call envoy_observe once per inspected resource with its matching material_id, "
-        "resource_id, source_block_id and original session_id"
-    )
+    if visual:
+        lines.append(
+            "call envoy_observe once per inspected resource with its matching material_id, "
+            "resource_id, source_block_id and original session_id"
+        )
     resource_ids: list[str] = []
     source_block_ids: list[str] = []
     for need in needs[:6]:
@@ -985,6 +1037,12 @@ def _needs_lines(
             "each path above is an absolute file on this machine: open it with an image or "
             "file tool to view the original frame, and quote the locator when you cite it"
         )
+    if not visual:
+        lines.append(
+            "this read delivered no material: complete the step above for this source, "
+            "then call envoy_read again for the same URL"
+        )
+        return lines
     lines.append(
         "source URL may be omitted when the material is retained because Envoy derives "
         "and verifies it from the delivered resource"
@@ -1035,6 +1093,8 @@ def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: 
         lines.append(f"unresolved: {note}")
     if material_id:
         offset = "<chars already delivered>"
+        next_offset = None
+        reason = ""
         for error in errors[:1]:
             details = error.get("details")
             if isinstance(details, dict):
@@ -1043,15 +1103,32 @@ def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: 
                     last = delivered[-1]
                     if isinstance(last, list) and len(last) == 2:
                         offset = str(last[1])
+                if details.get("next_offset") is not None:
+                    next_offset = str(details["next_offset"])
+                reason = str(details.get("reason") or "")
         lines.append("")
+        if reason == "material_fully_delivered":
+            lines.append(
+                "this material is fully delivered; no offset adds new text — answer "
+                "from the blocks above, or envoy_read with refresh=true for a new revision"
+            )
+            return lines
+        if next_offset is not None:
+            offset = next_offset
         lines.append(
             f"next: envoy_expand material_id={material_id} offset={offset} "
             f"max_chars={budget}"
         )
-        lines.append(
-            "re-reading the URL is blocked; call envoy_replay with this material_id "
-            "in a new session, or envoy_expand for more of the retained material"
-        )
+        if reason == "range_already_delivered":
+            lines.append(
+                "that offset is the next range not yet delivered; the range this call "
+                "asked for was already returned earlier"
+            )
+        else:
+            lines.append(
+                "re-reading the URL is blocked; call envoy_replay with this material_id "
+                "in a new session, or envoy_expand for more of the retained material"
+            )
     return lines
 
 
@@ -1078,7 +1155,24 @@ def _empty_lines(payload: dict) -> list[str]:
         terms = details.get("query_terms")
         if isinstance(terms, list) and terms:
             lines.append("query terms: " + ", ".join(str(term) for term in terms))
-        lines.append("next: envoy_search with different query terms, or envoy_expand for a raw range")
+        # Re-searching cannot produce what was already handed over: the passages
+        # exist in an earlier response, and a search response never re-delivers
+        # them. Say where to look instead of recommending another search.
+        next_offset = details.get("next_offset")
+        if next_offset is None:
+            next_offset = text.get("next_offset")
+        if next_offset is None:
+            next_offset = coverage.get("next_offset")
+        if next_offset is not None:
+            lines.append(
+                f"next: read the matching passages from the earlier response; "
+                f"envoy_expand offset={next_offset} returns the raw text from there"
+            )
+        else:
+            lines.append(
+                "next: read the matching passages from the earlier response; it "
+                "reports the coverage.next_offset to pass to envoy_expand for raw text"
+            )
         return lines
     return ["no content returned for this request"]
 
@@ -1113,6 +1207,124 @@ def _material_retained(payload: dict) -> bool:
         )
     except Exception:  # pragma: no cover - unknown state is not a lie worth making
         return True
+
+
+def _is_evidence_check(payload: dict) -> bool:
+    """Whether this payload is an envoy_verify verdict rather than a read."""
+    return (
+        str(payload.get("protocol_version") or "") == "envoy.evidence/1"
+        and "resolution" in payload
+    )
+
+
+def _evidence_check_text(payload: dict, request=None) -> str:
+    """Render a verification verdict, and nothing that looks like a read.
+
+    Envoy checks whether the quoted words occur in the retained material and
+    reports where. Whether the quotation supports the claim is the host's
+    judgement, so the text says that outright instead of implying support. The
+    next step depends on which side of the check failed: an unmatched quote
+    needs the words as the material prints them, not another expand of a
+    material that does not contain them.
+    """
+    budget = _content_char_budget(request)
+    resolution = str(payload.get("resolution") or "unknown")
+    parts = [f"Envoy verify {resolution}"]
+    if payload.get("evidence_id"):
+        parts.append(f"evidence_id={payload['evidence_id']}")
+    if payload.get("quote_match"):
+        parts.append(f"quote_match={payload['quote_match']}")
+    parts.append("semantic_support=not_evaluated")
+    lines = [" · ".join(parts)]
+    reason = str(payload.get("reason") or "")
+    if reason:
+        lines.append(f"why: {reason}")
+    locator = payload.get("locator") if isinstance(payload.get("locator"), dict) else {}
+    if locator:
+        where = ", ".join(str(value) for value in locator.values() if value not in (None, ""))
+        if where:
+            lines.append(f"locator: {where}")
+    block_id = str(payload.get("block_id") or "")
+    if block_id:
+        lines.append(f"block: {block_id}")
+    quote_match = str(payload.get("quote_match") or "")
+    if resolution == "matched":
+        lines.append(
+            "the quoted words occur in this material and the locator above says "
+            "where; whether they support the claim is your judgement, not Envoy's"
+        )
+        if quote_match and quote_match != "exact":
+            lines.append(
+                "quote_match is not exact: the words matched after normalisation, "
+                "so quote the material's spelling if the difference matters"
+            )
+        lines.append(
+            "next: cite the source URL together with the quoted words; the material "
+            "lease expires, so keep the quotation itself"
+        )
+    else:
+        lines.append(
+            f"the quote could not be checked here ({reason or 'unknown'}); Envoy did "
+            "not judge whether the claim is supported"
+        )
+    # The reader already decided what the caller can do; printing its answer keeps
+    # the receipt and the structured next_action from drifting apart.
+    next_action = payload.get("next_action")
+    if isinstance(next_action, str) and next_action.strip():
+        lines.append(f"next: {next_action.strip()}")
+    return "\n".join(_fit_content(lines, budget))
+
+
+def _delivery_reported(payload: dict) -> bool:
+    """Whether this payload carried the reader's own coverage record.
+
+    Without one, a response cannot say it delivered "the rest": it only knows
+    what it printed. The distinction keeps the closing notice from asserting a
+    completeness the payload never reported.
+    """
+    coverage = payload.get("coverage")
+    if isinstance(coverage, dict) and coverage:
+        return True
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    local = usage.get("local") if isinstance(usage.get("local"), dict) else {}
+    return bool(local.get("returned_ranges"))
+
+
+def _next_offset(payload: dict) -> str | None:
+    """Absolute character offset that continues this material, or None.
+
+    The reader records where its delivered window ended. That number is an
+    offset into the material; a count of characters this response happened to
+    print is not, and echoing it sends the caller back over text it has already
+    read. A printed length is only a last resort, taken from the delivered
+    ranges the reader reported.
+    """
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    modalities = coverage.get("modalities") if isinstance(coverage.get("modalities"), dict) else {}
+    text = modalities.get("text") if isinstance(modalities.get("text"), dict) else {}
+    text_details = text.get("details") if isinstance(text.get("details"), dict) else {}
+    payload_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    for holder in (coverage, text, text_details, payload_details):
+        value = holder.get("next_offset")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return str(value)
+    ranges = text_details.get("delivered_ranges")
+    if not isinstance(ranges, list):
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        local = usage.get("local") if isinstance(usage.get("local"), dict) else {}
+        ranges = local.get("returned_ranges")
+    if isinstance(ranges, list):
+        ends = [
+            pair[1]
+            for pair in ranges
+            if isinstance(pair, list)
+            and len(pair) == 2
+            and isinstance(pair[1], int)
+            and not isinstance(pair[1], bool)
+        ]
+        if ends:
+            return str(max(ends))
+    return None
 
 
 def _material_content_text(payload: dict, tool: str, request=None) -> str:
@@ -1165,13 +1377,44 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
         ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
         tail.append(f"resources: {ids}")
     retained = _material_retained(payload) if material_id else False
+    next_offset = _next_offset(payload) if material_id else None
     if material_id:
-        delivered = sum(len(_block_text(block)) for block in blocks)
-        if retained:
+        if retained and next_offset is not None:
             tail.append(
-                f"next: envoy_expand material_id={material_id} offset={delivered} "
+                f"next: envoy_expand material_id={material_id} offset={next_offset} "
                 f"max_chars={budget} (or envoy_search material_id=… query=…); "
                 "do not re-read the URL"
+            )
+            tail.append(
+                "citations that must outlive the lease: keep the quoted words and "
+                "the source URL, because material_id expires and envoy_verify will "
+                "then answer material_expired rather than resolve it"
+            )
+        elif retained and _delivery_reported(payload):
+            tail.append(
+                "this response delivered the rest of the material; no offset adds new "
+                "text — answer from the blocks above, or envoy_read with refresh=true "
+                "for a new revision"
+            )
+            tail.append(
+                "citations that must outlive the lease: keep the quoted words and "
+                "the source URL, because material_id expires and envoy_verify will "
+                "then answer material_expired rather than resolve it"
+            )
+        elif retained:
+            # No coverage record travelled with this payload, so there is no
+            # number to print. An offset invented from the printed length sends
+            # the caller back over text it has already read; expand reports its
+            # own next_offset when it is asked.
+            tail.append(
+                f"next: envoy_expand material_id={material_id} max_chars={budget} "
+                "(it reports the offset it delivered from) or envoy_search "
+                "material_id=… query=…; do not re-read the URL"
+            )
+            tail.append(
+                "citations that must outlive the lease: keep the quoted words and "
+                "the source URL, because material_id expires and envoy_verify will "
+                "then answer material_expired rather than resolve it"
             )
         else:
             tail.append(
@@ -1185,10 +1428,15 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
     def continuation(shown: int) -> str:
         if not material_id:
             return ""
+        if retained and next_offset is not None:
+            return (
+                f"next: envoy_expand material_id={material_id} offset={next_offset} "
+                f"max_chars={budget} to read the rest"
+            )
         if retained:
             return (
-                f"next: envoy_expand material_id={material_id} offset={shown} "
-                f"max_chars={budget} to read the rest"
+                f"next: envoy_expand material_id={material_id} max_chars={budget} "
+                "to continue (it reports the offset it delivered from)"
             )
         return "next: envoy_read with refresh=true for the same URL to read it again"
 
@@ -2129,6 +2377,10 @@ def handle_message(
         elif name == "envoy_search":
             response = search_material(MaterialSearchRequest.model_validate(arguments))
             payload = _read_payload(response, compact=modern_request)
+        elif name == "envoy_verify":
+            payload = check_evidence(
+                EvidenceCheckRequest.model_validate(arguments)
+            ).model_dump(mode="json")
         elif name == "envoy_doctor":
             payload = {
                 "tool": "envoy",

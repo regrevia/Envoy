@@ -1,4 +1,5 @@
 import json
+import re
 import io
 import sys
 from pathlib import Path
@@ -59,11 +60,16 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
         "envoy_doctor",
         "envoy_observe",
         "envoy_visual_history",
+        "envoy_verify",
     }
     assert "needs_host response is a handoff, not a terminal state" in tools["envoy_read"]["description"]
     assert "inspect every" in tools["envoy_read"]["description"]
     assert "one observation per inspected resource" in tools["envoy_observe"]["description"]
     assert "idempotency_key" in tools["envoy_read_local_video"]["inputSchema"]["required"]
+    # A string match proves the words are in the material, never that they back
+    # the claim, so the tool must say the semantic half stays unjudged.
+    assert "not_evaluated" in tools["envoy_verify"]["description"]
+    assert "semantic_support is always not_evaluated" in tools["envoy_verify"]["description"]
 
 
 def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
@@ -1623,6 +1629,95 @@ def test_envoy_read_text_always_carries_the_material_handle_and_replay_path():
     assert "envoy_replay" in blocked
 
 
+def test_read_text_reports_the_absolute_offset_a_partial_read_left_off():
+    """The expand hint must name an offset into the material, not the printed length."""
+    from envoy_cli import mcp
+
+    text = mcp._tool_content_text(
+        {
+            "result": "partial",
+            "material_id": "mat-x",
+            "source_revision": "rev-x",
+            "blocks": [{"content": {"text": "abc"}}],
+            "coverage": {"modalities": {"text": {"details": {"next_offset": 40}}}},
+        },
+        modern=True,
+    )
+    assert "offset=40" in text
+    assert "offset=3 " not in text
+
+    # With no coverage record there is no honest number to print; the hint must
+    # stop naming one instead of reverting to the printed length.
+    unknown = mcp._tool_content_text(
+        {
+            "result": "partial",
+            "material_id": "mat-y",
+            "source_revision": "rev-y",
+            "blocks": [{"content": {"text": "abc"}}],
+        },
+        modern=True,
+    )
+    assert "offset=3" not in unknown
+    assert "envoy_expand material_id=mat-y" in unknown
+    assert "do not re-read" in unknown
+
+
+def test_verify_verdict_is_rendered_as_a_verdict_not_a_read():
+    from envoy_cli import mcp
+
+    unmatched = mcp._tool_content_text(
+        {
+            "protocol_version": "envoy.evidence/1",
+            "resolution": "unmatched",
+            "evidence_id": "ev-1",
+            "quote_match": "none",
+            "reason": "block_missing",
+            "material_id": "mat-x",
+            "next_action": "envoy_verify again without block_id",
+        },
+        modern=True,
+    )
+    assert "Envoy verify unmatched" in unmatched
+    assert "why: block_missing" in unmatched
+    assert "semantic_support=not_evaluated" in unmatched
+    # A verdict is not an empty material: no block counter and no expand hint.
+    assert "blocks /" not in unmatched
+    assert "envoy_expand" not in unmatched
+    # The receipt prints the reader's own next action, so the text and the
+    # structured field cannot tell the host different things.
+    assert "next: envoy_verify again without block_id" in unmatched
+
+    matched = mcp._tool_content_text(
+        {
+            "protocol_version": "envoy.evidence/1",
+            "resolution": "matched",
+            "quote_match": "normalized",
+            "evidence_id": "ev-2",
+        },
+        modern=True,
+    )
+    assert "Envoy verify matched" in matched
+    assert "not Envoy's" in matched
+    assert "quote_match is not exact" in matched
+
+
+def test_replay_text_shows_the_full_revision_it_asks_the_host_to_carry():
+    from envoy_cli import mcp
+
+    revision = "a1b2c3d4" * 8
+    text = mcp._tool_content_text(
+        {
+            "tool": "envoy_replay",
+            "result": "ok",
+            "material_id": "mat-x",
+            "source_revision": revision,
+            "blocks": [{"content": {"text": "abc"}}],
+        },
+        modern=True,
+    )
+    assert revision in text
+
+
 def test_mcp_output_survives_a_cp1252_host_codec(monkeypatch):
     """A Windows host can pin PYTHONIOENCODING=cp1252; Chinese text must still ship."""
     from envoy_cli import mcp
@@ -1753,3 +1848,163 @@ def test_mcp_bridge_gives_media_reads_more_time_by_default(monkeypatch):
         "envoy_read", {"source": {"url": "https://example.org/article"}, "goal": "g"}
     )
     assert "budget" not in plain
+
+
+def test_a_search_receipt_hands_the_host_a_block_id_it_can_verify(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "b" * 24
+    source = "Overview.\n\nDeployment command: envoy start --worker.\n\nWrap up."
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "c" * 64,
+        "title_text": "Guide",
+        "text": source,
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "search",
+        "method": "tools/call",
+        "params": {
+            "_meta": meta,
+            "name": "envoy_search",
+            "arguments": {
+                "protocol_version": "envoy.search/1",
+                "request_id": "mcp-search-verify",
+                "material_id": material_id,
+                "query": "deployment command",
+            },
+        },
+    }])
+    search_response = json.loads(capsys.readouterr().out.splitlines()[1])
+    search_text = search_response["result"]["content"][0]["text"]
+    block_ids = re.findall(r"blk-search-\d+-\d+-[a-f0-9]+", search_text)
+    assert block_ids, search_text
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "verify",
+        "method": "tools/call",
+        "params": {
+            "_meta": meta,
+            "name": "envoy_verify",
+            "arguments": {
+                "material_id": material_id,
+                "block_id": block_ids[0],
+                "quote": "Deployment command: envoy start --worker.",
+            },
+        },
+    }])
+    verify_response = json.loads(capsys.readouterr().out.splitlines()[1])
+    assert "result" in verify_response, verify_response
+    verify_text = verify_response["result"]["content"][0]["text"]
+    assert "Envoy verify" in verify_text
+    assert "quote_found" in verify_text or "quote_found" in json.dumps(
+        verify_response["result"]["structuredContent"]
+    )
+    assert "not_evaluated" in json.dumps(verify_response["result"]["structuredContent"])
+
+
+def test_an_expand_receipt_hands_the_host_a_block_id_it_can_verify(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp, reader
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    material_id = "mat-" + "e" * 24
+    source = "Overview.\n\nDeployment command: envoy start --worker.\n\nWrap up."
+    reader._store_material(material_id, {
+        "source_url": "https://example.org/guide",
+        "source_revision": "f" * 64,
+        "title_text": "Guide",
+        "text": source,
+        "budget_state": {
+            "max_total_response_chars": 2000,
+            "max_total_response_tokens": 500,
+            "max_expansion_rounds": 3,
+            "returned_chars": 0,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [],
+        },
+    })
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "expand",
+        "method": "tools/call",
+        "params": {
+            "_meta": meta,
+            "name": "envoy_expand",
+            "arguments": {
+                "protocol_version": "envoy.read/1",
+                "request_id": "mcp-expand-verify",
+                "material_id": material_id,
+                "offset": 11,
+                "max_chars": 128,
+            },
+        },
+    }])
+    expand_response = json.loads(capsys.readouterr().out.splitlines()[1])
+    assert "result" in expand_response, expand_response
+    expand_text = expand_response["result"]["content"][0]["text"]
+    block_ids = re.findall(r"blk-body-0001-range-\d+", expand_text)
+    assert block_ids, expand_text
+    assert block_ids[0] == "blk-body-0001-range-11"
+
+    mcp.run_lines([{
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25"},
+    }, {
+        "jsonrpc": "2.0",
+        "id": "verify",
+        "method": "tools/call",
+        "params": {
+            "_meta": meta,
+            "name": "envoy_verify",
+            "arguments": {
+                "material_id": material_id,
+                "block_id": block_ids[0],
+                "quote": "Deployment command: envoy start --worker.",
+            },
+        },
+    }])
+    verify_response = json.loads(capsys.readouterr().out.splitlines()[1])
+    assert "result" in verify_response, verify_response
+    structured = verify_response["result"]["structuredContent"]
+    assert structured["resolution"] == "matched"
+    assert structured["reason"] == "quote_found"

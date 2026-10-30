@@ -23,6 +23,9 @@ off:
   `human_sign_in` option; no auth action is created and no browser is opened.
 - A stored session is never attached: `browser._apply_imported_cookies` returns
   0 and a static fetch sends no `Cookie` header.
+- What was stored earlier stays on disk: `envoy auth handoff off` only flips the
+  flag; deleting the local profile and the imported cookies takes
+  `envoy auth clear` (`--host <site>` narrows it to one site's saved profile).
 
 The user turns it on once:
 
