@@ -1,5 +1,36 @@
 # 更新日志 / Changelog
 
+## 0.1.37 - 2026-10-31
+
+### 中文
+
+- 长读现在是一条可恢复的任务，而不是一次会话：`envoy_task`（`create` / `get` / `apply` / `next` / `list`）
+  只记「实际交付过的区间」，`next` 交回的请求从第一个没交付过的偏移继续，带原 `material_id` 与
+  `source_revision`，因此恢复不需要重下、也不需要重新解析材料。收到 `source_revision_changed` 或材料已过期时
+  明确返回 `blocked`，不猜偏移。
+- 状态落盘方式沿用 collection checkpoint：原子写、进程锁、按 revision 校验的 `apply`；
+  checkpoint 里刻意不含租约、`session_id`、`expires_at`，所以换一个模型、换一个会话也能接着做完。
+- 同一套逻辑有 CLI 出口 `envoy task-checkpoint --request-json <file|->`（JSON 进、JSON 出，`blocked` 退出码 2），
+  未开 `full` 工具集时 MCP 不暴露 `envoy_task`。
+- 证据级别：核心与 CLI 为 `unit_checked`（24 例离线单测 + 1 例 MCP bridge），
+  真机 120 页 PDF 的「读 → 续读 → 换进程重放」链为 `verified`（run 41109097051，18 项检查 0 失败，
+  `long_pdf_pages` 与 `resume_after_interrupt` 通过）；`envoy_task` 本身在 Windows 真机上仍是 `not_run`。
+
+### English
+
+- A long read is now a resumable task rather than a session: `envoy_task` (`create` / `get` / `apply` / `next` /
+  `list`) records only the ranges actually delivered, and `next` hands back the request that continues from the
+  first unseen offset carrying the retained `material_id` and `source_revision` — so resuming neither re-downloads
+  nor re-extracts the material. A moved revision or an expired material returns `blocked`; it never guesses an offset.
+- State is persisted the way collection checkpoints already are: atomic write, interprocess lock, revision-checked
+  `apply`. The checkpoint deliberately carries no lease, `session_id`, or `expires_at`, so another model in another
+  session can finish the same task.
+- The same core is reachable from the CLI as `envoy task-checkpoint --request-json <file|->` (JSON in, JSON out,
+  exit 2 when blocked), and `envoy_task` stays hidden while the MCP `full` toolset is off.
+- Evidence: core and CLI are `unit_checked` (24 offline unit tests + 1 MCP bridge example); the real-machine chain
+  "120-page PDF read → continue → replay in a fresh process" is `verified` (run 41109097051, 0 failed of 18 checks,
+  with `long_pdf_pages` and `resume_after_interrupt` passing). `envoy_task` itself remains `not_run` on Windows.
+
 ## 0.1.36 - 2026-10-30
 
 ### 中文

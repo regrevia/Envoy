@@ -9,7 +9,7 @@
       "name": "envoy",
       "source": "./integrations/claude-code/envoy",
       "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
-      "version": "0.1.36"
+      "version": "0.1.37"
     }
   ]
 }
