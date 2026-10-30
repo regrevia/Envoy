@@ -8,7 +8,7 @@ import os
 import httpx
 import pytest
 
-from envoy_cli import cookies, features, mcp, permissions, reader
+from envoy_cli import browser, cookies, features, mcp, permissions, reader
 from envoy_core.schemas.read_v1 import ReadRequest
 
 
@@ -224,3 +224,42 @@ def test_cookie_values_never_reach_a_read_result(store, monkeypatch):
     assert "super-secret-value" not in dumped
     # The request was answered, so the check is on a real read path, not a stub.
     assert response.request_id == "secrets"
+
+
+def test_a_read_uses_the_session_the_visible_window_stored(store, monkeypatch):
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
+    seen: list[str] = []
+    monkeypatch.setattr(
+        browser, "profile_cookie_header", lambda host: seen.append(host) or "user_session=abc"
+    )
+    header = reader._credential_cookie_header("https://github.com/settings/profile")
+    assert header == "user_session=abc"
+    assert seen == ["github.com"]
+
+
+def test_the_visible_profile_is_not_read_while_the_switch_is_off(store, monkeypatch):
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
+
+    def _boom(host):
+        raise AssertionError("the profile must not be opened while handoff is off")
+
+    monkeypatch.setattr(browser, "profile_cookie_header", _boom)
+    assert reader._credential_cookie_header("https://github.com/settings/profile") == ""
+
+
+def test_an_imported_cookie_wins_over_the_visible_profile(store, monkeypatch):
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
+    _store_a_cookie(store)
+
+    def _boom(host):
+        raise AssertionError("the profile is a fallback, not a second opinion")
+
+    monkeypatch.setattr(browser, "profile_cookie_header", _boom)
+    header = reader._credential_cookie_header("https://example.com/page")
+    assert header == "sid=super-secret-value"
+
+
+def test_a_profile_that_will_not_open_is_not_a_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "browser_profile_dir", lambda create=False: tmp_path / "missing")
+    browser._COOKIE_HEADER_CACHE.clear()
+    assert browser.profile_cookie_header("github.com") == ""

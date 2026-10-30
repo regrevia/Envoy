@@ -5286,7 +5286,15 @@ def _credential_cookie_header(url: str) -> str:
         for item in cookies
         if item.get("name") and item.get("value") is not None
     ]
-    return "; ".join(pairs)
+    if pairs:
+        return "; ".join(pairs)
+    try:
+        from . import browser
+
+        host = (urlparse(url).hostname or "").lower()
+        return browser.profile_cookie_header(host)
+    except Exception:  # noqa: BLE001 - the profile is an extra source, not a requirement
+        return ""
 
 
 def _fetch_html(
