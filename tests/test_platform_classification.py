@@ -181,7 +181,7 @@ VERDICT_CASES = [
     ("https://apnews.com/hub/technology", "unsupported"),
     ("mailto:someone@example.com", "unsupported"),
     ("tel:+8613800138000", "unsupported"),
-    ("file:///Users/apple/notes.md", "unsupported"),
+    ("file:///home/user/notes.md", "unsupported"),
     ("ftp://ftp.example.com/pub/readme.txt", "unsupported"),
     ("https://x.com/OpenAI", "unsupported"),
     ("https://mp.weixin.qq.com/", "unsupported"),

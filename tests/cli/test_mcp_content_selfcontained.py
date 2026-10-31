@@ -116,7 +116,7 @@ def test_needs_host_text_carries_the_observe_call_shape() -> None:
                 "resource_id": "res-0001",
                 "mime_type": "image/jpeg",
                 "source_url": "https://example.org/frame-1.jpg",
-                "delivery": {"type": "local_file", "path": "/Users/apple/.envoy/materials/frames-mat-abc/frame-001.jpg"},
+                "delivery": {"type": "local_file", "path": "/home/user/.envoy/materials/frames-mat-abc/frame-001.jpg"},
             }
         ],
         "needs": [
@@ -154,7 +154,7 @@ def test_needs_host_text_names_the_original_frame_path() -> None:
                 "mime_type": "image/jpeg",
                 "delivery": {
                     "type": "local_file",
-                    "path": "/Users/apple/.envoy/materials/frames-mat-abc/frame-001.jpg",
+                    "path": "/home/user/.envoy/materials/frames-mat-abc/frame-001.jpg",
                 },
             }
         ],
@@ -169,7 +169,7 @@ def test_needs_host_text_names_the_original_frame_path() -> None:
 
     text = mcp._tool_content_text(payload, True, _request(include_visual=True))
 
-    assert "/Users/apple/.envoy/materials/frames-mat-abc/frame-001.jpg" in text
+    assert "/home/user/.envoy/materials/frames-mat-abc/frame-001.jpg" in text
     assert "open it with an image or file tool" in text
 
 

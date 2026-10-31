@@ -12,7 +12,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DELIVERY="${1:-/Users/apple/Desktop/2026/envoy-delivery/0.1.24}"
+DELIVERY="${1:-$HOME/envoy-delivery}"
 INSTALL="$ROOT/integrations/install.sh"
 
 [ -f "$INSTALL" ] || { echo "missing $INSTALL" >&2; exit 1; }

@@ -35,7 +35,7 @@ test('readSupportVerdict classifies the three policies', () => {
     ['https://www.runoob.com/python3/python3-tutorial.html', 'supported'],
     ['https://apnews.com/hub/technology', 'unsupported'],
     ['mailto:someone@example.com', 'unsupported'],
-    ['file:///Users/apple/notes.md', 'unsupported'],
+    ['file:///home/user/notes.md', 'unsupported'],
     ['https://x.com/OpenAI', 'unsupported'],
     ['https://mp.weixin.qq.com/', 'unsupported'],
     ['https://x.com/someone/status/1234567890', 'unsupported'],
