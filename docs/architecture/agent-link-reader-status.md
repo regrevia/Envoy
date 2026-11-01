@@ -122,6 +122,17 @@
 
 - 2026-11-01 素材检查点 v2（工作区 `419969f` 上未提交改动）：核心代码把“是否读完”从状态词改为证据函数——`processed_seconds` 取四个候选的**最大值**、`media_pending()` 是三信号并集、字幕型视频 `remaining_seconds()` 返回 `None`、`overall_state()` 对全部 `is_finished()` 的材料判 `COMPLETED`（故任务可 `completed` 而材料 `state` 仍 `partial`），已完成材料若仍有未处理秒数会降级为 `partial`；v1 检查点按“未知”加载而非 0。CLI `get`/`next`/`list` 增加派生键 `kind`/`media`/`remaining_seconds`/`is_finished`/`resume_kind`，落盘记录不含。当前回归：定向 73 项、`tests/cli` 全量 1068 项通过；四份夹具由守卫测试重新生成后字节/哈希一致（`tests/fixtures/long_task/README.md` 表即该测试 `-s` 输出）；探针复算 `video_asr_partial` → 剩余 3480.0 秒、恢复范围 `120→3600`，`video_asr_complete` → `already_finished`。证据级别 `unit_checked`；**未验证**：真实 ≥60 分钟视频 ASR 续读（本机无 whisper，7 个验收场景全 `not_run`）、扫描件/复杂版式 PDF、以及“只改一个时间段复用其余片段”（ASR 检查点身份带范围，改范围即重转录，仅界定重复工作量未修）。三份新文档：`docs/architecture/long-task-checkpoint-v2.md`、`docs/acceptance/long-video-acceptance-2026-11-01.md`、`docs/experiments/long-task-metrics-2026-11-01.md`。支持表述仍只是“部分材料能续读”；本项不构成成熟度结论。
 
+## 2026-11-02 状态更新：路由收敛、静态页结构、GitHub 适配器
+
+- 工作区：本轮改动未提交前基于 `ca4669b`（长任务检查点 v2 基线）。
+- 路由收敛：`envoy_read` 工具描述与 SKILL 元数据改为“宿主抓不到的材料才读”，新增 `## Decide before you call` 表（9 行 / 6 路由行）；三份手同步副本与 DSH 生成副本字节一致（`tests/cli/test_routing_discipline.py`，7 项）。`hooks.py` 未改：它是产品里唯一的 URL 拦截点，且不做内容判断；裸仓库根仍会被注入路由，`/tree|blob|commit|pull|issues` 子页不会。
+- 路由评测：`tests/fixtures/routing/links.json` 60 条 / 6 类；`scripts/acceptance/route_eval.py --dry-run` 60/60 一致、`route_mismatches 0`、`unavailable []`、分布 `host_fetch 10 / gh_git 20 / envoy 10 / envoy_task 20`。脚本原来探测一个不存在的导航谓词（虚假依赖），现改为直接调用 `hooks.inspect_prompt` 的 `.urls`。`--live` 仍是 stub（exit 2）。
+- 静态页结构（`reader.py`）：标题块 `blk-heading-NNNN`（`h1`–`h6` + `#anchor`、`parent_id` 层级）、表格块 `blk-table-NNNN`、`details` 下 `headings`/`page_links`/`tables`/三个 `*_truncated`/`canonical_url`/`description`/`og_title`；无结构页面整组键不出现，小页面体积不变。上限 200 标题 / 200 链接 / 20 表 / 50 行 / 20 列。真实链接 `verified` 3 个（IANA reserved 0.85 s 含 11×4 表、IANA example-domains 0.63 s、example.com 0.74 s 且其 HTML 本身无 `<a>`）。未验证：分页表格、`colspan`/`rowspan`、JS 渲染与 iframe。
+- GitHub 适配器（`github_source.py`，不 clone、不起浏览器）：默认一层列举，`ref`→commit SHA 绑定引用，2 次请求；实测 `cpython/tree/main/Lib` 191 条、`ready`、7.41–13.66 s（5 次抖动区间）；`recursive=1` 仅在目标含“全部文件/递归/代码搜索”或 `ENVOY_GITHUB_RECURSIVE_TREE=1` 时启用，20 s 预算 + 1000 条上限，超时/触顶降级并写 `plan_downgraded_from`。匿名 `api.github.com` 60 次/小时，每次读取消耗 2 次，限流时给 `github_rate_limited`。
+- 回归：定向 51 项（GitHub 适配器 34、页面结构 10、路由纪律 7）与 `tests/cli` 全量 1119 项通过。
+- 文档：新增 `docs/acceptance/site-reader-page-structure-2026-11-01.md`（原误落在 `packages/envoy-core/docs/`）；`docs/acceptance/github-reader-acceptance-2026-11-01.md` 增 S6.1 实测；`docs/architecture/link-routing-policy.md` 依赖表更新。
+- 仍未做：P0 长 PDF 扫描件/复杂版式与 Page Evidence Index、统一恢复协议、统一 Video 树、真实 ≥60 分钟视频验收（本机无 whisper）、`route_eval --live`。支持表述仍只是“部分材料能续读”。
+
 ## 下一次状态更新必须包括
 
 - 当前 `dev` commit 和工作区是否干净。

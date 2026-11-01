@@ -1,12 +1,18 @@
 ---
 name: envoy
 description: >
-  Read, understand, compare, or extract material from public URLs with Envoy.
-  Use when the user asks what a link contains, asks to inspect an article,
-  image post, video, audio, PDF, or web page, or asks to transform linked
-  material. Do not trigger for merely editing or quoting a URL, or for short
-  text the user already pasted; reach for it for video, audio, long articles,
-  and platform pages that need scrolling, cookies, or login.
+  Read material the host cannot get itself: video or audio transcripts and
+  frames, long articles, PDFs and Office documents, image posts, pages that
+  need scrolling, cookies, or login, GitHub repo/tree/blob/commit/pull/issue
+  links when no gh or git is available, and reads that must stay retained so a
+  later turn can expand, search, or replay them. Start with a plain host
+  fetch; call Envoy only after it is blocked, truncated, or renders an empty
+  shell. Do not call Envoy for a short static page a plain fetch already
+  answers; for GitHub, GitLab, or Bitbucket source navigation or a repo
+  README while gh or git is available (use gh api, git show, or plain fetch);
+  for material already in this turn's context (use envoy_expand or
+  envoy_search on its material_id); or for a link the user only wants edited,
+  quoted, or saved.
 ---
 
 # Envoy Link Reader
@@ -31,7 +37,8 @@ call:
 | Video or audio: transcript, timeline, frames | `envoy_read`. |
 | Long article, report, PDF, or image post | `envoy_read`. |
 | Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `envoy_read`; a plain fetch is known to fail there. |
-| Source-code host pages: github.com, gitlab.com, bitbucket.org paths `/commit`, `/blob`, `/tree`, `/pull`, `/issues`, `/compare` | `gh api` / `git show` / plain fetch. Envoy returns the page title and at most the commit message, never the diff. |
+| GitHub repo, tree, blob, commit, pull, or issue: `github.com/{owner}/{repo}`, `/tree/{ref}/{path}`, `/blob/{ref}/{path}#L10-L20`, `/commit/{sha}` | `envoy_read` takes the GitHub API path, no browser: repo tree, a file's bytes for a line range with its path, commit SHA, and content hash, the commit diff and stats, the PR or issue body and comments. Use `gh` or `git` instead when they are at hand. A truncated tree or an unfetched file or review is named in `coverage.unresolved`; a 403 is `github_rate_limited` with the reset time. |
+| GitLab, Bitbucket, or a GitHub page the API path declines (wiki, gist raw, org listing) | `gh api`, `git show`, or plain fetch. A rendered page gives the title and body, never the diff or the tree. |
 | Short static page, nothing pasted | Plain fetch first, escalate only if blocked, truncated, or JavaScript-rendered. |
 
 Stop after one plain fetch and one Envoy read. A short source that returns

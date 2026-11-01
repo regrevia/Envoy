@@ -29,7 +29,8 @@ call:
 | Video or audio: transcript, timeline, frames | `mcp__envoy__envoy_read`. |
 | Long article, report, PDF, or image post | `mcp__envoy__envoy_read`. |
 | Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `mcp__envoy__envoy_read`; a plain fetch is known to fail there. |
-| Source-code host pages: github.com, gitlab.com, bitbucket.org paths `/commit`, `/blob`, `/tree`, `/pull`, `/issues`, `/compare` | `gh api` / `git show` / plain fetch. Envoy returns the page title and at most the commit message, never the diff. |
+| GitHub repo, tree, blob, commit, pull, or issue: `github.com/{owner}/{repo}`, `/tree/{ref}/{path}`, `/blob/{ref}/{path}#L10-L20`, `/commit/{sha}` | `mcp__envoy__envoy_read` takes the GitHub API path, no browser: repo tree, a file's bytes for a line range with its path, commit SHA, and content hash, the commit diff and stats, the PR or issue body and comments. Use `gh` or `git` instead when they are at hand. A truncated tree or an unfetched file or review is named in `coverage.unresolved`; a 403 is `github_rate_limited` with the reset time. |
+| GitLab, Bitbucket, or a GitHub page the API path declines (wiki, gist raw, org listing) | `gh api`, `git show`, or plain fetch. A rendered page gives the title and body, never the diff or the tree. |
 | Short static page, nothing pasted | Plain fetch first, escalate only if blocked, truncated, or JavaScript-rendered. |
 
 Stop after one plain fetch and one Envoy read. A short source that returns

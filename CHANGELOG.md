@@ -23,8 +23,26 @@
 - 文档：`docs/architecture/long-task-checkpoint-v2.md`（协议与两级状态，`unit_checked`）、
   `docs/acceptance/long-video-acceptance-2026-11-01.md`（7 个场景全部 `not_run`，含确切命令与缺失前置）、
   `docs/experiments/long-task-metrics-2026-11-01.md`（逐阶段漏斗替换 57 条总覆盖率）。
-- 证据级别：改动为 `unit_checked`（定向 73 项、`tests/cli` 1068 项通过；探针复算 3480.0 / `None` / 范围
-  `120→3600` 未变）。**未验证**：真实 ≥60 分钟视频的 ASR 续读（本机无 whisper）、扫描件/复杂版式 PDF、
+- 路由收敛为“先自己抓，抓不到才找 Envoy”：`envoy_read` 的工具描述与 SKILL 元数据改成“宿主抓不到的材料才读”，
+  新增 `## Decide before you call` 路由表（GitHub 子页、短静态页归宿主自抓）；三份手同步副本与 DSH 生成副本一致。
+- 静态页结构化读取：`blocks` 增加标题块（`blk-heading-NNNN`，`locator.selector` 为 `h1`–`h6` 并按标题 `id` 追加
+  `#anchor`，`parent_id` 指上级标题、首个标题指 `blk-title`）与表格块（`blk-table-NNNN`，`columns`/`rows`/`caption`）；
+  `coverage.modalities.text.details` 增加 `headings`/`page_links`/`tables`、三个 `*_truncated` 及
+  `canonical_url`/`description`/`og_title`。页面没有这些结构时整组键不出现，普通页响应体积不变
+  （上限常量 `reader.py:315-322`，产物 `:579`/`:608`/`:641`/`:677`，注入 `:10280`）。
+- 新增 GitHub 适配器（不 clone、不起浏览器）：默认只列一层，`ref` 先解析成 commit SHA，再发
+  `git/trees/<sha>` 与 `contents/<path>?ref=<sha>` 共 2 次请求；`recursive=1` 仅在目标含“全部文件/递归/代码搜索”
+  等词或 `ENVOY_GITHUB_RECURSIVE_TREE=1` 时启用，超时或触顶则降级并把原因写进 `plan_downgraded_from`；
+  截断时只报 `entries_total_lower_bound` 与 `listing_capped_by_api`，不冒充全量
+  （`packages/envoy-cli/src/envoy_cli/github_source.py`）。
+- 路由语料与评估脚本：`tests/fixtures/routing/links.json` 60 条 / 6 类；`scripts/acceptance/route_eval.py` 的
+  `gh_git` 判定改为直接调用 `hooks.inspect_prompt`（此前探测一个并不存在的导航谓词，属于虚假依赖），
+  `--dry-run` 60/60 一致、`route_mismatches 0`、`unavailable []`。
+- 文档：`docs/architecture/link-routing-policy.md`、`docs/acceptance/github-reader-acceptance-2026-11-01.md`、
+  `docs/acceptance/site-reader-page-structure-2026-11-01.md`（静态页结构，含 3 个真实链接的 `verified` 复核）。
+- 证据级别：改动为 `unit_checked`（`tests/cli` 1119 项通过；本轮新增定向 51 项——GitHub 适配器 34、页面结构 10、
+  路由纪律 7；探针复算 3480.0 / `None` / 范围 `120→3600` 未变）。真实页面上 `verified` 的只有 3 个静态页结构。
+  **未验证**：**未验证**：真实 ≥60 分钟视频的 ASR 续读（本机无 whisper）、扫描件/复杂版式 PDF、
   以及“只改一个时间段、复用其余片段”——ASR 检查点身份带范围（`media.py:1491-1515`），改范围即重转录；本轮只把
   重复工作量界定为 `processed_until_seconds − continuation_start_seconds` 并写进文档，未修。支持的表述仍只是
   “部分材料能续读”。
@@ -53,7 +71,29 @@
   `docs/acceptance/long-video-acceptance-2026-11-01.md` (all seven scenarios `not_run`, with exact commands and
   missing prerequisites) and `docs/experiments/long-task-metrics-2026-11-01.md` (a per-stage funnel replacing the
   57-link total rate).
-- Evidence: `unit_checked` (73 targeted tests and 1068 `tests/cli` tests pass; the probe still prints 3480.0 /
+- Routing narrows to “fetch it yourself first, come to Envoy only when that fails”: the `envoy_read` tool description
+  and the SKILL metadata now say “read what the host cannot get itself”, and a `## Decide before you call` table
+  sends GitHub subpages and short static pages back to the host fetch. All three hand-synced copies match the
+  generated DSH copy.
+- Structured static-page reading: `blocks` gain heading blocks (`blk-heading-NNNN`, `locator.selector` `h1`–`h6` plus
+  `#anchor`, `parent_id` pointing at the enclosing heading, first heading at `blk-title`) and table blocks
+  (`blk-table-NNNN`, `columns`/`rows`/`caption`); `coverage.modalities.text.details` gains `headings`, `page_links`,
+  `tables`, three `*_truncated` flags and `canonical_url`/`description`/`og_title`. A page without that structure omits
+  the whole key set, so a plain page keeps its old response size (`reader.py:315-322` caps, `:579`/`:608`/`:641`/`:677`
+  emitters, `:10280` injection).
+- New GitHub adapter (no clone, no browser): one-level listing by default, `ref` resolved to a commit SHA first, then
+  `git/trees/<sha>` plus `contents/<path>?ref=<sha>` — two requests. `recursive=1` only when the goal mentions all
+  files / recursion / code search or `ENVOY_GITHUB_RECURSIVE_TREE=1` is set; a timeout or cap downgrades the plan and
+  records the reason in `plan_downgraded_from`; truncation reports `entries_total_lower_bound` and
+  `listing_capped_by_api` instead of claiming a full listing (`packages/envoy-cli/src/envoy_cli/github_source.py`).
+- Routing corpus and evaluator: `tests/fixtures/routing/links.json` (60 links, 6 categories); `route_eval.py` now calls
+  `hooks.inspect_prompt` for its `gh_git` verdict instead of probing a navigation predicate that never existed —
+  `--dry-run` matches 60/60 with `route_mismatches 0` and `unavailable []`.
+- Docs: `docs/architecture/link-routing-policy.md`, `docs/acceptance/github-reader-acceptance-2026-11-01.md` and
+  `docs/acceptance/site-reader-page-structure-2026-11-01.md` (three real links re-checked there).
+- Evidence: `unit_checked` (1119 `tests/cli` tests pass plus 51 new targeted tests — 34 GitHub adapter, 10 page
+  structure, 7 routing discipline; the probe still prints 3480.0 / `None` / range `120→3600`). Only three real static
+  pages are `verified` for the structure output. the probe still prints 3480.0 /
   `None` / range `120→3600`). **Not verified**: ASR continuation on a real ≥60-minute video (no whisper locally),
   scanned or complex-layout PDFs, and “change one time range and reuse the rest” — ASR checkpoint identity is
   range-scoped (`media.py:1491-1515`), so a changed range re-transcribes; this round only bounds the duplicate work

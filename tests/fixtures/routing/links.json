@@ -1,0 +1,718 @@
+{
+  "schema_version": 1,
+  "fixture": "routing-links",
+  "description": "Route correctness corpus: 6 categories x 10 links. Every URL must be sent to the reader that can actually return the evidence at the lowest cost. Correct routing beats how many times Envoy is called.",
+  "routes": {
+    "host_fetch": "plain HTTP fetch of server-rendered HTML/text",
+    "gh_git": "git / gh API on a source-code host (dedicated GitHub path)",
+    "envoy": "one-shot browser read, no retention",
+    "envoy_task": "long task: retention, page windows, ASR, resume/checkpoint"
+  },
+  "expect_first_evidence_seconds_kind": "target",
+  "counts": {
+    "simple_static": 10,
+    "github_repo": 10,
+    "github_nav_file": 10,
+    "complex_js": 10,
+    "long_doc_pdf": 10,
+    "video": 10
+  },
+  "links": [
+    {
+      "id": "simple_static_01",
+      "category": "simple_static",
+      "url": "https://example.com/",
+      "expected_route": "host_fetch",
+      "why": "RFC 2606 sample page: static HTML, one request, no JS, no retention value.",
+      "expect_first_evidence_seconds": {
+        "value": 1.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_02",
+      "category": "simple_static",
+      "url": "https://example.org/",
+      "expected_route": "host_fetch",
+      "why": "Same sample corpus; the answer is one sentence and stays in hand.",
+      "expect_first_evidence_seconds": {
+        "value": 1.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_03",
+      "category": "simple_static",
+      "url": "https://www.iana.org/domains/reserved",
+      "expected_route": "host_fetch",
+      "why": "Static IANA page; a plain fetch returns the body without a browser.",
+      "expect_first_evidence_seconds": {
+        "value": 1.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_04",
+      "category": "simple_static",
+      "url": "https://www.rfc-editor.org/rfc/rfc2606.txt",
+      "expected_route": "host_fetch",
+      "why": "Short plain-text RFC; 5 pages, no media, nothing to resume.",
+      "expect_first_evidence_seconds": {
+        "value": 1.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_05",
+      "category": "simple_static",
+      "url": "https://httpbin.org/html",
+      "expected_route": "host_fetch",
+      "why": "Static test page; content fits one fetch and needs no evidence artifact.",
+      "expect_first_evidence_seconds": {
+        "value": 1.2,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_06",
+      "category": "simple_static",
+      "url": "https://www.w3.org/Provider/Style/URI",
+      "expected_route": "host_fetch",
+      "why": "One-paragraph style note on a static server, server-rendered.",
+      "expect_first_evidence_seconds": {
+        "value": 1.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_07",
+      "category": "simple_static",
+      "url": "https://docs.python.org/3/glossary.html",
+      "expected_route": "host_fetch",
+      "why": "Server-rendered glossary; a bounded fetch answers a lookup question.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_08",
+      "category": "simple_static",
+      "url": "https://www.gnu.org/philosophy/free-sw.html",
+      "expected_route": "host_fetch",
+      "why": "Static essay page; single fetch, no scroll, no login.",
+      "expect_first_evidence_seconds": {
+        "value": 1.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_09",
+      "category": "simple_static",
+      "url": "https://www.sqlite.org/about.html",
+      "expected_route": "host_fetch",
+      "why": "Static about page; short body on a plain HTTP server.",
+      "expect_first_evidence_seconds": {
+        "value": 1.2,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "simple_static_10",
+      "category": "simple_static",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview",
+      "expected_route": "host_fetch",
+      "why": "Server-rendered MDN overview; content is in the HTML the first request returns.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_01",
+      "category": "github_repo",
+      "url": "https://github.com/python/cpython",
+      "expected_route": "gh_git",
+      "why": "Repository shell: owner/repo overview. `git ls-remote` / `gh api repos/...` answers it without a browser.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_02",
+      "category": "github_repo",
+      "url": "https://github.com/psf/requests",
+      "expected_route": "gh_git",
+      "why": "Repository shell; README and metadata come from the API, not a rendered page.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_03",
+      "category": "github_repo",
+      "url": "https://github.com/astral-sh/uv",
+      "expected_route": "gh_git",
+      "why": "Repository shell; the tree is a git object, so git is the right reader.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_04",
+      "category": "github_repo",
+      "url": "https://github.com/pallets/flask",
+      "expected_route": "gh_git",
+      "why": "Repository shell; default branch and latest commit are API fields.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_05",
+      "category": "github_repo",
+      "url": "https://github.com/modelcontextprotocol/servers",
+      "expected_route": "gh_git",
+      "why": "Repository shell; a README query is served by `gh api repos/.../readme`.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_06",
+      "category": "github_repo",
+      "url": "https://github.com/pallets/flask/releases",
+      "expected_route": "gh_git",
+      "why": "Release listing: tags and notes are API/`git tag` data, not page text.",
+      "expect_first_evidence_seconds": {
+        "value": 2.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_07",
+      "category": "github_repo",
+      "url": "https://github.com/astral-sh/ruff/releases/tag/v0.6.0",
+      "expected_route": "gh_git",
+      "why": "Release tag page; the tag object and notes come from git/API.",
+      "expect_first_evidence_seconds": {
+        "value": 2.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_08",
+      "category": "github_repo",
+      "url": "https://github.com/python/cpython/tags",
+      "expected_route": "gh_git",
+      "why": "Tag list; git refs, exactly what `git ls-remote --tags` returns.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_09",
+      "category": "github_repo",
+      "url": "https://github.com/orgs/python/repositories",
+      "expected_route": "gh_git",
+      "why": "Organization repository list; an API listing, no rendering needed.",
+      "expect_first_evidence_seconds": {
+        "value": 2.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_repo_10",
+      "category": "github_repo",
+      "url": "https://github.com/pallets/flask/branches",
+      "expected_route": "gh_git",
+      "why": "Branch list; ref data from git, and Envoy could only return the page title.",
+      "expect_first_evidence_seconds": {
+        "value": 2.5,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "github_nav_file_01",
+      "category": "github_nav_file",
+      "url": "https://github.com/python/cpython/blob/main/Lib/json/__init__.py",
+      "expected_route": "gh_git",
+      "why": "Blob page; the file content belongs to `git show`/raw fetch, not to a rendered page read.",
+      "expect_first_evidence_seconds": {
+        "value": 1.5,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_02",
+      "category": "github_nav_file",
+      "url": "https://github.com/pallets/flask/blob/main/src/flask/app.py",
+      "expected_route": "gh_git",
+      "why": "Blob page; Envoy returns the title and never the source, so the route is wrong before any fetch.",
+      "expect_first_evidence_seconds": {
+        "value": 1.5,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_03",
+      "category": "github_nav_file",
+      "url": "https://github.com/astral-sh/uv/tree/main/crates",
+      "expected_route": "gh_git",
+      "why": "Tree page; directory listing is a git tree object.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_04",
+      "category": "github_nav_file",
+      "url": "https://github.com/pallets/flask/commit/9f2a0d1c4b7e8a6d3f5c2b1e0a9d8c7b6a5f4e3d",
+      "expected_route": "gh_git",
+      "why": "Commit page; diff and message are git objects. SHA is a shape sample for dry-run, confirm before --live.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_05",
+      "category": "github_nav_file",
+      "url": "https://github.com/astral-sh/uv/pull/7000",
+      "expected_route": "gh_git",
+      "why": "Pull-request page; diff, review state and files are API objects (PR number is a shape sample).",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_06",
+      "category": "github_nav_file",
+      "url": "https://github.com/python/cpython/issues/118903",
+      "expected_route": "gh_git",
+      "why": "Issue page; thread and labels come from `gh api`, not from rendered HTML (number is a shape sample).",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_07",
+      "category": "github_nav_file",
+      "url": "https://github.com/psf/requests/compare/v2.31.0...v2.32.0",
+      "expected_route": "gh_git",
+      "why": "Compare view; the diff is exactly a git range, and the page render omits it.",
+      "expect_first_evidence_seconds": {
+        "value": 2.5,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_08",
+      "category": "github_nav_file",
+      "url": "https://github.com/python/cpython/tree/3.12/Lib/asyncio",
+      "expected_route": "gh_git",
+      "why": "Tree at a ref; git resolves ref plus path in one call.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_09",
+      "category": "github_nav_file",
+      "url": "https://github.com/django/django/commit/0b2f1c3d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c",
+      "expected_route": "gh_git",
+      "why": "Commit page for a release branch fix; git object again (SHA is a shape sample).",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "github_nav_file_10",
+      "category": "github_nav_file",
+      "url": "https://github.com/pallets/flask/issues?q=is%3Aissue+label%3Abug",
+      "expected_route": "gh_git",
+      "why": "Filtered issue list; GitHub search API answers it, the rendered page needs JS and login state.",
+      "expect_first_evidence_seconds": {
+        "value": 2.0,
+        "kind": "target"
+      },
+      "capability": "git_api"
+    },
+    {
+      "id": "complex_js_01",
+      "category": "complex_js",
+      "url": "https://vercel.com/changelog",
+      "expected_route": "envoy",
+      "why": "Client-rendered changelog; plain fetch returns a shell, so one browser read is the cheapest correct reader.",
+      "expect_first_evidence_seconds": {
+        "value": 8.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_02",
+      "category": "complex_js",
+      "url": "https://linear.app/",
+      "expected_route": "envoy",
+      "why": "SPA: content mounts after JS; a single browser read is required, but nothing needs retention.",
+      "expect_first_evidence_seconds": {
+        "value": 8.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_03",
+      "category": "complex_js",
+      "url": "https://www.figma.com/community",
+      "expected_route": "envoy",
+      "why": "JS-driven gallery; plain fetch yields no items. One read, no checkpoint.",
+      "expect_first_evidence_seconds": {
+        "value": 8.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_04",
+      "category": "complex_js",
+      "url": "https://www.notion.so/help",
+      "expected_route": "envoy",
+      "why": "Notion help centre renders client-side; a browser read is the first correct reader.",
+      "expect_first_evidence_seconds": {
+        "value": 9.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_05",
+      "category": "complex_js",
+      "url": "https://web.telegram.org/",
+      "expected_route": "envoy",
+      "why": "Login/JS-gated web app; one authenticated browser read, still no long task.",
+      "expect_first_evidence_seconds": {
+        "value": 9.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_06",
+      "category": "complex_js",
+      "url": "https://www.reddit.com/r/Python/",
+      "expected_route": "envoy",
+      "why": "Reddit challenges plain fetches; a browser with cookies returns the thread list in one read.",
+      "expect_first_evidence_seconds": {
+        "value": 9.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_07",
+      "category": "complex_js",
+      "url": "https://x.com/python",
+      "expected_route": "envoy",
+      "why": "Login wall plus JS; only a browser session has the content, and the answer fits one goal.",
+      "expect_first_evidence_seconds": {
+        "value": 10.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_08",
+      "category": "complex_js",
+      "url": "https://discord.com/",
+      "expected_route": "envoy",
+      "why": "Client-rendered app page; a browser read for the visible copy, no evidence artifact needed.",
+      "expect_first_evidence_seconds": {
+        "value": 9.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_09",
+      "category": "complex_js",
+      "url": "https://open.spotify.com/",
+      "expected_route": "envoy",
+      "why": "JS shell with region/login behaviour; one browser read to answer a page-level question.",
+      "expect_first_evidence_seconds": {
+        "value": 10.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "complex_js_10",
+      "category": "complex_js",
+      "url": "https://www.canva.com/",
+      "expected_route": "envoy",
+      "why": "Canvas/JS marketing shell; rendering is required, retention is not.",
+      "expect_first_evidence_seconds": {
+        "value": 8.0,
+        "kind": "target"
+      },
+      "capability": "browser_render"
+    },
+    {
+      "id": "long_doc_pdf_01",
+      "category": "long_doc_pdf",
+      "url": "https://arxiv.org/pdf/1706.03762",
+      "expected_route": "envoy_task",
+      "why": "PDF paper with a text layer; needs page-window extraction plus retained material for follow-up questions.",
+      "expect_first_evidence_seconds": {
+        "value": 25.0,
+        "kind": "target"
+      },
+      "capability": "pdf_text_layer"
+    },
+    {
+      "id": "long_doc_pdf_02",
+      "category": "long_doc_pdf",
+      "url": "https://arxiv.org/pdf/1810.04805",
+      "expected_route": "envoy_task",
+      "why": "Long PDF: 15+ pages, section-level evidence and a second pass, so a task with checkpoints.",
+      "expect_first_evidence_seconds": {
+        "value": 25.0,
+        "kind": "target"
+      },
+      "capability": "pdf_text_layer"
+    },
+    {
+      "id": "long_doc_pdf_03",
+      "category": "long_doc_pdf",
+      "url": "https://arxiv.org/pdf/2310.06825",
+      "expected_route": "envoy_task",
+      "why": "PDF needing chunked reading and a stable material lease for later expansion.",
+      "expect_first_evidence_seconds": {
+        "value": 25.0,
+        "kind": "target"
+      },
+      "capability": "pdf_text_layer"
+    },
+    {
+      "id": "long_doc_pdf_04",
+      "category": "long_doc_pdf",
+      "url": "https://www.rfc-editor.org/rfc/rfc8446.txt",
+      "expected_route": "envoy_task",
+      "why": "TLS 1.3 RFC, ~160 pages; one read cannot hold it, and the answer needs resumable ranges.",
+      "expect_first_evidence_seconds": {
+        "value": 20.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "long_doc_pdf_05",
+      "category": "long_doc_pdf",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.txt",
+      "expected_route": "envoy_task",
+      "why": "HTTP semantics RFC, ~200 pages; long text with section anchors, resume required.",
+      "expect_first_evidence_seconds": {
+        "value": 20.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "long_doc_pdf_06",
+      "category": "long_doc_pdf",
+      "url": "https://www.w3.org/TR/WCAG21/",
+      "expected_route": "envoy_task",
+      "why": "Multi-chapter spec; evidence must survive the read (checkpoints) to cite success criteria.",
+      "expect_first_evidence_seconds": {
+        "value": 25.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "long_doc_pdf_07",
+      "category": "long_doc_pdf",
+      "url": "https://docs.python.org/3/reference/datamodel.html",
+      "expected_route": "envoy_task",
+      "why": "Long reference chapter; section-level queries after the first read need retained material.",
+      "expect_first_evidence_seconds": {
+        "value": 22.0,
+        "kind": "target"
+      }
+    },
+    {
+      "id": "long_doc_pdf_08",
+      "category": "long_doc_pdf",
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.pdf",
+      "expected_route": "envoy_task",
+      "why": "10-K filing: hundreds of pages, tables and page windows; only a long task keeps the evidence.",
+      "expect_first_evidence_seconds": {
+        "value": 30.0,
+        "kind": "target"
+      },
+      "capability": "pdf_text_layer"
+    },
+    {
+      "id": "long_doc_pdf_09",
+      "category": "long_doc_pdf",
+      "url": "https://www.irs.gov/pub/irs-pdf/p15.pdf",
+      "expected_route": "envoy_task",
+      "why": "IRS Publication 15: PDF with text layer, many pages, needs page-window evidence.",
+      "expect_first_evidence_seconds": {
+        "value": 25.0,
+        "kind": "target"
+      },
+      "capability": "pdf_text_layer"
+    },
+    {
+      "id": "long_doc_pdf_10",
+      "category": "long_doc_pdf",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r5.pdf",
+      "expected_route": "envoy_task",
+      "why": "800-53 rev5, 400+ pages of controls; page-window extraction and persisted material are the point.",
+      "expect_first_evidence_seconds": {
+        "value": 30.0,
+        "kind": "target"
+      },
+      "capability": "pdf_text_layer"
+    },
+    {
+      "id": "video_01",
+      "category": "video",
+      "url": "https://www.youtube.com/watch?v=aircAruvnKk",
+      "expected_route": "envoy_task",
+      "why": "Video: transcript or frames are the evidence, produced by ASR and kept for timestamp citations.",
+      "expect_first_evidence_seconds": {
+        "value": 60.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_02",
+      "category": "video",
+      "url": "https://www.youtube.com/watch?v=wjZofJX0v4M",
+      "expected_route": "envoy_task",
+      "why": "Lecture video: ASR plus timestamped ranges; a single page read cannot answer it.",
+      "expect_first_evidence_seconds": {
+        "value": 60.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_03",
+      "category": "video",
+      "url": "https://www.bilibili.com/video/BV1GJ411x7h7",
+      "expected_route": "envoy_task",
+      "why": "Bilibili video: captions/media behind JS and possibly login, so a resume-capable task.",
+      "expect_first_evidence_seconds": {
+        "value": 50.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_04",
+      "category": "video",
+      "url": "https://www.douyin.com/video/7234512345678901234",
+      "expected_route": "envoy_task",
+      "why": "Douyin clip: media requests need a browser session and the result must be retained.",
+      "expect_first_evidence_seconds": {
+        "value": 55.0,
+        "kind": "target"
+      },
+      "capability": "media_frames"
+    },
+    {
+      "id": "video_05",
+      "category": "video",
+      "url": "https://vimeo.com/76979871",
+      "expected_route": "envoy_task",
+      "why": "Vimeo video with captions; ASR is the evidence producer and timestamps must survive the run.",
+      "expect_first_evidence_seconds": {
+        "value": 45.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_06",
+      "category": "video",
+      "url": "https://www.ted.com/talks/fei_fei_li_how_we_re_teaching_computers_to_understand_pictures",
+      "expected_route": "envoy_task",
+      "why": "Talk with a transcript track plus slides; evidence is timestamped and long.",
+      "expect_first_evidence_seconds": {
+        "value": 55.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_07",
+      "category": "video",
+      "url": "https://www.xiaohongshu.com/explore/64f0c2a1000000001f03f3a1",
+      "expected_route": "envoy_task",
+      "why": "Platform post with media behind cookies; collection plus retention, not a page fetch.",
+      "expect_first_evidence_seconds": {
+        "value": 55.0,
+        "kind": "target"
+      },
+      "capability": "media_frames"
+    },
+    {
+      "id": "video_08",
+      "category": "video",
+      "url": "https://www.youtube.com/watch?v=zjkBMFhNj_g",
+      "expected_route": "envoy_task",
+      "why": "One-hour-style talk; ASR segments and checkpointed progress are required to resume.",
+      "expect_first_evidence_seconds": {
+        "value": 60.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_09",
+      "category": "video",
+      "url": "https://www.bilibili.com/video/BV1d4411v7cB",
+      "expected_route": "envoy_task",
+      "why": "Bilibili video: captions often absent, so ASR with budget and timestamps.",
+      "expect_first_evidence_seconds": {
+        "value": 50.0,
+        "kind": "target"
+      },
+      "capability": "asr"
+    },
+    {
+      "id": "video_10",
+      "category": "video",
+      "url": "https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi",
+      "expected_route": "envoy_task",
+      "why": "Playlist collection: multiple videos, per-item progress and resume are the reason for a task.",
+      "expect_first_evidence_seconds": {
+        "value": 90.0,
+        "kind": "target"
+      },
+      "capability": "collection"
+    }
+  ]
+}

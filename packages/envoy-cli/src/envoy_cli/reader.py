@@ -94,6 +94,7 @@ from envoy_core.schemas.read_v1 import (
     Quality,
     MaterialSearchRequest,
     PdfLocator,
+    TableContent,
     TextContent,
     Usage,
     VideoLocator,
@@ -311,6 +312,22 @@ class DetectedMedia(PublicPageError):
         self.source = source
 
 
+MAX_PAGE_HEADINGS = 200
+MAX_PAGE_LINKS = 200
+MAX_PAGE_LINK_CANDIDATES = 600
+MAX_PAGE_TABLES = 20
+MAX_PAGE_TABLE_ROWS = 50
+MAX_PAGE_TABLE_COLUMNS = 20
+
+_HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+_BLOCK_BREAK_TAGS = {"p", "div", "li", "br", "tr", *_HEADING_TAGS}
+_IGNORED_LINK_PREFIXES = ("javascript:", "data:", "mailto:", "tel:", "blob:")
+
+
+def _page_inline_text(values) -> str:
+    return " ".join(" ".join(str(value) for value in values).split())
+
+
 class _PageParser(HTMLParser):
     _ignored_tags = {"script", "style", "noscript", "template", "svg", "nav", "footer", "aside", "header"}
 
@@ -320,20 +337,33 @@ class _PageParser(HTMLParser):
         self.text_parts: list[str] = []
         self.images: list[dict[str, str]] = []
         self.video_urls: list[str] = []
+        self.headings: list[dict[str, object]] = []
+        self.links: list[dict[str, str]] = []
+        self.tables: list[dict[str, object]] = []
+        self.meta: dict[str, str] = {}
+        self.headings_truncated = False
+        self.links_truncated = False
+        self.tables_truncated = False
         self._ignored_depth = 0
         self._in_title = False
         self._block_depth = 0
+        self._heading_stack: list[dict[str, object]] = []
+        self._link_stack: list[dict[str, object] | None] = []
+        self._table_stack: list[dict[str, object] | None] = []
+        self._cell_stack: list[dict[str, object]] = []
 
     def handle_starttag(self, tag: str, attrs):
         tag = tag.lower()
         attrs_map = dict(attrs)
         if tag in self._ignored_tags:
             self._ignored_depth += 1
-        if tag in {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "br", "tr"}:
-            self.text_parts.append("\n")
-            self._block_depth += 1
         if tag == "title":
             self._in_title = True
+        if self._ignored_depth == 0:
+            self._capture_start(tag, attrs_map)
+        if tag in _BLOCK_BREAK_TAGS:
+            self.text_parts.append("\n")
+            self._block_depth += 1
         if tag == "img" and self._ignored_depth == 0:
             src = (attrs_map.get("src") or attrs_map.get("data-src") or "").strip()
             if src:
@@ -349,7 +379,8 @@ class _PageParser(HTMLParser):
             self._in_title = False
         if tag in self._ignored_tags and self._ignored_depth:
             self._ignored_depth -= 1
-        if tag in {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "br", "tr"} and self._block_depth:
+        self._capture_end(tag)
+        if tag in _BLOCK_BREAK_TAGS and self._block_depth:
             self.text_parts.append("\n")
             self._block_depth -= 1
 
@@ -361,8 +392,339 @@ class _PageParser(HTMLParser):
             return
         if self._in_title:
             self.title_parts.append(value)
-        else:
+            return
+        if self._link_stack:
+            entry = self._link_stack[-1]
+            if entry is not None:
+                entry["parts"].append(value)
+        if self._heading_stack:
+            self._heading_stack[-1]["parts"].append(value)
+        record = self._table_stack[-1] if self._table_stack else None
+        if isinstance(record, dict) and record.get("in_caption"):
+            record["caption_parts"].append(value)
             self.text_parts.append(value)
+            return
+        if self._cell_stack:
+            cell = self._cell_stack[-1]
+            cell["parts"].append(value)
+            if cell["overflow"]:
+                return
+            self.text_parts.append(value)
+            return
+        if self._heading_stack:
+            # Heading text is exposed as its own HEADING block; keeping it out of the
+            # flat text avoids duplicating it as an ordinary paragraph.
+            return
+        self.text_parts.append(value)
+
+    def _capture_start(self, tag: str, attrs_map: dict[str, str]) -> None:
+        if tag in _HEADING_TAGS:
+            if len(self._heading_stack) < 2:
+                self._heading_stack.append({
+                    "level": int(tag[1]),
+                    "anchor": (attrs_map.get("id") or "").strip(),
+                    "parts": [],
+                })
+            return
+        if tag == "a":
+            href = (attrs_map.get("href") or "").strip()
+            if not href or href.lower().startswith(_IGNORED_LINK_PREFIXES):
+                self._link_stack.append(None)
+            else:
+                self._link_stack.append({
+                    "href": href,
+                    "label": (attrs_map.get("aria-label") or attrs_map.get("title") or "").strip(),
+                    "parts": [],
+                })
+            return
+        if tag == "link":
+            href = (attrs_map.get("href") or "").strip()
+            rel = (attrs_map.get("rel") or "").lower().split()
+            if href and "canonical" in rel and "canonical_url" not in self.meta:
+                self.meta["canonical_url"] = href
+            return
+        if tag == "meta":
+            name = (attrs_map.get("name") or attrs_map.get("property") or "").strip().lower()
+            content = _page_inline_text([attrs_map.get("content") or ""])
+            if not content:
+                return
+            if name == "description" and "description" not in self.meta:
+                self.meta["description"] = content
+            elif name == "og:description" and "description" not in self.meta:
+                self.meta["description"] = content
+            elif name == "og:title" and "og_title" not in self.meta:
+                self.meta["og_title"] = content
+            return
+        if tag == "table":
+            record: dict[str, object] | None = None
+            if not self._table_stack and len(self.tables) < MAX_PAGE_TABLES:
+                record = {
+                    "rows": [],
+                    "columns": [],
+                    "caption_parts": [],
+                    "caption": "",
+                    "in_caption": False,
+                    "truncated_rows": False,
+                    "truncated_columns": False,
+                    "row_index": 0,
+                    "current_row": None,
+                    "heading_index": len(self.headings),
+                }
+            elif not self._table_stack:
+                self.tables_truncated = True
+            self._table_stack.append(record)
+            return
+        if not self._table_stack:
+            return
+        record = self._table_stack[-1]
+        if record is None:
+            return
+        if tag == "caption":
+            record["in_caption"] = True
+        elif tag == "tr":
+            record["row_index"] = int(record["row_index"]) + 1
+            record["current_row"] = {"cells": [], "header": True}
+        elif tag in {"td", "th"}:
+            row = record["current_row"]
+            if not isinstance(row, dict):
+                return
+            if tag == "td":
+                row["header"] = False
+            overflow_row = int(record["row_index"]) > MAX_PAGE_TABLE_ROWS + 1
+            overflow_column = len(row["cells"]) >= MAX_PAGE_TABLE_COLUMNS
+            if overflow_row:
+                record["truncated_rows"] = True
+            elif overflow_column:
+                record["truncated_columns"] = True
+            self._cell_stack.append({"parts": [], "overflow": overflow_row or overflow_column})
+            if not (overflow_row or overflow_column):
+                self.text_parts.append(" ")
+
+    def _capture_end(self, tag: str) -> None:
+        if tag in _HEADING_TAGS:
+            if self._heading_stack:
+                heading = self._heading_stack.pop()
+                text = _page_inline_text(heading["parts"])
+                if text:
+                    if len(self.headings) < MAX_PAGE_HEADINGS:
+                        self.headings.append({
+                            "level": heading["level"],
+                            "text": text,
+                            "anchor": heading["anchor"],
+                        })
+                    else:
+                        self.headings_truncated = True
+            return
+        if tag == "a":
+            if self._link_stack:
+                entry = self._link_stack.pop()
+                if isinstance(entry, dict):
+                    text = _page_inline_text(entry["parts"]) or entry["label"]
+                    if text:
+                        if len(self.links) < MAX_PAGE_LINK_CANDIDATES:
+                            self.links.append({"text": text, "href": entry["href"]})
+                        else:
+                            self.links_truncated = True
+            return
+        if tag == "table":
+            if self._table_stack:
+                record = self._table_stack.pop()
+                if isinstance(record, dict):
+                    row = record["current_row"]
+                    if isinstance(row, dict):
+                        self._finish_row(record, row)
+                    record["current_row"] = None
+                    caption = _page_inline_text(record["caption_parts"])
+                    record["caption"] = caption
+                    if record["rows"] or record["columns"] or caption:
+                        self.tables.append(record)
+                    if record["truncated_rows"] or record["truncated_columns"]:
+                        self.tables_truncated = True
+            return
+        if not self._table_stack:
+            return
+        record = self._table_stack[-1]
+        if record is None:
+            return
+        if tag == "caption":
+            record["in_caption"] = False
+        elif tag in {"td", "th"}:
+            if self._cell_stack:
+                cell = self._cell_stack.pop()
+                row = record["current_row"]
+                if isinstance(row, dict) and not cell["overflow"]:
+                    text = _page_inline_text(cell["parts"])
+                    if text:
+                        row["cells"].append(text)
+        elif tag == "tr":
+            row = record["current_row"]
+            if isinstance(row, dict):
+                self._finish_row(record, row)
+            record["current_row"] = None
+
+    def _finish_row(self, record: dict[str, object], row: dict[str, object]) -> None:
+        cells = [str(cell) for cell in row["cells"]]
+        if not cells:
+            return
+        if int(record["row_index"]) == 1 and row["header"] and not record["columns"]:
+            record["columns"] = cells
+            return
+        rows = record["rows"]
+        if len(rows) < MAX_PAGE_TABLE_ROWS:
+            rows.append(cells)
+        else:
+            record["truncated_rows"] = True
+
+
+def _page_heading_blocks(parser: _PageParser, source_url: str) -> list[MaterialBlock]:
+    blocks: list[MaterialBlock] = []
+    ancestors: list[tuple[int, str]] = []
+    for index, heading in enumerate(parser.headings, start=1):
+        level = int(heading["level"])
+        while ancestors and ancestors[-1][0] >= level:
+            ancestors.pop()
+        block_id = f"blk-heading-{index:04d}"
+        anchor = str(heading.get("anchor") or "")
+        text = str(heading["text"])
+        blocks.append(MaterialBlock(
+            id=block_id,
+            kind=MaterialKind.HEADING,
+            content=TextContent(type="text", text=text),
+            origin=MaterialOrigin.SOURCE_TEXT,
+            locator=WebLocator(
+                type="web",
+                source_url=source_url,
+                block_id=block_id,
+                selector=f"h{level}" + (f"#{anchor}" if anchor else ""),
+                quote=text[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
+            parent_id=ancestors[-1][1] if ancestors else "blk-title",
+            order=index,
+        ))
+        ancestors.append((level, block_id))
+    return blocks
+
+
+def _page_structured_links(parser: _PageParser, base_url: str) -> tuple[list[dict[str, str]], bool]:
+    links: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    truncated = parser.links_truncated
+    base_host = (urlparse(base_url).hostname or "").lower()
+    for item in parser.links:
+        href = item["href"].strip()
+        if not href:
+            continue
+        if href.lower().startswith(_IGNORED_LINK_PREFIXES):
+            continue
+        absolute = _redact_url(urljoin(base_url, href))
+        if not absolute.lower().startswith(("http://", "https://")):
+            continue
+        text = item["text"] or absolute
+        key = (text, absolute)
+        if key in seen:
+            continue
+        seen.add(key)
+        host = (urlparse(absolute).hostname or "").lower()
+        if href.startswith("#"):
+            kind = "anchor"
+        elif host == base_host:
+            kind = "internal"
+        else:
+            kind = "external"
+        links.append({"text": text, "url": absolute, "kind": kind})
+        if len(links) >= MAX_PAGE_LINKS:
+            truncated = True
+            break
+    return links, truncated
+
+
+def _page_table_blocks(parser: _PageParser, source_url: str, start_order: int) -> list[MaterialBlock]:
+    blocks: list[MaterialBlock] = []
+    for index, table in enumerate(parser.tables, start=1):
+        columns = [str(cell) for cell in table.get("columns") or []]
+        rows = [[str(cell) for cell in row] for row in table.get("rows") or []]
+        if not columns and not rows:
+            continue
+        block_id = f"blk-table-{index:04d}"
+        caption = str(table.get("caption") or "") or None
+        heading_index = int(table.get("heading_index") or 0)
+        parent_id = f"blk-heading-{heading_index:04d}" if heading_index else "blk-title"
+        quote_source = caption or (columns[0] if columns else (rows[0][0] if rows and rows[0] else ""))
+        unresolved: list[str] = []
+        if table.get("truncated_rows"):
+            unresolved.append(f"Table rows beyond {MAX_PAGE_TABLE_ROWS} were not extracted")
+        if table.get("truncated_columns"):
+            unresolved.append(f"Table columns beyond {MAX_PAGE_TABLE_COLUMNS} were not extracted")
+        blocks.append(MaterialBlock(
+            id=block_id,
+            kind=MaterialKind.TABLE,
+            content=TableContent(type="table", columns=columns, rows=rows, caption=caption),
+            origin=MaterialOrigin.TABLE_PARSE,
+            locator=WebLocator(
+                type="web",
+                source_url=source_url,
+                block_id=block_id,
+                selector="table",
+                quote=quote_source[:MAX_LOCATOR_QUOTE_CHARS],
+            ),
+            parent_id=parent_id,
+            order=start_order + index - 1,
+            quality=Quality(unresolved=unresolved),
+        ))
+    return blocks
+
+
+def _page_structure_details(
+    parser: _PageParser,
+    base_url: str,
+    heading_blocks: list[MaterialBlock],
+    table_blocks: list[MaterialBlock],
+    page_links: list[dict[str, str]],
+    links_truncated: bool,
+) -> dict[str, object]:
+    headings = []
+    for index, block in enumerate(heading_blocks):
+        heading = parser.headings[index]
+        headings.append({
+            "block_id": block.id,
+            "level": int(heading["level"]),
+            "text": block.content.text,
+            "anchor": str(heading.get("anchor") or "") or None,
+        })
+    tables = [
+        {
+            "block_id": block.id,
+            "rows": len(block.content.rows),
+            "columns": len(block.content.columns),
+            "caption": block.content.caption,
+            "truncated": bool(block.quality and block.quality.unresolved),
+        }
+        for block in table_blocks
+    ]
+    canonical = parser.meta.get("canonical_url", "")
+    details: dict[str, object] = {
+        "headings": headings,
+        "headings_truncated": parser.headings_truncated,
+        "page_links": page_links,
+        "links_truncated": links_truncated,
+        "tables": tables,
+        "tables_truncated": parser.tables_truncated,
+        "canonical_url": _redact_url(urljoin(base_url, canonical)) if canonical else None,
+        "description": parser.meta.get("description") or None,
+        "og_title": parser.meta.get("og_title") or None,
+    }
+    # A page without headings, links, tables or head metadata keeps its previous
+    # response shape; the structure keys only cost tokens when there is structure.
+    if not any((
+        headings,
+        page_links,
+        tables,
+        details["canonical_url"],
+        details["description"],
+        details["og_title"],
+    )):
+        return {}
+    return details
 
 
 class _DouyinNoteGalleryParser(HTMLParser):
@@ -8987,6 +9349,16 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             "set with envoy_discover on the creator space or the collection link",
             details={"reader": "collection_guard"},
         )
+    if not request.scope.include_visual:
+        # GitHub repository pages, file views (with line ranges), commits, pull
+        # requests and issues are structured data. The REST API returns the tree,
+        # the bytes and the diff directly; booting a browser for them costs a
+        # process and still yields only a rendered page title.
+        from .github_source import read_github_source
+
+        github_response = read_github_source(request, source_url=source_url)
+        if github_response is not None:
+            return github_response
     direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
     direct_douyin_note = (
         urlparse(source_url).hostname in {"douyin.com", "www.douyin.com"}
@@ -9503,6 +9875,8 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             ),
             order=0,
         )
+        heading_blocks = _page_heading_blocks(parser, safe_source_url)
+        page_links, page_links_truncated = _page_structured_links(parser, final_url)
         visual_budget = max(0, request.budget.max_visual_inputs)
         goal_terms = _goal_terms(request.goal)
         raw_image_candidates = [
@@ -9673,7 +10047,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             except OSError:
                 can_continue = False
                 continuation_storage_failed = True
-        blocks = [title_block]
+        blocks = [title_block, *heading_blocks]
         if returned_text:
             blocks.append(MaterialBlock(
                 id="blk-body-0001",
@@ -9686,8 +10060,10 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     block_id="blk-body-0001",
                     quote=returned_text[:MAX_LOCATOR_QUOTE_CHARS],
                 ),
-                order=1,
+                order=len(blocks),
             ))
+        table_blocks = _page_table_blocks(parser, safe_source_url, len(blocks))
+        blocks.extend(table_blocks)
         resources = []
         ocr_blocks = []
         ocr_unresolved = []
@@ -9900,6 +10276,14 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                                 }
                                 if goal_terms
                                 else {}
+                            ),
+                            **_page_structure_details(
+                                parser,
+                                final_url,
+                                heading_blocks,
+                                table_blocks,
+                                page_links,
+                                page_links_truncated,
                             ),
                         },
                     ),

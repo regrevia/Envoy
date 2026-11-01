@@ -455,6 +455,19 @@ TOOLS = [
     {
         "name": "envoy_read",
         "description": (
+            "Route first: read a short static page, a file the host already has, "
+            "or source navigation with the host's own fetch, and call this only "
+            "when that is blocked, truncated, needs JavaScript or login, is "
+            "audio/video/PDF/Office, or must be retained for envoy_expand, "
+            "envoy_search, or envoy_replay. Skip it for material already in this "
+            "turn's context and for a URL the user only wants edited or quoted. "
+            "On GitHub, GitLab, and Bitbucket use gh or git when they are at hand. "
+            "Without them, a GitHub repo, tree, blob, commit, pull, or issue link "
+            "belongs here: that path goes through the GitHub API with no browser "
+            "and returns the tree, a file's line range with its path and commit "
+            "SHA, the diff and stats, or the issue body; a truncated tree and any "
+            "section it did not fetch are named in coverage.unresolved. A GitLab "
+            "or Bitbucket page still returns only the title and rendered body. "
             "Read a public URL toward the user's stated goal. The source type is "
             "auto-detected; use returned coverage and resources to decide whether "
             "to expand text or request host visual/video inspection. Public videos "
