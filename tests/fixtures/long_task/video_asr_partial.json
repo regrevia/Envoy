@@ -1,0 +1,198 @@
+{
+  "protocol_version": "envoy.read/1",
+  "request_id": "capture-asr-partial",
+  "session_id": null,
+  "material_id": "mat-0d0f26b3a8f306acc2392cba",
+  "source_revision": "7f9e4a9f1eb806a45d8aa5d06ced5e207d1722dcd4e395ddba161a0e33402c1a",
+  "execution_state": "completed",
+  "result": "partial",
+  "blocks": [
+    {
+      "id": "blk-title",
+      "kind": "heading",
+      "content": {
+        "type": "text",
+        "text": "A long public video",
+        "language": null
+      },
+      "origin": "source_text",
+      "locator": {
+        "type": "web",
+        "source_url": "https://video.example/watch/1",
+        "block_id": "blk-title",
+        "selector": null,
+        "quote": "A long public video"
+      },
+      "parent_id": null,
+      "order": 0,
+      "relations": [],
+      "quality": {
+        "engine": null,
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-transcript",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "[00:00.000] Segment 0: the instructor explains setup step 0.\n\n[00:02.000] Segment 1: the instructor explains setup step 1.\n\n[00:04.000] Segment 2: the instructor explains setup step 2.\n\n[00:06.000] Segment 3: the instructor explains setup step 3.\n\n[00:08.000] Segment 4: the instructor explains setup step 4.\n\n[00:10.000] Segment 5: the instructor explains setup step 5.\n\n[00:12.000] Segment 6: the instructor explains setup step 6.\n\n[00:14.000] Segment 7: the instructor explains setup step 7.\n\n[00:16.000] Segment 8: the instructor explains setup step 8.\n\n[00:18.000] Segment 9: the instructor explains setup step 9.\n\n[00:20.000] Segment 10: the instructor explains setup step 10.\n\n[00:22.000] Segment 11: the instructor explains setup step 11.\n\n[00:24.000] Segment 12: the instructor explains setup step 12.\n\n[00:26.000] Segment 13: the instructor explains setup step 13.\n\n[00:28.000] Segment 14: the instructor explains setup step 14.\n\n[00:30.000] Segment 15: the instructor explains setup step 15.\n\n[00:32.000] Segment 16: the instructor explains setup step 16.\n\n[00:34.000] Segment 17: the instructor explains setup step 17.\n\n[00:36.000] Segment 18: the instructor explains setup step 18.\n\n[00:38.000] Segment 19: the instructor explains setup step 19.\n\n[00:40.000] Segment 20: the instructor explains setup step 20.\n\n[00:42.000] Segment 21: the instructor explains setup step 21.\n\n[00:44.000] Segment 22: the instructor explains setup step 22.\n\n[00:46.000] Segment 23: the instructor explains setup step 23.\n\n[00:48.000] Segment 24: the instructor explains setup step 24.\n\n[00:50.000] Segment 25: the instructor explains setup step 25.\n\n[00:52.000] Segment 26: the instructor explains setup step 26.\n\n[00:54.000] Segment 27: the instructor explains setup step 27.\n\n[00:56.000] Segment 28: the instructor explains setup step 28.\n\n[00:58.000] Segment 29: the instructor explains setup step 29.\n\n[01:00.000] Segment 30: the instructor explains setup step 30.\n\n[01:02.000] Segment 31: the instructor explains setup step 31.\n\n[01:04.000] Segment 32: the instructor explains setup step 32.\n\n[01:06.000] Segment 33: the instructor explains setup step 33.\n\n[01:08.000] Segment 34: the instructor explains setup step 34.\n\n[01:10.000] Segment 35: the instructor explains setup step 35.\n\n[01:12.000] Segment 36: the instructor explains setup step 36.\n\n[01:14.000] Segment 37: the instructor explains setup step 37.\n\n[01:16.000] Segment 38: the instructor explains setup step 38.\n\n[01:18.000] Segment 39: the instructor explains setup step 39.\n\n[01:20.000] Segment 40: the instructor explains setup step 40.\n\n[01:22.000] Segment 41: the instructor explains setup step 41.\n\n[01:24.000] Segment 42: the instructor explains setup step 42.\n\n[01:26.000] Segment 43: the instructor explains setup step 43.\n\n[01:28.000] Segment 44: the instructor explains setup step 44.\n\n[01:30.000] Segment 45: the instructor explains setup step 45.\n\n[01:32.000] Segment 46: the instructor explains setup step 46.\n\n[01:34.000] Segment 47: the instructor explains setup step 47.\n\n[01:36.000] Segment 48: the instructor explains setup step 48.\n\n[01:38.000] Segment 49: the instructor explains setup step 49.\n\n[01:40.000] Segment 50: the instructor explains setup step 50.\n\n[01:42.000] Segment 51: the instructor explains setup step 51.\n\n[01:44.000] Segment 52: the instructor explains setup step 52.\n\n[01:46.000] Segment 53: the instructor explains setup step 53.\n\n[01:48.000] Segment 54: the instructor explains setup step 54.\n\n[01:50.000] Segment 55: the instructor explains setup step 55.\n\n[01:52.000] Segment 56: the instructor explains setup step 56.\n\n[01:54.000] Segment 57: the instructor explains setup step 57.\n\n[01:56.000] Segment 58: the instructor explains setup step 58.\n\n[01:58.000] Segment 59: the instructor explains setup step 59.",
+        "language": "en"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://video.example/watch/1",
+        "start_seconds": 0.0,
+        "end_seconds": 120.0,
+        "frame_id": null
+      },
+      "parent_id": "blk-title",
+      "order": 1,
+      "relations": [],
+      "quality": {
+        "engine": null,
+        "engine_score": null,
+        "unresolved": []
+      }
+    }
+  ],
+  "resources": [],
+  "coverage": {
+    "modalities": {
+      "text": {
+        "discovered": 60,
+        "extracted": 60,
+        "returned": 1,
+        "processed": null,
+        "delivered": null,
+        "observed": null,
+        "extraction": "partial",
+        "unresolved": [
+          "Local ASR only covered the reported time range before its work budget was reached"
+        ],
+        "details": {
+          "source": "video_asr",
+          "language": "en",
+          "transcript_source": "asr",
+          "total_chars": 3818,
+          "returned_chars": 3818,
+          "continuation_available": true,
+          "next_offset": 3818,
+          "goal_candidates": [
+            {
+              "offset": 0,
+              "end_offset": 60,
+              "score": 3,
+              "snippet": "[00:00.000] Segment 0: the instructor explains setup step 0."
+            },
+            {
+              "offset": 62,
+              "end_offset": 122,
+              "score": 3,
+              "snippet": "[00:02.000] Segment 1: the instructor explains setup step 1."
+            },
+            {
+              "offset": 124,
+              "end_offset": 184,
+              "score": 3,
+              "snippet": "[00:04.000] Segment 2: the instructor explains setup step 2."
+            },
+            {
+              "offset": 186,
+              "end_offset": 246,
+              "score": 3,
+              "snippet": "[00:06.000] Segment 3: the instructor explains setup step 3."
+            },
+            {
+              "offset": 248,
+              "end_offset": 308,
+              "score": 3,
+              "snippet": "[00:08.000] Segment 4: the instructor explains setup step 4."
+            }
+          ],
+          "estimated_returned_tokens": 960,
+          "estimated_remaining_tokens": 0,
+          "estimated_token_basis": "ascii4_nonascii1_v1",
+          "estimated_token_scope": "returned_material_text_only",
+          "token_budget": 8000,
+          "total_token_budget": null,
+          "remaining_tokens": 7040,
+          "returned_tokens": 960
+        }
+      },
+      "video": {
+        "discovered": 1,
+        "extracted": 1,
+        "returned": 1,
+        "processed": 1,
+        "delivered": null,
+        "observed": null,
+        "extraction": "partial",
+        "unresolved": [
+          "Video frames were not inspected; this material contains transcript evidence only"
+        ],
+        "details": {
+          "video_id": "long-sample",
+          "duration_seconds": 3600,
+          "subtitle_language": "en",
+          "transcript_source": "asr",
+          "requested_range": null,
+          "available_subtitle_languages": [],
+          "visual_inspection": "not_performed",
+          "asr_model": "base",
+          "transcription_status": "partial",
+          "processed_until_seconds": 120,
+          "speech_seconds": 120.0,
+          "speech_coverage": 1.0,
+          "transcript_confidence": "normal"
+        }
+      }
+    },
+    "unresolved": [
+      "Video frames were not inspected; this material contains transcript evidence only",
+      "Local ASR stopped at 02:00.000; later audio remains untranscribed"
+    ],
+    "sampled_ranges": [
+      {
+        "modality": "audio",
+        "start_seconds": 0,
+        "end_seconds": 120
+      }
+    ]
+  },
+  "needs": [],
+  "errors": [],
+  "usage": {
+    "host_model": {
+      "status": "unknown",
+      "provider": null,
+      "model": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost": null,
+      "duration_ms": null,
+      "details": {}
+    },
+    "auxiliary_models": [],
+    "local": {
+      "asr_model": "base",
+      "asr_duration_ms": 200,
+      "downloaded_bytes": 1000,
+      "media_download_ms": 100
+    }
+  },
+  "expires_at": null,
+  "_provenance": {
+    "kind": "captured_shape",
+    "signal": "synthetic",
+    "commit": "419969f",
+    "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_asr_partial",
+    "generated_at": "2026-10-31",
+    "replaced_call": "reader.transcribe_audio_file",
+    "fake_output": "{\"status\": \"partial\", \"language\": \"en\", \"model\": \"base\", \"elapsed_ms\": 200, \"next_seconds\": 120.0, \"segments\": 60 cues covering 0-120 s}",
+    "proof_scope": "proves that a reader-shaped partial-ASR receipt folds into a media-pending checkpoint that is not finished and whose resume routing is a range read; does not prove transcription quality, cue timing, duplicate avoidance, or resume after a real process interruption",
+    "note": "Real receipt from reader.read_public_page (video source, no subtitles, local ASR) with transcribe_audio_file monkeypatched to a partial result: 120 s processed of 3600 s. The text modality covers every character it has (delivered_chars=3818, total_chars=3818), so the v1 rule (remaining_chars() == 0 and state in {PARTIAL, CHECKPOINTED, RESUMING}) evaluates to True for this receipt: that rule is the bug that let 120 s of 3600 s count as finished. Under checkpoint v2 the same fold gives media_pending()=True and is_finished()=False."
+  }
+}

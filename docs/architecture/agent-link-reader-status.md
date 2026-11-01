@@ -25,7 +25,7 @@
 | 微信公众号和通用网页 | 进行中 | 通用公开页面提取已接入同一入口；微信公众号尚缺固定真实样本验收和长文/延迟资源测试 |
 | PDF、Office、独立音频/图片入口 | 进行中 | 独立 Skill 支持 PDF 文本层、纯文本/Markdown/CSV/JSON 直链和公开图片视觉交接；PDF 按页定位，长纯文本按字符范围续读；无文本层扫描页明确提示 OCR 能力缺口；独立音频 URL、Office 和扫描页 OCR 仍待接入 |
 | 可供 Agent 消费的 Markdown/HTML/ZIP | 已验证（开发验收） | 公共图文 ZIP 含索引、来源 Markdown、HTML、manifest、`materials.json` 和全部配图；Markdown 适合正文消费，协议 JSON 提供渐进读取和资源定位 |
-| 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；Worker 租约、并发配额、取消贯通仍未达到方案门槛 |
+| 长任务、任务状态、重试与素材检查点 | 进行中 | 现有网站任务链可恢复；素材检查点 v2 记录媒体与文本进度、续读起点与恢复动作，落地 v1 兼容加载与“单测形状”夹具；Worker 租约、并发配额、取消贯通仍未达到方案门槛。真实 ≥60 分钟视频续读、扫描件/复杂版式 PDF 未验收 |
 | 独立无数据库处理核心 | 进行中 | `packages/envoy-core` 已承载第一版 `envoy.read/1` 请求/材料/覆盖/资源 schema；现有 worker 尚未整体迁出 ORM |
 | CLI、宿主 Skill 与 MCP 桥 | 进行中 | `dev` 有 `packages/envoy-cli`、`envoy read/expand/doctor/mcp`；MCP 支持新版 per-request 元数据和旧版初始化协商；Skill 按目标指导 read/search/targeted expand。字幕时间定位、长行命中、跨 search/expand 区间账本、累计预算、material 文件锁、稳定视觉资源 ID、观察关联校验、租约帧交接均已实现。平台访问仍因登录/站点挑战而不稳定，未据此宣传全平台已验收 |
 | 多宿主链接优先 hook | 已验证（开发验收，`dev`） | `envoy hook prompt --host {claude-code,codex,dsh}` 共享同一 URL 提取/内网过滤/回退策略；Claude Code 插件已在本机通过 marketplace 安装并在 `--debug` 日志确认 `UserPromptSubmit` 注入 668 字符 `additionalContext`；Codex 插件已安装到 `~/.codex/plugins/cache/envoy/envoy/0.1.6`，因 0.156 不再加载插件 hook，用户级 `~/.codex/hooks.json` 已由 `envoy hook install --host codex` 写入并实测注入；DSH 使用 `agent/pre-step`。策略明确不替代宿主联网搜索：无链接检索仍用原生搜索，Envoy 只处理用户链接、视频/音频和需完整来源证据的读取，并通过分段读取/search/expand 控制上下文。 |
@@ -119,6 +119,8 @@
 - GitHub Actions：`dev@be855b0` run `39276276218` 首次 Windows standalone job 曾失败于测试依赖/ZIP 顺序；修复后 `dev@64cc907` run `39277166622`、`dev@d8f98a9` run `39278125707`、`dev@ca8d945` run `39283200077`、`dev@2efa0ec` run `39285278677`、`dev@64542df` run `39286119485`、`dev@83543ac` run `39288217750`、`dev@c480c1d` run `39290541329`、`dev@2e1bbf9` run `39299917956`、`dev@1091e8c` run `39300829830`、`dev@fb738ce` run `39301606519`、`dev@9144280` run `39302281396`、`dev@9bdf3dc` run `39304857145` 和当前 `dev@7b31a99` run `39305458134` 的四个 job 均通过。
 - 最新本机回归：全仓 `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q` 为 `524 passed, 143 warnings`；CLI/MCP/protocol/video/OCR/runtime 子集最近一次为 `193 passed`；wheel clean-install/console entrypoint/doctor smoke、Skill ZIP 和视频 evidence benchmark `5 passed`；wheel 已在独立 Python 3.11 runtime 重新安装并通过 `envoy doctor --json`。前端 production build 成功，保留两个 Hook 依赖警告。Backend venv 的 Python 3.9/LibreSSL urllib3 和 FastAPI `on_event` 弃用仍有 warnings。
 - GitHub 安装发行（本地改动，尚未发布）：新增自包含 CLI wheel 构建、Skill 安装说明、Release tag 版本校验及 wheel/Skill ZIP/SHA-256 发布工作流。尚未实际创建 GitHub Release 或验证宿主 MCP 配置自动写入；安装步骤仍需用户明确确认所用宿主。
+
+- 2026-11-01 素材检查点 v2（工作区 `419969f` 上未提交改动）：核心代码把“是否读完”从状态词改为证据函数——`processed_seconds` 取四个候选的**最大值**、`media_pending()` 是三信号并集、字幕型视频 `remaining_seconds()` 返回 `None`、`overall_state()` 对全部 `is_finished()` 的材料判 `COMPLETED`（故任务可 `completed` 而材料 `state` 仍 `partial`），已完成材料若仍有未处理秒数会降级为 `partial`；v1 检查点按“未知”加载而非 0。CLI `get`/`next`/`list` 增加派生键 `kind`/`media`/`remaining_seconds`/`is_finished`/`resume_kind`，落盘记录不含。当前回归：定向 73 项、`tests/cli` 全量 1068 项通过；四份夹具由守卫测试重新生成后字节/哈希一致（`tests/fixtures/long_task/README.md` 表即该测试 `-s` 输出）；探针复算 `video_asr_partial` → 剩余 3480.0 秒、恢复范围 `120→3600`，`video_asr_complete` → `already_finished`。证据级别 `unit_checked`；**未验证**：真实 ≥60 分钟视频 ASR 续读（本机无 whisper，7 个验收场景全 `not_run`）、扫描件/复杂版式 PDF、以及“只改一个时间段复用其余片段”（ASR 检查点身份带范围，改范围即重转录，仅界定重复工作量未修）。三份新文档：`docs/architecture/long-task-checkpoint-v2.md`、`docs/acceptance/long-video-acceptance-2026-11-01.md`、`docs/experiments/long-task-metrics-2026-11-01.md`。支持表述仍只是“部分材料能续读”；本项不构成成熟度结论。
 
 ## 下一次状态更新必须包括
 

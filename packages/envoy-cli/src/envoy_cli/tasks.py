@@ -113,9 +113,36 @@ def create_task(goal: str, sources: list[str], *, task_id: str | None = None) ->
         return _save(path, task)
 
 
+def _with_material_progress(payload: dict, task: lt.LongTask) -> dict:
+    """Add the resume-facing view of each material to a checkpoint payload.
+
+    The stored record stays exactly what the core serialized: adding a lease,
+    an expiry or a model session id here would make the checkpoint depend on
+    borrowed state. Everything added below is derived from the record itself.
+    """
+    by_url = {item.url: item for item in task.materials}
+    materials = payload.get("materials")
+    if isinstance(materials, list):
+        for item in materials:
+            if not isinstance(item, dict):
+                continue
+            material = by_url.get(item.get("url"))
+            if material is None:
+                continue
+            item["kind"] = material.kind
+            item["media"] = material.media_progress()
+            item["remaining_seconds"] = material.remaining_seconds()
+            # The state word is not the signal: a video whose transcript covers
+            # the whole timeline can still carry "partial" from its last ready
+            # receipt. A caller must read these two instead.
+            item["is_finished"] = material.is_finished()
+            item["resume_kind"] = material.resume_kind()
+    return payload
+
+
 def get_task(task_id: str) -> dict:
     _, task = _load(task_id)
-    return lt.to_checkpoint(task)
+    return _with_material_progress(lt.to_checkpoint(task), task)
 
 
 def apply_receipt(
@@ -125,7 +152,13 @@ def apply_receipt(
     *,
     offset: int,
 ) -> dict:
-    """Fold one real receipt into the task, without inventing any delivery."""
+    """Fold one real receipt into the task, without inventing any delivery.
+
+    ``offset`` is the text offset the receipt's text modality starts at: the
+    character position in the transcript for a media receipt, just like the
+    character position in a document for a text one. A fresh media read starts
+    at 0, so 0 is a real offset and never a reason to refuse the receipt.
+    """
     path = _task_path(task_id)
     with _locked(path):
         path, task = _load(task_id)
@@ -166,6 +199,7 @@ def next_request(
             max_chars=max_chars,
             max_total_response_chars=max_total_response_chars,
             observed_revision=observed_revision,
+            goal=task.goal,
         )
     except lt.TaskBlocked as exc:
         return {
@@ -180,6 +214,9 @@ def next_request(
         "task_id": task_id,
         "source": url,
         "result": "ready",
+        "action": material.resume_kind(),
+        "media": material.media_progress(),
+        "remaining_seconds": material.remaining_seconds(),
         "delivered_chars": material.delivered_chars,
         "remaining_chars": material.remaining_chars(),
         "source_revision": material.source_revision,
@@ -208,6 +245,9 @@ def list_tasks() -> list[dict]:
                 "sources": len(task.materials),
                 "delivered_chars": sum(item.delivered_chars for item in task.materials),
                 "updated_at": task.updated_at,
+                "materials": _with_material_progress(lt.to_checkpoint(task), task)[
+                    "materials"
+                ],
             }
         )
     return tasks

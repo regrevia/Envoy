@@ -1,0 +1,1601 @@
+{
+  "protocol_version": "envoy.read/1",
+  "request_id": "capture-page-asr-partial",
+  "session_id": null,
+  "material_id": "mat-8e62382452eceeec59172921",
+  "source_revision": "7ad15156eaebcd144359eb1d1c6e2d1601eb3d6d360aed475cf37f2a90bcb910",
+  "execution_state": "completed",
+  "result": "partial",
+  "blocks": [
+    {
+      "id": "blk-video-asr-0001",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第0段：讲解者说明配置文件的第0个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 0.0,
+        "end_seconds": 2.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 0,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0002",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第1段：讲解者说明配置文件的第1个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 2.0,
+        "end_seconds": 4.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 1,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0003",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第2段：讲解者说明配置文件的第2个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 4.0,
+        "end_seconds": 6.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 2,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0004",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第3段：讲解者说明配置文件的第3个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 6.0,
+        "end_seconds": 8.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 3,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0005",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第4段：讲解者说明配置文件的第4个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 8.0,
+        "end_seconds": 10.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 4,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0006",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第5段：讲解者说明配置文件的第5个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 10.0,
+        "end_seconds": 12.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 5,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0007",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第6段：讲解者说明配置文件的第6个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 12.0,
+        "end_seconds": 14.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 6,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0008",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第7段：讲解者说明配置文件的第7个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 14.0,
+        "end_seconds": 16.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 7,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0009",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第8段：讲解者说明配置文件的第8个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 16.0,
+        "end_seconds": 18.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 8,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0010",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第9段：讲解者说明配置文件的第9个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 18.0,
+        "end_seconds": 20.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 9,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0011",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第10段：讲解者说明配置文件的第10个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 20.0,
+        "end_seconds": 22.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 10,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0012",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第11段：讲解者说明配置文件的第11个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 22.0,
+        "end_seconds": 24.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 11,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0013",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第12段：讲解者说明配置文件的第12个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 24.0,
+        "end_seconds": 26.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 12,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0014",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第13段：讲解者说明配置文件的第13个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 26.0,
+        "end_seconds": 28.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 13,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0015",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第14段：讲解者说明配置文件的第14个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 28.0,
+        "end_seconds": 30.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 14,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0016",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第15段：讲解者说明配置文件的第15个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 30.0,
+        "end_seconds": 32.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 15,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0017",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第16段：讲解者说明配置文件的第16个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 32.0,
+        "end_seconds": 34.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 16,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0018",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第17段：讲解者说明配置文件的第17个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 34.0,
+        "end_seconds": 36.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 17,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0019",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第18段：讲解者说明配置文件的第18个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 36.0,
+        "end_seconds": 38.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 18,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0020",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第19段：讲解者说明配置文件的第19个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 38.0,
+        "end_seconds": 40.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 19,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0021",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第20段：讲解者说明配置文件的第20个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 40.0,
+        "end_seconds": 42.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 20,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0022",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第21段：讲解者说明配置文件的第21个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 42.0,
+        "end_seconds": 44.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 21,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0023",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第22段：讲解者说明配置文件的第22个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 44.0,
+        "end_seconds": 46.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 22,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0024",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第23段：讲解者说明配置文件的第23个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 46.0,
+        "end_seconds": 48.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 23,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0025",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第24段：讲解者说明配置文件的第24个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 48.0,
+        "end_seconds": 50.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 24,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0026",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第25段：讲解者说明配置文件的第25个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 50.0,
+        "end_seconds": 52.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 25,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0027",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第26段：讲解者说明配置文件的第26个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 52.0,
+        "end_seconds": 54.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 26,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0028",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第27段：讲解者说明配置文件的第27个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 54.0,
+        "end_seconds": 56.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 27,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0029",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第28段：讲解者说明配置文件的第28个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 56.0,
+        "end_seconds": 58.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 28,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0030",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第29段：讲解者说明配置文件的第29个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 58.0,
+        "end_seconds": 60.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 29,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0031",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第30段：讲解者说明配置文件的第30个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 60.0,
+        "end_seconds": 62.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 30,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0032",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第31段：讲解者说明配置文件的第31个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 62.0,
+        "end_seconds": 64.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 31,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0033",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第32段：讲解者说明配置文件的第32个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 64.0,
+        "end_seconds": 66.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 32,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0034",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第33段：讲解者说明配置文件的第33个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 66.0,
+        "end_seconds": 68.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 33,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0035",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第34段：讲解者说明配置文件的第34个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 68.0,
+        "end_seconds": 70.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 34,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0036",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第35段：讲解者说明配置文件的第35个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 70.0,
+        "end_seconds": 72.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 35,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0037",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第36段：讲解者说明配置文件的第36个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 72.0,
+        "end_seconds": 74.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 36,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0038",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第37段：讲解者说明配置文件的第37个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 74.0,
+        "end_seconds": 76.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 37,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0039",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第38段：讲解者说明配置文件的第38个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 76.0,
+        "end_seconds": 78.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 38,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0040",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第39段：讲解者说明配置文件的第39个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 78.0,
+        "end_seconds": 80.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 39,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0041",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第40段：讲解者说明配置文件的第40个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 80.0,
+        "end_seconds": 82.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 40,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0042",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第41段：讲解者说明配置文件的第41个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 82.0,
+        "end_seconds": 84.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 41,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0043",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第42段：讲解者说明配置文件的第42个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 84.0,
+        "end_seconds": 86.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 42,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0044",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第43段：讲解者说明配置文件的第43个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 86.0,
+        "end_seconds": 88.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 43,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0045",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第44段：讲解者说明配置文件的第44个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 88.0,
+        "end_seconds": 90.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 44,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0046",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第45段：讲解者说明配置文件的第45个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 90.0,
+        "end_seconds": 92.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 45,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0047",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第46段：讲解者说明配置文件的第46个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 92.0,
+        "end_seconds": 94.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 46,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0048",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第47段：讲解者说明配置文件的第47个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 94.0,
+        "end_seconds": 96.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 47,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0049",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第48段：讲解者说明配置文件的第48个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 96.0,
+        "end_seconds": 98.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 48,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0050",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第49段：讲解者说明配置文件的第49个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 98.0,
+        "end_seconds": 100.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 49,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0051",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第50段：讲解者说明配置文件的第50个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 100.0,
+        "end_seconds": 102.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 50,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0052",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第51段：讲解者说明配置文件的第51个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 102.0,
+        "end_seconds": 104.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 51,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0053",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第52段：讲解者说明配置文件的第52个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 104.0,
+        "end_seconds": 106.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 52,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0054",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第53段：讲解者说明配置文件的第53个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 106.0,
+        "end_seconds": 108.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 53,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0055",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第54段：讲解者说明配置文件的第54个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 108.0,
+        "end_seconds": 110.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 54,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0056",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第55段：讲解者说明配置文件的第55个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 110.0,
+        "end_seconds": 112.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 55,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0057",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第56段：讲解者说明配置文件的第56个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 112.0,
+        "end_seconds": 114.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 56,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0058",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第57段：讲解者说明配置文件的第57个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 114.0,
+        "end_seconds": 116.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 57,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0059",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第58段：讲解者说明配置文件的第58个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 116.0,
+        "end_seconds": 118.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 58,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-asr-0060",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "第59段：讲解者说明配置文件的第59个步骤。",
+        "language": "zh"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://www.douyin.com/video/7698386448961683813",
+        "start_seconds": 118.0,
+        "end_seconds": 120.0,
+        "frame_id": null
+      },
+      "parent_id": null,
+      "order": 59,
+      "relations": [],
+      "quality": {
+        "engine": "whisper-base",
+        "engine_score": null,
+        "unresolved": []
+      }
+    }
+  ],
+  "resources": [],
+  "coverage": {
+    "modalities": {
+      "video": {
+        "discovered": 1,
+        "extracted": 1,
+        "returned": 1,
+        "processed": 1,
+        "delivered": null,
+        "observed": null,
+        "extraction": "partial",
+        "unresolved": [
+          "Local ASR stopped at 02:00.000; 3480s of the 3600s window remains untranscribed, continue with scope.start_seconds=120.0",
+          "The host did not declare local image input and frame inspection capability"
+        ],
+        "details": {
+          "media_selection": "single_player",
+          "media_selection_reason": null,
+          "browser_media_candidate_files": 1,
+          "media_probe_bytes": 65536,
+          "browser_media_url": "https://cdn.example.test",
+          "media_downloaded_bytes": 5,
+          "duration_seconds": 3600.0,
+          "transcript_source": "asr",
+          "transcript_language": "zh",
+          "asr_model": "base",
+          "asr_duration_ms": 5,
+          "page_chapter_count": 0,
+          "page_chapter_span": null,
+          "chapters_incomplete": false,
+          "transcript_segment_count": 60,
+          "transcript_segments_returned": 60,
+          "transcript_truncated": false,
+          "transcript_processed_until_seconds": 120.0,
+          "transcript_delivered_until_seconds": 120.0,
+          "transcript_unprocessed_seconds": 3480.0,
+          "continuation_available": true,
+          "transcript_continuation_start_seconds": 120.0,
+          "requested_start_seconds": null,
+          "requested_end_seconds": null,
+          "estimated_returned_tokens": 1349,
+          "estimated_remaining_tokens": 0,
+          "estimated_token_basis": "ascii4_nonascii1_v1",
+          "estimated_token_scope": "returned_material_text_only",
+          "token_budget": 8000,
+          "total_token_budget": null,
+          "remaining_tokens": 6651,
+          "returned_tokens": 1349,
+          "speech_seconds": 120.0,
+          "speech_coverage": 1.0,
+          "transcript_confidence": "normal",
+          "frame_inspection": "host_capability_missing",
+          "media_fetched": true,
+          "raw_media_retention": "ephemeral",
+          "raw_media_reused": false,
+          "raw_media_path": null
+        }
+      }
+    },
+    "unresolved": [],
+    "sampled_ranges": []
+  },
+  "needs": [],
+  "errors": [],
+  "usage": {
+    "host_model": {
+      "status": "unknown",
+      "provider": null,
+      "model": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost": null,
+      "duration_ms": null,
+      "details": {}
+    },
+    "auxiliary_models": [],
+    "local": {}
+  },
+  "expires_at": null,
+  "_provenance": {
+    "kind": "captured_shape",
+    "signal": "synthetic",
+    "commit": "419969f",
+    "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_page_video_asr_partial",
+    "generated_at": "2026-10-31",
+    "replaced_call": "reader.transcribe_audio_file (inside the page-video evidence path) plus the page media probe and duration probe",
+    "fake_output": "{\"status\": \"partial\", ...} part of the same fake as video_asr_partial, fed through the page evidence builder instead of the direct-video path",
+    "proof_scope": "proves the checkpoint fold of the only reader dialect that carries transcript_processed_until_seconds / transcript_delivered_until_seconds / transcript_unprocessed_seconds; does not prove page-level video extraction against a live site, transcription quality, or that the delivered-text cutoff equals the transcription cursor",
+    "note": "Real receipt from reader._attach_browser_video_evidence with the ASR call monkeypatched to a partial result: 120 s processed of 3600 s. This is the only reader path that emits video.details.transcript_unprocessed_seconds; it does not emit transcription_status nor a text modality."
+  }
+}

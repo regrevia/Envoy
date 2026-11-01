@@ -1,0 +1,195 @@
+{
+  "protocol_version": "envoy.read/1",
+  "request_id": "capture-asr-complete",
+  "session_id": null,
+  "material_id": "mat-299012fd1256017b25ba4177",
+  "source_revision": "7278b28027ccc2064effe0d7f664bb9454ced41e85d39cb79e83a53003201909",
+  "execution_state": "completed",
+  "result": "ready",
+  "blocks": [
+    {
+      "id": "blk-title",
+      "kind": "heading",
+      "content": {
+        "type": "text",
+        "text": "A long public video",
+        "language": null
+      },
+      "origin": "source_text",
+      "locator": {
+        "type": "web",
+        "source_url": "https://video.example/watch/1",
+        "block_id": "blk-title",
+        "selector": null,
+        "quote": "A long public video"
+      },
+      "parent_id": null,
+      "order": 0,
+      "relations": [],
+      "quality": {
+        "engine": null,
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-transcript",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "[00:00.000] Part 0: the speaker finishes the walkthrough of step 0.\n\n[00:10.000] Part 1: the speaker finishes the walkthrough of step 1.\n\n[00:20.000] Part 2: the speaker finishes the walkthrough of step 2.\n\n[00:30.000] Part 3: the speaker finishes the walkthrough of step 3.\n\n[00:40.000] Part 4: the speaker finishes the walkthrough of step 4.\n\n[00:50.000] Part 5: the speaker finishes the walkthrough of step 5.\n\n[01:00.000] Part 6: the speaker finishes the walkthrough of step 6.\n\n[01:10.000] Part 7: the speaker finishes the walkthrough of step 7.\n\n[01:20.000] Part 8: the speaker finishes the walkthrough of step 8.\n\n[01:30.000] Part 9: the speaker finishes the walkthrough of step 9.\n\n[01:40.000] Part 10: the speaker finishes the walkthrough of step 10.\n\n[01:50.000] Part 11: the speaker finishes the walkthrough of step 11.\n\n[02:00.000] Part 12: the speaker finishes the walkthrough of step 12.\n\n[02:10.000] Part 13: the speaker finishes the walkthrough of step 13.\n\n[02:20.000] Part 14: the speaker finishes the walkthrough of step 14.\n\n[02:30.000] Part 15: the speaker finishes the walkthrough of step 15.\n\n[02:40.000] Part 16: the speaker finishes the walkthrough of step 16.\n\n[02:50.000] Part 17: the speaker finishes the walkthrough of step 17.\n\n[03:00.000] Part 18: the speaker finishes the walkthrough of step 18.\n\n[03:10.000] Part 19: the speaker finishes the walkthrough of step 19.\n\n[03:20.000] Part 20: the speaker finishes the walkthrough of step 20.\n\n[03:30.000] Part 21: the speaker finishes the walkthrough of step 21.\n\n[03:40.000] Part 22: the speaker finishes the walkthrough of step 22.\n\n[03:50.000] Part 23: the speaker finishes the walkthrough of step 23.\n\n[04:00.000] Part 24: the speaker finishes the walkthrough of step 24.\n\n[04:10.000] Part 25: the speaker finishes the walkthrough of step 25.\n\n[04:20.000] Part 26: the speaker finishes the walkthrough of step 26.\n\n[04:30.000] Part 27: the speaker finishes the walkthrough of step 27.\n\n[04:40.000] Part 28: the speaker finishes the walkthrough of step 28.\n\n[04:50.000] Part 29: the speaker finishes the walkthrough of step 29.\n\n[05:00.000] Part 30: the speaker finishes the walkthrough of step 30.\n\n[05:10.000] Part 31: the speaker finishes the walkthrough of step 31.\n\n[05:20.000] Part 32: the speaker finishes the walkthrough of step 32.\n\n[05:30.000] Part 33: the speaker finishes the walkthrough of step 33.\n\n[05:40.000] Part 34: the speaker finishes the walkthrough of step 34.\n\n[05:50.000] Part 35: the speaker finishes the walkthrough of step 35.\n\n[06:00.000] Part 36: the speaker finishes the walkthrough of step 36.\n\n[06:10.000] Part 37: the speaker finishes the walkthrough of step 37.\n\n[06:20.000] Part 38: the speaker finishes the walkthrough of step 38.\n\n[06:30.000] Part 39: the speaker finishes the walkthrough of step 39.\n\n[06:40.000] Part 40: the speaker finishes the walkthrough of step 40.\n\n[06:50.000] Part 41: the speaker finishes the walkthrough of step 41.\n\n[07:00.000] Part 42: the speaker finishes the walkthrough of step 42.\n\n[07:10.000] Part 43: the speaker finishes the walkthrough of step 43.\n\n[07:20.000] Part 44: the speaker finishes the walkthrough of step 44.\n\n[07:30.000] Part 45: the speaker finishes the walkthrough of step 45.\n\n[07:40.000] Part 46: the speaker finishes the walkthrough of step 46.\n\n[07:50.000] Part 47: the speaker finishes the walkthrough of step 47.\n\n[08:00.000] Part 48: the speaker finishes the walkthrough of step 48.\n\n[08:10.000] Part 49: the speaker finishes the walkthrough of step 49.\n\n[08:20.000] Part 50: the speaker finishes the walkthrough of step 50.\n\n[08:30.000] Part 51: the speaker finishes the walkthrough of step 51.\n\n[08:40.000] Part 52: the speaker finishes the walkthrough of step 52.\n\n[08:50.000] Part 53: the speaker finishes the walkthrough of step 53.\n\n[09:00.000] Part 54: the speaker finishes the walkthrough of step 54.\n\n[09:10.000] Part 55: the speaker finishes the walkthrough of step 55.\n\n[09:20.000] Part 56: the speaker finishes the walkthrough of step 56.\n\n[09:30.000] Part 57: the speaker finishes the walkthrough of step 57.\n\n[09:40.000] Part 58: the speaker finishes the walkthrough of step 58.\n\n[09:50.000] Part 59: the speaker finishes the walkthrough of step 59.",
+        "language": "en"
+      },
+      "origin": "asr",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://video.example/watch/1",
+        "start_seconds": 0.0,
+        "end_seconds": 600.0,
+        "frame_id": null
+      },
+      "parent_id": "blk-title",
+      "order": 1,
+      "relations": [],
+      "quality": {
+        "engine": null,
+        "engine_score": null,
+        "unresolved": []
+      }
+    }
+  ],
+  "resources": [],
+  "coverage": {
+    "modalities": {
+      "text": {
+        "discovered": 60,
+        "extracted": 60,
+        "returned": 1,
+        "processed": null,
+        "delivered": null,
+        "observed": null,
+        "extraction": "complete",
+        "unresolved": [],
+        "details": {
+          "source": "video_asr",
+          "language": "en",
+          "transcript_source": "asr",
+          "total_chars": 4238,
+          "returned_chars": 4238,
+          "continuation_available": false,
+          "next_offset": null,
+          "goal_candidates": [
+            {
+              "offset": 0,
+              "end_offset": 67,
+              "score": 3,
+              "snippet": "[00:00.000] Part 0: the speaker finishes the walkthrough of step 0."
+            },
+            {
+              "offset": 69,
+              "end_offset": 136,
+              "score": 3,
+              "snippet": "[00:10.000] Part 1: the speaker finishes the walkthrough of step 1."
+            },
+            {
+              "offset": 138,
+              "end_offset": 205,
+              "score": 3,
+              "snippet": "[00:20.000] Part 2: the speaker finishes the walkthrough of step 2."
+            },
+            {
+              "offset": 207,
+              "end_offset": 274,
+              "score": 3,
+              "snippet": "[00:30.000] Part 3: the speaker finishes the walkthrough of step 3."
+            },
+            {
+              "offset": 276,
+              "end_offset": 343,
+              "score": 3,
+              "snippet": "[00:40.000] Part 4: the speaker finishes the walkthrough of step 4."
+            }
+          ],
+          "estimated_returned_tokens": 1065,
+          "estimated_remaining_tokens": 0,
+          "estimated_token_basis": "ascii4_nonascii1_v1",
+          "estimated_token_scope": "returned_material_text_only",
+          "token_budget": 8000,
+          "total_token_budget": null,
+          "remaining_tokens": 6935,
+          "returned_tokens": 1065
+        }
+      },
+      "video": {
+        "discovered": 1,
+        "extracted": 1,
+        "returned": 1,
+        "processed": 1,
+        "delivered": null,
+        "observed": null,
+        "extraction": "partial",
+        "unresolved": [
+          "Video frames were not inspected; this material contains transcript evidence only"
+        ],
+        "details": {
+          "video_id": "long-sample",
+          "duration_seconds": 600,
+          "subtitle_language": "en",
+          "transcript_source": "asr",
+          "requested_range": null,
+          "available_subtitle_languages": [],
+          "visual_inspection": "not_performed",
+          "asr_model": "base",
+          "transcription_status": "success",
+          "processed_until_seconds": 600,
+          "speech_seconds": 600.0,
+          "speech_coverage": 1.0,
+          "transcript_confidence": "normal"
+        }
+      }
+    },
+    "unresolved": [
+      "Video frames were not inspected; this material contains transcript evidence only"
+    ],
+    "sampled_ranges": [
+      {
+        "modality": "audio",
+        "start_seconds": 0,
+        "end_seconds": 600
+      }
+    ]
+  },
+  "needs": [],
+  "errors": [],
+  "usage": {
+    "host_model": {
+      "status": "unknown",
+      "provider": null,
+      "model": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost": null,
+      "duration_ms": null,
+      "details": {}
+    },
+    "auxiliary_models": [],
+    "local": {
+      "asr_model": "base",
+      "asr_duration_ms": 200,
+      "downloaded_bytes": 1000,
+      "media_download_ms": 100
+    }
+  },
+  "expires_at": null,
+  "_provenance": {
+    "kind": "captured_shape",
+    "signal": "synthetic",
+    "commit": "419969f",
+    "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_asr_complete",
+    "generated_at": "2026-10-31",
+    "replaced_call": "reader.transcribe_audio_file",
+    "fake_output": "{\"status\": \"success\", \"language\": \"en\", \"model\": \"base\", \"elapsed_ms\": 200, \"next_seconds\": 600.0, \"segments\": 300 cues covering 0-600 s}",
+    "proof_scope": "proves the finished shape of a video material whose transcript covers the whole duration; does not prove that real ASR ever reaches this state",
+    "note": "Real receipt from reader.read_public_page (video source, no subtitles, local ASR) with transcribe_audio_file monkeypatched to a complete result: 600 s processed of 600 s."
+  }
+}

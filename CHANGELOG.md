@@ -1,5 +1,65 @@
 # 更新日志 / Changelog
 
+## 未发布 / Unreleased
+
+### 中文
+
+- 素材检查点升到 v2：媒体材料记录 10 个字段（`kind`、`total_seconds`、`processed_seconds`、`completed_seconds`、
+  `transcription_status`、`transcript_source`、`continuation_start_seconds`、`unprocessed_seconds`、
+  `downloaded_bytes`、`media_calls`），`processed_seconds` 取 receipt 中 `processed_until_seconds` /
+  `transcript_processed_until_seconds` / `transcript_delivered_until_seconds` / 音频 `sampled_ranges` 末端四者的
+  **最大值**（`long_task.py:433-443`）。只读“已交付”键会让一次 3600 秒视频的 120 秒转录被当成完成，这是本轮修的缺陷。
+- “是否读完”改由函数判断，不看状态词：新增 `media_pending()`（三个独立信号的并集，`long_task.py:296-314`）、
+  `remaining_seconds()`（字幕型视频返回 `None` 而不是整段时长，`long_task.py:316-333`）、`resume_kind()`、
+  `is_finished()`；`overall_state()` 对“所有材料 `is_finished()`”判 `COMPLETED`，因此任务可以是 `completed`
+  而材料 `state` 仍是最后一次 receipt 的 `partial`——两级语义刻意保留，调用方必须调函数而非比较字符串。
+  `with_delivery` 另有回落保护：已完成材料若仍有未处理秒数会降级为 `partial`（`long_task.py:517-523`）。
+- v1 检查点仍可读（`SUPPORTED_CHECKPOINT_VERSIONS = (1, 2)`，`long_task.py:36-38`）：v1 无媒体字段，按“未知”加载，
+  不回写、不把未知当 0。
+- CLI 的 `get` / `next` / `list` 增加派生视图键 `kind`、`media`（8 键）、`remaining_seconds`、`is_finished`、
+  `resume_kind`（`packages/envoy-cli/src/envoy_cli/tasks.py:116-136`）；落盘记录不含这些键。
+- 新增 4 份 receipt 形状夹具与“重新生成必须字节一致”的守卫测试；`_provenance` 标为
+  `kind: captured_shape` / `signal: synthetic`，即单测替换调用得到的形状，不是真实交付。
+- 文档：`docs/architecture/long-task-checkpoint-v2.md`（协议与两级状态，`unit_checked`）、
+  `docs/acceptance/long-video-acceptance-2026-11-01.md`（7 个场景全部 `not_run`，含确切命令与缺失前置）、
+  `docs/experiments/long-task-metrics-2026-11-01.md`（逐阶段漏斗替换 57 条总覆盖率）。
+- 证据级别：改动为 `unit_checked`（定向 73 项、`tests/cli` 1068 项通过；探针复算 3480.0 / `None` / 范围
+  `120→3600` 未变）。**未验证**：真实 ≥60 分钟视频的 ASR 续读（本机无 whisper）、扫描件/复杂版式 PDF、
+  以及“只改一个时间段、复用其余片段”——ASR 检查点身份带范围（`media.py:1491-1515`），改范围即重转录；本轮只把
+  重复工作量界定为 `processed_until_seconds − continuation_start_seconds` 并写进文档，未修。支持的表述仍只是
+  “部分材料能续读”。
+
+### English
+
+- Material checkpoints move to v2: a media material records ten fields (`kind`, `total_seconds`,
+  `processed_seconds`, `completed_seconds`, `transcription_status`, `transcript_source`,
+  `continuation_start_seconds`, `unprocessed_seconds`, `downloaded_bytes`, `media_calls`), and
+  `processed_seconds` is the **maximum** of `processed_until_seconds`, `transcript_processed_until_seconds`,
+  `transcript_delivered_until_seconds` and the ends of the audio `sampled_ranges` (`long_task.py:433-443`).
+  Reading only the delivered key let a 120 s transcript of a 3600 s video count as finished — the defect fixed here.
+- Whether a material is done is decided by functions, not by the state word: new `media_pending()` (union of three
+  independent signals, `long_task.py:296-314`), `remaining_seconds()` (`None`, not the whole duration, for a
+  subtitle-only video, `long_task.py:316-333`), `resume_kind()` and `is_finished()`; `overall_state()` marks a task
+  `COMPLETED` when every material `is_finished()`, so a task can be `completed` while a material's `state` still reads
+  `partial` from its last receipt. The two levels are deliberate; callers must call the functions. `with_delivery`
+  also downgrades a completed material that still has unprocessed seconds (`long_task.py:517-523`).
+- v1 checkpoints still load (`SUPPORTED_CHECKPOINT_VERSIONS = (1, 2)`, `long_task.py:36-38`): v1 has no media fields,
+  so they load as unknown — not written back, never treated as zero.
+- `get` / `next` / `list` gain derived view keys `kind`, `media` (8 keys), `remaining_seconds`, `is_finished`,
+  `resume_kind` (`packages/envoy-cli/src/envoy_cli/tasks.py:116-136`); the stored record does not contain them.
+- Four receipt-shape fixtures plus a guard test that fails unless regeneration is byte-identical; their
+  `_provenance` says `kind: captured_shape` / `signal: synthetic` — shapes captured by monkeypatching, not deliveries.
+- Docs: `docs/architecture/long-task-checkpoint-v2.md` (protocol and two-level state, `unit_checked`),
+  `docs/acceptance/long-video-acceptance-2026-11-01.md` (all seven scenarios `not_run`, with exact commands and
+  missing prerequisites) and `docs/experiments/long-task-metrics-2026-11-01.md` (a per-stage funnel replacing the
+  57-link total rate).
+- Evidence: `unit_checked` (73 targeted tests and 1068 `tests/cli` tests pass; the probe still prints 3480.0 /
+  `None` / range `120→3600`). **Not verified**: ASR continuation on a real ≥60-minute video (no whisper locally),
+  scanned or complex-layout PDFs, and “change one time range and reuse the rest” — ASR checkpoint identity is
+  range-scoped (`media.py:1491-1515`), so a changed range re-transcribes; this round only bounds the duplicate work
+  as `processed_until_seconds − continuation_start_seconds` and documents it. The supported claim remains that some
+  materials can be continued.
+
 ## 0.1.38 - 2026-10-31
 
 ### 中文

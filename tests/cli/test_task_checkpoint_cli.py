@@ -9,10 +9,16 @@ it twice", not "fetch again".
 
 import json
 
+from envoy_cli import tasks as tasks_module
 from envoy_cli.cli import main
+from envoy_core import long_task as lt
+from envoy_core.schemas.read_v1 import ExpandRequest, ReadRequest
 
 SOURCE = "https://example.test/long.pdf"
 OTHER = "https://example.test/other.pdf"
+VIDEO = "https://example.com/talk.mp4"
+VIDEO_MATERIAL = "mat-" + "a" * 24
+TEXT_MATERIAL = "mat-" + "b" * 24
 
 
 def _run(payload, monkeypatch, tmp_path, capsys):
@@ -221,3 +227,235 @@ def test_list_reports_progress_without_a_lease(monkeypatch, tmp_path, capsys):
     assert code == 0
     assert payload["tasks"][0]["task_id"] == "task-1"
     assert payload["tasks"][0]["delivered_chars"] == 12000
+
+
+def _video_receipt(*, revision="rev-v1", material_id=VIDEO_MATERIAL, returned=480,
+                   next_offset=480, total_chars=24000, duration=3600.0,
+                   processed_until=120.0, transcription_status="partial",
+                   result="partial", text=True):
+    """A video ASR receipt: the shape reader.py reports, with a literal timeline."""
+    modalities = {}
+    if text:
+        modalities["text"] = {
+            "details": {
+                "source": "video_asr",
+                "language": "en",
+                "transcript_source": "video_asr",
+                "total_chars": total_chars,
+                "returned_chars": returned,
+                "continuation_available": True,
+                "next_offset": next_offset,
+            }
+        }
+    modalities["video"] = {
+        "details": {
+            "video_id": "vid-talk",
+            "duration_seconds": duration,
+            "transcript_source": "video_asr",
+            "requested_range": {"start_seconds": 0.0, "end_seconds": processed_until},
+            "transcription_status": transcription_status,
+            "processed_until_seconds": processed_until,
+            "visual_inspection": "not_performed",
+        }
+    }
+    return {
+        "protocol_version": "envoy.read/1",
+        "material_id": material_id,
+        "source_revision": revision,
+        "result": result,
+        "errors": [],
+        "blocks": [{"id": "blk-video-asr-0001", "kind": "transcript"}],
+        "coverage": {
+            "modalities": modalities,
+            "sampled_ranges": [
+                {"modality": "audio", "start_seconds": 0.0, "end_seconds": processed_until}
+            ],
+        },
+        "usage": {"local": {"downloaded_bytes": 4096}},
+    }
+
+
+def test_a_partial_video_receipt_resumes_with_a_range_read(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys, sources=(VIDEO,))
+    code, applied = _run(
+        {"action": "apply", "task_id": "task-1", "source": VIDEO, "offset": 0,
+         "receipt": _video_receipt()},
+        monkeypatch, tmp_path, capsys,
+    )
+    assert code == 0
+    assert applied["materials"][0]["kind"] == "video"
+    assert applied["materials"][0]["state"] == "partial"
+
+    code, payload = _run(
+        {"action": "next", "task_id": "task-1", "source": VIDEO,
+         "request_id": "req-video-1", "max_chars": 8000},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    assert code == 0
+    assert payload["result"] == "ready"
+    assert payload["action"] == "read"
+    assert payload["media"]["processed_seconds"] == 120.0
+    assert payload["media"]["total_seconds"] == 3600.0
+    assert payload["media"]["remaining_seconds"] == 3480.0
+    assert payload["media"]["transcription_status"] == "partial"
+    assert payload["media"]["completed_seconds"] == [[0.0, 120.0]]
+    assert payload["media"]["downloaded_bytes"] == 4096
+    assert payload["media"]["media_calls"] == 1
+
+    request = payload["request"]
+    assert request["goal"] == "read the whole document"
+    assert request["source"] == {"url": VIDEO}
+    assert request["scope"] == {"kind": "range", "start_seconds": 120.0,
+                                "end_seconds": 3600.0}
+    assert request["retention"]["raw_media"] == "persistent"
+    assert request["budget"]["max_response_chars"] == 8000
+    ReadRequest.model_validate(request)
+
+
+def test_a_finished_video_is_blocked_by_the_core_not_the_cli(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys, sources=(VIDEO,))
+    _run(
+        {"action": "apply", "task_id": "task-1", "source": VIDEO, "offset": 0,
+         "receipt": _video_receipt(returned=0, next_offset=0, duration=3600.0,
+                                   processed_until=3600.0,
+                                   transcription_status="complete",
+                                   result="complete")},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    code, payload = _run(
+        {"action": "next", "task_id": "task-1", "source": VIDEO},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    assert code == 0
+    assert payload["result"] == "blocked"
+    assert payload["error"]["code"] == "already_finished"
+    # "action" here is the CLI's own verb; the refusal adds no resume action.
+    assert payload["action"] == "next"
+    assert "request" not in payload
+
+
+def test_a_text_material_still_resumes_with_an_expand(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys)
+    _run(
+        {"action": "apply", "task_id": "task-1", "source": SOURCE, "offset": 0,
+         "receipt": _receipt(material_id=TEXT_MATERIAL)},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    code, payload = _run(
+        {"action": "next", "task_id": "task-1", "source": SOURCE},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    assert code == 0
+    assert payload["result"] == "ready"
+    assert payload["action"] == "expand"
+    assert payload["media"] is None
+    assert payload["remaining_seconds"] is None
+    assert payload["request"]["material_id"] == TEXT_MATERIAL
+    ExpandRequest.model_validate(payload["request"])
+
+
+def test_get_shows_the_media_axis_and_nulls_it_for_text(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys, sources=(SOURCE, VIDEO))
+    _run(
+        {"action": "apply", "task_id": "task-1", "source": SOURCE, "offset": 0,
+         "receipt": _receipt()},
+        monkeypatch, tmp_path, capsys,
+    )
+    _run(
+        {"action": "apply", "task_id": "task-1", "source": VIDEO, "offset": 0,
+         "receipt": _video_receipt()},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    code, payload = _run({"action": "get", "task_id": "task-1"},
+                         monkeypatch, tmp_path, capsys)
+
+    assert code == 0
+    by_url = {item["url"]: item for item in payload["materials"]}
+    assert by_url[SOURCE]["kind"] == "pdf"
+    assert by_url[SOURCE]["media"] is None
+    assert by_url[SOURCE]["remaining_seconds"] is None
+    assert by_url[SOURCE]["is_finished"] is False
+    assert by_url[SOURCE]["resume_kind"] == "expand"
+    assert by_url[VIDEO]["kind"] == "video"
+    assert by_url[VIDEO]["media"]["processed_seconds"] == 120.0
+    assert by_url[VIDEO]["media"]["remaining_seconds"] == 3480.0
+    assert by_url[VIDEO]["remaining_seconds"] == 3480.0
+    assert by_url[VIDEO]["is_finished"] is False
+    assert by_url[VIDEO]["resume_kind"] == "read"
+    # The stored record carries no lease, so the derived view cannot either.
+    assert "lease" not in payload["materials"][0]
+    assert "expires_at" not in payload["materials"][0]
+    # Nor do the two verdicts: they stay a view of the record, not new fields.
+    _, task = tasks_module._load("task-1")
+    stored = {item["url"]: item for item in lt.to_checkpoint(task)["materials"]}
+    assert "is_finished" not in stored[VIDEO]
+    assert "resume_kind" not in stored[VIDEO]
+    assert "is_finished" not in stored[SOURCE]
+    assert "resume_kind" not in stored[SOURCE]
+
+
+def test_a_media_receipt_with_no_text_modality_still_folds(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys, sources=(VIDEO,))
+
+    code, applied = _run(
+        {"action": "apply", "task_id": "task-1", "source": VIDEO, "offset": 0,
+         "receipt": _video_receipt(text=False)},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    assert code == 0
+    assert applied["materials"][0]["state"] == "partial"
+    assert applied["materials"][0]["kind"] == "video"
+
+    code, fetched = _run({"action": "get", "task_id": "task-1"},
+                         monkeypatch, tmp_path, capsys)
+    assert fetched["materials"][0]["media"]["processed_seconds"] == 120.0
+
+    code, payload = _run(
+        {"action": "next", "task_id": "task-1", "source": VIDEO},
+        monkeypatch, tmp_path, capsys,
+    )
+    assert code == 0
+    assert payload["action"] == "read"
+    ReadRequest.model_validate(payload["request"])
+
+
+def test_apply_defaults_to_offset_zero_for_a_media_receipt(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys, sources=(VIDEO,))
+
+    code, applied = _run(
+        {"action": "apply", "task_id": "task-1", "source": VIDEO,
+         "receipt": _video_receipt()},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    assert code == 0
+    assert applied["materials"][0]["delivered_ranges"] == [[0, 480]]
+
+def test_get_says_a_video_is_finished_even_when_chars_remain(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys, sources=(VIDEO,))
+    _run(
+        {"action": "apply", "task_id": "task-1", "source": VIDEO, "offset": 0,
+         "receipt": _video_receipt(result="complete", returned=0, next_offset=0,
+                                   processed_until=3600.0,
+                                   transcription_status="complete")},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    code, payload = _run({"action": "get", "task_id": "task-1"},
+                         monkeypatch, tmp_path, capsys)
+
+    assert code == 0
+    item = payload["materials"][0]
+    assert item["kind"] == "video"
+    # The timeline is fully transcribed: that verdict is is_finished, not the
+    # state word and not the character count.
+    assert item["is_finished"] is True
+    assert item["remaining_seconds"] == 0.0
+    assert item["resume_kind"] == "expand"

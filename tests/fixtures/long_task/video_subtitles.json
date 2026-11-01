@@ -1,0 +1,187 @@
+{
+  "protocol_version": "envoy.read/1",
+  "request_id": "capture-subtitles",
+  "session_id": null,
+  "material_id": "mat-0a99fb0ec86864288fe00d66",
+  "source_revision": "ce70c4243079eeef43281b4de7adf17c01d86e3a0aadeaa5a6ade94e6d7a026f",
+  "execution_state": "completed",
+  "result": "ready",
+  "blocks": [
+    {
+      "id": "blk-title",
+      "kind": "heading",
+      "content": {
+        "type": "text",
+        "text": "Public lesson",
+        "language": null
+      },
+      "origin": "source_text",
+      "locator": {
+        "type": "web",
+        "source_url": "https://video.example/watch?id=sample",
+        "block_id": "blk-title",
+        "selector": null,
+        "quote": "Public lesson"
+      },
+      "parent_id": null,
+      "order": 0,
+      "relations": [],
+      "quality": {
+        "engine": null,
+        "engine_score": null,
+        "unresolved": []
+      }
+    },
+    {
+      "id": "blk-video-transcript",
+      "kind": "transcript",
+      "content": {
+        "type": "text",
+        "text": "[00:00.000] Caption 0: this section covers topic 0.\n\n[00:30.000] Caption 1: this section covers topic 1.\n\n[01:00.000] Caption 2: this section covers topic 2.\n\n[01:30.000] Caption 3: this section covers topic 3.\n\n[02:00.000] Caption 4: this section covers topic 4.\n\n[02:30.000] Caption 5: this section covers topic 5.\n\n[03:00.000] Caption 6: this section covers topic 6.\n\n[03:30.000] Caption 7: this section covers topic 7.\n\n[04:00.000] Caption 8: this section covers topic 8.\n\n[04:30.000] Caption 9: this section covers topic 9.\n\n[05:00.000] Caption 10: this section covers topic 10.\n\n[05:30.000] Caption 11: this section covers topic 11.\n\n[06:00.000] Caption 12: this section covers topic 12.\n\n[06:30.000] Caption 13: this section covers topic 13.\n\n[07:00.000] Caption 14: this section covers topic 14.\n\n[07:30.000] Caption 15: this section covers topic 15.\n\n[08:00.000] Caption 16: this section covers topic 16.\n\n[08:30.000] Caption 17: this section covers topic 17.\n\n[09:00.000] Caption 18: this section covers topic 18.\n\n[09:30.000] Caption 19: this section covers topic 19.\n\n[10:00.000] Caption 20: this section covers topic 20.\n\n[10:30.000] Caption 21: this section covers topic 21.\n\n[11:00.000] Caption 22: this section covers topic 22.\n\n[11:30.000] Caption 23: this section covers topic 23.\n\n[12:00.000] Caption 24: this section covers topic 24.\n\n[12:30.000] Caption 25: this section covers topic 25.\n\n[13:00.000] Caption 26: this section covers topic 26.\n\n[13:30.000] Caption 27: this section covers topic 27.\n\n[14:00.000] Caption 28: this section covers topic 28.\n\n[14:30.000] Caption 29: this section covers topic 29.\n\n[15:00.000] Caption 30: this section covers topic 30.\n\n[15:30.000] Caption 31: this section covers topic 31.\n\n[16:00.000] Caption 32: this section covers topic 32.\n\n[16:30.000] Caption 33: this section covers topic 33.\n\n[17:00.000] Caption 34: this section covers topic 34.\n\n[17:30.000] Caption 35: this section covers topic 35.\n\n[18:00.000] Caption 36: this section covers topic 36.\n\n[18:30.000] Caption 37: this section covers topic 37.\n\n[19:00.000] Caption 38: this section covers topic 38.\n\n[19:30.000] Caption 39: this section covers topic 39.\n\n[20:00.000] Caption 40: this section covers topic 40.\n\n[20:30.000] Caption 41: this section covers topic 41.\n\n[21:00.000] Caption 42: this section covers topic 42.\n\n[21:30.000] Caption 43: this section covers topic 43.\n\n[22:00.000] Caption 44: this section covers topic 44.\n\n[22:30.000] Caption 45: this section covers topic 45.\n\n[23:00.000] Caption 46: this section covers topic 46.\n\n[23:30.000] Caption 47: this section covers topic 47.\n\n[24:00.000] Caption 48: this section covers topic 48.\n\n[24:30.000] Caption 49: this section covers topic 49.\n\n[25:00.000] Caption 50: this section covers topic 50.\n\n[25:30.000] Caption 51: this section covers topic 51.\n\n[26:00.000] Caption 52: this section covers topic 52.\n\n[26:30.000] Caption 53: this section covers topic 53.\n\n[27:00.000] Caption 54: this section covers topic 54.\n\n[27:30.000] Caption 55: this section covers topic 55.\n\n[28:00.000] Caption 56: this section covers topic 56.\n\n[28:30.000] Caption 57: this section covers topic 57.\n\n[29:00.000] Caption 58: this section covers topic 58.\n\n[29:30.000] Caption 59: this section covers topic 59.",
+        "language": "en"
+      },
+      "origin": "subtitle",
+      "locator": {
+        "type": "video_time",
+        "source_url": "https://video.example/watch?id=sample",
+        "start_seconds": 0.0,
+        "end_seconds": 1800.0,
+        "frame_id": null
+      },
+      "parent_id": "blk-title",
+      "order": 1,
+      "relations": [],
+      "quality": {
+        "engine": null,
+        "engine_score": null,
+        "unresolved": []
+      }
+    }
+  ],
+  "resources": [],
+  "coverage": {
+    "modalities": {
+      "text": {
+        "discovered": 60,
+        "extracted": 60,
+        "returned": 1,
+        "processed": null,
+        "delivered": null,
+        "observed": null,
+        "extraction": "complete",
+        "unresolved": [],
+        "details": {
+          "source": "video_subtitles",
+          "language": "en",
+          "transcript_source": "manual_subtitles",
+          "total_chars": 3278,
+          "returned_chars": 3278,
+          "continuation_available": false,
+          "next_offset": null,
+          "goal_candidates": [
+            {
+              "offset": 640,
+              "end_offset": 693,
+              "score": 4,
+              "snippet": "[06:00.000] Caption 12: this section covers topic 12."
+            },
+            {
+              "offset": 1300,
+              "end_offset": 1353,
+              "score": 3,
+              "snippet": "[12:00.000] Caption 24: this section covers topic 24."
+            },
+            {
+              "offset": 1355,
+              "end_offset": 1408,
+              "score": 3,
+              "snippet": "[12:30.000] Caption 25: this section covers topic 25."
+            },
+            {
+              "offset": 0,
+              "end_offset": 51,
+              "score": 2,
+              "snippet": "[00:00.000] Caption 0: this section covers topic 0."
+            },
+            {
+              "offset": 53,
+              "end_offset": 104,
+              "score": 2,
+              "snippet": "[00:30.000] Caption 1: this section covers topic 1."
+            }
+          ],
+          "estimated_returned_tokens": 824,
+          "estimated_remaining_tokens": 0,
+          "estimated_token_basis": "ascii4_nonascii1_v1",
+          "estimated_token_scope": "returned_material_text_only",
+          "token_budget": 8000,
+          "total_token_budget": null,
+          "remaining_tokens": 7176,
+          "returned_tokens": 824
+        }
+      },
+      "video": {
+        "discovered": 1,
+        "extracted": 1,
+        "returned": 1,
+        "processed": 1,
+        "delivered": null,
+        "observed": null,
+        "extraction": "partial",
+        "unresolved": [
+          "Video frames were not inspected; this material contains transcript evidence only"
+        ],
+        "details": {
+          "video_id": "sample",
+          "duration_seconds": 3600,
+          "subtitle_language": "en",
+          "transcript_source": "manual_subtitles",
+          "requested_range": null,
+          "available_subtitle_languages": [
+            "en",
+            "zh-Hans"
+          ],
+          "visual_inspection": "not_performed",
+          "asr_model": null,
+          "transcription_status": null,
+          "processed_until_seconds": null,
+          "speech_seconds": 0.0,
+          "speech_coverage": 0.0,
+          "transcript_confidence": "normal"
+        }
+      }
+    },
+    "unresolved": [
+      "Video frames were not inspected; this material contains transcript evidence only"
+    ],
+    "sampled_ranges": []
+  },
+  "needs": [],
+  "errors": [],
+  "usage": {
+    "host_model": {
+      "status": "unknown",
+      "provider": null,
+      "model": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost": null,
+      "duration_ms": null,
+      "details": {}
+    },
+    "auxiliary_models": [],
+    "local": {}
+  },
+  "expires_at": null,
+  "_provenance": {
+    "kind": "captured_shape",
+    "signal": "synthetic",
+    "commit": "419969f",
+    "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_subtitles",
+    "generated_at": "2026-10-31",
+    "replaced_call": "reader.extract_public_subtitles",
+    "fake_output": "3600 s caption track, automatic=False, rendered as manual_subtitles",
+    "proof_scope": "proves that a subtitle-only video receipt carries no processed_seconds and therefore no transcript-owned progress; does not prove subtitle track selection against a live site or subtitle coverage of the whole duration",
+    "note": "Real receipt from reader.read_public_page with extract_public_subtitles monkeypatched to a 3600 s caption track (automatic=False). transcription_status is None and coverage.sampled_ranges is empty because no audio was transcribed."
+  }
+}
