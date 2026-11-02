@@ -1682,7 +1682,7 @@ def read_github_source(request: ReadRequest, source_url: str | None = None) -> R
             retryable=True,
             details=details,
         )
-    except GithubNotFound as exc:
+    except GithubNotFound:
         return _blocked(
             request,
             ErrorCode.SOURCE_UNAVAILABLE,
@@ -1697,7 +1697,7 @@ def read_github_source(request: ReadRequest, source_url: str | None = None) -> R
                 "api_requests": list(ctx.requests),
             },
         )
-    except GithubUnauthorized as exc:
+    except GithubUnauthorized:
         return _blocked(
             request,
             ErrorCode.AUTH_REQUIRED,

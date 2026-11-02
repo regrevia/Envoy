@@ -8,7 +8,6 @@ field, so both fields must carry the same evidence: the block text, the search
 hits, the resource ids, and the call the model is expected to make next.
 """
 
-import json
 from types import SimpleNamespace
 
 from envoy_cli import mcp

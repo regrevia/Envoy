@@ -20,7 +20,7 @@ for relative in ("packages/envoy-core/src", "packages/envoy-cli/src"):
 
 pypdf = pytest.importorskip("pypdf")
 
-from envoy_core.schemas.read_v1 import Budget, ReadRequest, SourceRef  # noqa: E402
+from envoy_core.schemas.read_v1 import ReadRequest, SourceRef  # noqa: E402
 from envoy_cli import reader  # noqa: E402
 
 TOP_LEVEL_KEYS = {

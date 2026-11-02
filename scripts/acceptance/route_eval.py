@@ -174,6 +174,11 @@ def _host(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+# A bare repository page (owner/repo, optionally .git) is the one code-host URL
+# the product hands to the shell route instead of Envoy.
+_REPO_SHELL_RE = re.compile(r"^/[^/]+/[^/]+(?:\.git)?/?$")
+
+
 def _path(url: str) -> str:
     try:
         return urlsplit(url).path or "/"
