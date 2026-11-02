@@ -1,7 +1,7 @@
 # GitHub reader acceptance — 2026-11-01
 
 Acceptance plan for the GitHub source reader
-([`packages/envoy-cli/src/envoy_cli/github_source.py`](/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/github_source.py)),
+([`packages/envoy-cli/src/envoy_cli/github_source.py`]($HOME/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/github_source.py)),
 the piece that lets a repository URL return a file, a tree, a diff, or a commit
 SHA without starting a browser.
 
@@ -31,7 +31,7 @@ where quoted, come from the routing fixture and stay labelled `target`.
 ## Prerequisites
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 
 # the venv that has envoy-cli installed, and gh for the cross-check
 packages/envoy-cli/.venv/bin/python -c "import sys; print(sys.version)"
@@ -192,7 +192,7 @@ Question: does one link stay inside the routing budget rather than walking an
 entire repository?
 
 Budget under test (`LIVE_PLAN` in
-[`scripts/acceptance/route_eval.py`](/Users/apple/Desktop/2026/Envoy/scripts/acceptance/route_eval.py)):
+[`scripts/acceptance/route_eval.py`]($HOME/Desktop/2026/Envoy/scripts/acceptance/route_eval.py)):
 at most 4 requests per link, 20s per link.
 
 ```python

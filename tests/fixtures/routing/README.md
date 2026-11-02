@@ -16,8 +16,8 @@ tests/fixtures/routing/
   README.md    this file: schema, routes, and what the numbers mean
 ```
 
-The evaluator is [`scripts/acceptance/route_eval.py`](/Users/apple/Desktop/2026/Envoy/scripts/acceptance/route_eval.py).
-The reasoning behind each route is [`docs/architecture/link-routing-policy.md`](/Users/apple/Desktop/2026/Envoy/docs/architecture/link-routing-policy.md).
+The evaluator is [`scripts/acceptance/route_eval.py`]($HOME/Desktop/2026/Envoy/scripts/acceptance/route_eval.py).
+The reasoning behind each route is [`docs/architecture/link-routing-policy.md`]($HOME/Desktop/2026/Envoy/docs/architecture/link-routing-policy.md).
 
 ## Routes
 
@@ -96,7 +96,7 @@ written back into this fixture.
 ## Decoupled from the 57-link coverage metric
 
 The 57-link total-coverage study in
-[`docs/experiments/long-task-metrics-2026-11-01.md`](/Users/apple/Desktop/2026/Envoy/docs/experiments/long-task-metrics-2026-11-01.md)
+[`docs/experiments/long-task-metrics-2026-11-01.md`]($HOME/Desktop/2026/Envoy/docs/experiments/long-task-metrics-2026-11-01.md)
 is deprecated: it counts links that came back readable, so routing every link
 through Envoy scores well and costs the most. This corpus shares no links, no
 counts, and no verdict vocabulary with it. A single `usable_rate` number must not

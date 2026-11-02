@@ -77,6 +77,27 @@ def test_generated_dsh_plugin_copy_matches_the_canonical_skill():
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+def test_plain_fetch_gate_is_numeric_so_it_can_be_decided_without_judgement():
+    """A model cannot weigh "blocked or truncated" in the abstract.
+
+    The gate only holds if the model can count: a plain fetch that came back
+    with a real body is the answer, and the escalation list is evidence, not
+    suspicion. These numbers are the contract; keep them in sync with the prose.
+    """
+
+    for path in SKILL_FILES:
+        body = path.read_text(encoding="utf-8")
+        for phrase in (
+            "800 characters or more of article text",
+            "fewer than 200 characters came back",
+            "application/pdf",
+            "enable JavaScript",
+            "envoy_replay",
+        ):
+            assert phrase in body, f"{path}: {phrase}"
+        assert "escalate only on the evidence" in body, path
+
+
 def test_skill_table_routes_github_to_the_api_path_and_names_the_limits():
     text = (REPO / "integrations" / "skills" / "envoy" / "SKILL.md").read_text(
         encoding="utf-8"

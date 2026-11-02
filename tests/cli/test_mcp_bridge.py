@@ -574,7 +574,7 @@ def test_mcp_bridge_rejects_unlinked_visual_observation(capsys):
     }])
 
     response = json.loads(capsys.readouterr().out.splitlines()[1])
-    payload = json.loads(response["result"]["content"][0]["text"])
+    payload = response["result"]["structuredContent"]
     assert payload["result"] == "blocked"
     assert payload["blocks"] == []
     assert payload["observation_persistence"]["reason"] == "material_id_missing"
@@ -627,7 +627,7 @@ def test_mcp_visual_observation_infers_source_from_needs_resource_binding(
     }])
 
     response = json.loads(capsys.readouterr().out.splitlines()[1])
-    payload = json.loads(response["result"]["content"][0]["text"])
+    payload = response["result"]["structuredContent"]
 
     assert payload["protocol_version"] == "envoy.observe/1"
     assert payload["result"] == "ready"
@@ -710,7 +710,7 @@ def test_mcp_bridge_reads_persisted_visual_observations_with_budget(tmp_path, mo
     }])
 
     response = json.loads(capsys.readouterr().out.splitlines()[1])
-    payload = json.loads(response["result"]["content"][0]["text"])
+    payload = response["result"]["structuredContent"]
     assert payload["result"] == "ready"
     assert payload["blocks"][0]["content"]["text"] == "The chart shows three stages."
     assert payload["blocks"][0]["origin"] == "host_visual"
@@ -777,7 +777,7 @@ def test_mcp_bridge_search_returns_source_located_goal_match(tmp_path, monkeypat
     }])
 
     response = json.loads(capsys.readouterr().out.splitlines()[1])
-    payload = json.loads(response["result"]["content"][0]["text"])
+    payload = response["result"]["structuredContent"]
     assert payload["blocks"][0]["content"]["text"] == "Deployment command: envoy start --worker."
     assert payload["blocks"][0]["locator"]["source_url"] == "https://example.org/guide"
 
@@ -858,7 +858,7 @@ def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):
 
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     response = lines[1]
-    payload = json.loads(response["result"]["content"][0]["text"])
+    payload = response["result"]["structuredContent"]
     assert exit_code == 0
     assert response["id"] == "read-1"
     assert payload["result"] == "ready"

@@ -1,0 +1,29 @@
+version: 2
+
+# 只做版本更新与安全更新两类 PR；其余（docker、whisper/torch 那条 media 链）不开，
+# 免得每天被 GPU 相关的大版本 PR 淹没。
+updates:
+  - package-ecosystem: pip
+    directory: /packages/envoy-cli
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "python"]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "javascript"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "ci"]

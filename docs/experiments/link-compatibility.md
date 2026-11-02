@@ -1176,7 +1176,7 @@ source-checkout 入口，未装 media extra）核对 `envoy doctor --json` 的�
   —— 引擎缺失时它没有声称能转录，还给了下一步动作。`capabilities.inputs.conditional` 里也写清
   `local_video_asr` 的 requires（yt-dlp、FFmpeg/FFprobe、openai-whisper、已备模型）。
 - `asr_model_available=false` 而 `asr_model_file_present=true` 看着矛盾，实测解释得通：
-  `asr_model_cache_dir()=/Users/apple/.cache/whisper`，`base.pt` 确实在（145262807 字节，
+  `asr_model_cache_dir()=$HOME/.cache/whisper`，`base.pt` 确实在（145262807 字节，
   sha256 `ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e`，即官方 base 权重）；
   而 `~/.envoy/asr.json` 里记的 `sha256=eca4af68…` 与它对不上，所以 `asr_model_verified=false`。
   代码里 `asr_installed` 为假时 `available` 恒假，这个状态本身是**正确**的（引擎都没装，模型可用无意义）；

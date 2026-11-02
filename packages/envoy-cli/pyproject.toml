@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "envoy-cli"
-version = "0.1.38"
+version = "0.1.39"
 license = {text = "Apache-2.0"}
 description = "Independent Envoy link reader launcher"
 requires-python = ">=3.10"
 dependencies = [
   "httpx>=0.28,<1",
-  "pypdf>=5.1,<6",
+  "pypdf>=6.21.4,<7",
   "pydantic>=2.10,<3",
   "yt-dlp>=2026.8.19,<2027",
   "playwright>=1.52,<2",
@@ -18,6 +18,9 @@ dependencies = [
 
 [project.optional-dependencies]
 media = ["openai-whisper==20250625"]
+# PDF 扫描页渲染后端；缺它时 reader 报安装提示而不是静默跳过。
+# Pillow 把 pypdfium2 的位图编码成 PNG（ocr extra 里也有，这里单独列以免只装渲染就缺编码器）。
+pdf-render = ["pypdfium2>=4,<6", "Pillow>=10,<13"]
 ocr = ["Pillow>=10,<13"]
 ocr-vision = [
   "Pillow>=10,<13",

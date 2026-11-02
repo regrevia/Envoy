@@ -1,7 +1,7 @@
 # A 线交付报告 —— 媒体/采集预算与断点续跑（0.1.23 基线）
 
-- 工作树：`/Users/apple/Desktop/2026/envoy-a`，分支 `wt/envoy-a`，基线 `main=fbdede5`（release 0.1.23）
-- 未触碰：安装器、workflow、integrations、dist、版本号；主仓库 `/Users/apple/Desktop/2026/Envoy` 未改动
+- 工作树：`$HOME/Desktop/2026/envoy-a`，分支 `wt/envoy-a`，基线 `main=fbdede5`（release 0.1.23）
+- 未触碰：安装器、workflow、integrations、dist、版本号；主仓库 `$HOME/Desktop/2026/Envoy` 未改动
 - 本轮提交：`a9666cb`（A1/A2/A4 边界）、`2d9e8c1`（A5）、`9b04c4d`（A3）、报告单独一次
 - 全部改动只在工作树内，未 push、未 merge
 
@@ -59,9 +59,9 @@
 测试环境说明：系统/项目/uv 工具环境都没有 pytest；本轮用 `uv pip install --offline --target /tmp/envoy-a-pt pytest` 装到临时目录，再用带齐依赖的 tool 环境解释器跑：
 
 ```bash
-cd /Users/apple/Desktop/2026/envoy-a
+cd $HOME/Desktop/2026/envoy-a
 PYTHONPATH=/tmp/envoy-a-pt:packages/envoy-cli/src:packages/envoy-core/src \
-  /Users/apple/.local/share/uv/tools/envoy-cli/bin/python -m pytest <files> -q
+  $HOME/.local/share/uv/tools/envoy-cli/bin/python -m pytest <files> -q
 ```
 
 | 命令（目标） | 结果 |
@@ -86,7 +86,7 @@ PYTHONPATH=/tmp/envoy-a-pt:packages/envoy-cli/src:packages/envoy-core/src \
 
 ## 四、明天与用户一起做真实验收（V01–V10）
 
-前置：在 `/Users/apple/Desktop/2026/envoy-a` 用干净环境装一次可编辑包；`ENVOY_ASR_CHECKPOINT_DIR` 指向临时目录便于观察断点。
+前置：在 `$HOME/Desktop/2026/envoy-a` 用干净环境装一次可编辑包；`ENVOY_ASR_CHECKPOINT_DIR` 指向临时目录便于观察断点。
 
 - **V01 断点身份换目录仍命中**：同一段音视频在两个不同临时目录各跑一次，第二次日志/返回里 `cached` 或 `resumed` 为真、断点文件名一致（观察 `~/.envoy/asr` 下 JSON 的 `identity`）。
 - **V02 内容变化即失效**：改一段音频（重编码/截断）再跑，生成新断点文件，旧断点不被续用。

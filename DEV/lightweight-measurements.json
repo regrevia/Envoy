@@ -1,9 +1,9 @@
 {
   "generated_at": "2026-10-28T05:43:51+00:00",
-  "repo": "/Users/apple/Desktop/2026/Envoy",
+  "repo": "$HOME/Desktop/2026/Envoy",
   "branch_hint": "run from a checkout; numbers describe this worktree",
   "python": "3.11.15",
-  "python_executable": "/Users/apple/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11",
+  "python_executable": "$HOME/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11",
   "platform": "Darwin arm64",
   "repeat": 7,
   "total_budget_seconds": 115.0,
@@ -35,7 +35,7 @@
       "key": "version",
       "label": "envoy --version",
       "command": [
-        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "$HOME/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
         "-c",
         "from envoy_cli.cli import entrypoint; entrypoint()",
         "--version"
@@ -67,7 +67,7 @@
       "key": "doctor_json",
       "label": "envoy doctor --json",
       "command": [
-        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "$HOME/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
         "-c",
         "from envoy_cli.cli import entrypoint; entrypoint()",
         "doctor",
@@ -100,7 +100,7 @@
       "key": "import_cli",
       "label": "python -c \"import envoy_cli.cli\"",
       "command": [
-        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "$HOME/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
         "-c",
         "import envoy_cli.cli"
       ]
@@ -131,7 +131,7 @@
       "key": "importtime_cli",
       "label": "python -X importtime -c \"import envoy_cli.cli\"",
       "command": [
-        "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
+        "$HOME/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python",
         "-X",
         "importtime",
         "-c",

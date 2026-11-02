@@ -5,9 +5,9 @@ layer for every URL. This document states which reader owns which URL, why, and
 how a change to that ownership is evaluated.
 
 The corpus that checks this policy lives in
-[`tests/fixtures/routing/`](/Users/apple/Desktop/2026/Envoy/tests/fixtures/routing/README.md);
+[`tests/fixtures/routing/`]($HOME/Desktop/2026/Envoy/tests/fixtures/routing/README.md);
 the offline checker is
-[`scripts/acceptance/route_eval.py`](/Users/apple/Desktop/2026/Envoy/scripts/acceptance/route_eval.py).
+[`scripts/acceptance/route_eval.py`]($HOME/Desktop/2026/Envoy/scripts/acceptance/route_eval.py).
 
 ## The claim
 

@@ -58,7 +58,7 @@
 目的：确认契约里的每一条都能被离线单测与端到端 CLI 测试判定，且不破坏既有静态页行为。
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 packages/envoy-cli/.venv/bin/python -m pytest tests/cli/test_page_structure.py -q
 ```
 
@@ -104,7 +104,7 @@ packages/envoy-cli/.venv/bin/python -m pytest tests/cli/test_page_structure.py \
 目的：真实会话里，会话钩子是否会把用户给出的静态链接指向 Envoy 读取，从而真的走到这条读取路径；以及钩子文案里是否还有「直接交给内置抓取」的误导。
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 packages/envoy-cli/.venv/bin/python - <<'PY'
 import sys
 sys.path[:0] = ["packages/envoy-cli/src", "packages/envoy-core/src"]
@@ -146,7 +146,7 @@ context lines: 13
 目的：确认新增结构经 MCP 层原样到达宿主，宿主不需要额外渲染器；并确认小页面不会被结构键撑爆响应体积。
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 packages/envoy-cli/.venv/bin/python -m pytest tests/cli/test_mcp_bridge.py -q
 ```
 
@@ -285,7 +285,7 @@ packages/envoy-cli/.venv/bin/python -m pytest tests/cli -q
 前置：在仓库根执行；Python 用 `packages/envoy-cli/.venv/bin/python`；不要给 pytest 传 `--timeout`（环境未装该插件）。
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 
 # 1. 本次契约的单测
 packages/envoy-cli/.venv/bin/python -m pytest tests/cli/test_page_structure.py -q
@@ -301,7 +301,7 @@ packages/envoy-cli/.venv/bin/python -m pytest tests/cli -q
 真实链接读取（单条）：
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 ENVOY_LOCAL_DATA_DIR=/tmp/envoy-accept-$(date +%s) \
 packages/envoy-cli/.venv/bin/python - <<'PY'
 import contextlib, io, json, sys

@@ -459,8 +459,11 @@ TOOLS = [
             "or source navigation with the host's own fetch, and call this only "
             "when that is blocked, truncated, needs JavaScript or login, is "
             "audio/video/PDF/Office, or must be retained for envoy_expand, "
-            "envoy_search, or envoy_replay. Skip it for material already in this "
-            "turn's context and for a URL the user only wants edited or quoted. "
+            "envoy_search, or envoy_replay. A plain fetch that already returned "
+            "800 characters or more of the article body answered the question: "
+            "use it and do not call this for that page. Skip it for material "
+            "already in this turn's context and for a URL the user only wants "
+            "edited or quoted. "
             "On GitHub, GitLab, and Bitbucket use gh or git when they are at hand. "
             "Without them, a GitHub repo, tree, blob, commit, pull, or issue link "
             "belongs here: that path goes through the GitHub API with no browser "
@@ -867,8 +870,13 @@ def _tool_content_text(payload: dict, modern: bool, request=None) -> str:
             f"Envoy collection checkpoint {payload.get('action', 'updated')}; "
             f"manifest_revision={payload.get('manifest_revision', 'unknown')}."
         )
-    if not modern:
-        return json.dumps(payload, ensure_ascii=False)
+    # Legacy hosts (no modern `_meta` negotiation) read `content` as text and
+    # may never forward `structuredContent`. Handing them a JSON dump made a
+    # 9,600-character article a 39,000-character escaped wall that the host
+    # cuts mid-record with no readable continuation. Both protocol generations
+    # get the same rendered evidence; `modern` stays in the signature because
+    # the callers and tests pin the pair of fields, not because rendering
+    # depends on it.
     tool = str(payload.get("tool") or "envoy_read")
     if tool == "envoy_discover":
         return _discover_content_text(payload)
@@ -896,7 +904,7 @@ def _content_char_budget(request) -> int:
         value = getattr(request, attr, None)
         if isinstance(value, int) and value > 0:
             return max(1_200, min(value, 12_000))
-    return 8_000
+    return 12_000
 
 
 def _block_text(block: dict) -> str:
@@ -934,6 +942,18 @@ def _block_line(index: int, total: int, block: dict) -> str:
 # Wrapping it keeps the beginning inside the budget instead of spending the
 # whole allowance on a header it cannot show.
 _FIT_LINE_WIDTH = 240
+# Room the rendered lines need on top of the block text itself. Every block
+# costs one `[12/40] blk-0012 · paragraph <locator>` line, and the head plus the
+# continuation or full-delivery note cost a fixed few hundred more; both are
+# charged to the same character budget as the prose.
+_MATERIAL_BLOCK_LINE_ROOM = 160
+_MATERIAL_CHROME_ROOM = 2_000
+# The largest reader delivery this renderer will insist on printing in full.
+# A reader ships at most `max_response_chars` (12,000 by default), so a payload
+# inside this ceiling can always be rendered whole; a payload past it is
+# already an explicit request for less text, and is cut with a real
+# continuation instead of being dumped.
+_MATERIAL_FULL_RENDER_MAX = 24_000
 # Room kept for the closing notice, so the caller learns what was cut instead
 # of receiving a response that just stops.
 _FIT_NOTICE_ROOM = 400
@@ -1385,6 +1405,19 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
     head = _material_header(payload, tool)
     if not needs and result != "blocked":
         text_chars = sum(len(_block_text(block)) for block in blocks)
+        # This block text is exactly what the coverage record calls delivered.
+        # Cutting it here makes the answer shorter than its own receipt, and
+        # envoy_expand then refuses the missing tail as already delivered, so a
+        # document the reader shipped in full can never be read in full. The
+        # per-block lines, locators and closing notes are charged to this same
+        # budget, so fit the shipped text plus what those lines cost. Measured:
+        # a 9,631-character article arrived 1,631 characters short of its own
+        # coverage record and the tail could not be fetched again.
+        if text_chars <= _MATERIAL_FULL_RENDER_MAX:
+            budget = max(
+                budget,
+                text_chars + _MATERIAL_CHROME_ROOM + len(blocks) * _MATERIAL_BLOCK_LINE_ROOM,
+            )
         head += f" · {len(blocks)} blocks / {text_chars} chars"
         if resources:
             head += f" / {len(resources)} resources"
@@ -1479,9 +1512,13 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
                 f"max_chars={budget} to read the rest"
             )
         if retained:
+            # The cut happened here, not in the reader: the payload reports full
+            # delivery, so `_next_offset` is null and an expand without an offset
+            # would be told the material was already delivered. The printed
+            # block characters are the material offset to resume from.
             return (
-                f"next: envoy_expand material_id={material_id} max_chars={budget} "
-                "to continue (it reports the offset it delivered from)"
+                f"next: envoy_expand material_id={material_id} offset={shown} "
+                f"max_chars={budget} to continue"
             )
         return "next: envoy_read with refresh=true for the same URL to read it again"
 
@@ -1587,9 +1624,15 @@ def _material_remaining(item: dict) -> int | None:
     return max(0, total - delivered)
 
 
-def _read_payload(response, compact: bool) -> dict:
-    if not compact:
-        return response.model_dump(mode="json")
+def _read_payload(response, compact: bool = True) -> dict:
+    """Serialize one response the same way for every host.
+
+    A legacy session used to get the full dump while a modern one got the
+    compact one, so the host least able to spend context received the largest
+    payload: measured 39,103 characters for a 9,631-character article, on top
+    of the same bytes repeated in `content`. ``compact`` stays in the signature
+    for the existing call sites; the payload is always compact now.
+    """
     payload = response.model_dump(
         mode="json",
         exclude_none=True,

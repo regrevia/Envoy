@@ -30,7 +30,7 @@ The CLI has exactly one task entry point; there is no `envoy task create` /
 one JSON envelope:
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 packages/envoy-cli/.venv/bin/envoy task-checkpoint --request-json - <<'JSON'
 {"action": "create", "task_id": "acc-2026-11-01", "goal": "follow this material",
  "sources": ["https://example.com/long-video"]}

@@ -1,7 +1,7 @@
 # C 线报告（安装 / 打包 / 跨平台）— 0.1.24
 
 基线 0.1.23 发行版 → 0.1.24 交付提交（构建提交见 `release-manifest.json` 的 `source_commit`）。
-交付目录：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24/`。
+交付目录：`$HOME/Desktop/2026/envoy-delivery/0.1.24/`。
 
 ## 1. 做了什么（按用户能感知的顺序）
 
@@ -50,7 +50,7 @@
 ## 3. 打包结果（release 渠道，C7/C8 之后重建）
 
 
-预览候选：`/Users/apple/Desktop/2026/envoy-delivery/0.1.24-preview/`（`local-preview` 渠道，wheel 带 `+preview.g6b5928537057`，`doctor` 报 `channel local-preview`、`source_revision f03184184294`，5 产物 + 清单 + `SHA256SUMS` + `verify_delivery.py` + `PREVIEW-NOTES.md`），只给在场首测，不上传。
+预览候选：`$HOME/Desktop/2026/envoy-delivery/0.1.24-preview/`（`local-preview` 渠道，wheel 带 `+preview.g6b5928537057`，`doctor` 报 `channel local-preview`、`source_revision f03184184294`，5 产物 + 清单 + `SHA256SUMS` + `verify_delivery.py` + `PREVIEW-NOTES.md`），只给在场首测，不上传。
 | 文件 | 作用 |
 | --- | --- |
 | `envoy_cli-0.1.24-py3-none-any.whl` | runtime（CLI + 内嵌 core） |
@@ -79,7 +79,7 @@
 
 ## 5. 交付清单
 
-`/Users/apple/Desktop/2026/envoy-delivery/0.1.24/`：
+`$HOME/Desktop/2026/envoy-delivery/0.1.24/`：
 6 个发行资产 + `SHA256SUMS` + `COMPATIBILITY.md`（平台能力矩阵，逐项标
 implemented / unit_checked / packaged / not_run）+ `DEVELOPMENT-REPORT.md` +
 `EXPERIMENT-PLAN.json`（35 条实验，全部 `not_run`）+ `RUN-WHEN-PRESENT.md`
@@ -212,7 +212,7 @@ where.exe envoy; envoy --version                                 # 期望 0.1.24
 
 - 版本升到 `0.1.25`：`check_versions.py --check` → 11 处声明一致（含 2 份文档）；发行清单、DSH skill、宿主 skills 均 `--check` current。
 - 定向测试：`pytest -q tests/cli tests/test_envoy_cli_distribution.py tests/core_protocol` → **886 passed**。
-- 发行包（`--channel release`，源码 `b0e420e733af`，`source_dirty=false`）在仓库根 `dist/` 全量重建后 emit 清单，交付到 `/Users/apple/Desktop/2026/envoy-delivery/0.1.25/`；后按发布字节替换 wheel/清单/摘要。
+- 发行包（`--channel release`，源码 `b0e420e733af`，`source_dirty=false`）在仓库根 `dist/` 全量重建后 emit 清单，交付到 `$HOME/Desktop/2026/envoy-delivery/0.1.25/`；后按发布字节替换 wheel/清单/摘要。
 - 交付校验：`verify_delivery.py --dir .` → `delivery ok (13 checks)`；`shasum -c SHA256SUMS` → 6/6 OK；`dry_run_experiments.py --check` → `plan ok: 35 entries (not_run 35); holdout frozen`。
 - 安装器：`check_installer_offline.sh` → **10/10**；`check_installer_e2e_local.sh …/0.1.25` → **14/14**；预览候选 `…/0.1.25-preview` 同样 13 项 + **14/14**。
 - 发行轮子冒烟：`envoy --version` → `envoy-cli 0.1.25 (core 0.1.25)`；`doctor --json` 的 `build = {channel: release, version: 0.1.25, source_revision: b0e420e733af, source_dirty: false}`。

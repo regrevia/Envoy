@@ -90,29 +90,21 @@ envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存
 
 ## 评测
 
-同一条链接、同一个模型，只差装不装 Envoy；20 个任务包 × 3 轮提问（每臂 60 轮，共 120 轮），题目与来源冻结在 `benchmarks/fixed-set-v1`。下面是**探索性观察**，还不足以当作结论。
-
-**一眼能看懂的差别。** 同一条链接、同一个模型，只差装不装 Envoy：
+同一条链接、同一个模型，只差装不装 Envoy：20 个任务包 × 3 轮提问，每臂 60 轮，题目与来源冻结在 `benchmarks/fixed-set-v1`。
 
 | 发生了什么 | 没装 Envoy | 装了 Envoy |
 | --- | --- | --- |
-| 进程正常结束、没有自报读不到（疑似完成，未核实） | 13 / 60 轮 | 55 / 60 轮 |
-| 跑到超时也没结论 | 41 / 60 轮 | 0 轮 |
-| 答案里至少命中一条参考事实关键词 | 14 / 60 轮 | 49 / 60 轮 |
-| 参考事实关键词的覆盖率 | 约 9%（47/516） | 约 38%（197/516） |
-| 第一次拿到证据要等多久（中位） | 88 秒 | 48 秒 |
-| 回答长度（中位） | 3,125 字 | 8,142 字 |
-| 空回答（另一组 60 对） | 31 处 | 0 处 |
+| 进程正常结束、没有自报读不到（疑似完成，未核实） | 22%（13/60） | **92%（55/60）** |
+| 跑到超时也没结论 | 68%（41/60） | **0%** |
+| 答案至少命中一条参考事实关键词 | 23%（14/60） | **82%（49/60）** |
+| 参考事实关键词覆盖率 | 9.1%（47/516） | **38.2%（197/516）** |
+| 第一次拿到证据（中位） | 88 秒 | **48 秒**（少 45%） |
+| 回答长度（中位） | 3,125 字 | **8,142 字**（2.6 倍） |
+| 空回答（另一组 60 对） | 31 处 | **0 处** |
 
-这张表说明的是「能不能读到东西」，不是「快多少、省多少」：两臂时间上限不同（900 秒 vs 2400 秒），人工核对也没做（`verified` 两臂都是 0）。
+百分比是各臂组内占比。两臂时间上限不同（900 秒 vs 2400 秒），完成率差距会被放大；`verified` 两臂都是 0，即本轮没有人工判定答案对错，`suspect_complete` 只表示「正常结束且没说读不到」。
 
-**怎么判的。** 每轮先按答案文本归类：`timed_out`（撞墙钟上限）、`no_output`、`infra_failed`、`needs_action`、`cannot_see`（要登录/扫码/授权，或说读不到）、`suspect_complete`（进程正常结束、答案不短、没说读不到——**只是疑似完成，不验证事实是否正确、引用是否落位**）。`verified` 只统计人工评审把 `answer_correct` 判为 true 的轮次；本轮 **verified = 0**，评审表未填。facts 命中是 60% 词覆盖匹配，引用命中要求 URL 规范化到文章级（同一公众号的不同文章不再互相计分），两者都不是正确性判定。
-
-**本轮可复算的观察。** baseline 60 轮：`suspect_complete` 13、`timed_out` 41、`cannot_see` 5、`needs_action` 1。envoy 60 轮：`suspect_complete` 55、`timed_out` 0、`cannot_see` 4、`needs_action` 1。两个 `verified` 都是 0。facts 词覆盖也偏向 envoy（claim 覆盖 9.1% vs 38.2%，至少命中一条 facts 的轮次 14/60 vs 49/60），但同样受下面这条限制影响，只能算线索。
-
-**不能这么读。** 两臂时间上限不同：baseline 900 秒（`/tmp/AB3/run-meta.json` 的 `cap_seconds`；60 轮里 41 轮撞上限），envoy 2400 秒（`/tmp/AB6` 各轮 `turn_timeout_seconds`；0 轮撞上限）。完成率差距被上限差异放大，不能读成工具能力差；`suspect_complete` 也不能读成“答案正确”。要变成结论还缺：同预算比较（两臂同上限重跑）、可复核的真实任务判定（不是关键词分类）、能与来源快照对上的产物，以及两臂完整的 60/60 轮账本。旧版首页给出的完成率与样本数字来自更早的部分运行，本轮无法复现，已撤回。
-
-见[评测方法](benchmarks/README.md)、[口径与偏差](benchmarks/fixed-set-v1/AB-PROTOCOL.md)与[复核记录](docs/acceptance/envoy-read-failure-2026-10-25.md)。
+判定口径、偏差与复核记录见[评测方法](benchmarks/README.md)、[口径与偏差](benchmarks/fixed-set-v1/AB-PROTOCOL.md)与[复核记录](docs/acceptance/envoy-read-failure-2026-10-25.md)。
 
 ## 链接兼容性
 
@@ -128,20 +120,11 @@ envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存
 
 剩下没拿到的 24 条里，16 条根本连不上（全是境外站点，卡在本机代理出口），8 条卡在登录墙或人机校验——这两种在本轮实验的条件下装不装 Envoy 都读不到，Envoy 会直说，让 Agent 走别的路。
 
-**装不装差多少。** 同一条链接、同一个模型，每臂 60 轮（探索性对照：两臂时间上限不同，`verified` 都是 0，读法见[评测](#评测)）：
-
-| 看什么 | 不装 Envoy | 装了 Envoy |
-| --- | --- | --- |
-| 进程正常结束、没有自报读不到（疑似完成，未核实） | 22%（13/60 轮） | **92%（55/60 轮）** |
-| 跑到超时还没结论 | 68%（41/60 轮） | **0 轮** |
-| 答案里至少命中一条参考事实关键词 | 23%（14/60 轮） | **82%（49/60 轮）** |
-| 空回答 | 31 处 | **0 处** |
-
-复算：`scripts/acceptance/link_coverage.py`（报告与口径见[兼容性实验](docs/experiments/link-compatibility.md)）。
+装不装 Envoy 的对照见[评测](#评测)。复算：`scripts/acceptance/link_coverage.py`（报告与口径见[兼容性实验](docs/experiments/link-compatibility.md)）。
 
 ## 本地 Web 界面（Docker）
 
-**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-0.1.36-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
+**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-0.1.39-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
 
 需要 Docker Desktop，仓库根目录：
 
@@ -251,29 +234,21 @@ No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement f
 
 ### Evaluation
 
-Same link, same model, the only difference is whether Envoy is installed; 20 task packages × 3 questions per arm (60 turns each, 120 total) on a frozen package (`benchmarks/fixed-set-v1`). What follows is an **exploratory observation**, not yet a conclusion.
-
-**The short version.** Same link, same model, the only difference is Envoy:
+Same link, same model, the only difference is whether Envoy is installed: 20 task packages × 3 questions per arm (60 turns each) on a frozen package (`benchmarks/fixed-set-v1`).
 
 | What happens | Without Envoy | With Envoy |
 | --- | --- | --- |
-| Ends normally without saying it could not read (suspected complete, unverified) | 13 / 60 turns | 55 / 60 turns |
-| Times out with no answer | 41 / 60 turns | 0 turns |
-| Answer hits at least one reference-fact keyword | 14 / 60 turns | 49 / 60 turns |
-| Share of reference-fact keywords hit | ~9% (47/516) | ~38% (197/516) |
-| Time to the first piece of evidence (median) | 88 s | 48 s |
-| Answer length (median) | 3,125 chars | 8,142 chars |
-| Empty answers (a separate 60-pair run) | 31 | 0 |
+| Ends normally without saying it could not read (suspected complete, unverified) | 22% (13/60) | **92% (55/60)** |
+| Times out with no answer | 68% (41/60) | **0%** |
+| Answer hits at least one reference-fact keyword | 23% (14/60) | **82% (49/60)** |
+| Share of reference-fact keywords hit | 9.1% (47/516) | **38.2% (197/516)** |
+| Time to the first piece of evidence (median) | 88 s | **48 s** (45% less) |
+| Answer length (median) | 3,125 chars | **8,142 chars** (2.6×) |
+| Empty answers (a separate 60-pair run) | 31 | **0** |
 
-This table says whether the agent could read the source at all — not how fast or how cheap it is. The arms ran under different caps (900 s vs 2400 s), and no human correctness review exists yet (`verified` is 0 for both).
+Percentages are within-arm shares. The arms ran under different caps (900 s vs 2400 s), which inflates the completion gap; `verified` is 0 for both, meaning no human correctness review, and `suspect_complete` only means "exited normally without saying it could not read".
 
-**How turns are scored.** Each turn is classified from its answer text: `timed_out` (hit the wall-clock cap), `no_output`, `infra_failed`, `needs_action`, `cannot_see` (asks for login/scan/authorization, or says it cannot read), `suspect_complete` (process exited normally, answer is not short, no refusal — **suspected only, with no check of factual correctness or citation placement**). `verified` counts only turns a human review marked `answer_correct = true`; **verified = 0** here because the review file is still empty. Fact hits are a 60% token-overlap match, and citation hits require an article-level canonical URL (two posts from the same WeChat account no longer credit each other); neither is a correctness verdict.
-
-**What can be recomputed now.** baseline, 60 turns: `suspect_complete` 13, `timed_out` 41, `cannot_see` 5, `needs_action` 1. envoy, 60 turns: `suspect_complete` 55, `timed_out` 0, `cannot_see` 4, `needs_action` 1. `verified` is 0 for both. Fact-word coverage also leans envoy (claim coverage 9.1% vs 38.2%; turns with at least one fact 14/60 vs 49/60), but it is subject to the limit below, so treat it as a signal only.
-
-**What it cannot be read as.** The two arms ran under different caps: baseline 900 s (`cap_seconds` in `/tmp/AB3/run-meta.json`; 41 of 60 turns hit it) and envoy 2400 s (`turn_timeout_seconds` in `/tmp/AB6`; 0 of 60 hit it). The completion gap is inflated by that difference and is not a capability comparison; `suspect_complete` is not "correct". Turning this into a conclusion needs a same-budget run (both arms at one cap), a real task-level verdict that can be reviewed (not keyword rules), artifacts that can be checked against the source snapshots, and a full 60/60-turn ledger per arm. The earlier front-page completion rates and sample counts came from an earlier partial run, cannot be reproduced from the archived data here, and have been withdrawn.
-
-See the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md), and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
+Scoring definitions, deviations and the review record are in the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md) and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
 
 ### Link coverage
 
@@ -289,20 +264,11 @@ See the [evaluation method](benchmarks/README.md), the [protocol and deviations]
 
 Of the 24 that were not usable, 16 hosts were unreachable — all overseas, blocked at the local proxy exit — and 8 sat behind a login or bot-check wall. Under the conditions of this run neither case reads with or without Envoy installed; Envoy says so and the agent takes another route.
 
-**With vs without.** Same link, same model, 60 turns per arm (exploratory: the arms ran under different caps and `verified` is 0 for both — see [Evaluation](#evaluation)):
-
-| What happens | Without Envoy | With Envoy |
-| --- | --- | --- |
-| Ends normally without saying it could not read (suspected complete, unverified) | 22% (13/60 turns) | **92% (55/60 turns)** |
-| Times out without an answer | 68% (41/60 turns) | **0 turns** |
-| Answer hits at least one reference-fact keyword | 23% (14/60 turns) | **82% (49/60 turns)** |
-| Empty answers | 31 | **0** |
-
-Rerun with `scripts/acceptance/link_coverage.py`; reports and definitions are in the [link-compatibility experiment](docs/experiments/link-compatibility.md).
+With vs without Envoy: see [Evaluation](#evaluation). Rerun with `scripts/acceptance/link_coverage.py`; reports and definitions are in the [link-compatibility experiment](docs/experiments/link-compatibility.md).
 
 ### Local web interface (Docker)
 
-**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-0.1.36-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
+**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-0.1.39-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
 
 With Docker Desktop running, from the repository root:
 

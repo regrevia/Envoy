@@ -1,6 +1,6 @@
 # Envoy 长 PDF 缺陷修复报告（B 线）
 
-- 工作树：`/Users/apple/Desktop/2026/envoy-b`，分支 `wt/envoy-b`，基线 `fbdede5`（0.1.23）
+- 工作树：`$HOME/Desktop/2026/envoy-b`，分支 `wt/envoy-b`，基线 `fbdede5`（0.1.23）
 - 提交：`35810fc` — B1–B5 代码 + 测试（仅本工作树，未 push、未合并）
 - 状态标记：`implemented` 已改代码；`unit_checked` 有纯逻辑单测通过；`not_run` 未做（原因见末尾）
 
@@ -19,13 +19,13 @@
 
 ## 二、验证命令与结果
 
-解释器：`/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python`（pypdf 5.9.0 / pytest / httpx 可用）。
+解释器：`$HOME/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python`（pypdf 5.9.0 / pytest / httpx 可用）。
 工作树代码优先：
 
 ```bash
-cd /Users/apple/Desktop/2026/envoy-b
-export PYTHONPATH=/Users/apple/Desktop/2026/envoy-b/packages/envoy-cli/src:/Users/apple/Desktop/2026/envoy-b/packages/envoy-core/src
-V=/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python
+cd $HOME/Desktop/2026/envoy-b
+export PYTHONPATH=$HOME/Desktop/2026/envoy-b/packages/envoy-cli/src:$HOME/Desktop/2026/envoy-b/packages/envoy-core/src
+V=$HOME/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/python
 ```
 
 | 命令 | 结果 |

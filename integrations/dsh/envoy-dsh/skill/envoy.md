@@ -31,7 +31,23 @@ call:
 | Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `mcp__envoy__envoy_read`; a plain fetch is known to fail there. |
 | GitHub repo, tree, blob, commit, pull, or issue: `github.com/{owner}/{repo}`, `/tree/{ref}/{path}`, `/blob/{ref}/{path}#L10-L20`, `/commit/{sha}` | `mcp__envoy__envoy_read` takes the GitHub API path, no browser: repo tree, a file's bytes for a line range with its path, commit SHA, and content hash, the commit diff and stats, the PR or issue body and comments. Use `gh` or `git` instead when they are at hand. A truncated tree or an unfetched file or review is named in `coverage.unresolved`; a 403 is `github_rate_limited` with the reset time. |
 | GitLab, Bitbucket, or a GitHub page the API path declines (wiki, gist raw, org listing) | `gh api`, `git show`, or plain fetch. A rendered page gives the title and body, never the diff or the tree. |
-| Short static page, nothing pasted | Plain fetch first, escalate only if blocked, truncated, or JavaScript-rendered. |
+| Short static page, nothing pasted | Plain fetch first; escalate only on the evidence listed below. |
+
+A plain fetch that returns **800 characters or more of article text**
+already answered the question: use it and stop. Escalate to `mcp__envoy__envoy_read` only
+on evidence, never on suspicion:
+
+- fewer than 200 characters came back, or the text is a challenge or error
+  page: "enable JavaScript", "Access denied", "verify you are human",
+  "please log in";
+- the link is a document (`application/pdf`, `.docx`, `.pptx`, `.xlsx`, `.epub`)
+  or media (`.mp4`, `.m4a`, `.mp3`, `.webm`);
+- the body needs scrolling, cookies, a login, or a rendered shell to appear;
+- the answer must outlive this turn: `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`,
+  `mcp__envoy__envoy_replay`, video frames, or an audio transcript.
+
+A static article is the common case: it fetches in one plain request, and a
+second call to read what the first call already returned is pure cost.
 
 Stop after one plain fetch and one Envoy read. A short source that returns
 `blocked` is a normal outcome: report it and stop rather than retrying in a

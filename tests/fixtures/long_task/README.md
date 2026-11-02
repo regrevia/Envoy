@@ -65,7 +65,7 @@ The capture script is a module of four pytest cases, not a standalone command, s
 the same function that captures a receipt also asserts its shape:
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 ENVOY_CAPTURE_OUT=/tmp/long-task-fixtures \
   packages/envoy-cli/.venv/bin/python -m pytest tests/fixtures/long_task/capture_receipts.py -q
 ```

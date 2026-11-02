@@ -2,17 +2,18 @@
 name: envoy
 description: >
   Read material the host cannot get itself: video or audio transcripts and
-  frames, long articles, PDFs and Office documents, image posts, pages that
-  need scrolling, cookies, or login, GitHub repo/tree/blob/commit/pull/issue
-  links when no gh or git is available, and reads that must stay retained so a
-  later turn can expand, search, or replay them. Start with a plain host
-  fetch; call Envoy only after it is blocked, truncated, or renders an empty
-  shell. Do not call Envoy for a short static page a plain fetch already
-  answers; for GitHub, GitLab, or Bitbucket source navigation or a repo
-  README while gh or git is available (use gh api, git show, or plain fetch);
-  for material already in this turn's context (use envoy_expand or
-  envoy_search on its material_id); or for a link the user only wants edited,
-  quoted, or saved.
+  frames, PDFs and Office documents, image posts, pages that need scrolling,
+  cookies, or login, GitHub repo/tree/blob/commit/pull/issue links when no gh or
+  git is available, articles a plain fetch truncates, and reads that must stay
+  retained so a later turn can expand, search, or replay them. Start with a
+  plain host fetch; call Envoy only after it is blocked, truncated, or renders
+  an empty shell, or when the answer must outlive the turn. Do not call Envoy
+  for a short static page a plain fetch already answers, for an article whose
+  body a plain fetch already returned in full, for GitHub, GitLab, or Bitbucket
+  source navigation or a repo README while gh or git is available (use gh api,
+  git show, or plain fetch), for material already in this turn's context (use
+  envoy_expand or envoy_search on its material_id), or for a link the user only
+  wants edited, quoted, or saved.
 ---
 
 # Envoy Link Reader
@@ -39,7 +40,23 @@ call:
 | Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `envoy_read`; a plain fetch is known to fail there. |
 | GitHub repo, tree, blob, commit, pull, or issue: `github.com/{owner}/{repo}`, `/tree/{ref}/{path}`, `/blob/{ref}/{path}#L10-L20`, `/commit/{sha}` | `envoy_read` takes the GitHub API path, no browser: repo tree, a file's bytes for a line range with its path, commit SHA, and content hash, the commit diff and stats, the PR or issue body and comments. Use `gh` or `git` instead when they are at hand. A truncated tree or an unfetched file or review is named in `coverage.unresolved`; a 403 is `github_rate_limited` with the reset time. |
 | GitLab, Bitbucket, or a GitHub page the API path declines (wiki, gist raw, org listing) | `gh api`, `git show`, or plain fetch. A rendered page gives the title and body, never the diff or the tree. |
-| Short static page, nothing pasted | Plain fetch first, escalate only if blocked, truncated, or JavaScript-rendered. |
+| Short static page, nothing pasted | Plain fetch first; escalate only on the evidence listed below. |
+
+A plain fetch that returns **800 characters or more of article text**
+already answered the question: use it and stop. Escalate to `envoy_read` only
+on evidence, never on suspicion:
+
+- fewer than 200 characters came back, or the text is a challenge or error
+  page: "enable JavaScript", "Access denied", "verify you are human",
+  "please log in";
+- the link is a document (`application/pdf`, `.docx`, `.pptx`, `.xlsx`, `.epub`)
+  or media (`.mp4`, `.m4a`, `.mp3`, `.webm`);
+- the body needs scrolling, cookies, a login, or a rendered shell to appear;
+- the answer must outlive this turn: `envoy_expand`, `envoy_search`,
+  `envoy_replay`, video frames, or an audio transcript.
+
+A static article is the common case: it fetches in one plain request, and a
+second call to read what the first call already returned is pure cost.
 
 Stop after one plain fetch and one Envoy read. A short source that returns
 `blocked` is a normal outcome: report it and stop rather than retrying in a

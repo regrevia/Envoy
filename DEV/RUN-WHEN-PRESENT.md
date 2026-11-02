@@ -16,11 +16,11 @@ python scripts/check_versions.py --check
 python scripts/check_release_manifest.py --check
 ```
 
-交付包在 `/Users/apple/Desktop/2026/envoy-delivery/0.1.25/`。装之前跑一次交付校验，
+交付包在 `$HOME/Desktop/2026/envoy-delivery/0.1.25/`。装之前跑一次交付校验，
 一条命令覆盖摘要、清单、wheel/tgz/skill 与安装脚本的版本引用（离线，不需要装 wheel）：
 
 ```sh
-cd /Users/apple/Desktop/2026/envoy-delivery/0.1.25
+cd $HOME/Desktop/2026/envoy-delivery/0.1.25
 PYTHONDONTWRITEBYTECODE=1 python3 verify_delivery.py --dir .
 # 期望最后一行：delivery ok: ... (13 checks)
 ```
@@ -181,7 +181,7 @@ range GET 探过可达），冻结结果在 `holdout-H12-2026-10-28.json`，sha2
 **已经冻结过，不要再跑一次**——下面是万一要重放的形态，正常执行直接从 §9 记结果开始：
 
 ```sh
-cd /Users/apple/Desktop/2026/envoy-delivery/0.1.25
+cd $HOME/Desktop/2026/envoy-delivery/0.1.25
 python3 freeze_holdout.py --input candidates.txt --size 12 --id H12-2026-10-28 \
   --out holdout.json --apply-plan EXPERIMENT-PLAN.json
 python3 freeze_holdout.py --check holdout.json --plan EXPERIMENT-PLAN.json  # 期望 holdout ok: ... (12 rows, ...)
@@ -197,7 +197,7 @@ python3 dry_run_experiments.py --check              # 期望 ...; holdout frozen
 ## 9. 把一条结果写回计划（唯一允许的写法）
 
 ```sh
-cd /Users/apple/Desktop/2026/envoy-delivery/0.1.25
+cd $HOME/Desktop/2026/envoy-delivery/0.1.25
 python3 record_experiment.py --json                       # 先看现在是 35 条 not_run、holdout 状态
 python3 record_experiment.py --id V02 --status passed \
     --evidence "900s budget: 412/600 chunks, gap 188, 214s wall" \

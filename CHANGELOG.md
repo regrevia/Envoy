@@ -1,6 +1,6 @@
 # 更新日志 / Changelog
 
-## 未发布 / Unreleased
+## 0.1.39 - 2026-11-02
 
 ### 中文
 
@@ -46,6 +46,47 @@
   以及“只改一个时间段、复用其余片段”——ASR 检查点身份带范围（`media.py:1491-1515`），改范围即重转录；本轮只把
   重复工作量界定为 `processed_until_seconds − continuation_start_seconds` 并写进文档，未修。支持的表述仍只是
   “部分材料能续读”。
+
+- PDF 扫描页 OCR（可选能力）：无文本层的页在读取时就地渲染为 PNG（200 dpi）再识别，识别文本按页码顺序进入正文与
+  `page_spans`；失败落到 `ocr_failed` 并写 `failed_reason` 与 `coverage.unresolved`，不静默留空。渲染走可选 extra
+  `pdf-render`（`pypdfium2` / Pillow），缺依赖时显式报错并给出 `pip install 'envoy-cli[pdf-render]'`；OCR 后端按
+  `vision` → `paddleocr` → `rapidocr` → `tesseract` 选择，单次最多 40 页（`ENVOY_PDF_OCR_MAX_PAGES` 可覆盖），超出或
+  墙钟到点记 `unprocessed` + `ocr_budget_exhausted`。本机实测：`tests/fixtures/pdf/scanned-text.pdf` 2 页全扫描 1.06 s，
+  `tesseract 5.5.2` 识别出 20/21 字符，`summary.counts = {ocr: 2}`（`reader.py:6433`、`pdf_render.py:196`、`ocr.py:169`）。
+- 多栏阅读顺序：文本层页按行聚类与起始 x 距聚类判断栏数，`columns >= 2` 且 `layout_score >= 0.6` 才重排，重排前后词袋
+  必须一致，否则保留流式顺序；门槛是 ≥600 字符（`ENVOY_PDF_LAYOUT=off` 可关）。本机实测：三栏夹具 1084 字符 →
+  `columns=3, layout_score=1.0`；合成双栏长页 1410 字符 → `columns=2, lines_reordered=true`，重排后先左栏后右栏。
+  仓库自带 `two-column.pdf` 每页仅 129 字符，低于门槛，仍走流式，不作为双栏证据（`reader.py:6658`、`pdf_layout.py:203`）。
+- 逐页证据 `envoy.page-evidence/1`：`coverage.modalities.text.details.page_evidence` 给出 `page_count` / `window` /
+  `indexed_page_count` / `pages` / `pages_truncated` / `summary`；每页含 `status`、`extraction_mode`、`chars`、
+  `text_sha256`、`reading_order`、`layout`、`ocr`、`citation`、`flags`。`pages` 最多 200 条、按页码升序，截断时
+  `pages_truncated=true`；`summary.counts` 与各区域页码清单按整个窗口统计，不受 `pages` 截断影响。只有 PDF 源带该键，
+  非 PDF 源的 `details` 不含（`reader.py:6734`、`:6252-6253`；`tests/cli/test_pdf_evidence.py` 13 项通过）。
+- 验收与证据级别：新增 `docs/acceptance/pdf-page-evidence-2026-11-02.md`；本轮改动为 `unit_checked`（离线合成夹具与直接
+  调用 `_pdf_page_evidence`）。`verified` 只有本机后端探测：`render_backend_status()` 可用（`pypdfium2 5.14.0`）、
+  `tesseract 5.5.2` 可用；`vision` / `paddleocr` / `rapidocr` 与 `pdftoppm` / `mutool` 未安装，均 `not_run`。
+  **未验证**：真实公开 PDF、>1000 页真实大文件、旋转/竖排文字、表格结构重建、加密文件与表单、扫描页版式分析。
+  支持的表述是“部分 PDF 的扫描页可识别、部分双栏页阅读顺序已修正”。
+- 正文渲染不再被截断：此前的旧协议回包把整份 JSON 原样放进 `content`，撞上宿主的工具结果上限后正文被切在中间，
+  而覆盖信息仍声称“全文已交付”。现在 `content` 一律渲染为可读文本并有保底预算——正文 ≤ 24,000 字符时整篇渲染
+  （字符余量按块数计：`_MATERIAL_CHROME_ROOM` / `_MATERIAL_BLOCK_LINE_ROOM`，`mcp.py:951`），超过上限才截断，
+  且必须同时给出截断说明和可用的 `offset`，不再出现“切了却报完整”。实测 Magpie 那篇 9,631 字符文章：旧回包
+  39,103 字符原始 JSON（一次调用合计 78,206 字符），新回包 14,291 字符渲染文本，末句与原文一致；legacy 会话与
+  `2026-07-28` 元数据两条协议路径字节一致。
+- 续读链路实测：26,031 字符文章在 12,000 预算下首读交付 11,978 字符并给 `next_offset`，两次 `envoy_expand`
+  接着取回 11,987 / 2,064 字符，拼接覆盖全文（含埋在中段的“数值一览”“准确率”两节），无丢失。
+- 触发条件改为可数：`## Decide before you call` 增加数值门槛——一次普通抓取拿到 ≥800 字符正文就直接用并停止；
+  只有正文 <200 字符、出现 challenge/JS/登录字样、文档或媒体扩展名、需要 cookie/滚动/渲染壳，或答案要跨轮保留
+  （`envoy_expand` / `envoy_search` / `envoy_replay` / 视频帧 / 音频转录）才升级到 `envoy_read`。三份手同步副本与
+  DSH 生成副本一致；`tests/cli/test_routing_discipline.py` 增加数值门槛守卫（8 项通过）。这是提示词契约，
+  不是运行时拦截：宿主仍可自行决定调用。
+
+- 依赖安全更新：`pypdf` 5.1.0 → 6.21.4（`backend/requirements.txt` 与 `packages/envoy-cli/pyproject.toml` 的
+  `>=6.21.4,<7`）、`cryptography` 44.0.1 → 50.0.0、`python-multipart` 0.0.20 → 0.0.31、`pytest` 8.4.1 → 9.0.3；
+  前端 `postcss` 8.5.23，并给 `brace-expansion@^1.1.0` 加 `overrides`。按 OSV 对 15 个固定版本逐条核对，后端
+  **0 条**；前端剩 18 条仅落在 eslint/minimatch/rimraf 开发链上的 moderate，除跨大版本换工具外无解，本次不动。
+- 仓库卫生：把 `DEV/` 与 `docs/` 下 17 个文件里残留的 51 处本机绝对路径改写成 `$HOME` 写法；发布前巡检
+  未发现凭据、token 或私钥。这些是 `419969f` 清理时漏掉的部分。
 
 ### English
 
@@ -99,6 +140,62 @@
   range-scoped (`media.py:1491-1515`), so a changed range re-transcribes; this round only bounds the duplicate work
   as `processed_until_seconds − continuation_start_seconds` and documents it. The supported claim remains that some
   materials can be continued.
+
+- Scanned-page OCR (optional): pages with no text layer are rendered to PNG (200 dpi) in place and then recognised, and the
+  recognised text enters the body and `page_spans` in page order; a failure becomes `ocr_failed` with `failed_reason` and
+  `coverage.unresolved` rather than a silent blank. Rendering uses the optional `pdf-render` extra (`pypdfium2` / Pillow);
+  when the dependencies are missing the read fails with an explicit error naming `pip install 'envoy-cli[pdf-render]'`.
+  OCR backends are tried in the order `vision` → `paddleocr` → `rapidocr` → `tesseract`; one read OCRs at most 40 pages
+  (`ENVOY_PDF_OCR_MAX_PAGES` overrides), and pages beyond that cap or past the wall-clock deadline are recorded as
+  `unprocessed` + `ocr_budget_exhausted`. Measured here: `tests/fixtures/pdf/scanned-text.pdf` (2 fully scanned pages)
+  took 1.06 s, `tesseract 5.5.2` recovered 20/21 characters, `summary.counts = {ocr: 2}`
+  (`reader.py:6433`, `pdf_render.py:196`, `ocr.py:169`).
+- Multi-column reading order: text-layer pages are clustered into lines by `y` and into columns by start-`x` gaps, and a
+  page is reordered only when `columns >= 2` and `layout_score >= 0.6`; the bag of words must be identical before and
+  after, otherwise the stream order is kept. The page must also carry ≥600 characters (`ENVOY_PDF_LAYOUT=off` disables
+  the step). Measured here: the three-column fixture (1084 characters) gives `columns=3, layout_score=1.0`; a synthesised
+  two-column page (1410 characters) gives `columns=2, lines_reordered=true` with the left column delivered before the
+  right. The shipped `two-column.pdf` holds only 129 characters per page, stays below the threshold and remains stream
+  order — it is not evidence for two-column reordering (`reader.py:6658`, `pdf_layout.py:203`).
+- Per-page evidence `envoy.page-evidence/1`: `coverage.modalities.text.details.page_evidence` carries `page_count`,
+  `window`, `indexed_page_count`, `pages`, `pages_truncated` and `summary`; each page carries `status`,
+  `extraction_mode`, `chars`, `text_sha256`, `reading_order`, `layout`, `ocr`, `citation` and `flags`. `pages` holds at
+  most 200 entries in ascending page order and sets `pages_truncated=true` when it drops any; `summary.counts` and the
+  per-area page lists cover the whole window and are unaffected by that cap. Only PDF sources carry the key; a non-PDF
+  source's `details` does not (`reader.py:6734`, `:6252-6253`; `tests/cli/test_pdf_evidence.py`, 13 tests pass).
+- Acceptance and evidence: new `docs/acceptance/pdf-page-evidence-2026-11-02.md`; this round is `unit_checked` (offline
+  synthetic fixtures and direct calls to `_pdf_page_evidence`). Only the local backend probe is `verified`:
+  `render_backend_status()` reports `pypdfium2 5.14.0` and `tesseract 5.5.2` is present; `vision`, `paddleocr`,
+  `rapidocr`, `pdftoppm` and `mutool` are absent and `not_run`. **Not verified**: real public PDFs, real files beyond
+  1000 pages, rotated or vertical text, table structure reconstruction, encrypted files and forms, layout analysis on
+  scanned pages. The supported claim is that the scanned pages of some PDFs can be recognised and the reading order of
+  some two-column pages is corrected.
+- Rendered bodies are no longer cut: the legacy response used to put the whole JSON payload into `content`, and the
+  host's tool-result limit sliced the article mid-sentence while coverage still claimed full delivery. `content` is now
+  always rendered text with a floor: a body of 24,000 characters or less is rendered whole (chrome room scales with the
+  block count: `_MATERIAL_CHROME_ROOM` / `_MATERIAL_BLOCK_LINE_ROOM`, `mcp.py:951`), and a larger body is cut only with
+  an explicit truncation notice plus a usable `offset`. Measured on the 9,631-character Magpie article: 39,103 characters
+  of raw JSON before (78,206 for the call), 14,291 characters of rendered text now, final sentence intact, identical on
+  the legacy session path and the `2026-07-28` metadata path.
+- Continuation verified end to end: a 26,031-character article under a 12,000 budget delivers 11,978 characters with a
+  `next_offset`; two `envoy_expand` rounds return 11,987 and 2,064 characters, and the concatenation covers the whole
+  document including two sections buried in the middle. Nothing is lost.
+- Trigger conditions became countable: `## Decide before you call` now states the threshold — 800 characters or more of
+  article text from one plain fetch is the answer, stop there; escalate to `envoy_read` only on fewer than 200 characters,
+  challenge/JS/login markers, a document or media extension, a need for cookies/scrolling/a rendered shell, or an answer
+  that must outlive the turn (`envoy_expand` / `envoy_search` / `envoy_replay` / video frames / audio transcript). The
+  three hand-synced copies and the generated DSH copy agree; `tests/cli/test_routing_discipline.py` guards the numbers
+  (8 passing). This is a prompt contract, not a runtime block: the host still chooses whether to call.
+
+- Dependency security updates: `pypdf` 5.1.0 → 6.21.4 (`backend/requirements.txt` and
+  `>=6.21.4,<7` in `packages/envoy-cli/pyproject.toml`), `cryptography` 44.0.1 → 50.0.0,
+  `python-multipart` 0.0.20 → 0.0.31, `pytest` 8.4.1 → 9.0.3; frontend `postcss` 8.5.23 plus an
+  `overrides` entry for `brace-expansion@^1.1.0`. Checked all 15 pinned backend versions against OSV:
+  **zero** alerts. The frontend keeps 18 moderate findings that only sit in the eslint/minimatch/rimraf
+  dev chain and have no fix short of replacing the toolchain, so they are left alone.
+- Repository hygiene: 51 leftover absolute local paths in 17 files under `DEV/` and `docs/` now read
+  `$HOME/...`; the pre-release sweep found no credentials, tokens, or private keys. These were missed
+  by the `419969f` cleanup.
 
 ## 0.1.38 - 2026-10-31
 

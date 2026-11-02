@@ -10,10 +10,10 @@
 | Windows | Win11 / PowerShell 7.6.9 / CPython 3.11.9 | Windows 侧同事真机实测，已知值，本文直接引用，未复测 |
 | mac | macOS Darwin arm64 / CPython 3.11.15 | 本机 `scripts/measure_startup.py`，5 次采样取中位数 |
 
-mac 侧数字来自本机 [DEV/lightweight-measurements.json](/Users/apple/Desktop/2026/Envoy/DEV/lightweight-measurements.json)（2026-10-28 生成）。口径：
+mac 侧数字来自本机 [DEV/lightweight-measurements.json]($HOME/Desktop/2026/Envoy/DEV/lightweight-measurements.json)（2026-10-28 生成）。口径：
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd $HOME/Desktop/2026/Envoy
 packages/envoy-cli/.venv/bin/python scripts/measure_startup.py \
   --repeat 5 --json DEV/lightweight-measurements.json
 ```

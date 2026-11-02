@@ -75,7 +75,7 @@ uv run --offline --python 3.11 --with pytest pytest -q tests/test_install_script
 - 0.1.26 已发：tag `v0.1.26` → 提交 `2b899fd`，发布流水线 `40705522220` success，
   资产 7 个（`envoy_cli-0.1.26-py3-none-any.whl` 247691 B、`envoy-dsh-0.1.26.tgz` 106719 B、
   `envoy-skill.zip` 31128 B、`install.sh` 24549 B、`install.ps1` 29687 B、`release-manifest.json`、
-  `SHA256SUMS`）。交付目录 `/Users/apple/Desktop/2026/envoy-delivery/0.1.26/`，
+  `SHA256SUMS`）。交付目录 `$HOME/Desktop/2026/envoy-delivery/0.1.26/`，
   `verify_delivery.py --dir .` = 13 checks ok，`shasum -a 256 -c SHA256SUMS` 6/6 OK。
 - npm 已补齐：`envoy-dsh@0.1.26` 已发布（`dist-tags.latest = 0.1.26`，packument 里版本由 6 个
   变 7 个）。发出来的 tarball `sha256 e161fcd6…` 与交付目录里那份**逐字节相同**；解包后
