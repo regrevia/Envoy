@@ -263,7 +263,7 @@ def test_default_install_never_pulls_the_media_stack():
     import tomllib
 
     pyproject = tomllib.loads(
-        (Path(__file__).resolve().parents[2] / "packages/envoy-cli/pyproject.toml").read_text()
+        (Path(__file__).resolve().parents[2] / "packages/envoy-cli/pyproject.toml").read_text(encoding="utf-8")
     )
     dependencies = " ".join(pyproject["project"]["dependencies"])
     assert "whisper" not in dependencies

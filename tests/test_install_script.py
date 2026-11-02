@@ -83,7 +83,7 @@ def test_mcp_target_merges_instead_of_replacing(tmp_path):
     assert result.returncode == 0, result.stderr
     import json
 
-    data = json.loads(config.read_text())
+    data = json.loads(config.read_text(encoding="utf-8"))
     assert data["mcpServers"]["other"] == {"command": "other"}
     assert data["mcpServers"]["envoy"]["args"] == ["mcp"]
     backups = list((home / ".cursor").glob("mcp.json.envoy-*"))
@@ -162,7 +162,7 @@ def test_stale_python_venv_is_rebuilt_and_health_uses_the_runtime(tmp_path):
         ["sh", str(SCRIPT), "mcp"], env=env, capture_output=True, text=True, timeout=120
     )
     assert result.returncode == 0, result.stderr
-    invocations = log.read_text()
+    invocations = log.read_text(encoding="utf-8")
     assert "venv --quiet --python 3.11" in invocations
     assert (runtime / "bin" / "envoy").is_file()
     assert "runtime 0.1.14, protocol envoy.read/1" in result.stdout

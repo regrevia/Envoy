@@ -31,8 +31,8 @@ def test_freeze_writes_deterministic_sample(tmp_path: Path) -> None:
     first, second = tmp_path / "a.json", tmp_path / "b.json"
     assert module.main(["--input", str(source), "--out", str(first), "--size", "12"]) == 0
     assert module.main(["--input", str(source), "--out", str(second), "--size", "12"]) == 0
-    left = json.loads(first.read_text())
-    right = json.loads(second.read_text())
+    left = json.loads(first.read_text(encoding="utf-8"))
+    right = json.loads(second.read_text(encoding="utf-8"))
     assert left["rows"] == right["rows"]
     assert left["size"] == len(left["rows"]) == 12
     assert left["sha256"] == right["sha256"]
@@ -55,7 +55,7 @@ def test_tampered_rows_are_detected(tmp_path: Path) -> None:
     source.write_text(candidates())
     out = tmp_path / "holdout.json"
     assert module.main(["--input", str(source), "--out", str(out), "--size", "6"]) == 0
-    data = json.loads(out.read_text())
+    data = json.loads(out.read_text(encoding="utf-8"))
     data["rows"][0] = "https://example.com/swapped-in-after-results"
     out.write_text(json.dumps(data))
     problems = module.check(out)
@@ -107,8 +107,8 @@ def test_apply_plan_records_the_frozen_rows(tmp_path: Path) -> None:
         ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
     )
     assert code == 0
-    recorded = json.loads(plan.read_text())["holdout"]
-    frozen = json.loads(out.read_text())
+    recorded = json.loads(plan.read_text(encoding="utf-8"))["holdout"]
+    frozen = json.loads(out.read_text(encoding="utf-8"))
     assert recorded["status"] == "frozen"
     assert recorded["rows"] == frozen["rows"]
     assert recorded["sha256"] == frozen["sha256"]
@@ -122,14 +122,14 @@ def test_apply_plan_refuses_to_replace_a_frozen_holdout(tmp_path: Path) -> None:
     source.write_text(candidates())
     plan = write_plan(tmp_path)
     frozen = {"status": "frozen", "sha256": "ab" * 32, "rows": ["https://example.com/old"]}
-    data = json.loads(plan.read_text())
+    data = json.loads(plan.read_text(encoding="utf-8"))
     data["holdout"].update(frozen)
     plan.write_text(json.dumps(data, indent=2) + "\n")
     out = tmp_path / "holdout.json"
     assert module.main(
         ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
     ) == 1
-    assert json.loads(plan.read_text())["holdout"]["sha256"] == "ab" * 32
+    assert json.loads(plan.read_text(encoding="utf-8"))["holdout"]["sha256"] == "ab" * 32
 
 
 def test_check_accepts_a_plan_that_matches_the_frozen_file(tmp_path: Path) -> None:
@@ -153,7 +153,7 @@ def test_check_rejects_a_plan_that_was_edited_by_hand(tmp_path: Path, capsys) ->
     assert module.main(
         ["--input", str(source), "--out", str(out), "--size", "12", "--apply-plan", str(plan)]
     ) == 0
-    data = json.loads(plan.read_text())
+    data = json.loads(plan.read_text(encoding="utf-8"))
     data["holdout"]["sha256"] = "cd" * 32
     data["holdout"]["rows"] = data["holdout"]["rows"][:-1]
     plan.write_text(json.dumps(data, indent=2) + "\n")
@@ -173,7 +173,7 @@ def test_apply_plan_refuses_to_freeze_a_different_size_than_planned(tmp_path: Pa
     assert module.main(
         ["--input", str(source), "--out", str(out), "--size", "8", "--apply-plan", str(plan)]
     ) == 1
-    assert json.loads(plan.read_text())["holdout"]["status"] == "pending_sample"
+    assert json.loads(plan.read_text(encoding="utf-8"))["holdout"]["status"] == "pending_sample"
 
 
 def test_apply_plan_refuses_to_freeze_under_a_different_id(tmp_path: Path) -> None:
@@ -200,7 +200,7 @@ def test_apply_plan_accepts_the_mismatch_with_force(tmp_path: Path) -> None:
         ]
     )
     assert code == 0
-    assert json.loads(plan.read_text())["holdout"]["size"] == 8
+    assert json.loads(plan.read_text(encoding="utf-8"))["holdout"]["size"] == 8
 
 
 def test_check_reports_a_plan_written_for_another_holdout(tmp_path: Path) -> None:
@@ -210,8 +210,8 @@ def test_check_reports_a_plan_written_for_another_holdout(tmp_path: Path) -> Non
     out = tmp_path / "holdout.json"
     assert module.main(["--input", str(source), "--out", str(out), "--size", "12"]) == 0
     plan = write_plan(tmp_path)
-    frozen = json.loads(out.read_text())
-    data = json.loads(plan.read_text())
+    frozen = json.loads(out.read_text(encoding="utf-8"))
+    data = json.loads(plan.read_text(encoding="utf-8"))
     data["holdout"].update(
         {"id": "H99", "status": "frozen", "size": 12,
          "sha256": frozen["sha256"], "rows": frozen["rows"]}

@@ -110,7 +110,7 @@ def switch_to_preview_wheel(directory: Path) -> str:
     preview_version = f"{VERSION}+preview.gabc.20261028"
     name = f"envoy_cli-{preview_version}-py3-none-any.whl"
     write_wheel(directory / name, version=preview_version)
-    manifest = json.loads((directory / "release-manifest.json").read_text())
+    manifest = json.loads((directory / "release-manifest.json").read_text(encoding="utf-8"))
     manifest["artifacts"][0]["name"] = name
     manifest["artifacts"][0]["sha256"] = sha256((directory / name).read_bytes()).hexdigest()
     (directory / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -135,7 +135,7 @@ def test_a_wheel_without_its_packages_is_refused(tmp_path: Path) -> None:
             f"envoy_cli-{VERSION}.dist-info/METADATA",
             f"Metadata-Version: 2.1\nName: envoy-cli\nVersion: {VERSION}\nRequires-Dist: httpx\n",
         )
-    manifest = json.loads((directory / "release-manifest.json").read_text())
+    manifest = json.loads((directory / "release-manifest.json").read_text(encoding="utf-8"))
     manifest["artifacts"][0]["sha256"] = sha256(wheel.read_bytes()).hexdigest()
     (directory / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     refresh_checksums(directory, manifest)
@@ -199,7 +199,7 @@ def test_wheel_without_runtime_dependency_fails(tmp_path: Path) -> None:
     build_delivery(tmp_path)
     wheel = tmp_path / f"envoy_cli-{VERSION}-py3-none-any.whl"
     write_wheel(wheel, deps=False)
-    manifest = json.loads((tmp_path / "release-manifest.json").read_text())
+    manifest = json.loads((tmp_path / "release-manifest.json").read_text(encoding="utf-8"))
     for artifact in manifest["artifacts"]:
         if artifact["name"] == wheel.name:
             artifact["sha256"] = sha256(wheel.read_bytes()).hexdigest()
@@ -287,7 +287,7 @@ def test_plan_command_on_the_real_cli_surface_passes(tmp_path: Path) -> None:
 def test_plan_gated_on_an_entry_that_does_not_exist_fails(tmp_path: Path) -> None:
     build_delivery(tmp_path)
     path = tmp_path / "EXPERIMENT-PLAN.json"
-    plan = json.loads(path.read_text())
+    plan = json.loads(path.read_text(encoding="utf-8"))
     plan["holdout"] = {
         "id": "H12",
         "status": "pending_sample",
@@ -303,7 +303,7 @@ def test_plan_gated_on_an_entry_that_does_not_exist_fails(tmp_path: Path) -> Non
 def test_holdout_command_naming_a_flag_the_tool_never_had_fails(tmp_path: Path) -> None:
     build_delivery(tmp_path)
     path = tmp_path / "EXPERIMENT-PLAN.json"
-    plan = json.loads(path.read_text())
+    plan = json.loads(path.read_text(encoding="utf-8"))
     plan["holdout"] = {
         "id": "H12",
         "status": "pending_sample",
@@ -320,7 +320,7 @@ def test_holdout_command_naming_a_flag_the_tool_never_had_fails(tmp_path: Path) 
 def test_plan_gated_on_real_entries_passes(tmp_path: Path) -> None:
     build_delivery(tmp_path)
     path = tmp_path / "EXPERIMENT-PLAN.json"
-    plan = json.loads(path.read_text())
+    plan = json.loads(path.read_text(encoding="utf-8"))
     plan["holdout"] = {
         "id": "H12",
         "status": "pending_sample",
@@ -344,7 +344,7 @@ def _gated_plan(directory: Path, holdout_status: str, entry_status: str) -> None
         entry.pop("observed_at")
     write_plan(directory, [entry], status="not_run" if entry_status == "not_run" else "passed")
     path = directory / "EXPERIMENT-PLAN.json"
-    plan = json.loads(path.read_text())
+    plan = json.loads(path.read_text(encoding="utf-8"))
     plan["holdout"] = {
         "id": "H12",
         "status": holdout_status,
