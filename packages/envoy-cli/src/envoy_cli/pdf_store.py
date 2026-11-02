@@ -26,15 +26,20 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER_VERSION = "pdf-page-store/1"
+# Bump 到 /2：旧缓存记录里没有 ocr 元数据，复用会让扫描页被当成"无文本层"。
+PARSER_VERSION = "pdf-page-store/2"
 PAGE_STATUSES = (
     "text",
+    "ocr",
+    "ocr_failed",
     "ocr_candidate",
     "blank",
     "parse_error",
     "not_processed",
 )
-_COMMITTED_STATUSES = frozenset({"text", "ocr_candidate", "blank", "parse_error"})
+_COMMITTED_STATUSES = frozenset(
+    {"text", "ocr", "ocr_failed", "ocr_candidate", "blank", "parse_error"}
+)
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:

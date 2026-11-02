@@ -61,6 +61,7 @@ from .media import (
 from .ocr import (
     DEFAULT_OCR_BACKEND,
     OCR_PIPELINE_REVISION,
+    OCR_PROFILES,
     _engine_version,
     available_ocr_backends,
     extract_image_ocr,
@@ -68,6 +69,19 @@ from .ocr import (
     resolve_ocr_language,
     select_ocr_backend,
 )
+from .pdf_render import (
+    INSTALL_HINT as PDF_RENDER_INSTALL_HINT,
+    PdfRenderUnavailable,
+    render_backend_status,
+    render_page_to_png,
+)
+
+try:
+    # 契约 §3 的版式分析模块与本次改动同批交付；模块缺失时退回 extract_text 的
+    # 流式阅读顺序，而不是让整个 PDF 读取失败。
+    from .pdf_layout import analyse_runs as _pdf_analyse_runs
+except ImportError:  # pragma: no cover - 只在未安装版式模块时走到
+    _pdf_analyse_runs = None
 from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
@@ -3012,7 +3026,8 @@ def _pdf_page_coverage_details(stored: dict) -> dict:
         if isinstance(span, dict) and str(span.get("page_number", "")).isdigit()
     })
     page_count = int(stored.get("page_count") or coverage.get("page_count") or len(spans))
-    return {
+    evidence = stored.get("page_evidence")
+    result = {
         "page_count": page_count,
         "indexed_page_count": len(indexed),
         "indexed_pages": indexed,
@@ -3020,6 +3035,9 @@ def _pdf_page_coverage_details(stored: dict) -> dict:
         "page_coverage": coverage,
         "delivery_gap": bool(stored.get("delivery_gap")),
     }
+    if isinstance(evidence, dict):
+        result["page_evidence"] = evidence
+    return result
 
 
 def _remaining_work_seconds(request: ReadRequest) -> int:
@@ -6223,6 +6241,661 @@ def _fetch_pdf_source(
         raise
 
 
+_PDF_OCR_CACHE_FILENAME = "ocr-pages.jsonl"
+_PDF_OCR_DEFAULT_PAGE_CAP = 40
+# 固定 200dpi：同一份源文件的重读必须命中同一条缓存，dpi 进缓存键而不是按页变化。
+_PDF_OCR_DPI = 200
+# §3 只对长文本页做几何重建；短页重排的收益抵不上误判风险。
+_PDF_LAYOUT_MIN_CHARS = 600
+_PDF_LAYOUT_MIN_COLUMNS = 2
+_PDF_LAYOUT_MIN_SCORE = 0.6
+_PDF_PAGE_EVIDENCE_SCHEMA = "envoy.page-evidence/1"
+_PDF_PAGE_EVIDENCE_LIMIT = 200
+_PDF_PAGE_STATUSES = (
+    "text",
+    "ocr",
+    "ocr_failed",
+    "ocr_candidate",
+    "blank",
+    "parse_error",
+    "unprocessed",
+)
+# 只有这些状态的缓存页可以直接复用正文；ocr_failed 与 ocr_candidate 每次重读都
+# 重新尝试，用户装好渲染/OCR 后端后无需清缓存即可恢复。ocr 页也不复用：缓存
+# 记录里没有 ocr 明细（confidence/regions），重跑会命中 ocr-pages.jsonl 缓存，
+# 既不重新渲染，也不让 page_evidence 丢掉识别证据。
+_PDF_STORED_STATUSES = frozenset({"text", "blank", "parse_error"})
+
+
+def _pdf_page_block_id(page_number: int) -> str:
+    return f"blk-pdf-page-{page_number:04d}"
+
+
+def _pdf_ocr_page_cap(window_pages: int) -> int:
+    """单次读取内允许 OCR 的页数，契约默认 40 页，环境变量可覆盖。"""
+    default = min(_PDF_OCR_DEFAULT_PAGE_CAP, max(0, window_pages))
+    raw = os.getenv("ENVOY_PDF_OCR_MAX_PAGES", "").strip()
+    if not raw:
+        return default
+    try:
+        override = int(raw)
+    except ValueError:
+        return default
+    if override < 0:
+        return default
+    return min(override, max(0, window_pages))
+
+
+def _pdf_ocr_profile(request: ReadRequest) -> str:
+    """PDF 页复用 OCR 的 profile 概念；非法值退回 balanced 而不是报错。"""
+    requested = str(getattr(request, "ocr_profile", "") or "").strip()
+    return requested if requested in OCR_PROFILES else "balanced"
+
+
+def _pdf_ocr_cache_path(page_store) -> Path | None:
+    directory = getattr(page_store, "directory", None)
+    if directory is None:
+        return None
+    try:
+        return Path(directory) / _PDF_OCR_CACHE_FILENAME
+    except TypeError:
+        return None
+
+
+def _pdf_ocr_cache_read(page_store) -> dict[str, dict]:
+    path = _pdf_ocr_cache_path(page_store)
+    if path is None or not path.exists():
+        return {}
+    records: dict[str, dict] = {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict) and str(entry.get("key") or ""):
+                    records[str(entry["key"])] = entry
+    except OSError:
+        return {}
+    return records
+
+
+def _pdf_ocr_cache_append(page_store, key: str, entry: dict) -> None:
+    """追加一行；缓存写失败只影响下次重跑，绝不影响本次读取结果。"""
+    path = _pdf_ocr_cache_path(page_store)
+    if path is None:
+        return
+    record = {"key": key, **entry}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _pdf_ocr_cache_key(
+    *,
+    source_digest: str,
+    page_number: int,
+    dpi: int,
+    render_backend_version: str,
+    ocr_backend: str,
+    ocr_engine_version: str,
+    ocr_language: str,
+    ocr_profile: str,
+) -> str:
+    """契约 §2 的缓存键；换渲染器版本或 OCR 模型都必须失效。"""
+    from .pdf_store import PARSER_VERSION
+
+    payload = "\0".join(
+        (
+            source_digest,
+            str(page_number),
+            str(dpi),
+            str(render_backend_version),
+            str(ocr_backend),
+            str(ocr_engine_version),
+            str(ocr_language),
+            str(ocr_profile),
+            PARSER_VERSION,
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _pdf_ocr_runtime(request: ReadRequest, state: dict) -> dict:
+    """后端选择只探测一次：40 页逐页 import/which 探测纯属浪费。"""
+    cached = state.get("runtime")
+    if isinstance(cached, dict):
+        return cached
+    runtime = {
+        "backend": None,
+        "language": None,
+        "engine_version": None,
+        "profile": _pdf_ocr_profile(request),
+        "available": None,
+        "error": None,
+    }
+    try:
+        available = available_ocr_backends()
+        backend = select_ocr_backend(_requested_ocr_backend(request), available=available)
+        runtime.update({
+            "available": available,
+            "backend": backend,
+            "language": resolve_ocr_language(backend, _requested_ocr_language(request)),
+            "engine_version": f"{_engine_version(backend)}+{OCR_PIPELINE_REVISION}",
+        })
+    except (RuntimeError, ValueError) as exc:
+        runtime["error"] = str(exc)
+    state["runtime"] = runtime
+    return runtime
+
+
+def _pdf_ocr_failure(ocr: dict, reason: str) -> dict:
+    return {
+        "status": "ocr_failed",
+        "text": "",
+        "extraction_mode": "none",
+        "ocr": {**ocr, "failed_reason": reason},
+        "flags": ["no_text_layer", "ocr_failed"],
+        "reason": reason,
+    }
+
+
+def _pdf_ocr_failure_kind(reason: str) -> str:
+    """把失败原因归类，只为了在 MISSING_CAPABILITY 文案里给出可执行的下一步。"""
+    lowered = reason.lower()
+    if "rendering backend" in lowered or "page rendering failed" in lowered:
+        return "render"
+    if "ocr backend" in lowered or "no ocr backend" in lowered:
+        return "backend"
+    return "error"
+
+
+def _pdf_ocr_confidence(regions: list) -> float:
+    scores: list[float] = []
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        try:
+            scores.append(float(region.get("confidence") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    if not scores:
+        return 0.0
+    return round(sum(scores) / len(scores), 3)
+
+
+def _pdf_ocr_page(
+    data: bytes,
+    page_number: int,
+    *,
+    request: ReadRequest,
+    source_digest: str,
+    page_store,
+    ocr_cache: dict[str, dict],
+    ocr_state: dict,
+    deadline: float | None,
+) -> dict:
+    """渲染 + OCR 一页。返回统一结果，失败原因必须具体且可执行。"""
+    if deadline is not None and time.monotonic() >= deadline:
+        return {
+            "status": "unprocessed",
+            "text": "",
+            "extraction_mode": "none",
+            "ocr": None,
+            "flags": ["ocr_budget_exhausted"],
+            "reason": "work budget exhausted before OCR",
+        }
+    runtime = _pdf_ocr_runtime(request, ocr_state)
+    profile = str(runtime["profile"])
+    base_ocr = {
+        "backend": runtime["backend"],
+        "language": runtime["language"],
+        "engine_version": runtime["engine_version"],
+        "profile": profile,
+        "confidence": None,
+        "regions": 0,
+        "failed_reason": None,
+        "cache_hit": False,
+        "dpi": _PDF_OCR_DPI,
+    }
+    if runtime["error"]:
+        return _pdf_ocr_failure(base_ocr, f"OCR backend unavailable: {runtime['error']}")
+    render_state = ocr_state.get("render")
+    if not isinstance(render_state, dict):
+        render_state = render_backend_status()
+        ocr_state["render"] = render_state
+    install_hint = str(render_state.get("install_hint") or PDF_RENDER_INSTALL_HINT)
+    if not render_state.get("available"):
+        return _pdf_ocr_failure(
+            base_ocr,
+            "No PDF rendering backend is available for scanned pages; "
+            f"install one with: {install_hint}",
+        )
+
+    def _lookup(render_version: str) -> dict | None:
+        key = _pdf_ocr_cache_key(
+            source_digest=source_digest,
+            page_number=page_number,
+            dpi=_PDF_OCR_DPI,
+            render_backend_version=render_version,
+            ocr_backend=str(runtime["backend"]),
+            ocr_engine_version=str(runtime["engine_version"]),
+            ocr_language=str(runtime["language"]),
+            ocr_profile=profile,
+        )
+        return ocr_cache.get(key)
+
+    def _hit(entry: dict) -> dict:
+        text = str(entry.get("text") or "")
+        ocr = {
+            **base_ocr,
+            "backend": str(entry.get("backend") or runtime["backend"]),
+            "language": str(entry.get("language") or runtime["language"]),
+            "engine_version": str(entry.get("engine_version") or runtime["engine_version"]),
+            "confidence": entry.get("confidence"),
+            "regions": int(entry.get("regions") or 0),
+            "cache_hit": True,
+        }
+        return {
+            "status": "ocr",
+            "text": text,
+            "extraction_mode": "ocr",
+            "ocr": ocr,
+            "flags": ["no_text_layer", "ocr_applied"],
+            "reason": None,
+        }
+
+    cached = _lookup(str(render_state.get("backend_version") or "unknown"))
+    if cached is not None and str(cached.get("text") or "").strip():
+        return _hit(cached)
+
+    try:
+        png, render_info = render_page_to_png(data, page_number, dpi=_PDF_OCR_DPI)
+    except PdfRenderUnavailable as exc:
+        ocr_state["render"] = {
+            "available": False,
+            "backend": None,
+            "backend_version": None,
+            "install_hint": str(getattr(exc, "install_hint", install_hint)),
+            "reason": str(exc),
+        }
+        return _pdf_ocr_failure(
+            base_ocr,
+            "No PDF rendering backend is available for scanned pages; "
+            f"install one with: {getattr(exc, 'install_hint', install_hint)}",
+        )
+    except Exception as exc:  # 渲染异常按单页失败处理，不能让整次读取崩掉
+        return _pdf_ocr_failure(
+            base_ocr,
+            f"PDF page rendering failed: {type(exc).__name__}: {exc}"[:400],
+        )
+    except BaseException:
+        raise
+
+    render_version = str(render_info.get("backend_version") or "unknown")
+    if render_version != str(render_state.get("backend_version") or "unknown"):
+        cached = _lookup(render_version)
+        if cached is not None and str(cached.get("text") or "").strip():
+            return _hit(cached)
+        ocr_state["render"] = {**render_state, "backend_version": render_version}
+    try:
+        with tempfile.TemporaryDirectory(prefix="envoy-pdf-ocr-") as temp_dir:
+            image_path = Path(temp_dir) / f"page-{page_number:04d}.png"
+            image_path.write_bytes(png)
+            result = extract_image_ocr(
+                image_path,
+                profile=profile,
+                language=str(runtime["language"]),
+                backend=str(runtime["backend"]),
+                available=runtime["available"],
+            )
+    except Exception as exc:
+        return _pdf_ocr_failure(
+            base_ocr,
+            f"OCR failed on this page: {type(exc).__name__}: {exc}"[:400],
+        )
+    except BaseException:
+        raise
+    if deadline is not None and time.monotonic() >= deadline:
+        return {
+            "status": "unprocessed",
+            "text": "",
+            "extraction_mode": "none",
+            "ocr": None,
+            "flags": ["ocr_budget_exhausted"],
+            "reason": "work budget exhausted during OCR",
+        }
+
+    text = re.sub(r"\n{3,}", "\n\n", str(result.get("text") or "")).strip()
+    if not text:
+        # OCR 跑通但没认出一个字：如实记失败，绝不伪造空白页正文。
+        return _pdf_ocr_failure(base_ocr, "OCR produced no text for this page")
+    regions = result.get("regions") if isinstance(result.get("regions"), list) else []
+    ocr = {
+        **base_ocr,
+        "backend": str(result.get("backend") or runtime["backend"]),
+        "language": str(result.get("language") or runtime["language"]),
+        "engine_version": str(runtime["engine_version"]),
+        "confidence": _pdf_ocr_confidence(regions),
+        "regions": len(regions),
+        "cache_hit": False,
+    }
+    key = _pdf_ocr_cache_key(
+        source_digest=source_digest,
+        page_number=page_number,
+        dpi=_PDF_OCR_DPI,
+        render_backend_version=render_version,
+        ocr_backend=str(runtime["backend"]),
+        ocr_engine_version=str(runtime["engine_version"]),
+        ocr_language=str(runtime["language"]),
+        ocr_profile=profile,
+    )
+    entry = {
+        "source_digest": source_digest,
+        "page_number": page_number,
+        "dpi": _PDF_OCR_DPI,
+        "render_backend_version": render_version,
+        "backend": ocr["backend"],
+        "engine_version": ocr["engine_version"],
+        "language": ocr["language"],
+        "profile": profile,
+        "text": text,
+        "regions": ocr["regions"],
+        "confidence": ocr["confidence"],
+    }
+    ocr_cache[key] = entry
+    _pdf_ocr_cache_append(page_store, key, entry)
+    return {
+        "status": "ocr",
+        "text": text,
+        "extraction_mode": "ocr",
+        "ocr": ocr,
+        "flags": ["no_text_layer", "ocr_applied"],
+        "reason": None,
+    }
+
+
+def _pdf_text_runs(page) -> list[dict]:
+    """按文本片段取几何信息，供 §3 的 analyse_runs 判断分栏与阅读顺序。"""
+    runs: list[dict] = []
+    try:
+        page_width = float(page.mediabox.width)
+    except Exception:
+        page_width = None
+
+    def _visitor(text, cm, tm, font_dict, font_size) -> None:  # noqa: ANN001 - pypdf 回调签名
+        if not text or not text.strip():
+            return
+        try:
+            x = float(tm[4])
+            y = float(tm[5])
+        except (TypeError, ValueError, IndexError):
+            return
+        size = None
+        try:
+            if font_size:
+                size = float(font_size)
+        except (TypeError, ValueError):
+            size = None
+        runs.append({"x": x, "y": y, "text": text, "size": size})
+
+    try:
+        page.extract_text(visitor_text=_visitor)
+    except Exception:
+        return []
+    if page_width is not None:
+        for run in runs:
+            run["page_width"] = page_width
+    return runs
+
+
+def _pdf_apply_layout(
+    page,
+    page_text: str,
+    *,
+    deadline: float | None,
+) -> tuple[str, dict | None, str, list[str]]:
+    """§3：几何重建只改阅读顺序，不改字词；失败一律保留 extract_text 的结果。"""
+    disabled = os.getenv("ENVOY_PDF_LAYOUT", "").strip().lower()
+    if disabled in {"off", "0", "false", "no"}:
+        return page_text, None, "stream", []
+    if _pdf_analyse_runs is None or len(page_text) < _PDF_LAYOUT_MIN_CHARS:
+        return page_text, None, "stream", []
+    if deadline is not None and time.monotonic() >= deadline:
+        return page_text, None, "stream", ["layout_skipped"]
+    runs = _pdf_text_runs(page)
+    if not runs:
+        return page_text, None, "stream", []
+    page_width = runs[0].get("page_width") if runs else None
+    try:
+        result = _pdf_analyse_runs(runs, page_width=page_width)
+    except Exception as exc:
+        # 版式分析是增强项；失败要留下原因，但不能把可读文本一起丢掉。
+        return (
+            page_text,
+            {
+                "columns": 0,
+                "lines": 0,
+                "lines_reordered": False,
+                "table_like_rows": 0,
+                "layout_score": 0.0,
+                "notes": [f"layout analysis failed: {type(exc).__name__}"],
+            },
+            "stream",
+            [],
+        )
+    if not isinstance(result, dict):
+        return page_text, None, "stream", []
+    try:
+        columns = int(result.get("columns") or 0)
+        lines = int(result.get("lines") or 0)
+        table_rows = int(result.get("table_like_rows") or 0)
+        score = float(result.get("layout_score") or 0.0)
+    except (TypeError, ValueError):
+        return page_text, None, "stream", []
+    header_footer = 0
+    try:
+        header_footer = int(result.get("header_footer_lines") or 0)
+    except (TypeError, ValueError):
+        header_footer = 0
+    layout: dict = {
+        "columns": columns,
+        "lines": lines,
+        "lines_reordered": bool(result.get("lines_reordered")),
+        "table_like_rows": table_rows,
+        "layout_score": round(score, 3),
+    }
+    notes = result.get("notes")
+    if isinstance(notes, list) and notes:
+        layout["notes"] = [str(note) for note in notes[:5]]
+    if header_footer:
+        layout["header_footer_lines"] = header_footer
+    flags: list[str] = []
+    ordered = str(result.get("ordered_text") or "")
+    if columns >= _PDF_LAYOUT_MIN_COLUMNS and score >= _PDF_LAYOUT_MIN_SCORE and ordered.strip():
+        cleaned = re.sub(r"\n{3,}", "\n\n", ordered).strip()
+        # 只接受字词完全一致的副本：重排不能成为丢字/改字的通道。
+        if cleaned and sorted(cleaned.split()) == sorted(page_text.split()):
+            flags.append("layout_reordered")
+            if header_footer:
+                flags.append("header_footer_like")
+            return cleaned, layout, "columns", flags
+    if header_footer:
+        flags.append("header_footer_like")
+    return page_text, layout, "stream", flags
+
+
+def _pdf_page_evidence(
+    *,
+    total_page_count: int,
+    window_start: int,
+    window_end: int,
+    page_records: dict[int, dict],
+    page_spans: list[dict],
+    delivered_pages: set[int] | None = None,
+) -> dict:
+    """契约 §1 的 page_evidence：窗口内逐页状态 + 真实计数。
+
+    正文只存摘要（chars/sha256/citation 偏移），不复制全文；summary 的计数按
+    整个窗口算，pages 超 200 页才截断，避免调用方把截断误读成「只读了这些页」。
+    """
+    delivered = delivered_pages or set()
+    span_by_page: dict[int, dict] = {}
+    for span in page_spans:
+        if not isinstance(span, dict):
+            continue
+        try:
+            number = int(span.get("page_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            span_by_page[number] = span
+    window_pages = list(range(window_start, window_end + 1)) if window_end >= window_start else []
+    counts = {status: 0 for status in _PDF_PAGE_STATUSES}
+    pages: list[dict] = []
+    ocr_pages: list[int] = []
+    ocr_failed_pages: list[int] = []
+    scanned_pages: list[int] = []
+    complex_pages: list[int] = []
+    parse_error_pages: list[int] = []
+    not_processed_pages: list[int] = []
+    for number in window_pages:
+        record = page_records.get(number) or {}
+        status = str(record.get("status") or "unprocessed")
+        if status not in counts:
+            status = "unprocessed"
+        counts[status] += 1
+        if status == "ocr":
+            ocr_pages.append(number)
+        if status == "ocr_failed":
+            ocr_failed_pages.append(number)
+        if status in {"ocr", "ocr_failed", "ocr_candidate"}:
+            scanned_pages.append(number)
+        if status == "parse_error":
+            parse_error_pages.append(number)
+        if status == "unprocessed":
+            not_processed_pages.append(number)
+        text = str(record.get("text") or "")
+        layout = record.get("layout")
+        layout_entry = None
+        if isinstance(layout, dict):
+            try:
+                columns = int(layout.get("columns") or 0)
+                if columns >= _PDF_LAYOUT_MIN_COLUMNS:
+                    complex_pages.append(number)
+                layout_entry = {
+                    "columns": columns,
+                    "lines": int(layout.get("lines") or 0),
+                    "lines_reordered": bool(layout.get("lines_reordered")),
+                    "table_like_rows": int(layout.get("table_like_rows") or 0),
+                    "layout_score": round(float(layout.get("layout_score") or 0.0), 3),
+                }
+            except (TypeError, ValueError):
+                layout_entry = None
+            if layout_entry is not None:
+                if isinstance(layout.get("notes"), list) and layout["notes"]:
+                    layout_entry["notes"] = [str(note) for note in layout["notes"][:5]]
+                if layout.get("header_footer_lines"):
+                    try:
+                        layout_entry["header_footer_lines"] = int(layout["header_footer_lines"])
+                    except (TypeError, ValueError):
+                        pass
+        span = span_by_page.get(number)
+        citation = {
+            # 偏移是 full_text 里的绝对位置，必须与 page_spans 一致，调用方才能直接切片。
+            "text_offset_start": int(span.get("start") or 0) if isinstance(span, dict) else 0,
+            "text_offset_end": int(span.get("end") or 0) if isinstance(span, dict) else 0,
+            "block_ids": (
+                [_pdf_page_block_id(number)]
+                if number in delivered and isinstance(span, dict)
+                else []
+            ),
+            "page_number": number,
+        }
+        ocr_entry = record.get("ocr")
+        pages.append({
+            "page_number": number,
+            "status": status,
+            "extraction_mode": str(record.get("extraction_mode") or "none"),
+            "chars": len(text),
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "reading_order": str(record.get("reading_order") or ("columns" if record.get("extraction_mode") == "layout" else "stream")),
+            "layout": layout_entry,
+            "ocr": dict(ocr_entry) if isinstance(ocr_entry, dict) else None,
+            "citation": citation,
+            "flags": [str(flag) for flag in (record.get("flags") or [])],
+        })
+    truncated = len(pages) > _PDF_PAGE_EVIDENCE_LIMIT
+    if truncated:
+        pages = pages[:_PDF_PAGE_EVIDENCE_LIMIT]
+    return {
+        "schema": _PDF_PAGE_EVIDENCE_SCHEMA,
+        "page_count": total_page_count,
+        "window": {"page_start": window_start, "page_end": window_end},
+        "indexed_page_count": len(window_pages),
+        "pages": pages,
+        "pages_truncated": truncated,
+        "summary": {
+            "counts": counts,
+            "ocr_pages": ocr_pages,
+            "ocr_failed_pages": ocr_failed_pages,
+            "scanned_pages": scanned_pages,
+            "complex_pages": complex_pages,
+            "parse_error_pages": parse_error_pages,
+            "not_processed_pages": not_processed_pages,
+        },
+    }
+
+
+def _pdf_missing_ocr_message(
+    *,
+    ocr_failed_pages: list[int],
+    failure_kind: str | None,
+    failure_reason: str | None,
+    pending_pages: list[int],
+) -> str:
+    base = "This PDF has no extractable text layer"
+    # 带上页码：全部扫描件都失败时，用户至少要能从报错里看出是哪几页，
+    # 否则只能猜「哪些页没有文字层」。
+    failed_refs = ", ".join(str(number) for number in ocr_failed_pages[:10])
+    if ocr_failed_pages and failure_kind == "render":
+        return (
+            base
+            + f" (scanned pages {failed_refs})"
+            + "; scanned-page OCR needs a PDF rendering backend, which is not installed. "
+            + "Install it with: "
+            + PDF_RENDER_INSTALL_HINT
+        )
+    if ocr_failed_pages and failure_kind == "backend":
+        return (
+            base
+            + f" (scanned pages {failed_refs})"
+            + f"; scanned-page OCR could not run: {failure_reason or 'no OCR backend is installed'}"
+        )
+    if ocr_failed_pages:
+        return (
+            base
+            + f" (scanned pages {failed_refs})"
+            + "; scanned-page OCR was attempted and failed: "
+            + (failure_reason or "OCR produced no text")
+        )
+    if pending_pages:
+        return (
+            base
+            + "; scanned pages were found but the OCR page budget left no room to OCR them "
+            + f"({len(pending_pages)} pages, raise ENVOY_PDF_OCR_MAX_PAGES to include them)"
+        )
+    return base + "; OCR capability is required for scanned pages"
+
+
 def _parse_pdf_source(
     request: ReadRequest,
     source: dict,
@@ -6290,6 +6963,15 @@ def _parse_pdf_source(
     unprocessed_pages: list[int] = list(gap_pages)
     work_budget_exhausted = False
     cursor = 0
+    ocr_pages: list[int] = []
+    ocr_failed_pages: list[int] = []
+    ocr_failure_kind: str | None = None
+    ocr_failure_reason: str | None = None
+    page_records: dict[int, dict] = {}
+    ocr_cache = _pdf_ocr_cache_read(page_store) if page_store is not None else {}
+    ocr_state: dict = {}
+    ocr_cap = _pdf_ocr_page_cap(max(0, window_end - window_start + 1))
+    ocr_attempts = 0
     for page_number in range(window_start, window_end + 1):
         if deadline is not None and time.monotonic() >= deadline:
             work_budget_exhausted = True
@@ -6298,7 +6980,18 @@ def _parse_pdf_source(
             )[:page_list_limit]
             break
         record = stored_pages.get(page_number)
-        if record is not None and str(record.get("status")) in {"text", "ocr_candidate", "blank", "parse_error"}:
+        reusing = (
+            record is not None
+            and str(record.get("status")) in _PDF_STORED_STATUSES
+            # layout 明细同样没有落进页记录；重排页重新分析一次（只提文本、
+            # 不渲染），否则复用后 page_evidence.layout 会变成 null。
+            and str(record.get("extraction_mode") or "") != "layout"
+        )
+        layout_info: dict | None = None
+        ocr_info: dict | None = None
+        flags: list[str] = []
+        reading_order = "stream"
+        if reusing:
             status = str(record.get("status"))
             page_text = str(record.get("text") or "")
             extraction_mode = str(record.get("extraction_mode") or "text")
@@ -6314,13 +7007,88 @@ def _parse_pdf_source(
                 page_text = cleaned
                 if page_text:
                     status, extraction_mode = "text", "text"
+                    page_text, layout_info, reading_order, flags = _pdf_apply_layout(
+                        page,
+                        page_text,
+                        deadline=deadline,
+                    )
+                    # 只有真正按栏重排过才算 layout 模式：否则证据里的
+                    # extraction_mode 会和 reading_order/flags 自相矛盾。
+                    if reading_order == "columns":
+                        extraction_mode = "layout"
                 elif raw.strip():
                     # The page has content but its extracted text is whitespace
                     # only: it is genuinely blank to a text reader, not a scan.
                     status, extraction_mode = "blank", "text"
                 else:
                     status, extraction_mode = "ocr_candidate", "none"
-            if page_store is not None:
+        if status == "ocr_candidate":
+            # 扫描页在这里就地 OCR，而不是 continue：识别出的正文必须按页码
+            # 顺序进入 full_text，否则后续 expand 的偏移会乱。
+            if ocr_cap <= 0 or ocr_attempts >= ocr_cap:
+                scanned_pages.append(page_number)
+                page_statuses[page_number] = status
+                page_records[page_number] = {
+                    "status": status,
+                    "extraction_mode": extraction_mode,
+                    "text": "",
+                    "reading_order": "stream",
+                    "layout": None,
+                    "ocr": None,
+                    "flags": ["ocr_page_cap"],
+                }
+                continue
+            ocr_attempts += 1
+            outcome = _pdf_ocr_page(
+                data,
+                page_number,
+                request=request,
+                source_digest=source_digest,
+                page_store=page_store,
+                ocr_cache=ocr_cache,
+                ocr_state=ocr_state,
+                deadline=deadline,
+            )
+            if outcome["status"] == "unprocessed":
+                work_budget_exhausted = True
+                unprocessed_pages = (
+                    gap_pages + list(range(page_number, window_end + 1))
+                )[:page_list_limit]
+                page_statuses[page_number] = "unprocessed"
+                page_records[page_number] = {
+                    "status": "unprocessed",
+                    "extraction_mode": "none",
+                    "text": "",
+                    "reading_order": "stream",
+                    "layout": None,
+                    "ocr": None,
+                    "flags": ["ocr_budget_exhausted"],
+                }
+                break
+            status = str(outcome["status"])
+            page_text = str(outcome["text"])
+            extraction_mode = str(outcome["extraction_mode"])
+            ocr_info = outcome["ocr"]
+            flags = list(outcome["flags"])
+            if status == "ocr":
+                ocr_pages.append(page_number)
+            else:
+                ocr_failed_pages.append(page_number)
+                if ocr_failure_reason is None and outcome.get("reason"):
+                    ocr_failure_reason = str(outcome["reason"])
+                    ocr_failure_kind = _pdf_ocr_failure_kind(ocr_failure_reason)
+        page_statuses[page_number] = status
+        page_records[page_number] = {
+            "status": status,
+            "extraction_mode": extraction_mode,
+            "text": page_text,
+            "reading_order": reading_order,
+            "layout": layout_info,
+            "ocr": ocr_info,
+            "flags": flags,
+        }
+        if page_store is not None and not reusing:
+            try:
                 page_store.commit_page(
                     page_number,
                     status=status,
@@ -6328,15 +7096,18 @@ def _parse_pdf_source(
                     extraction_mode=extraction_mode,
                     page_count=total_page_count,
                 )
-        page_statuses[page_number] = status
-        if status == "ocr_candidate":
+            except (OSError, ValueError):
+                pass
+        if status in {"ocr", "ocr_failed", "ocr_candidate"} and page_number not in scanned_pages:
             scanned_pages.append(page_number)
-            continue
         if status == "blank":
             blank_pages.append(page_number)
             continue
         if status == "parse_error":
             parse_error_pages.append(page_number)
+            continue
+        if status == "ocr_failed":
+            # 没识别出正文的页不能进 page_spans，否则 full_text 会出现空页偏移。
             continue
         if page_texts:
             cursor += 2
@@ -6384,10 +7155,22 @@ def _parse_pdf_source(
             )
             + ". Send page_start/page_end to read another window"
         )
-    if scanned_pages:
+    ocr_pending_pages = [
+        page_number
+        for page_number in scanned_pages
+        if page_statuses.get(page_number) == "ocr_candidate"
+    ]
+    if ocr_pending_pages:
         real_unresolved.append(
-            "PDF pages without an extractable text layer require OCR: "
-            + ", ".join(str(page_number) for page_number in scanned_pages[:64])
+            "PDF pages without an extractable text layer were not OCRed "
+            f"(OCR page cap {ocr_cap}, set ENVOY_PDF_OCR_MAX_PAGES to raise it): "
+            + ", ".join(str(page_number) for page_number in ocr_pending_pages[:64])
+        )
+    if ocr_failed_pages:
+        real_unresolved.append(
+            "PDF scanned pages could not be OCRed and have no text: "
+            + ", ".join(str(page_number) for page_number in ocr_failed_pages[:64])
+            + f" ({ocr_failure_reason or 'OCR produced no text'})"
         )
     if parse_error_pages:
         real_unresolved.append(
@@ -6430,6 +7213,13 @@ def _parse_pdf_source(
                             unresolved=real_unresolved,
                             details={
                                 **page_coverage,
+                                "page_evidence": _pdf_page_evidence(
+                                    total_page_count=total_page_count,
+                                    window_start=window_start,
+                                    window_end=window_end,
+                                    page_records=page_records,
+                                    page_spans=page_spans,
+                                ),
                                 "returned_chars": 0,
                                 "total_chars": 0,
                                 "continuation_available": False,
@@ -6442,7 +7232,12 @@ def _parse_pdf_source(
                 ),
             )
         raise PublicPageError(
-            "This PDF has no extractable text layer; OCR capability is required for scanned pages",
+            _pdf_missing_ocr_message(
+                ocr_failed_pages=ocr_failed_pages,
+                failure_kind=ocr_failure_kind,
+                failure_reason=ocr_failure_reason,
+                pending_pages=ocr_pending_pages,
+            ),
             ErrorCode.MISSING_CAPABILITY,
         )
 
@@ -6497,6 +7292,20 @@ def _parse_pdf_source(
     if returned_end < len(full_text):
         response_budget_exhausted = True
 
+    delivered_pages = {
+        int(block.locator.page_number)
+        for block in blocks
+        if isinstance(block.locator, PdfLocator) and block.locator.page_number
+    }
+    page_evidence = _pdf_page_evidence(
+        total_page_count=total_page_count,
+        window_start=window_start,
+        window_end=window_end,
+        page_records=page_records,
+        page_spans=page_spans,
+        delivered_pages=delivered_pages,
+    )
+
     retention_disabled = request.retention.derived_ttl_seconds <= 0
     can_continue = response_budget_exhausted and not retention_disabled
     # Only the initial response reports the delivery gap; the material records
@@ -6506,8 +7315,14 @@ def _parse_pdf_source(
     unresolved = list(real_unresolved)
     if response_budget_exhausted:
         unresolved.append("PDF text was limited by the response budget")
-    if scanned_pages:
-        unresolved.append("Some pages contain no text layer and need OCR")
+    if ocr_pending_pages:
+        unresolved.append(
+            "Some pages contain no text layer and were not OCRed (page cap or budget)"
+        )
+    if ocr_failed_pages:
+        unresolved.append(
+            "Some scanned pages could not be OCRed and have no text"
+        )
     should_store_material = bool(
         can_continue or (not retention_disabled and len(full_text) <= MAX_SEARCH_CACHE_CHARS)
     )
@@ -6524,6 +7339,7 @@ def _parse_pdf_source(
                 "page_spans": page_spans,
                 "page_count": total_page_count,
                 "page_coverage": page_coverage,
+                "page_evidence": page_evidence,
                 "delivery_gap": response_budget_exhausted,
                 "source_coverage_unresolved": source_unresolved,
                 "budget_state": {
@@ -6564,7 +7380,11 @@ def _parse_pdf_source(
     if continuation_storage_failed:
         unresolved.append("Continuation cache could not be written")
     has_unread_pages = bool(
-        scanned_pages or parse_error_pages or unprocessed_pages or window_gaps
+        ocr_pending_pages
+        or ocr_failed_pages
+        or parse_error_pages
+        or unprocessed_pages
+        or window_gaps
     )
     return ReadResponse(
         request_id=request.request_id,
@@ -6586,6 +7406,7 @@ def _parse_pdf_source(
                     "returned_chars": returned_chars,
                     "total_chars": len(full_text),
                     "continuation_available": can_continue,
+                    "page_evidence": page_evidence,
                     "next_offset": returned_end if can_continue else None,
                     "input_kind": str(source.get("input_kind") or "remote_pdf"),
                     **_token_budget_details(request, returned_tokens, full_text[returned_end:]),
@@ -6698,6 +7519,11 @@ def _reuse_pdf_material(request: ReadRequest, source_url: str) -> ReadResponse |
         "downloaded_bytes": 0,
         "max_download_bytes": 0,
     }
+    # 复用材料时把原始逐页证据一并带回：缓存里 block id 与 page_spans 仍然成立，
+    # 重算反而会丢掉当时才知道的 OCR 置信度和失败原因。
+    evidence = stored.get("page_evidence")
+    if isinstance(evidence, dict):
+        details["page_evidence"] = evidence
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
