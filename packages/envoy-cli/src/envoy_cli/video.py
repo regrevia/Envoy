@@ -248,6 +248,51 @@ def _safe_subtitle_url(value: str) -> bool:
     return True
 
 
+class _SubtitleWarningLog:
+    """Keep the extractor's warnings instead of printing them.
+
+    A site that publishes subtitle tracks only to signed-in accounts (Bilibili
+    sets `need_login_subtitle`) never errors: the extractor emits one warning
+    and offers whatever else it has. `no_warnings` would drop that sentence,
+    leaving an ordinary "no subtitle track" result that reads as if the video
+    itself were unavailable.
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
+    def debug(self, message: str) -> None:
+        return None
+
+    def info(self, message: str) -> None:
+        return None
+
+    def error(self, message: str) -> None:
+        return None
+
+    def warning(self, message: str) -> None:
+        text = str(message or "").strip()
+        if text and len(self.warnings) < 16:
+            self.warnings.append(text[:500])
+
+
+_LOGIN_SUBTITLE_MARKERS = (
+    "only available when logged in",
+    "need_login_subtitle",
+    "subtitles are only available",
+    "requires login",
+    "login required",
+)
+
+
+def _warnings_require_login(warnings: list[str]) -> bool:
+    for warning in warnings:
+        lowered = warning.lower()
+        if any(marker in lowered for marker in _LOGIN_SUBTITLE_MARKERS):
+            return True
+    return False
+
+
 def extract_public_subtitles(
     source_url: str,
     preferred_language: str | None = None,
@@ -297,12 +342,16 @@ def _extract_public_subtitles_worker(
     work_limit = max(int(max_work_seconds), 1)
     started = time.monotonic()
     deadline = started + work_limit
+    warning_log = _SubtitleWarningLog()
     options = {
         "ignoreconfig": True,
         "compat_opts": ["prefer-legacy-http-handler"],
         "quiet": True,
         "noprogress": True,
-        "no_warnings": True,
+        # Keep warnings in a private log: a login-gated subtitle list is only
+        # ever announced through one, and dropping it hides the real reason.
+        "no_warnings": False,
+        "logger": warning_log,
         "skip_download": True,
         "noplaylist": True,
         "socket_timeout": min(work_limit, 5),
@@ -337,14 +386,28 @@ def _extract_public_subtitles_worker(
                         for track in _format_candidates(tracks.get(language, [])):
                             candidates.append((language, source_name, track))
                 if not candidates:
-                    status = "unsupported_subtitle_format" if available else "no_subtitles"
+                    login_required = _warnings_require_login(warning_log.warnings)
+                    if login_required:
+                        status = "subtitle_login_required"
+                        error = (
+                            "This site serves subtitle tracks only to signed-in "
+                            "accounts; the video itself was resolved anonymously"
+                        )
+                    else:
+                        status = "unsupported_subtitle_format" if available else "no_subtitles"
+                        error = (
+                            "Subtitle tracks exist, but none use VTT, SRT, or JSON3"
+                            if available
+                            else ""
+                        )
                     return {
                         "status": status,
                         "cues": [],
                         "title": str(info.get("title") or ""),
                         "duration": info.get("duration"),
                         "available_languages": available[:64],
-                        "error": "Subtitle tracks exist, but none use VTT, SRT, or JSON3" if available else "",
+                        "login_required": login_required,
+                        "error": error,
                     }
                 selected_language = None
                 selected_source = None
@@ -382,12 +445,17 @@ def _extract_public_subtitles_worker(
                     cues = parsed
                     break
                 if track is None:
+                    login_required = _warnings_require_login(warning_log.warnings)
                     return {
-                        "status": "subtitle_tracks_unavailable",
+                        "status": (
+                            "subtitle_login_required" if login_required
+                            else "subtitle_tracks_unavailable"
+                        ),
                         "cues": [],
                         "title": str(info.get("title") or ""),
                         "duration": info.get("duration"),
                         "available_languages": available[:64],
+                        "login_required": login_required,
                         "error": "; ".join(track_errors[:3]) or "No usable public subtitle track",
                     }
                 return {
@@ -398,6 +466,7 @@ def _extract_public_subtitles_worker(
                     "language": selected_language,
                     "automatic": selected_source == "automatic",
                     "available_languages": available[:64],
+                    "track_errors": track_errors[:8],
                     "cues": cues,
                 }
     except MediaUnsafeAddress:

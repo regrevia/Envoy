@@ -1036,6 +1036,39 @@ def download_video_for_frames(
     )
 
 
+_VIDEO_FRAME_FORMATS = (
+    "best[height<=720]/bestvideo[height<=720]+bestaudio",
+    "best[height<=480]/bestvideo[height<=480]+bestaudio",
+    "best[height<=360]/bestvideo[height<=360]+bestaudio",
+    "worst[height<=360]/worst",
+    "best/worst",
+)
+
+_FORMAT_UNAVAILABLE_MARKERS = (
+    "403",
+    "forbidden",
+    "http error 404",
+    "http error 410",
+    "requested format",
+    "format is not available",
+    "no video formats",
+    "not available",
+)
+
+
+def _format_unavailable(exc: BaseException) -> bool:
+    """True when one quality tier was refused, not when the download broke.
+
+    A 403 on the 720p rendition means "not this one", so a lower tier is worth
+    a try. A timeout or a dead network is not: dropping the quality would only
+    repeat the same failed trip. This is what keeps a member-only high tier
+    from turning into "the video cannot be read at all".
+    """
+
+    text = _safe_error(exc).lower()
+    return any(marker in text for marker in _FORMAT_UNAVAILABLE_MARKERS)
+
+
 def _download_video_for_frames_worker(
     source_url: str,
     output_dir: str,
@@ -1073,7 +1106,7 @@ def _download_video_for_frames_worker(
         "fragment_retries": 0,
         "socket_timeout": min(work_limit, 30),
         "max_filesize": byte_limit,
-        "format": "best[height<=720]/bestvideo[height<=720]+bestaudio/best",
+        "format": _VIDEO_FRAME_FORMATS[0],
         "outtmpl": str(root / "video.%(ext)s"),
         "progress_hooks": [_download_progress_hook(byte_limit, deadline)],
     }
@@ -1100,35 +1133,57 @@ def _download_video_for_frames_worker(
                 found.extend(path for path in root.iterdir() if path.is_file())
                 return info, found
 
-    info: dict[str, Any] = {}
-    candidates: list[Path] = []
-    attempts = _media_proxy_attempts()
-    for index, proxy in enumerate(attempts):
-        try:
-            info, candidates = attempt(proxy)
-            break
-        except MediaBudgetExceeded:
-            raise
-        except MediaProcessingError:
-            if index == len(attempts) - 1:
-                raise
-        except Exception as exc:
-            error = MediaProcessingError(f"Video download failed: {_safe_error(exc)}")
-            if index == len(attempts) - 1:
-                raise error from exc
+    def pick_video_file(candidates: list[Path]) -> Path | None:
+        return next(
+            (
+                candidate.resolve()
+                for candidate in candidates
+                if candidate.is_file()
+                and not candidate.name.endswith((".part", ".ytdl", ".temp"))
+                and candidate.resolve().parent == root
+                and candidate.stat().st_size > 0
+            ),
+            None,
+        )
 
-    video_path = next(
-        (
-            candidate.resolve()
-            for candidate in candidates
-            if candidate.is_file()
-            and candidate.resolve().parent == root
-            and candidate.stat().st_size > 0
-        ),
-        None,
-    )
+    info: dict[str, Any] = {}
+    video_path: Path | None = None
+    attempts = _media_proxy_attempts()
+    last_error: Exception | None = None
+    for tier in _VIDEO_FRAME_FORMATS:
+        options["format"] = tier
+        for index, proxy in enumerate(attempts):
+            try:
+                info, candidates = attempt(proxy)
+            except MediaBudgetExceeded:
+                raise
+            except MediaProcessingError as exc:
+                last_error = exc
+                if index == len(attempts) - 1 and not _format_unavailable(exc):
+                    raise
+                continue
+            except Exception as exc:
+                last_error = MediaProcessingError(
+                    f"Video download failed: {_safe_error(exc)}"
+                )
+                if index == len(attempts) - 1 and not _format_unavailable(last_error):
+                    raise last_error from exc
+                continue
+            video_path = pick_video_file(candidates)
+            if video_path is not None:
+                break
+            # A tier that downloaded nothing usable is not the end: a smaller
+            # rendition may fit the byte budget, so take the next rung.
+            last_error = MediaProcessingError(
+                f"No usable video file at quality tier {tier}"
+            )
+        if video_path is not None:
+            break
     if video_path is None:
-        raise MediaProcessingError("yt-dlp completed without a video file")
+        raise MediaProcessingError(
+            "Video download failed at every quality tier: "
+            f"{_safe_error(last_error) if last_error is not None else 'no attempt succeeded'}"
+        )
     downloaded_bytes = video_path.stat().st_size
     if downloaded_bytes > byte_limit:
         video_path.unlink(missing_ok=True)

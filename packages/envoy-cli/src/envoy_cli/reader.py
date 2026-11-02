@@ -9095,7 +9095,7 @@ def _read_video_asr(request: ReadRequest, source_url: str) -> ReadResponse:
         )
     if not status["asr_installed"]:
         raise MediaCapabilityMissing(
-            "No public subtitle track is available; install envoy-cli[media] to enable local ASR"
+            "Local ASR is disabled; install envoy-cli[media] to enable it"
         )
     if not status["asr_model_available"]:
         raise MediaCapabilityMissing(
@@ -10253,8 +10253,19 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         if subtitle_result.get("status") not in {"not_single_video", "extractor_unavailable"}:
             status = str(subtitle_result.get("status") or "failed")
             message = str(subtitle_result.get("error") or "")
-            auth_markers = ("login", "sign in", "403", "authentication", "fresh cookies")
-            if any(marker in message.lower() for marker in auth_markers):
+            subtitle_login_required = bool(subtitle_result.get("login_required")) or (
+                status == "subtitle_login_required"
+            )
+            # Only a refused page is a cookie wall. A subtitle track the site
+            # withholds from anonymous readers (Bilibili's need_login_subtitle)
+            # is a narrower fact: the video itself was resolved, and telling the
+            # user the source needs cookies would be wrong advice.
+            page_access_refused = (
+                not subtitle_login_required and _looks_like_page_access_failure(message)
+            )
+            browser_snapshot = None
+            browser_snapshot_for_video = False
+            if page_access_refused:
                 browser_snapshot, browser_error = _read_with_isolated_browser(
                     request,
                     source_url,
@@ -10319,19 +10330,33 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             [f"No transcript is available ({exc})"],
                         )
                         return _attach_video_frames(request, source_url, frame_base)
-                    subtitle_state = (
-                        "No public subtitle track is available"
-                        if status == "no_subtitles"
-                        else "Public subtitle extraction failed"
-                    )
+                    if subtitle_login_required:
+                        subtitle_state = (
+                            "The site serves this video's subtitle tracks only to "
+                            "signed-in accounts, so no public transcript exists"
+                        )
+                    elif status == "no_subtitles":
+                        subtitle_state = "No public subtitle track is available"
+                    else:
+                        subtitle_state = "Public subtitle extraction failed"
                     page_text = _read_video_page_text(request, source_url)
                     if page_text is not None:
                         return page_text
+                    blocked_details = {
+                        "subtitle_status": status,
+                        "subtitle_login_required": subtitle_login_required,
+                    }
+                    if subtitle_login_required:
+                        blocked_details["needs_user_action"] = _login_user_action(
+                            source_url,
+                            kind="subtitle_login_required",
+                        )
                     return _blocked(
                         request,
                         ErrorCode.MISSING_CAPABILITY,
                         f"{subtitle_state}; {exc}",
                         action_required=True,
+                        details=blocked_details,
                     )
                 except MediaBudgetExceeded as exc:
                     return _blocked(request, ErrorCode.BUDGET_EXCEEDED, str(exc))
@@ -10346,6 +10371,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                         )
                         return _attach_video_frames(request, source_url, frame_base)
                     subtitle_message = message or status
+                    if subtitle_login_required:
+                        subtitle_message = (
+                            "subtitle tracks need a signed-in session; the public "
+                            "video itself was resolved"
+                        )
                     return _blocked(
                         request,
                         ErrorCode.NETWORK_ERROR,
@@ -11291,6 +11321,43 @@ def _persisted_auth_action(source_url: str, purpose: str) -> dict:
         return {}
 
 
+_PAGE_ACCESS_FAILURE_MARKERS = (
+    "sign in",
+    "sign-in",
+    "signin",
+    "login required",
+    "login is required",
+    "log in to",
+    "authentication required",
+    "fresh cookies",
+    "cookies required",
+    "requires cookies",
+    "http error 401",
+    "http error 403",
+    "403 forbidden",
+    "private video",
+    "members-only",
+    "members only",
+    "age-restricted",
+    "age restricted",
+    "confirm your age",
+    "captcha",
+    "challenge",
+)
+
+
+def _looks_like_page_access_failure(message: str) -> bool:
+    """True only when the whole page was refused, not one track on it.
+
+    Substring matching on "login"/"403" used to turn a login-gated subtitle
+    list into "the source needs cookies". This keeps the cookie wall for pages
+    that really were refused and leaves narrower limits to the caller.
+    """
+
+    lowered = str(message or "").lower()
+    return any(marker in lowered for marker in _PAGE_ACCESS_FAILURE_MARKERS)
+
+
 def _login_user_action(
     source_url: str,
     kind: str = "login_or_verification",
@@ -11311,7 +11378,14 @@ def _login_user_action(
         "its player exposes the real source. Ask the user to import cookies "
         "from a local browser, or to sign in once from a terminal."
     )
-    if kind == "cookies_required":
+    if kind == "subtitle_login_required":
+        question = (
+            f"{host or 'This site'} publishes this video's subtitle tracks only "
+            "to signed-in accounts; the page and the video itself read fine "
+            "anonymously. Import cookies only if the transcript matters: the "
+            "video does not need a login."
+        )
+    elif kind == "cookies_required":
         question = (
             f"{host or 'This site'} asked for fresh cookies before serving this "
             "source, and a signed-in account is not necessarily what it wants. "

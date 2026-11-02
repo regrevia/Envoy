@@ -312,16 +312,41 @@ def _platform_download_args(source_url: str) -> list[str]:
     return []
 
 
-def _download_args(source_url: str) -> list[str]:
+def _download_tiers(source_url: str) -> list[list[str]]:
+    """Format arguments to try in order, best quality first.
+
+    A site can refuse one rendition (403 on the 1080p stream, member-only
+    quality) while still serving a smaller one. Falling back tier by tier
+    means such a video downloads at 480p instead of failing outright.
+    """
+
     source = classify_video_source(source_url)
     if source["source_kind"] == "direct_media":
         return [
-            "--socket-timeout", "20",
-            "--retries", "2",
-            "--fragment-retries", "2",
-            "--format", "best[height<=720]/best",
+            ["--socket-timeout", "20", "--retries", "2", "--fragment-retries", "2", "--format", "best[height<=720]/best"],
+            ["--format", "best[height<=480]/best"],
+            ["--format", "worst[height<=360]/worst"],
         ]
-    return ["--format", "bestvideo*+bestaudio/best"]
+    return [
+        ["--format", "bestvideo*+bestaudio/best"],
+        ["--format", "best[height<=480]/best"],
+        ["--format", "worst[height<=360]/worst"],
+    ]
+
+
+_FORMAT_UNAVAILABLE_MARKERS = (
+    "http error 403",
+    "http error 404",
+    "http error 410",
+    "requested format is not available",
+    "no video formats found",
+    "no formats found",
+)
+
+
+def _format_unavailable(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return any(marker in lowered for marker in _FORMAT_UNAVAILABLE_MARKERS)
 
 
 def validate_video_url(source_url: str) -> str:
@@ -528,27 +553,44 @@ def download_video(source_url: str, output_dir: str | Path, auth: dict | None = 
 
             video_id = re.sub(r"[^A-Za-z0-9._-]+", "_", str(info.get("id") or "video")).strip("._") or "video"
             output_template = str(root / f"{video_id}.%(ext)s")
-            download_result = _run_ytdlp([
-                *platform_args,
-                "--no-playlist",
-                "--newline",
-                *_download_args(url),
-                "--merge-output-format", "mp4",
-                "--output", output_template,
-                "--print", "after_move:filepath",
-                url,
-            ], candidate)
-            downloaded_path = next(
-                (Path(line.strip()).resolve() for line in reversed(download_result.stdout.splitlines()) if line.strip()),
-                None,
-            )
-            if downloaded_path is None or not downloaded_path.is_file():
-                candidates = sorted(root.glob(f"{video_id}.*"))
-                downloaded_path = candidates[-1].resolve() if candidates else None
-            if downloaded_path is None or not downloaded_path.is_file():
-                raise VideoSourceError(
-                    f"yt-dlp completed without a downloaded file; stdout: {download_result.stdout.strip()}"
+            tiers = _download_tiers(url)
+            downloaded_path: Path | None = None
+            tier_error: VideoSourceError | None = None
+            for tier_index, tier_args in enumerate(tiers):
+                try:
+                    download_result = _run_ytdlp([
+                        *platform_args,
+                        "--no-playlist",
+                        "--newline",
+                        *tier_args,
+                        "--merge-output-format", "mp4",
+                        "--output", output_template,
+                        "--print", "after_move:filepath",
+                        url,
+                    ], candidate)
+                except VideoSourceError as exc:
+                    if tier_index == len(tiers) - 1 or not _format_unavailable(str(exc)):
+                        raise
+                    tier_error = exc
+                    continue
+                downloaded_path = next(
+                    (Path(line.strip()).resolve() for line in reversed(download_result.stdout.splitlines()) if line.strip()),
+                    None,
                 )
+                if downloaded_path is None or not downloaded_path.is_file():
+                    candidates = sorted(root.glob(f"{video_id}.*"))
+                    downloaded_path = candidates[-1].resolve() if candidates else None
+                if downloaded_path is not None and downloaded_path.is_file():
+                    break
+                if tier_index == len(tiers) - 1:
+                    raise VideoSourceError(
+                        f"yt-dlp completed without a downloaded file; stdout: {download_result.stdout.strip()}"
+                    )
+                tier_error = VideoSourceError(
+                    f"quality tier {tier_index + 1} produced no usable file"
+                )
+            if downloaded_path is None or not downloaded_path.is_file():
+                raise tier_error or VideoSourceError("yt-dlp could not download the video")
             return {
                 "path": str(downloaded_path),
                 "video_id": str(info.get("id") or video_id),

@@ -1,5 +1,48 @@
 # 更新日志 / Changelog
 
+## 0.1.40 - 2026-11-03
+
+### 中文
+
+- 字幕拿不到不再说成“整个视频要登录”。yt-dlp 只在子站把字幕列给登录用户时才发
+  `need_login_subtitle` 警告，这个警告以前被 `no_warnings` 吞掉，于是落到“ASR 不可用”的通用话术。
+  现在用私有 logger 收下警告（`video.py:251`），命中登录标记返回独立状态 `subtitle_login_required`
+  且带 `login_required=true`（`video.py:391`）；成功路径也回传 `track_errors`（`video.py:469`），
+  告诉调用方是哪几条轨道被拒、为什么。
+- `reader.py` 改成按结构化字段判定登录（`subtitle_status` / `subtitle_login_required`，`reader.py:10256-10257`），
+  删掉原来的 `auth_markers` 子串匹配；只有页面正文读取失败（`_looks_like_page_access_failure`，
+  `reader.py:11346`）才开隔离浏览器，字幕受限不再触发整页登录流程。
+- 字幕受限时的措辞直接说清楚：“站点只把字幕轨道给登录用户，公开转录不存在”，需要用户动作时才附带登录指引
+  （`reader.py:10333-10356`、`reader.py:11378`）；本地 ASR 不可用的提示与它分开（`reader.py:9098` 附近）。
+- 视频帧下载按质量档逐级降级（`media._VIDEO_FRAME_FORMATS`，`media.py:1039`）：403 / 格式不可用 / 该档没有产出文件才降一档
+  （`_format_unavailable`，`media.py:1059`），超时和预算超限不降级；挑文件时排除 `.part` / `.ytdl` 临时产物
+  （`pick_video_file`，`media.py:1136`），避免把半截文件当成品。
+- 后端下载同样按档降级（`video_source_service._download_tiers`，`video_source_service.py:315`），
+  403 换下一档而不是整单失败；超时仍是硬错误（`_format_unavailable`，`video_source_service.py:347`）。
+
+### English
+
+- A subtitle limitation is no longer reported as "the video needs a login". yt-dlp announces a login-gated
+  subtitle list only through a `need_login_subtitle` warning, which `no_warnings` used to swallow, so the read
+  fell back to the generic "ASR unavailable" wording. A private logger now keeps that warning
+  (`video.py:251`); when it matches, the worker returns its own status `subtitle_login_required` with
+  `login_required: true` (`video.py:391`), and the success path carries `track_errors` (`video.py:469`) so callers
+  can see which tracks were rejected and why.
+- `reader.py` decides "login" from structured fields (`subtitle_status` / `subtitle_login_required`,
+  `reader.py:10256-10257`) instead of the old `auth_markers` substring match; the isolated browser is opened only
+  when the page body itself fails (`_looks_like_page_access_failure`, `reader.py:11346`), so restricted subtitles no
+  longer drag the whole read into a login flow.
+- When subtitles are gated the response says so plainly ("the site serves this video's subtitle tracks only to
+  signed-in accounts, so no public transcript exists") and attaches a login action only when the user can act on it
+  (`reader.py:10333-10356`, `reader.py:11378`); the local-ASR capability message is kept separate (`reader.py:9098`).
+- Video-frame downloads now step down a quality ladder (`media._VIDEO_FRAME_FORMATS`, `media.py:1039`): only a 403,
+  an unavailable format, or a tier that produced no file moves it down one rung (`_format_unavailable`,
+  `media.py:1059`); timeouts and budget overruns do not downgrade. The picker ignores `.part` / `.ytdl` residue
+  (`pick_video_file`, `media.py:1136`), so a half-written file is never taken as the download.
+- The backend download path steps down the same ladder (`video_source_service._download_tiers`,
+  `video_source_service.py:315`): a 403 switches tiers instead of failing the whole task, while a timeout stays fatal
+  (`_format_unavailable`, `video_source_service.py:347`).
+
 ## 0.1.39 - 2026-11-02
 
 ### 中文
