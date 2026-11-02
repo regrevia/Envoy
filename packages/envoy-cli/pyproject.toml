@@ -24,7 +24,7 @@ pdf-render = ["pypdfium2>=4,<6", "Pillow>=10,<13"]
 ocr = ["Pillow>=10,<13"]
 ocr-vision = [
   "Pillow>=10,<13",
-  "pyobjc-framework-Vision>=10,<12; sys_platform == 'darwin'",
+  "pyobjc-framework-Vision>=10,<13; sys_platform == 'darwin'",
   "pyobjc-framework-Quartz>=10,<13; sys_platform == 'darwin'",
 ]
 ocr-rapid = ["Pillow>=10,<13", "rapidocr-onnxruntime>=1.3,<2"]
