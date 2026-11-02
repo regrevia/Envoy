@@ -20,12 +20,12 @@
     "autoprefixer": "10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "15.5.28",
-    "postcss": "8.5.23",
+    "postcss": "8.5.32",
     "tailwindcss": "4.3.3",
     "typescript": "5.7.2"
   },
   "overrides": {
-    "postcss": "8.5.23",
+    "postcss": "8.5.32",
     "brace-expansion@^1.1.0": "1.1.21"
   }
 }
