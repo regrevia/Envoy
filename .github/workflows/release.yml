@@ -57,7 +57,7 @@ jobs:
           python scripts/check_release_manifest.py --check
           python scripts/build_envoy_dsh_plugin.py --check
           python scripts/sync_host_skills.py --check
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: 构建可安装产物 / Build installable assets
