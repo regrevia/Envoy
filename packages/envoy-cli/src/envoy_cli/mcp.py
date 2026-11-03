@@ -481,6 +481,12 @@ TOOLS = [
             "Envoy returns "
             "evidence and coverage gaps, not job-location or company-match conclusions. "
             "An envoy_read needs_host response is a handoff, not a terminal state. "
+            "A blocked or empty envoy_read describes this reader, not the source: "
+            "the same page may be perfectly readable by your own plain fetch, so "
+            "take it there and answer from that body or page tree instead of "
+            "reporting it unavailable. The rendered answer is capped near 12,000 "
+            "characters by default; budget.max_response_chars lowers it, and the "
+            "rest stays reachable through coverage.next_offset and envoy_expand. "
             "For inspect_visual, inspect every "
             "listed resource, call envoy_observe once per inspected resource "
             "using its matching material_id, resource_id, source_block_id and original "
@@ -1120,6 +1126,16 @@ def _needs_lines(
     return lines
 
 
+# A refusal describes this reader, not the source. Without it the caller tells
+# the user "unreadable page" for a page it could have fetched itself, so this
+# line is part of the receipt, not advice in a skill file.
+_READER_REFUSAL_FALLBACK = (
+    "this is this reader's failure, not the source's: the same page or file may be "
+    "perfectly readable — take it with your own plain fetch and answer from the body, "
+    "text, or page tree you get, instead of reporting it unavailable"
+)
+
+
 def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: int) -> list[str]:
     lines: list[str] = []
     for error in errors[:2]:
@@ -1429,10 +1445,14 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
 
     if result == "blocked":
         lines.extend(_blocked_lines(payload, errors, material_id, budget))
+        if tool == "envoy_read":
+            lines.append(_READER_REFUSAL_FALLBACK)
         return "\n".join(_fit_content(lines, budget))
 
     if result == "empty":
         lines.extend(_empty_lines(payload))
+        if tool == "envoy_read":
+            lines.append(_READER_REFUSAL_FALLBACK)
 
     for index, block in enumerate(blocks, 1):
         lines.append("")

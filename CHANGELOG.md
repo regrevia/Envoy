@@ -1,5 +1,32 @@
 # 更新日志 / Changelog
 
+## 未发布 / Unreleased
+
+### 中文
+
+- `envoy_read` 的 `blocked` / `empty` 回执现在自己说明「这是本读取器失败，不是源不可读」，
+  并明确要求调用方改用自带的普通抓取拿原文，不要再把可读页面报成打不开（`mcp.py`
+  `_READER_REFUSAL_FALLBACK`，接在 `_blocked_lines` / `_empty_lines` 之后）；此前这类回执只讲
+  Envoy 侧原因，模型容易据此停下。`envoy_search` 的零命中回执不受影响。
+- `envoy_read` 的工具说明补上两条现有行为：回执被截断时可用 `budget.max_response_chars`
+  压到更省 token 的量，剩余内容仍在 `coverage.next_offset` + `envoy_expand` 里；默认渲染上限
+  约 12,000 字符。
+- 新增回执回归测试（`tests/cli/test_mcp_content_selfcontained.py`）：`blocked`、`empty` 必带
+  自行抓取提示，`envoy_search` 零命中不带。
+
+### English
+
+- A `blocked` / `empty` `envoy_read` receipt now says the failure belongs to this reader, not to
+  the source, and tells the caller to take the page with its own plain fetch instead of reporting a
+  readable page as unavailable (`mcp.py` `_READER_REFUSAL_FALLBACK`, appended after `_blocked_lines`
+  / `_empty_lines`); previously the receipt only explained Envoy's side and the model could stop
+  there. Zero-hit `envoy_search` receipts are unchanged.
+- The `envoy_read` description now states two behaviours that already existed: a trimmed answer can
+  be made cheaper with `budget.max_response_chars`, with the rest still reachable through
+  `coverage.next_offset` and `envoy_expand`; the default rendered cap is about 12,000 characters.
+- New receipt regression tests (`tests/cli/test_mcp_content_selfcontained.py`): `blocked` and
+  `empty` must carry the fetch-it-yourself line, zero-hit `envoy_search` must not.
+
 ## 0.1.43 - 2026-11-03
 
 ### 中文

@@ -263,3 +263,48 @@ def test_empty_search_text_explains_zero_matches_instead_of_saying_empty() -> No
     assert "0 hits" in text
     assert "zzz" in text
     assert "envoy_search with different terms" in text
+
+
+def _refusal_payload(result: str) -> dict:
+    return {
+        "tool": "envoy_read",
+        "result": result,
+        "material_id": "mat-abc123",
+        "blocks": [],
+        "resources": [],
+        "errors": [
+            {
+                "code": "blocked_by_consent",
+                "message": "this page requires a consent click",
+                "details": {},
+            }
+        ],
+        "coverage": {"modalities": {"text": {"extraction": "none"}}},
+    }
+
+
+def test_blocked_read_tells_the_caller_to_fetch_the_source_itself() -> None:
+    # A refusal is a fact about this reader. Read as "the page is unreadable" it
+    # makes the caller report a page it could have fetched in one request, so the
+    # receipt itself has to carry the fallback.
+    text = mcp._tool_content_text(_refusal_payload("blocked"), True, _request())
+
+    assert "blocked_by_consent" in text
+    assert "not the source's" in text
+    assert "own plain fetch" in text
+
+
+def test_empty_read_tells_the_caller_to_fetch_the_source_itself() -> None:
+    text = mcp._tool_content_text(_refusal_payload("empty"), True, _request())
+
+    assert "not the source's" in text
+    assert "own plain fetch" in text
+
+
+def test_search_empty_text_does_not_claim_the_source_is_unreadable() -> None:
+    payload = _refusal_payload("empty")
+    payload["tool"] = "envoy_search"
+
+    text = mcp._tool_content_text(payload, True, _request())
+
+    assert "not the source's" not in text
