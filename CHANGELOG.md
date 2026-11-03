@@ -1,5 +1,26 @@
 # 更新日志 / Changelog
 
+## 0.1.41 - 2026-11-03
+
+### 中文
+
+- 依赖升级，不改运行行为：backend 的 fastapi 0.115.6 → 0.162.0、reportlab 4.5.0 → 5.1.0、
+  python-multipart 0.0.28 → 0.0.32、pytest 9.1.1 → 9.2.0；CLI 的 `pyobjc-framework-vision` /
+  `pyobjc-framework-quartz` 范围随本机 macOS 26 框架版本同步（`packages/envoy-cli/pyproject.toml`）。
+- 前端工具链：Next 15.5.28 → 16.4.3、React / React-DOM 19.0.0 → 19.3.1、eslint 9 → 10 并改用 flat config
+  （`frontend/eslint.config.mjs`）；`npm run lint` 与 `npm run build` 通过。
+- CI 的 actions/upload-artifact、actions/setup-node 升到 v7，工作流语法未变。
+
+### English
+
+- Dependency upgrades only, no runtime behaviour change: backend fastapi 0.115.6 → 0.162.0,
+  reportlab 4.5.0 → 5.1.0, python-multipart 0.0.28 → 0.0.32, pytest 9.1.1 → 9.2.0; the CLI's
+  `pyobjc-framework-vision` / `pyobjc-framework-quartz` ranges follow the macOS 26 framework versions
+  (`packages/envoy-cli/pyproject.toml`).
+- Frontend toolchain: Next 15.5.28 → 16.4.3, React / React-DOM 19.0.0 → 19.3.1, eslint 9 → 10 with a flat
+  config (`frontend/eslint.config.mjs`); `npm run lint` and `npm run build` pass.
+- CI actions/upload-artifact and actions/setup-node move to v7; workflow syntax is unchanged.
+
 ## 0.1.40 - 2026-11-03
 
 ### 中文

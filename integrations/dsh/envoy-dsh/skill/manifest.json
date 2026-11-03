@@ -1,7 +1,7 @@
 {
   "name": "envoy",
   "description": "Read material the host cannot get itself: video or audio transcripts and frames, PDFs and Office documents, image posts, pages that need scrolling, cookies, or login, GitHub repo/tree/blob/commit/pull/issue links when no gh or git is available, articles a plain fetch truncates, and reads that must stay retained so a later turn can expand, search, or replay them. Start with a plain host fetch; call Envoy only after it is blocked, truncated, or renders an empty shell, or when the answer must outlive the turn. Do not call Envoy for a short static page a plain fetch already answers, for an article whose body a plain fetch already returned in full, for GitHub, GitLab, or Bitbucket source navigation or a repo README while gh or git is available (use gh api, git show, or plain fetch), for material already in this turn's context (use envoy_expand or envoy_search on its material_id), or for a link the user only wants edited, quoted, or saved. This DeepSeek Harness plugin mounts the Envoy MCP bridge with the bounded core toolset and provides the adapted skill, so no separate MCP setup is required.",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "generated_from": "integrations/skills/envoy/SKILL.md",
   "protocol": "envoy.read/1"
 }
