@@ -1,5 +1,46 @@
 # 更新日志 / Changelog
 
+## 0.1.43 - 2026-11-03
+
+### 中文
+
+- 视频原始文件下载改走直连 HTTP：浏览器抓到的播放地址（如 `aweme/v1/play/`）
+  直接跟随 302 到签名 CDN 并流式落盘，不再交给 yt-dlp 通用提取器；抖音这类
+  依赖 `a_bogus` 签名的站现在能拿到原始 mp4（`media.py`）。
+- 直连下载只在响应 `Content-Type` 为 `video/` / `audio/`，或为通用二进制类型且
+  重定向后的 URL 形似媒体文件时才接受，避免把页面文档当视频存下来；页面文档类
+  响应不再进入视频候选（`media.py`、`reader.py`）。
+- 请求持久保留原始媒体、但本机没有 ASR 运行时也没有抽帧消费方时，返回
+  `ready` 并给出 `raw_media_path` / `media_only`，不再报「缺能力」的 partial
+  （`reader.py`）。
+- yt-dlp 兜底路径现在能拿到 Envoy 已保存的登录 cookie：以 Netscape cookiefile
+  形式写入 `~/.envoy/yt-dlp-cookies/<host>.txt`（仅本人可读），按行保留各自的
+  domain/path 作用域，不向跨源 CDN 发送 `Cookie` 头；只用手上已有的 cookie
+  存储，不为一次下载另开浏览器（`cookies.py`、`media.py`、`video.py`）。
+- 新增回归测试：媒体单独交付、页面文档过滤、播放地址 302 直连、HTML 与未知
+  二进制类型拒收（`tests/cli/test_browser_runtime.py`，65 passed）。
+
+### English
+
+- Raw video acquisition now streams the URL the browser captured straight to disk,
+  following the 302 to the signed CDN, instead of handing it to yt-dlp's generic
+  extractor; signature-gated sites such as Douyin now yield the original MP4
+  (`media.py`).
+- The direct downloader accepts a response only when its `Content-Type` is `video/`
+  or `audio/`, or a generic binary type whose post-redirect URL still looks like a
+  media file, so a captured page document can no longer be saved as a video
+  (`media.py`, `reader.py`).
+- A read that asks for persistent raw media, with neither an ASR runtime nor a frame
+  consumer installed, now returns `ready` with `raw_media_path` / `media_only`
+  instead of a capability-gap `partial` (`reader.py`).
+- The yt-dlp fallback now receives the session Envoy already stores, written as a
+  Netscape cookiefile (`~/.envoy/yt-dlp-cookies/<host>.txt`, owner-only) that keeps
+  each row's domain/path scope, so no `Cookie` header goes cross-origin; it never
+  opens a browser for a download (`cookies.py`, `media.py`, `video.py`).
+- New regression tests cover media-only delivery, page-document filtering, the
+  player-redirect download, and rejection of HTML and unknown binary types
+  (`tests/cli/test_browser_runtime.py`, 65 passed).
+
 ## 0.1.42 - 2026-11-03
 
 ### 中文

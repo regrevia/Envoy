@@ -736,6 +736,57 @@ def load_cookies_for(url: str) -> list[dict]:
     return selected[:200]
 
 
+def yt_dlp_cookie_file(url: str) -> str | None:
+    """Path to a yt-dlp cookie jar for this URL, or None when no session is held.
+
+    The media legs never pass through the isolated browser, so they cannot pick
+    up a login the page layer already has; without a session the site's own
+    extractor refuses with "Fresh cookies are needed". Only the session Envoy
+    already stores is handed over: opening Envoy's browser profile here would
+    launch a browser on every download. The jar lives under Envoy's home with
+    owner-only permissions and keeps each row's domain and path scoping.
+    """
+
+    host = (urlparse(str(url or "")).hostname or "").lower()
+    if not host:
+        return None
+    rows = list(load_cookies_for(url))
+    if not rows:
+        return None
+    lines = ["# Netscape HTTP Cookie File"]
+    for row in rows:
+        domain = str(row.get("domain") or host).strip()
+        name = str(row.get("name") or "")
+        value = str(row.get("value") or "")
+        if not domain or not name:
+            continue
+        include_subdomains = "TRUE" if domain.startswith(".") else "FALSE"
+        cookie_path = str(row.get("path") or "/") or "/"
+        secure = "TRUE" if row.get("secure") else "FALSE"
+        try:
+            expires = int(row.get("expires") or 0)
+        except (TypeError, ValueError):
+            expires = 0
+        lines.append(
+            "\t".join(
+                [domain, include_subdomains, cookie_path, secure, str(expires), name, value]
+            )
+        )
+    if len(lines) == 1:
+        return None
+    from .cache import envoy_home
+
+    directory = envoy_home() / "yt-dlp-cookies"
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = directory / f"{host}.txt"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        restrict_to_owner(path)
+    except OSError:
+        return None
+    return str(path)
+
+
 def clear_imported_cookies() -> bool:
     path = cookie_store_path()
     if not path.is_file():

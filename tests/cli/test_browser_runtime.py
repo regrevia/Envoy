@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import types
 
 import pytest
@@ -13,7 +14,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-core" / "src"))
 sys.path.insert(0, str(ROOT_DIR / "packages" / "envoy-cli" / "src"))
 
-from envoy_cli import browser, netpolicy, reader
+from envoy_cli import browser, media, netpolicy, reader
 from envoy_cli.capabilities import capability_catalog
 from envoy_core.schemas.read_v1 import (
     ExecutionState,
@@ -1877,3 +1878,179 @@ def test_a_music_track_is_flagged_rather_than_quoted_as_speech():
         [{"start": 0.0, "end": 6.0}], 8.0
     )
     assert confidence == "normal"
+
+
+def test_browser_video_evidence_delivers_a_persisted_source_without_consumers(monkeypatch, tmp_path):
+    """media-only reads: a requested source file is the deliverable.
+
+    With no ASR runtime and no frame consumer installed, the download used to end
+    in PARTIAL with a capability gap even though the file was there. A caller that
+    asked for persistent raw media must get READY and the path.
+    """
+
+    source_url = "https://www.douyin.com/video/7698386448961683813"
+    play_url = "https://www.douyin.com/aweme/v1/play/?aid=6383&biz_sign=secret"
+    request = ReadRequest.model_validate({
+        "request_id": "browser-video-media-only",
+        "source": {"url": source_url, "kind": "video"},
+        "retention": {"raw_media": "persistent"},
+    })
+    video_bytes = b"persisted-source-bytes"
+    video_path = tmp_path / "download.mp4"
+    video_path.write_bytes(video_bytes)
+    downloaded: list[str] = []
+
+    def fake_download(url, *_args, **_kwargs):
+        downloaded.append(url)
+        return {
+            "path": str(video_path),
+            "duration": 100.7,
+            "downloaded_bytes": len(video_bytes),
+            "elapsed_ms": 1,
+        }
+
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "download_video_for_frames", fake_download)
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: {
+        "asr_installed": False,
+        "asr_model_available": False,
+        "asr_model": None,
+    })
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader._attach_browser_video_evidence(
+        request,
+        source_url,
+        [source_url],
+        ReadResponse(
+            request_id=request.request_id,
+            execution_state=ExecutionState.COMPLETED,
+            result=ReadResult.PARTIAL,
+        ),
+        bound_media_urls=[play_url],
+    )
+
+    assert downloaded, "the persisted source was never requested"
+    assert response.result == ReadResult.READY
+    video = response.coverage.modalities["video"]
+    assert video.extraction == "complete"
+    assert video.details["media_only"] is True
+    assert video.details["media_fetched"] is True
+    assert video.details["transcript_source"] == "unavailable"
+    persisted = Path(video.details["raw_media_path"])
+    assert persisted.is_file()
+    assert persisted.stat().st_size == len(video_bytes)
+    # A signed player URL must not be published in the response payload.
+    assert play_url not in response.model_dump_json()
+
+
+def test_captured_page_document_is_not_a_media_candidate():
+    page = "https://www.douyin.com/video/7698386448961683813"
+    assert reader._is_site_document_candidate(page, page) is True
+    assert reader._is_site_document_candidate("https://www.douyin.com", page) is True
+    assert reader._is_site_document_candidate("https://www.douyin.com/feed", page) is False
+    assert reader._is_site_document_candidate(
+        "https://www.douyin.com/aweme/v1/play/?aid=6383", page
+    ) is False
+    assert reader._is_site_document_candidate(
+        "https://v95-web-sz.douyinvod.com/x/video/tos/cn/obj/?token=1", page
+    ) is False
+
+
+class _FakeHTTPResponse:
+    def __init__(self, url, body, content_type):
+        self._body = body
+        self._pos = 0
+        self._url = url
+        self.headers = {"Content-Type": content_type}
+
+    def geturl(self):
+        return self._url
+
+    def read(self, size=-1):
+        chunk = self._body[self._pos:self._pos + size]
+        self._pos += len(chunk)
+        return chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+def test_direct_media_download_streams_a_player_redirect(monkeypatch, tmp_path):
+    """A player endpoint answers 302 to the signed file; stream it, not yt-dlp.
+
+    yt-dlp's generic extractor re-requests the redirect target with its own
+    headers and reports "Requested format is not available" on signed CDN links.
+    """
+
+    body = b"x" * 500
+    seen: list[str] = []
+
+    def fake_urlopen(request, timeout=None):
+        seen.append(request.full_url)
+        return _FakeHTTPResponse(
+            "https://v95-web-sz.douyinvod.com/x/video/tos/cn/obj/?token=1",
+            body,
+            "video/mp4",
+        )
+
+    monkeypatch.setattr(media.urllib.request, "urlopen", fake_urlopen)
+
+    result = media._try_download_direct_media(
+        "https://www.douyin.com/aweme/v1/play/?aid=6383&biz_sign=secret",
+        tmp_path,
+        10_000,
+        time.monotonic() + 5,
+    )
+
+    assert seen == ["https://www.douyin.com/aweme/v1/play/?aid=6383&biz_sign=secret"]
+    assert result is not None
+    assert result["downloaded_bytes"] == len(body)
+    target = Path(result["path"])
+    assert target.suffix == ".mp4"
+    assert target.read_bytes() == body
+
+
+def test_direct_media_download_declines_a_page_document(monkeypatch, tmp_path):
+    """A captured page URL must fall through to the extractor, not be saved."""
+
+    def fake_urlopen(request, timeout=None):
+        return _FakeHTTPResponse(
+            "https://www.douyin.com/video/7698386448961683813",
+            b"<html>page</html>",
+            "text/html; charset=utf-8",
+        )
+
+    monkeypatch.setattr(media.urllib.request, "urlopen", fake_urlopen)
+
+    result = media._try_download_direct_media(
+        "https://www.douyin.com/video/7698386448961683813",
+        tmp_path,
+        10_000,
+        time.monotonic() + 5,
+    )
+
+    assert result is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_direct_media_download_requires_a_media_redirect_for_generic_binaries(monkeypatch, tmp_path):
+    def fake_urlopen(request, timeout=None):
+        return _FakeHTTPResponse(
+            "https://www.douyin.com/aweme/v1/play/?aid=6383",
+            b"opaque",
+            "application/octet-stream",
+        )
+
+    monkeypatch.setattr(media.urllib.request, "urlopen", fake_urlopen)
+
+    assert media._try_download_direct_media(
+        "https://www.douyin.com/aweme/v1/play/?aid=6383",
+        tmp_path,
+        10_000,
+        time.monotonic() + 5,
+    ) is None
+    assert list(tmp_path.iterdir()) == []

@@ -325,6 +325,18 @@ def extract_public_subtitles(
         }
 
 
+def _subtitle_cookie_options(source_url: str) -> dict:
+    """The session Envoy holds, when it holds one, for the subtitle API."""
+
+    try:
+        from .cookies import yt_dlp_cookie_file
+
+        path = yt_dlp_cookie_file(source_url)
+    except Exception:  # noqa: BLE001 - cookies are an accelerator, never a blocker
+        return {}
+    return {"cookiefile": path} if path else {}
+
+
 def _extract_public_subtitles_worker(
     source_url: str,
     preferred_language: str | None,
@@ -344,6 +356,7 @@ def _extract_public_subtitles_worker(
     deadline = started + work_limit
     warning_log = _SubtitleWarningLog()
     options = {
+        **_subtitle_cookie_options(source_url),
         "ignoreconfig": True,
         "compat_opts": ["prefer-legacy-http-handler"],
         "quiet": True,

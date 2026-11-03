@@ -2062,6 +2062,34 @@ def _page_video_chapter_blocks(
     return blocks
 
 
+_SITE_DOCUMENT_SUFFIXES = frozenset({".html", ".htm", ".xhtml", ".php", ".asp", ".aspx"})
+
+
+def _is_site_document_candidate(media_url: str, page_url: str) -> bool:
+    """True when a captured URL is the page document itself, not a media file.
+
+    The passive response listener keeps responses that are not obviously assets,
+    so the page HTML can look like a bound player source; publishing it as "the
+    video" would hand the caller the site front page.
+    """
+
+    try:
+        media = urlparse(str(media_url or ""))
+        page = urlparse(str(page_url or ""))
+    except ValueError:
+        return False
+    if media.scheme not in {"http", "https"} or not media.netloc:
+        return False
+    leaf = (media.path or "").rsplit("/", 1)[-1]
+    if "." in leaf and ("." + leaf.rsplit(".", 1)[-1].lower()) in _SITE_DOCUMENT_SUFFIXES:
+        return True
+    if media.netloc.lower() != page.netloc.lower():
+        return False
+    media_path = (media.path or "/").rstrip("/")
+    page_path = (page.path or "/").rstrip("/")
+    return media_path in {"", page_path}
+
+
 def _attach_browser_video_evidence(
     request: ReadRequest,
     source_url: str,
@@ -2080,7 +2108,12 @@ def _attach_browser_video_evidence(
     # rejects it, and autoplay makes it look loaded. Dropping it means a player
     # that never mounted reports the login wall instead of publishing a 2.6 s
     # silent preview as the post.
-    eligible_urls = [url for url in bound_urls if not _is_cover_preview_media_url(url)]
+    eligible_urls = [
+        url
+        for url in bound_urls
+        if not _is_cover_preview_media_url(url)
+        and not _is_site_document_candidate(url, source_url)
+    ]
     preview_only = bool(bound_urls) and not eligible_urls
     video_coverage = response.coverage.modalities.get("video") or CoverageItem(
         discovered=1,
@@ -2171,7 +2204,7 @@ def _attach_browser_video_evidence(
                 "visual_inspection": "not_performed",
             },
         )
-    if not asr_ready and not frame_enabled:
+    if not asr_ready and not frame_enabled and not keep_media:
         # Nothing in this response would consume the media, so do not spend the
         # probe requests or the download only to report that ASR cannot run.
         visual_requirement = None
@@ -2403,6 +2436,54 @@ def _attach_browser_video_evidence(
                     max_work_seconds=_remaining_work_seconds(request),
                 )
             downloaded_bytes = int(downloaded.get("downloaded_bytes") or video_path.stat().st_size)
+            if keep_media and not asr_ready and not frame_enabled:
+                # The caller asked for the source file and nothing else: no ASR
+                # runtime and no frame consumer are installed, so the download
+                # itself is the whole deliverable. Report it as delivered rather
+                # than as a gap, and keep the page text the read already had.
+                media_only_details = {
+                    **video_coverage.details,
+                    **selection_details,
+                    "browser_media_url": _media_origin(selected_url),
+                    "media_downloaded_bytes": downloaded_bytes,
+                    "duration_seconds": duration or None,
+                    "transcript_source": "unavailable",
+                    "visual_inspection": "not_performed",
+                    "frame_inspection": "not_requested",
+                    "media_fetched": True,
+                    "media_only": True,
+                    "raw_media_retention": retention_mode,
+                    "raw_media_reused": media_reused,
+                    "raw_media_path": str(video_path),
+                    "media_file_name": video_path.name,
+                }
+                media_only_coverage = video_coverage.model_copy(
+                    update={
+                        "discovered": 1,
+                        "extracted": 1,
+                        "returned": 1,
+                        "processed": 1,
+                        "delivered": 1,
+                        "extraction": "complete",
+                        "unresolved": list(dict.fromkeys(unresolved)),
+                        "details": media_only_details,
+                    }
+                )
+                modalities = dict(response.coverage.modalities)
+                modalities["video"] = media_only_coverage
+                coverage_unresolved = [
+                    item
+                    for item in response.coverage.unresolved
+                    if item not in obsolete_coverage_gaps
+                ]
+                return response.model_copy(
+                    update={
+                        "coverage": response.coverage.model_copy(
+                            update={"modalities": modalities, "unresolved": coverage_unresolved}
+                        ),
+                        "result": ReadResult.READY,
+                    }
+                )
 
             runtime = media_runtime_status()
             if runtime.get("asr_installed") and runtime.get("asr_model_available"):

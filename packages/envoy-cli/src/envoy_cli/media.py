@@ -912,6 +912,23 @@ def download_audio_for_asr(
     )
 
 
+def _yt_dlp_cookie_options(source_url: str) -> dict[str, Any]:
+    """Hand yt-dlp the session Envoy holds, when it holds one.
+
+    The extractor calls the site's own API, which refuses an anonymous request
+    with "Fresh cookies are needed" even when the page itself is public. A jar is
+    optional: a site that needs no session must keep working without one.
+    """
+
+    try:
+        from .cookies import yt_dlp_cookie_file
+
+        path = yt_dlp_cookie_file(source_url)
+    except Exception:  # noqa: BLE001 - cookies are an accelerator, never a blocker
+        return {}
+    return {"cookiefile": path} if path else {}
+
+
 def _download_audio_for_asr_worker(
     source_url: str,
     output_dir: str,
@@ -931,6 +948,7 @@ def _download_audio_for_asr_worker(
     started = time.monotonic()
     deadline = started + work_limit
     options = {
+        **_yt_dlp_cookie_options(source_url),
         "ignoreconfig": True,
         "compat_opts": ["prefer-legacy-http-handler"],
         "quiet": True,
@@ -1069,6 +1087,105 @@ def _format_unavailable(exc: BaseException) -> bool:
     return any(marker in text for marker in _FORMAT_UNAVAILABLE_MARKERS)
 
 
+_DIRECT_MEDIA_SUFFIXES = (".mp4", ".m4s", ".m4a", ".m4v", ".webm", ".mov", ".flv", ".mp3")
+_DIRECT_MEDIA_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
+def _direct_media_suffix(url: str, content_type: str) -> str:
+    kind = (content_type or "").split(";", 1)[0].strip().lower()
+    if kind.startswith("video/"):
+        subtype = kind.split("/", 1)[1]
+        if subtype in {"mp4", "webm", "quicktime", "x-flv", "x-matroska"}:
+            return {"quicktime": ".mov", "x-flv": ".flv", "x-matroska": ".mkv"}.get(
+                subtype, f".{subtype}"
+            )
+        return ".mp4"
+    if kind.startswith("audio/"):
+        return ".m4a"
+    leaf = urlsplit(url).path.rsplit("/", 1)[-1].lower()
+    for suffix in _DIRECT_MEDIA_SUFFIXES:
+        if leaf.endswith(suffix):
+            return suffix
+    return ".mp4"
+
+
+def _looks_like_media_url(url: str) -> bool:
+    parts = urlsplit(url)
+    leaf = parts.path.rsplit("/", 1)[-1].lower()
+    return (
+        any(leaf.endswith(suffix) for suffix in _DIRECT_MEDIA_SUFFIXES)
+        or "/video/tos/" in parts.path
+        or "douyinvod" in parts.netloc
+    )
+
+
+def _try_download_direct_media(
+    source_url: str,
+    root: Path,
+    byte_limit: int,
+    deadline: float,
+) -> dict[str, Any] | None:
+    """Stream a player-bound media URL that needs no extractor.
+
+    A browser-captured source is already a signed file URL, or a player endpoint
+    that redirects to one; running it through yt-dlp's generic extractor
+    re-requests it with the extractor's own headers and fails on signed CDN
+    links. This streams the URL as the player would. The response type decides:
+    anything that is not media returns None here, so the extractor path still
+    handles real page URLs and names the real reason.
+    """
+
+    parts = urlsplit(source_url)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return None
+    request = urllib.request.Request(
+        source_url,
+        headers={"User-Agent": _DIRECT_MEDIA_UA, "Accept": "*/*"},
+    )
+    try:
+        response = urllib.request.urlopen(
+            request, timeout=max(1, min(int(deadline - time.monotonic()), 30))
+        )
+    except Exception:  # noqa: BLE001 - let the extractor path report the failure
+        return None
+    with response:
+        content_type = response.headers.get("Content-Type", "")
+        kind = (content_type or "").split(";", 1)[0].strip().lower()
+        # A page that answers with a generic binary type would otherwise be saved
+        # as a video; only trust that type when the redirect ends at a media URL.
+        if not kind.startswith(("video/", "audio/")) and not (
+            kind in {"application/octet-stream", "binary/octet-stream"}
+            and _looks_like_media_url(response.geturl())
+        ):
+            return None
+        target = root / f"video{_direct_media_suffix(source_url, content_type)}"
+        total = 0
+        try:
+            with target.open("wb") as handle:
+                while True:
+                    if time.monotonic() > deadline:
+                        raise MediaProcessingError(
+                            "Direct media download ran out of its work budget"
+                        )
+                    chunk = response.read(262_144)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > byte_limit:
+                        raise MediaBudgetExceeded(
+                            "Media download exceeded max_download_bytes"
+                        )
+                    handle.write(chunk)
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+    if total <= 0:
+        target.unlink(missing_ok=True)
+        return None
+    return {"path": str(target), "duration": None, "downloaded_bytes": total}
+
+
 def _download_video_for_frames_worker(
     source_url: str,
     output_dir: str,
@@ -1094,7 +1211,11 @@ def _download_video_for_frames_worker(
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     started = time.monotonic()
     deadline = started + work_limit
+    direct = _try_download_direct_media(source_url, root, byte_limit, deadline)
+    if direct is not None:
+        return direct
     options = {
+        **_yt_dlp_cookie_options(source_url),
         "ignoreconfig": True,
         "compat_opts": ["prefer-legacy-http-handler"],
         "quiet": True,
