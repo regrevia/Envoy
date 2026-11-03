@@ -62,6 +62,12 @@ Stop after one plain fetch and one Envoy read. A short source that returns
 `blocked` is a normal outcome: report it and stop rather than retrying in a
 loop. Keep `goal` narrow enough that a `partial` result still answers it.
 
+A `blocked`, `empty`, or failed Envoy read says nothing about whether the page
+is readable: it means this reader could not get it. Before telling the user a
+source is unavailable, take it yourself with a plain fetch and work from the
+raw body, text, or page tree you got. Never drop content you can read because
+a tool declined it.
+
 ## Deliverables from one source or many
 
 The point of a read is usually an artifact, not a summary in chat. Build the
