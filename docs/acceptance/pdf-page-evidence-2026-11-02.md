@@ -108,7 +108,7 @@ OCR 默认最多 40 页或窗口页数取小，可用环境变量 `ENVOY_PDF_OCR
 ## 8. 复现
 
 ```bash
-cd /Users/apple/Desktop/2026/Envoy
+cd <repo>
 packages/envoy-cli/.venv/bin/python -m pytest tests/cli/test_pdf_evidence.py -q
 ```
 
