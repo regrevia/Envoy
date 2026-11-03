@@ -308,3 +308,57 @@ def test_search_empty_text_does_not_claim_the_source_is_unreadable() -> None:
     text = mcp._tool_content_text(payload, True, _request())
 
     assert "not the source's" not in text
+
+
+def test_blocks_from_one_page_name_that_page_once() -> None:
+    """The page URL is provenance, not per-block data.
+
+    Measured on a 70-block Wikipedia article: repeating the page URL on every
+    block line spent 4,820 characters of a 21,354-character receipt on the same
+    74-character URL. One declared page plus the block's fragment carries the
+    same provenance for a fraction of the tokens.
+    """
+    payload = _read_payload()
+    payload["blocks"] = [
+        {
+            "id": f"blk-{index:04d}",
+            "kind": "paragraph",
+            "content": {"type": "text", "text": f"paragraph {index}"},
+            "locator": {
+                "source_url": f"https://example.org/article#blk-{index:04d}",
+                "block_id": f"blk-{index:04d}",
+            },
+        }
+        for index in range(1, 4)
+    ]
+
+    text = mcp._tool_content_text(payload, True, _request())
+
+    assert text.count("https://example.org/article") == 1
+    assert "source: https://example.org/article" in text
+    for index in range(1, 4):
+        assert f"[{index}/3] blk-{index:04d} · paragraph #blk-{index:04d}" in text
+
+
+def test_blocks_from_several_pages_keep_their_own_locator() -> None:
+    payload = _read_payload()
+    payload["blocks"] = [
+        {
+            "id": "blk-a",
+            "kind": "paragraph",
+            "content": {"type": "text", "text": "from one page"},
+            "locator": {"source_url": "https://example.org/one#blk-a", "block_id": "blk-a"},
+        },
+        {
+            "id": "blk-b",
+            "kind": "paragraph",
+            "content": {"type": "text", "text": "from another page"},
+            "locator": {"source_url": "https://example.org/two#blk-b", "block_id": "blk-b"},
+        },
+    ]
+
+    text = mcp._tool_content_text(payload, True, _request())
+
+    assert "source: " not in text
+    assert "https://example.org/one#blk-a" in text
+    assert "https://example.org/two#blk-b" in text

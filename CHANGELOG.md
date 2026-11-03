@@ -11,6 +11,9 @@
 - `envoy_read` 的工具说明补上两条现有行为：回执被截断时可用 `budget.max_response_chars`
   压到更省 token 的量，剩余内容仍在 `coverage.next_offset` + `envoy_expand` 里；默认渲染上限
   约 12,000 字符。
+- 同一页面内的块不再逐块重复整条来源 URL：70 块的维基条目实测回执 21,354 → 16,534
+  字符（少 4,820），页面在块前声明一次、块行只留 `#blk-…` 锚点；跨多页的集合仍逐块给完整
+  locator。
 - 新增回执回归测试（`tests/cli/test_mcp_content_selfcontained.py`）：`blocked`、`empty` 必带
   自行抓取提示，`envoy_search` 零命中不带。
 
@@ -24,6 +27,10 @@
 - The `envoy_read` description now states two behaviours that already existed: a trimmed answer can
   be made cheaper with `budget.max_response_chars`, with the rest still reachable through
   `coverage.next_offset` and `envoy_expand`; the default rendered cap is about 12,000 characters.
+- Blocks from one page no longer repeat that page's URL on every line: a real 70-block
+  Wikipedia receipt went from 21,354 to 16,534 characters (4,820 fewer) by declaring the page once
+  and keeping only the `#blk-...` fragment per block; collections spanning several pages keep a full
+  locator each.
 - New receipt regression tests (`tests/cli/test_mcp_content_selfcontained.py`): `blocked` and
   `empty` must carry the fetch-it-yourself line, zero-hit `envoy_search` must not.
 

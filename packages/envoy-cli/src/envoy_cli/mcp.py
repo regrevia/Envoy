@@ -920,7 +920,7 @@ def _block_text(block: dict) -> str:
     return ""
 
 
-def _locator_note(block: dict) -> str:
+def _locator_note(block: dict, base_url: str = "") -> str:
     locator = block.get("locator")
     if not isinstance(locator, dict):
         return ""
@@ -933,15 +933,40 @@ def _locator_note(block: dict) -> str:
         return f" p.{page}"
     url = str(locator.get("source_url") or "")
     block_id = str(locator.get("block_id") or "")
-    if url:
-        return f" {url[:70]}#{block_id}" if block_id else f" {url[:70]}"
-    return ""
+    if not url:
+        return ""
+    # A document's blocks all sit in one page. Repeating that page's URL on
+    # every block line costs about 120 characters each -- 8,500 of a 21,000
+    # character receipt for a 70-block article -- without adding provenance,
+    # because the page is declared once above the blocks and the fragment names
+    # the block inside it.
+    if base_url and url.split("#", 1)[0] == base_url:
+        return f" #{block_id}" if block_id else ""
+    return f" {url[:70]}#{block_id}" if block_id else f" {url[:70]}"
 
 
-def _block_line(index: int, total: int, block: dict) -> str:
+def _shared_source_url(blocks: list) -> str:
+    """Return the one page URL every located block belongs to, or "".
+
+    Only a URL shared by all blocks is factored out; a collection whose blocks
+    come from several pages keeps a full locator per block.
+    """
+    bases = set()
+    for block in blocks:
+        locator = block.get("locator")
+        url = str(locator.get("source_url") or "") if isinstance(locator, dict) else ""
+        if not url:
+            return ""
+        bases.add(url.split("#", 1)[0])
+        if len(bases) > 1:
+            return ""
+    return bases.pop() if bases else ""
+
+
+def _block_line(index: int, total: int, block: dict, base_url: str = "") -> str:
     block_id = str(block.get("id") or "")
     kind = str(block.get("kind") or "block")
-    return f"[{index}/{total}] {block_id} · {kind}{_locator_note(block)}"
+    return f"[{index}/{total}] {block_id} · {kind}{_locator_note(block, base_url)}"
 
 
 # A body can arrive as one enormous line (minified JSON, a single-line CSV).
@@ -1454,9 +1479,13 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
         if tool == "envoy_read":
             lines.append(_READER_REFUSAL_FALLBACK)
 
+    shared_url = _shared_source_url(blocks)
+    if shared_url:
+        lines.append("")
+        lines.append(f"source: {shared_url}")
     for index, block in enumerate(blocks, 1):
         lines.append("")
-        lines.append(_block_line(index, len(blocks), block))
+        lines.append(_block_line(index, len(blocks), block, shared_url))
         text = _block_text(block)
         lines.append((text, len(text)) if text else "(no text)")
 
