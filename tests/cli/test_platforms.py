@@ -476,6 +476,77 @@ def test_public_image_note_can_return_source_bound_ocr_regions(monkeypatch, tmp_
     assert response.coverage.modalities["ocr"].details["region_count"] == 1
 
 
+def test_ocr_regions_are_merged_in_reading_order():
+    from envoy_cli.reader import _merge_ocr_region_text
+
+    regions = [
+        {"text": "第二行", "bbox": [0.1, 0.4, 0.4, 0.5], "confidence": 0.9},
+        {"text": "同一行", "bbox": [0.5, 0.41, 0.9, 0.5], "confidence": 0.9},
+        {"text": "第一行", "bbox": [0.1, 0.2, 0.6, 0.3], "confidence": 0.9},
+    ]
+
+    assert _merge_ocr_region_text(regions) == "第一行\n第二行同一行"
+
+
+def test_image_note_delivers_local_files_when_the_host_reads_images(
+    monkeypatch,
+    tmp_path,
+):
+    from types import SimpleNamespace
+    from envoy_cli import browser, reader
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    source_url = "https://www.xiaohongshu.com/explore/65abc123"
+    html = """
+    <html><head><title>图文笔记</title></head><body>
+      <main class="note-container"><div class="note-image">
+        <img src="https://sns.example/note.png">
+      </div></main></body></html>
+    """
+    page = SimpleNamespace(
+        url=source_url,
+        title="图文笔记",
+        text="",
+        html=html,
+        media_urls=(),
+        page_video_urls=(),
+    )
+    image_path = tmp_path / "note.png"
+    image_path.write_bytes(b"png")
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (source_url, html))
+    monkeypatch.setattr(browser, "read_page", lambda *_args, **_kwargs: page)
+    monkeypatch.setattr(
+        reader,
+        "_download_image_for_ocr",
+        lambda *_args, **_kwargs: (image_path, "a" * 64),
+    )
+    monkeypatch.setattr(reader, "_read_cached_image_ocr", lambda *_args, **_kwargs: {
+        "backend": "tesseract",
+        "regions": [{"text": "岗位说明", "bbox": [0.1, 0.2, 0.8, 0.3], "confidence": 0.9}],
+    })
+    monkeypatch.setattr(reader, "_safe_visual_candidates", lambda candidates, *_args: (
+        [{
+            "image": item,
+            "image_url": item["url"],
+            "block_id": "blk-image-0001",
+            "resource_id": "resource-image-1",
+        } for item in candidates],
+        0,
+    ))
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path / "materials"))
+
+    response = reader.read_public_page(ReadRequest.model_validate({
+        "request_id": "xhs-local",
+        "source": {"url": source_url},
+        "host_capabilities": {"image_input": "local_file"},
+    }))
+
+    delivery = response.resources[0].delivery
+    assert delivery.type == "local_file"
+    assert delivery.path == str(image_path)
+
+
 def test_public_image_note_marks_empty_ocr_as_partial_for_visual_review(
     monkeypatch,
     tmp_path,

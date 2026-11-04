@@ -1087,6 +1087,127 @@ def _safe_visual_candidates(
     return selected, skipped_sensitive
 
 
+_IMAGE_NOTE_OCR_PROFILE = "balanced"
+_IMAGE_NOTE_OCR_MAX_IMAGES = 12
+_IMAGE_DOWNLOAD_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def _is_cjk_char(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x2E80 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+        or 0xFF00 <= code <= 0xFFEF
+        or 0x3000 <= code <= 0x303F
+    )
+
+
+def _merge_ocr_region_text(regions: list[dict]) -> str:
+    """Join OCR regions into readable text, keeping CJK tight and line breaks.
+
+    ``bbox`` follows the contract's normalized corner form: left, top, right,
+    bottom. Regions are clustered into lines by vertical overlap, so words that
+    sit on the same line but differ slightly in height stay together.
+    """
+    rows: list[tuple[float, float, float, float, str]] = []
+    for region in regions:
+        text = str(region.get("text") or "").strip()
+        bbox = region.get("bbox")
+        if not text or not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        try:
+            left, top, right, bottom = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        if right <= left or bottom <= top:
+            continue
+        rows.append((top, left, right, bottom, text))
+    if not rows:
+        return ""
+    rows.sort(key=lambda row: (row[0], row[1]))
+
+    lines: list[dict] = []
+    for top, left, right, bottom, text in rows:
+        height = bottom - top
+        target: dict | None = None
+        for line in reversed(lines[-6:]):
+            overlap = min(bottom, line["bottom"]) - max(top, line["top"])
+            if overlap > 0.5 * min(height, line["bottom"] - line["top"]):
+                target = line
+                break
+        if target is None:
+            lines.append({"top": top, "bottom": bottom, "items": [(left, text)]})
+        else:
+            target["top"] = min(target["top"], top)
+            target["bottom"] = max(target["bottom"], bottom)
+            target["items"].append((left, text))
+
+    rendered: list[str] = []
+    for line in sorted(lines, key=lambda item: (item["top"], item["items"][0][0])):
+        pieces: list[str] = []
+        for _left, text in sorted(line["items"], key=lambda entry: entry[0]):
+            if not pieces:
+                pieces.append(text)
+            elif _is_cjk_char(text[0]) or _is_cjk_char(pieces[-1][-1]):
+                pieces.append(text)
+            else:
+                pieces.append(" " + text)
+        rendered.append("".join(pieces))
+    return "\n".join(rendered).strip()
+
+
+def _image_note_ocr_text(
+    images: list[dict],
+    *,
+    profile: str,
+    language: str,
+    backend: str,
+    max_bytes: int,
+    dns_cache: dict[str, str],
+    downloads: dict[str, tuple[Path, str]] | None = None,
+) -> dict[str, str]:
+    """OCR an image post's gallery so the words of the post come back as text.
+
+    An image post carries no body text in the page: without this the caller only
+    receives image references and cannot say what the post contains.
+    """
+    texts: dict[str, str] = {}
+    if not images:
+        return texts
+    if not profile:
+        try:
+            if not any(available_ocr_backends().values()):
+                return texts
+        except (OSError, ValueError, RuntimeError):
+            return texts
+        profile = _IMAGE_NOTE_OCR_PROFILE
+    for item in images[:_IMAGE_NOTE_OCR_MAX_IMAGES]:
+        try:
+            image_path, image_sha256 = _download_image_for_ocr(
+                item["image_url"],
+                max_bytes=max_bytes,
+                dns_cache=dns_cache,
+            )
+            if downloads is not None:
+                downloads[item["resource_id"]] = (image_path, image_sha256)
+            result = _read_cached_image_ocr(
+                image_path,
+                image_sha256,
+                profile=profile,
+                language=language,
+                backend=backend,
+            )
+        except (OSError, ValueError, PublicPageError, MediaBudgetExceeded, RuntimeError):
+            continue
+        merged = _merge_ocr_region_text(result.get("regions") or [])
+        if merged:
+            texts[item["resource_id"]] = merged
+    return texts
+
+
 def _download_image_for_ocr(
     image_url: str,
     *,
@@ -1095,6 +1216,14 @@ def _download_image_for_ocr(
 ) -> tuple[Path, str]:
     if not _is_public_http_url(image_url, dns_cache):
         raise PublicPageError("OCR image URL is not a public HTTP(S) address")
+    parsed = urlparse(image_url)
+    image_headers = {
+        "User-Agent": _IMAGE_DOWNLOAD_USER_AGENT,
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        # Image CDNs behind a gallery check the referrer; without it they serve
+        # an HTML error page instead of the picture.
+        "Referer": f"{parsed.scheme}://{parsed.netloc}/",
+    }
     root = _material_root() / "ocr-inputs"
     root.mkdir(mode=0o700, exist_ok=True)
     current_url = image_url
@@ -1102,7 +1231,7 @@ def _download_image_for_ocr(
         for _ in range(5):
             if not _is_public_http_url(current_url, dns_cache):
                 raise PublicPageError("OCR image redirect resolved to a non-public address")
-            with client.stream("GET", current_url, headers={"User-Agent": "Envoy/0.1"}) as response:
+            with client.stream("GET", current_url, headers=image_headers) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
                     location = response.headers.get("location")
                     if not location:
@@ -10824,6 +10953,10 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             order=0,
         )
         heading_blocks = _page_heading_blocks(parser, safe_source_url)
+        if image_note_page and len(heading_blocks) > 1:
+            # A gallery post's headings are the recommendation feed, not the
+            # post; keep the post caption (the first one) and drop the rest.
+            heading_blocks = heading_blocks[:1]
         page_links, page_links_truncated = _page_structured_links(parser, final_url)
         visual_budget = max(0, request.budget.max_visual_inputs)
         goal_terms = _goal_terms(request.goal)
@@ -10861,6 +10994,35 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         )
         selected_images = image_candidates[:visual_budget]
         safe_images = safe_image_catalog[:visual_budget]
+        image_note_ocr: dict[str, str] = {}
+        image_local_files: dict[str, tuple[Path, str]] = {}
+        gallery_ocr_active = bool(
+            image_note_page
+            and safe_images
+            and (
+                request.ocr_profile
+                or request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
+            )
+        )
+        if gallery_ocr_active:
+            try:
+                image_note_ocr = _image_note_ocr_text(
+                    safe_images,
+                    profile=request.ocr_profile,
+                    language=_requested_ocr_language(request),
+                    backend=_requested_ocr_backend(request),
+                    max_bytes=request.budget.max_download_bytes,
+                    dns_cache=dns_cache,
+                    downloads=image_local_files,
+                )
+            except (OSError, httpx.HTTPError, PublicPageError, ValueError):
+                # The gallery's own words are a bonus; an unreachable image must
+                # not turn a readable post into a failed read.
+                image_note_ocr = {}
+            if image_note_ocr:
+                # The gallery is the post; the page itself only carries chrome
+                # and recommendations, so the extracted words become the body.
+                text = "\n\n".join(image_note_ocr.values())
         available_chars = max(
             0,
             _response_char_budget(request)
@@ -11035,17 +11197,73 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     order=len(blocks),
                 )
             )
-            resources.append(
-                ResourceRef(
-                    resource_id=resource_id,
-                    mime_type="image/*",
-                    delivery=HostDelivery(type="uri", uri=image_url),
-                    delivery_evidence="unverified",
+            local_image = image_local_files.get(resource_id)
+            if (
+                local_image is not None
+                and request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
+            ):
+                resources.append(
+                    ResourceRef(
+                        resource_id=resource_id,
+                        mime_type="image/*",
+                        delivery=HostDelivery(type="local_file", path=str(local_image[0])),
+                        sha256=local_image[1],
+                        delivery_evidence="unverified",
+                        expires_at=datetime.fromtimestamp(
+                            time.time() + min(
+                                request.retention.derived_ttl_seconds,
+                                MATERIAL_TTL_SECONDS,
+                            ),
+                            tz=timezone.utc,
+                        ),
+                    )
                 )
-            )
+            else:
+                resources.append(
+                    ResourceRef(
+                        resource_id=resource_id,
+                        mime_type="image/*",
+                        delivery=HostDelivery(type="uri", uri=image_url),
+                        delivery_evidence="unverified",
+                    )
+                )
+            note_image_text = image_note_ocr.get(resource_id)
+            if note_image_text:
+                ocr_blocks.append(f"{resource_id}-ocr")
+                blocks.append(
+                    MaterialBlock(
+                        id=f"{resource_id}-ocr",
+                        kind=MaterialKind.OCR,
+                        content=TextContent(type="text", text=note_image_text),
+                        origin=MaterialOrigin.OCR,
+                        locator=ImageRegionLocator(
+                            type="image_region",
+                            resource_id=resource_id,
+                            coordinate_system="normalized_top_left",
+                            bbox=[0.0, 0.0, 1.0, 1.0],
+                        ),
+                        parent_id=block_id,
+                        order=len(blocks),
+                        relations=[Relation(
+                            type="derived_from",
+                            target_id=block_id,
+                            basis="extraction",
+                        )],
+                        quality=Quality(
+                            engine=f"ocr-{ocr_profile or _IMAGE_NOTE_OCR_PROFILE}",
+                            unresolved=[
+                                "OCR is a text extraction hint; inspect the source image for layout or ambiguity"
+                            ],
+                        ),
+                    )
+                )
             if len(resources) >= min(MAX_IMAGES, visual_budget):
                 break
-        if ocr_profile:
+        if gallery_ocr_active and len(image_note_ocr) < len(safe_images):
+            ocr_unresolved.append(
+                f"OCR returned no valid text regions for {len(safe_images) - len(image_note_ocr)} gallery images"
+            )
+        if ocr_profile and not image_note_page:
             for item in safe_images:
                 try:
                     image_path, image_sha256 = _download_image_for_ocr(

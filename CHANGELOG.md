@@ -30,6 +30,18 @@
   当正文返回（`auth_session._looks_like_gate`）。
 - 429 等限流页不再可能被报成 `signed_in`：`signed_in` 仍要求页面出现过挑战、正文足够长、且不再
   像墙。
+- 图文帖（抖音、小红书这类「正文全在图片里」的页面）现在读成完整正文：所有图片先按图序跑一遍
+  OCR，合并成一段按阅读顺序排好的文字当页正文，不再只回「一点」；识别不出的图记为
+  `partial` 并给 `inspect_visual` 需求，不假装读完（`reader._image_note_ocr_text`、图文相册分支）。
+- 原图直接交到宿主手上：宿主声明 `image_input: local_file` 时，每张图以
+  `delivery.type=local_file`（带 `sha256` 与过期时间）返回并附对应 OCR 块，宿主可以直接看原图，
+  也能读图里的字（`reader.py` 图文相册分支）。
+- 图文页的多个小标题只保留第一条：以前每条图内标题都进块，正文被切成碎段
+  （`reader.py` `heading_blocks` 裁剪）。
+- 图片下载或 OCR 失败不再把整篇读成 `blocked`：那一层文字按「没拿到」降级，页面正文照常返回
+  （`reader.py` 图文 OCR 的失败兜底）。
+- OCR 块的覆盖度记账修正：发出的 OCR 块计入 `region_count`；识别结果为空的图片进
+  `unresolved` 并给出 partial，而不是报 `complete`（`reader.py` 图文相册分支）。
 
 ### English
 
@@ -69,6 +81,22 @@
 - A rate-limited page (429) can no longer be reported as `signed_in`: `signed_in` still requires
   that a challenge was seen, that the text is long enough, and that the page no longer looks like
   a gate.
+- Image posts (Douyin and Xiaohongshu keep the body inside the pictures) now read as a full
+  article: every image is OCR'd once in album order and the merged, reading-order text becomes the
+  page body instead of a fragment. Images that yield no text are reported as `partial` with an
+  `inspect_visual` need rather than passed off as complete (`reader._image_note_ocr_text`, gallery
+  branch).
+- The original images are handed to the host: when it declares `image_input: local_file` each image
+  comes back as `delivery.type=local_file` (with `sha256` and an expiry) next to its OCR block, so
+  the host can open the original and read the words in it (`reader.py` gallery branch).
+- An image post keeps only its first heading: earlier every in-image caption became a heading block
+  and cut the body into fragments (`reader.py` `heading_blocks` trim).
+- A failed image download or OCR no longer turns the whole read into `blocked`; that layer is
+  degraded to "not captured" and the rest of the page is still returned (gallery OCR fallback in
+  `reader.py`).
+- OCR coverage accounting fixed: emitted OCR blocks count toward `region_count`, and an image whose
+  OCR is empty goes into `unresolved` with a partial result instead of `complete` (gallery branch of
+  `reader.py`).
 
 ## 0.1.44 - 2026-11-03
 
