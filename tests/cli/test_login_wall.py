@@ -125,6 +125,10 @@ def test_thin_platform_page_is_partial_not_ready(monkeypatch):
     details = response.coverage.modalities["text"].details
     assert details.get("thin_platform_page") is True
     assert response.coverage.modalities["text"].unresolved
+    # A page that only renders inside a signed-in browser must hand the model a
+    # route forward, not just a note, or the link ends as "cannot return anything".
+    assert [need.type for need in response.needs] == ["authenticate"]
+    assert response.needs[0].action_id
 
 
 def test_unresolvable_host_is_a_network_error_not_a_policy_rejection():

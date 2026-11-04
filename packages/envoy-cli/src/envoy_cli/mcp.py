@@ -611,13 +611,16 @@ TOOLS = [
             "the user with its absolute path, then call action 'status' after they "
             "finish and re-read the original link. The browser stays open in the "
             "background between calls, so a scan is enough and the user never has "
-            "to find a terminal. action 'cancel' closes it. When the user's own "
-            "browser already holds the session, action 'import' with browser "
-            "'chrome'/'edge'/'safari' copies that site's cookies into Envoy's "
-            "local store without a terminal; only counts and cookie names come "
-            "back, never values. This whole tool is off by default: it works only "
-            "after the user runs `envoy auth handoff on`. Pass action_id when a "
-            "previous open gave one, or url to start from a link."
+            "to find a terminal. action 'cancel' closes it. The session stays in "
+            "Envoy's own profile and every later read of that site uses it, "
+            "including video subtitle and stream requests, so one sign-in fixes "
+            "the link. action 'import' with browser 'chrome'/'edge'/'safari' is "
+            "the fallback for a session the user already has: it copies that "
+            "site's cookies into Envoy's local store (off until the user runs "
+            "`envoy auth handoff on`); only counts and cookie names come back, "
+            "never values. Pass action_id when a previous open gave one, or url "
+            "to start from a link. Reach for this tool instead of telling the "
+            "user the link cannot be read."
         ),
         "inputSchema": AUTH_SCHEMA,
     },
@@ -660,13 +663,14 @@ def normalize_toolset(value: str | None = None) -> str:
 def tools_for_toolset(value: str | None = None) -> list[dict]:
     """Return the static tool declarations for one toolset, preserving order.
 
-    Credential handoff ships off, so its tool is not advertised until the user
-    turns the switch on: a model should not be offered a capability that is
-    deliberately unavailable.
+    The in-chat sign-in ships on, so envoy_auth is advertised by default: the
+    whole point is that a login wall gets resolved inside the conversation
+    instead of ending in "cannot read this link". Only a user who turns both
+    switches off loses the tool.
     """
 
     allowed = set(TOOLSETS[normalize_toolset(value)])
-    if not _credential_handoff_enabled():
+    if not (_credential_handoff_enabled() or _sign_in_enabled()):
         allowed.discard("envoy_auth")
     return [tool for tool in TOOLS if tool["name"] in allowed]
 
@@ -675,6 +679,12 @@ def _credential_handoff_enabled() -> bool:
     from . import features
 
     return features.credential_handoff_enabled()
+
+
+def _sign_in_enabled() -> bool:
+    from . import features
+
+    return features.sign_in_enabled()
 
 
 class MCPProtocolSession:
@@ -808,12 +818,22 @@ def _action_text(action: dict) -> str:
             label = f"{label} -> {command}" if label else command
         if label:
             parts.append(label)
+    kinds = {
+        str(option.get("kind") or option.get("action") or "").strip()
+        for option in options
+        if isinstance(option, dict)
+    }
+    if "in_chat_sign_in" in kinds:
+        parts.append(
+            "Do this yourself now: call envoy_auth with action 'open' and the "
+            "source url -- no terminal and no restart is needed."
+        )
     action_id = str(action.get("action_id") or "").strip()
     if action_id:
         parts.append(
-            f"Pause id {action_id}, resumable: the user runs "
-            f"`envoy auth open --action-id {action_id}` once in their terminal; "
-            f"`envoy auth verify --action-id {action_id}` re-checks without a window."
+            f"After the user signs in, call envoy_auth {{action:'status', "
+            f"action_id:'{action_id}'}} and then re-read the source; nothing is "
+            f"returned until that status says signed_in."
         )
     return " ".join(parts)
 
@@ -2097,13 +2117,33 @@ def _auth_payload(arguments: dict) -> dict:
     payload: dict = {"tool": "envoy_auth", "action": action}
     from . import features
 
-    if not features.credential_handoff_enabled():
+    sign_in_enabled = features.sign_in_enabled()
+    handoff_enabled = features.credential_handoff_enabled()
+    # Importing the user's own browser cookies is the opt-in half; opening the
+    # site's sign-in page in Envoy's own profile is on by default.
+    if action == "import" and not handoff_enabled:
         payload.update({
             "result": "blocked",
             "credential_handoff": {"enabled": False, "scope": "this machine only"},
             "instruction": (
-                "Credential handoff is off by default. Relay this to the user: "
-                "they can enable it with `envoy auth handoff on`. Nothing was "
+                "Importing cookies from the user's browser is the opt-in half and "
+                "is off. Use action 'open' instead: it signs the user in from the "
+                "chat without reading their browsers. If they prefer the import, "
+                "they enable it once with `envoy auth handoff on`."
+            ),
+        })
+        return payload
+    if action != "import" and not (sign_in_enabled or handoff_enabled):
+        payload.update({
+            "result": "blocked",
+            "credential_handoff": {
+                "enabled": False,
+                "in_chat_sign_in": False,
+                "scope": "this machine only",
+            },
+            "instruction": (
+                "The in-chat sign-in was turned off on this machine. Relay this "
+                "to the user: `envoy auth handoff on` re-enables it. Nothing was "
                 "opened and no stored session was used."
             ),
         })
@@ -2132,10 +2172,22 @@ def _auth_payload(arguments: dict) -> dict:
         result = auth_session.status(action_id)
         payload.update(result)
         signed_in = result.get("status") == "signed_in"
+        if signed_in:
+            # The sign-in happened in another process; this one may have cached
+            # the empty answer from the attempt that failed.
+            try:
+                from . import browser
+
+                browser.reset_profile_cookie_cache()
+            except Exception:  # noqa: BLE001 - a cache flush must not fail the call
+                pass
         payload["result"] = "ready" if signed_in else "waiting"
         payload["instruction"] = (
-            "the sign-in worked and the source can be read now: call envoy_read on "
-            "source_url"
+            "the sign-in worked; the session now lives in Envoy's own profile and "
+            "every later leg uses it (page fetch, isolated browser, yt-dlp subtitle "
+            "and stream requests). Call envoy_read on source_url now; if it still "
+            "refuses, the site wants a different account or an extra step, not a "
+            "second sign-in."
             if signed_in
             else "still waiting for the human; show screen_path again if they lost "
             "it, do not re-read the source yet"

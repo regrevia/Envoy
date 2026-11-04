@@ -44,6 +44,56 @@ def actions_dir() -> Path:
     return path
 
 
+def profile_session_path() -> Path:
+    """Where the hosts the profile is known to be signed in for are listed.
+
+    Reading that profile costs a browser launch, so every non-browser leg (the
+    page fetch, the yt-dlp cookie jar) checks this cheap marker first: only a
+    host that a real interactive sign-in actually completed is worth the cost.
+    """
+
+    path = auth_root() / "profile-sessions.json"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return path
+
+
+def _profile_session_hosts() -> dict[str, float]:
+    try:
+        payload = json.loads(profile_session_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    hosts = payload.get("hosts") if isinstance(payload, dict) else None
+    if not isinstance(hosts, dict):
+        return {}
+    return {str(key).lower(): float(value or 0) for key, value in hosts.items()}
+
+
+def mark_profile_session(host: str) -> None:
+    """Record that ``host`` now answers a signed-in session in the profile."""
+
+    name = str(host or "").strip().lower()
+    if not name:
+        return
+    stored = _profile_session_hosts()
+    stored[name] = _now()
+    try:
+        _write(profile_session_path(), {"hosts": stored})
+    except OSError:
+        pass
+
+
+def profile_session_known(host: str) -> bool:
+    """True when a sign-in was completed in this profile for ``host`` or its parent."""
+
+    name = str(host or "").strip().lower()
+    if not name:
+        return False
+    for known in _profile_session_hosts():
+        if name == known or name.endswith("." + known) or known.endswith("." + name):
+            return True
+    return False
+
+
 def _action_path(action_id: str) -> Path:
     return actions_dir() / f"{action_id}.json"
 

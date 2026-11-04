@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import httpx
 import pytest
 
-from envoy_cli import browser, cookies, features, mcp, permissions, reader
+from envoy_cli import authflow, browser, cookies, features, mcp, permissions, reader
 from envoy_core.schemas.read_v1 import ReadRequest
 
 
@@ -39,14 +40,25 @@ def _store_a_cookie(store) -> None:
     os.chmod(store, 0o600)
 
 
-def test_the_switch_is_off_by_default():
+def test_cookie_import_is_off_by_default_while_the_sign_in_is_on():
     status = features.credential_handoff_status()
     assert status["enabled"] is False
     assert status["source"] == "default"
     assert features.credential_handoff_enabled() is False
+    # Reading the user's own browsers stays opt-in; opening the site's sign-in
+    # page in Envoy's own profile is the default way out of a login wall.
+    assert status["in_chat_sign_in"] is True
+    assert features.sign_in_enabled() is True
 
 
-def test_the_tool_is_not_advertised_while_the_switch_is_off():
+def test_the_tool_is_advertised_because_the_sign_in_is_on():
+    names = [tool["name"] for tool in mcp.tools_for_toolset("core")]
+    assert "envoy_auth" in names
+
+
+def test_the_tool_disappears_only_when_both_switches_are_off(monkeypatch):
+    monkeypatch.setenv("ENVOY_IN_CHAT_SIGN_IN", "0")
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
     names = [tool["name"] for tool in mcp.tools_for_toolset("core")]
     assert "envoy_auth" not in names
 
@@ -74,29 +86,48 @@ def test_the_environment_wins_over_the_file(monkeypatch):
     assert features.credential_handoff_enabled() is True
 
 
-def test_a_disabled_tool_call_opens_nothing_and_says_how_to_enable():
-    payload = mcp._auth_payload({"action": "open", "url": "https://example.com/gated"})
+def test_an_import_call_is_blocked_while_the_handoff_switch_is_off():
+    payload = mcp._auth_payload({
+        "action": "import",
+        "url": "https://example.com/gated",
+        "browser": "chrome",
+    })
     assert payload["result"] == "blocked"
     assert payload["credential_handoff"]["enabled"] is False
+    # The instruction must steer to the path that works without the switch.
+    assert "action 'open'" in payload["instruction"]
     assert "envoy auth handoff on" in payload["instruction"]
+
+
+def test_an_open_call_is_blocked_only_when_the_sign_in_is_switched_off(monkeypatch):
+    monkeypatch.setenv("ENVOY_IN_CHAT_SIGN_IN", "0")
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
+    payload = mcp._auth_payload({"action": "open", "url": "https://example.com/gated"})
+    assert payload["result"] == "blocked"
+    assert payload["credential_handoff"]["in_chat_sign_in"] is False
     assert "screen_path" not in payload
 
 
-def test_a_disabled_read_hint_does_not_offer_the_tool():
+def test_a_read_hint_offers_the_in_chat_sign_in_by_default():
     hint = reader._login_user_action("https://example.com/gated")
     assert hint["credential_handoff"]["enabled"] is False
-    assert [option["action"] for option in hint["options"]] == ["human_sign_in"]
-    assert "action_id" not in hint
-    assert "envoy auth handoff on" in hint["credential_handoff"]["how_to_enable"]
-
-
-def test_an_enabled_read_hint_offers_the_in_chat_sign_in(monkeypatch):
-    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
-    hint = reader._login_user_action("https://example.com/gated")
-    assert hint["credential_handoff"]["enabled"] is True
+    assert hint["credential_handoff"]["in_chat_sign_in"] is True
     first = hint["options"][0]
     assert first["action"] == "in_chat_sign_in"
     assert "envoy_auth" in first["instruction"]
+    # Copying a browser's cookies is the opt-in half and is not offered here.
+    assert "import_cookies" not in [option["action"] for option in hint["options"]]
+    assert "envoy auth handoff on" in hint["credential_handoff"]["how_to_enable"]
+    assert hint.get("action_id")
+
+
+def test_an_enabled_read_hint_offers_both_paths(monkeypatch):
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
+    hint = reader._login_user_action("https://example.com/gated")
+    assert hint["credential_handoff"]["enabled"] is True
+    actions = [option["action"] for option in hint["options"]]
+    assert actions[0] == "in_chat_sign_in"
+    assert "import_cookies" in actions
 
 
 def test_a_stored_session_is_not_attached_while_disabled(store):
@@ -140,8 +171,10 @@ def test_an_enabled_static_fetch_sends_the_stored_cookie(store, monkeypatch):
     assert seen and "sid=super-secret-value" in seen[0]
 
 
-def test_a_disabled_static_fetch_sends_no_cookie(store, monkeypatch):
+def test_a_disabled_static_fetch_sends_no_imported_cookie(store, monkeypatch):
     _store_a_cookie(store)
+    # The imported store needs the switch; with it off no cookie may come from it.
+    monkeypatch.setattr(browser, "profile_cookie_header", lambda host: "")
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -229,6 +262,7 @@ def test_cookie_values_never_reach_a_read_result(store, monkeypatch):
 def test_a_read_uses_the_session_the_visible_window_stored(store, monkeypatch):
     monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "1")
     seen: list[str] = []
+    monkeypatch.setattr(authflow, "profile_session_known", lambda host: True)
     monkeypatch.setattr(
         browser, "profile_cookie_header", lambda host: seen.append(host) or "user_session=abc"
     )
@@ -237,14 +271,89 @@ def test_a_read_uses_the_session_the_visible_window_stored(store, monkeypatch):
     assert seen == ["github.com"]
 
 
-def test_the_visible_profile_is_not_read_while_the_switch_is_off(store, monkeypatch):
+def test_the_sign_in_session_is_sent_with_the_handoff_switch_off(store, monkeypatch):
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
+    seen: list[str] = []
+    monkeypatch.setattr(authflow, "profile_session_known", lambda host: True)
+    monkeypatch.setattr(
+        browser, "profile_cookie_header", lambda host: seen.append(host) or "user_session=abc"
+    )
+    assert (
+        reader._credential_cookie_header("https://github.com/settings/profile")
+        == "user_session=abc"
+    )
+    assert seen == ["github.com"]
+
+
+def test_no_known_session_means_the_profile_is_never_opened(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENVOY_IN_CHAT_SIGN_IN", "1")
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
+    monkeypatch.setattr(authflow, "auth_root", lambda: tmp_path / "auth")
+    monkeypatch.setattr(cookies, "load_cookies_for", lambda url: [])
+    monkeypatch.setattr(cookies, "cookie_store_path", lambda: tmp_path / "none.json")
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("a public link must not pay for a profile read")
+
+    monkeypatch.setattr(browser, "profile_cookie_header", _boom)
+    monkeypatch.setattr(browser, "profile_cookie_rows", _boom)
+    assert reader._credential_cookie_header("https://www.youtube.com/watch?v=abc") == ""
+    assert cookies.yt_dlp_cookie_file("https://www.youtube.com/watch?v=abc") is None
+
+
+def test_a_completed_sign_in_marks_the_host_and_its_subdomains(tmp_path, monkeypatch):
+    monkeypatch.setattr(authflow, "auth_root", lambda: tmp_path / "auth")
+    assert authflow.profile_session_known("www.youtube.com") is False
+
+    authflow.mark_profile_session("youtube.com")
+
+    assert authflow.profile_session_known("www.youtube.com") is True
+    assert authflow.profile_session_known("m.youtube.com") is True
+    assert authflow.profile_session_known("example.com") is False
+    assert permissions.is_owner_only(authflow.profile_session_path())
+
+
+def test_the_sign_in_is_not_read_when_the_user_switched_it_off(store, monkeypatch):
+    monkeypatch.setenv("ENVOY_IN_CHAT_SIGN_IN", "0")
     monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
 
     def _boom(host):
-        raise AssertionError("the profile must not be opened while handoff is off")
+        raise AssertionError("the profile must not be opened when both switches are off")
 
     monkeypatch.setattr(browser, "profile_cookie_header", _boom)
     assert reader._credential_cookie_header("https://github.com/settings/profile") == ""
+
+
+def test_a_sign_in_session_reaches_the_yt_dlp_jar(store, monkeypatch, tmp_path):
+    from envoy_cli import cache
+
+    monkeypatch.setattr(authflow, "profile_session_known", lambda host: True)
+    monkeypatch.setenv("ENVOY_IN_CHAT_SIGN_IN", "1")
+    monkeypatch.setenv("ENVOY_CREDENTIAL_HANDOFF", "0")
+    monkeypatch.setattr(cache, "envoy_home", lambda: tmp_path)
+    monkeypatch.setattr(cookies, "load_cookies_for", lambda url: [])
+    monkeypatch.setattr(
+        browser,
+        "profile_cookie_rows",
+        lambda host: [
+            {
+                "domain": ".youtube.com",
+                "name": "SID",
+                "path": "/",
+                "secure": True,
+                "expires": 1893456000,
+                "value": "profile-secret",
+            }
+        ],
+    )
+
+    path = cookies.yt_dlp_cookie_file("https://www.youtube.com/watch?v=abc")
+
+    assert path
+    body = Path(path).read_text(encoding="utf-8")
+    assert "\tSID\tprofile-secret" in body
+    assert body.splitlines()[0] == "# Netscape HTTP Cookie File"
+    assert permissions.is_owner_only(Path(path))
 
 
 def test_an_imported_cookie_wins_over_the_visible_profile(store, monkeypatch):
@@ -261,5 +370,6 @@ def test_an_imported_cookie_wins_over_the_visible_profile(store, monkeypatch):
 
 def test_a_profile_that_will_not_open_is_not_a_session(tmp_path, monkeypatch):
     monkeypatch.setattr(browser, "browser_profile_dir", lambda create=False: tmp_path / "missing")
-    browser._COOKIE_HEADER_CACHE.clear()
+    browser.reset_profile_cookie_cache()
     assert browser.profile_cookie_header("github.com") == ""
+    assert browser.profile_cookie_rows("github.com") == []

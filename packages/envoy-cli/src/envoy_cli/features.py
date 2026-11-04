@@ -1,15 +1,20 @@
-"""Opt-in switches for behaviour that touches the user's own accounts.
+"""Switches for the two different ways a read can use a sign-in.
 
-Credential handoff is the one feature that can read a session the user owns:
-Envoy opens a sign-in page for them, or copies their browser's cookies for one
-site. That is powerful enough to stay off until the user turns it on, so this
-module owns the single decision every such code path asks:
+They are not the same power and do not share a default:
 
-    ``credential_handoff_enabled()``
+``sign_in_enabled()`` (on by default)
+    Envoy opens the site's own sign-in page in its own isolated profile and
+    hands the user a picture of it (usually a QR code). The user scans; Envoy's
+    profile keeps the session. Nothing is read from the user's own browsers, so
+    the default can be on: the human is the one who signs in, once, in the chat.
 
-The value comes from ``ENVOY_CREDENTIAL_HANDOFF`` when set (so one shell can opt
-in without editing a file), otherwise from ``~/.envoy/config.json``, otherwise
-off. Secrets are not part of the config: this file only stores booleans.
+``credential_handoff_enabled()`` (opt-in, off by default)
+    Envoy copies a session that already exists elsewhere -- the user's Chrome,
+    Edge or Safari cookies, or a session from an imported store. That reads
+    data the user already owns, so it stays off until they turn it on.
+
+The environment wins over ``~/.envoy/config.json``. Secrets are not part of the
+config: this file only stores booleans.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ CONFIG_NAME = "config.json"
 DIR_MODE = 0o700
 ENV_FLAG = "ENVOY_CREDENTIAL_HANDOFF"
 KEY = "credential_handoff"
+SIGN_IN_ENV_FLAG = "ENVOY_IN_CHAT_SIGN_IN"
+SIGN_IN_KEY = "sign_in"
 
 _TRUTHY = {"1", "true", "yes", "on", "enable", "enabled"}
 _FALSY = {"0", "false", "no", "off", "disable", "disabled"}
@@ -108,6 +115,22 @@ def credential_handoff_enabled() -> bool:
     return bool(_parse_flag(stored))
 
 
+def sign_in_enabled() -> bool:
+    """True unless the user turned the in-chat sign-in itself off."""
+
+    override = os.getenv(SIGN_IN_ENV_FLAG)
+    if override is not None:
+        parsed = _parse_flag(override)
+        if parsed is not None:
+            return parsed
+    try:
+        stored = read_config().get(SIGN_IN_KEY)
+    except ConfigError:
+        return True
+    parsed = _parse_flag(stored)
+    return True if parsed is None else bool(parsed)
+
+
 def credential_handoff_status() -> dict:
     """Describe the switch without ever describing credentials."""
 
@@ -130,6 +153,7 @@ def credential_handoff_status() -> dict:
         "source": source,
         "config_path": str(config_path()),
         "env_flag": ENV_FLAG,
+        "in_chat_sign_in": sign_in_enabled(),
     }
 
 

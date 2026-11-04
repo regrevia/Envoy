@@ -9,6 +9,7 @@ headless check decides whether the original link is readable now.
 from __future__ import annotations
 
 import time
+from urllib.parse import urlparse
 
 from .browser import _page_state, browser_profile_dir
 from .media import interprocess_file_lock
@@ -167,6 +168,12 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
     headless_reusable = bool(page_access and not (looks_like_login and not media_access))
     if headless_reusable:
         reason = "readable"
+        try:
+            from . import authflow
+
+            authflow.mark_profile_session(urlparse(str(url or "")).hostname or "")
+        except Exception:  # noqa: BLE001 - the verification result still stands
+            pass
     elif looks_like_login:
         reason = "still_behind_login"
     elif not page_access:

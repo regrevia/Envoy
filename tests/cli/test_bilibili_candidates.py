@@ -38,25 +38,42 @@ def test_a_card_without_a_cover_falls_back_to_its_shortest_label():
     assert rows[0]["duration_seconds"] is None
 
 
-def test_a_blocked_space_tells_the_user_how_to_sign_in(monkeypatch):
+def test_a_blocked_space_offers_the_in_chat_sign_in_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "envoy_cli.features.sign_in_enabled", lambda: True
+    )
     monkeypatch.setattr(
         "envoy_cli.features.credential_handoff_enabled", lambda: False
     )
     hint = collections._session_required_hint(
         "bilibili", Exception("Request is blocked by server (412)"), ""
     )
-    assert "envoy auth handoff on" in hint
-    assert "envoy auth import" in hint
+    assert "envoy_auth" in hint
+    assert "envoy auth handoff on" not in hint
     assert "412" not in hint
 
 
-def test_an_enabled_handoff_points_at_the_sign_in_page(monkeypatch):
+def test_an_enabled_handoff_points_at_the_import(monkeypatch):
+    monkeypatch.setattr(
+        "envoy_cli.features.sign_in_enabled", lambda: False
+    )
     monkeypatch.setattr(
         "envoy_cli.features.credential_handoff_enabled", lambda: True
     )
     hint = collections._session_required_hint("bilibili", "352", "")
-    assert "envoy_auth" in hint
-    assert "envoy auth handoff on" not in hint
+    assert "envoy_auth import" in hint
+    assert "handoff on" not in hint
+
+
+def test_both_switches_off_points_at_re_enabling_the_sign_in(monkeypatch):
+    monkeypatch.setattr(
+        "envoy_cli.features.sign_in_enabled", lambda: False
+    )
+    monkeypatch.setattr(
+        "envoy_cli.features.credential_handoff_enabled", lambda: False
+    )
+    hint = collections._session_required_hint("bilibili", "412", "")
+    assert "envoy auth handoff on" in hint
 
 
 def test_a_plain_empty_space_gets_no_session_hint():

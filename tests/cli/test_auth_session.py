@@ -41,6 +41,23 @@ def test_looks_blocked_only_reads_a_reached_page():
     assert not auth_session._looks_blocked("")
     assert not auth_session._looks_blocked("Late in the afternoon the harbour emptied.")
 
+def test_a_page_that_never_showed_a_gate_cannot_report_a_sign_in():
+    # The link may simply have been readable: claiming a sign-in would send the
+    # caller into a retry loop for a page that never needed one.
+    assert not auth_session._looks_like_gate("A normal article", "Body text here.", "https://example.com/a")
+    assert auth_session._looks_like_gate("微博", "登录/注册", "https://weibo.com/u/1")
+
+
+def test_a_sign_in_page_url_counts_as_a_gate_even_before_it_renders():
+    assert auth_session._looks_like_gate("", "", "https://passport.example.com/sso/signin")
+    assert auth_session._looks_like_gate("", "", "https://example.com/login?next=/a")
+    assert not auth_session._looks_like_gate("", "", "https://example.com/article/1")
+
+
+def test_a_rate_limited_page_is_a_gate_not_a_signed_in_page():
+    assert auth_session._looks_like_gate("", "Too many requests. Try again later.", "https://example.com/a")
+
+
 def test_status_of_a_dead_worker_is_not_running():
     action_dir = auth_session._session_dir("auth-dead")
     action_dir.mkdir(parents=True)

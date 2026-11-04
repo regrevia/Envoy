@@ -50,7 +50,36 @@ _LOGIN_URLS = {
     "weibo.com": "https://weibo.com/login.php",
     "douyin.com": "https://www.douyin.com/",
 }
-_BLOCKED_HINTS = ("异常", "403", "captcha", "安全验证", "人机", "访问受限", "forbidden")
+_BLOCKED_HINTS = (
+    "异常",
+    "403",
+    "captcha",
+    "安全验证",
+    "人机",
+    "访问受限",
+    "forbidden",
+    "too many requests",
+)
+# A page that still sits on the site's sign-in path has not moved past the gate
+# even when its wording carries no hint word (a password form, a QR panel).
+_LOGIN_PATH_HINTS = ("/login", "/signin", "/sign-in", "/passport", "/auth/", "/sso")
+
+
+def _looks_like_gate(title: str, text: str, url: str = "") -> bool:
+    """True while the page still shows the sign-in/verification step."""
+
+    try:
+        path = urllib.parse.urlsplit(str(url or "")).path.lower()
+    except ValueError:
+        path = ""
+    if any(hint in path for hint in _LOGIN_PATH_HINTS):
+        return True
+    probe = f"{title} {text}".lower()
+    if not probe.strip():
+        return False
+    if any(hint in probe for hint in _LOGIN_HINTS):
+        return True
+    return any(hint in probe for hint in _BLOCKED_HINTS)
 
 
 def _looks_blocked(text: str) -> bool:
@@ -275,16 +304,32 @@ def _worker(
                 except Exception:
                     pass
                 fallback = _login_url(url)
-                if fallback != url:
+                try:
+                    _t0, first_text, _c0 = _page_state(page)
+                except Exception:
+                    _t0, first_text = "", ""
+                try:
+                    first_url = page.url
+                except Exception:
+                    first_url = url
+                if fallback != url and _looks_blocked(first_text):
                     try:
-                        _t, first_text, _c = _page_state(page)
+                        page.goto(fallback, wait_until="domcontentloaded", timeout=45000)
+                    except Exception:
+                        pass
+                    try:
+                        _t0, first_text, _c0 = _page_state(page)
                     except Exception:
                         first_text = ""
-                    if _looks_blocked(first_text):
-                        try:
-                            page.goto(fallback, wait_until="domcontentloaded", timeout=45000)
-                        except Exception:
-                            pass
+                    try:
+                        first_url = page.url
+                    except Exception:
+                        first_url = fallback
+                # A page that never showed a gate proves nothing: the link may
+                # simply have been readable, and claiming "signed in" would send
+                # the caller into a retry loop. Only a page that moved off the
+                # gate counts.
+                challenged = _looks_like_gate(_t0, first_text, first_url)
                 deadline = time.monotonic() + max(30, int(timeout_seconds))
                 while time.monotonic() < deadline:
                     try:
@@ -308,10 +353,15 @@ def _worker(
                                 "updated_at": time.time(),
                             },
                         )
-                    lowered = text.lower()
-                    if text.strip() and not any(hint in lowered for hint in _LOGIN_HINTS):
+                    if (
+                        challenged
+                        and len(text.strip()) > 20
+                        and not _looks_like_gate(_title, text, final_url)
+                    ):
                         signed_in = True
                         break
+                    if _looks_like_gate(_title, text, final_url):
+                        challenged = True
                     time.sleep(1.5)
                 status = "signed_in" if signed_in else "waiting"
             finally:
@@ -330,6 +380,14 @@ def _worker(
             },
         )
         return 1
+    if status == "signed_in":
+        # The browser is closed now, so the profile's cookies are on disk. Only
+        # this marker makes the cheap legs (page fetch, yt-dlp jar) pay for a
+        # profile read; a public link never touches the browser.
+        try:
+            authflow.mark_profile_session(urllib.parse.urlsplit(url).hostname or "")
+        except Exception:  # noqa: BLE001 - the record must still be written
+            pass
     _write_state(
         action_id,
         {

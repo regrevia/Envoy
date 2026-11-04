@@ -266,14 +266,19 @@ def _session_required_hint(platform: str, extractor_error: object, html: str) ->
         return ""
     from . import features
 
+    if features.sign_in_enabled():
+        return (
+            ". This space only answers a signed-in session: open its sign-in page with "
+            "envoy_auth, then retry after the user finishes it."
+        )
     if features.credential_handoff_enabled():
         return (
-            ". This space only answers a signed-in session: ask for the sign-in page "
-            "(envoy_auth) and retry after the user finishes it."
+            ". This space only answers a signed-in session: import the browser that holds "
+            "one with envoy_auth import, then retry."
         )
     return (
-        ". This space only answers a signed-in session: run `envoy auth handoff on` and retry, "
-        "or import existing cookies with `envoy auth import`."
+        ". This space only answers a signed-in session: the user can turn the in-chat "
+        "sign-in back on with `envoy auth handoff on`, then retry."
     )
 
 

@@ -741,16 +741,47 @@ def yt_dlp_cookie_file(url: str) -> str | None:
 
     The media legs never pass through the isolated browser, so they cannot pick
     up a login the page layer already has; without a session the site's own
-    extractor refuses with "Fresh cookies are needed". Only the session Envoy
-    already stores is handed over: opening Envoy's browser profile here would
-    launch a browser on every download. The jar lives under Envoy's home with
-    owner-only permissions and keeps each row's domain and path scoping.
+    extractor refuses with "Fresh cookies are needed". The session can come from
+    the imported store (opt-in) or from the profile the in-chat sign-in wrote
+    (on by default, and only for a host a sign-in actually finished, so a public
+    video never pays for a browser launch); both are read here, imported rows
+    winning a name clash. The
+    jar lives under Envoy's home with owner-only permissions and keeps each
+    row's domain and path scoping.
     """
 
     host = (urlparse(str(url or "")).hostname or "").lower()
     if not host:
         return None
     rows = list(load_cookies_for(url))
+    # The in-chat sign-in writes into Envoy's own profile, not into the imported
+    # store; the media legs never pass through that browser, so without this
+    # second source a video that the user just signed in for would still fail
+    # with "Fresh cookies are needed". Only the requested host's rows are added.
+    from . import authflow, features
+
+    if features.sign_in_enabled() and authflow.profile_session_known(host):
+        try:
+            from .browser import profile_cookie_rows
+
+            seen = {(str(row.get("domain") or ""), str(row.get("name") or "")) for row in rows}
+            for item in profile_cookie_rows(host):
+                key = (str(item.get("domain") or ""), str(item.get("name") or ""))
+                if not item.get("name") or key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    {
+                        "domain": item.get("domain"),
+                        "name": item.get("name"),
+                        "path": item.get("path") or "/",
+                        "secure": item.get("secure"),
+                        "expires": item.get("expires"),
+                        "value": item.get("value"),
+                    }
+                )
+        except Exception:  # noqa: BLE001 - a profile that will not open is no session
+            pass
     if not rows:
         return None
     lines = ["# Netscape HTTP Cookie File"]

@@ -1093,6 +1093,7 @@ def _install_media_capture(page) -> None:
 
 
 _COOKIE_HEADER_CACHE: dict[str, str] = {}
+_COOKIE_ROW_CACHE: dict[str, list[dict]] = {}
 
 
 def _profile_cookie_matches(domain: str, host: str) -> bool:
@@ -1100,26 +1101,31 @@ def _profile_cookie_matches(domain: str, host: str) -> bool:
     return bool(value) and (host == value or host.endswith("." + value))
 
 
-def profile_cookie_header(host: str) -> str:
-    """The Cookie header Envoy's own profile holds for one host.
+def profile_cookie_rows(host: str) -> list[dict]:
+    """The cookies Envoy's own profile holds for one host, as cookie dicts.
 
-    The visible sign-in window is the only place a human can hand Envoy a
-    session, and it writes that session into this profile. A read that needs
-    the session must therefore ask the same profile, not a stale copy.
+    The in-chat sign-in is the only writer of this profile: the user scans a
+    code, the session lands here, and every later leg that needs it -- the page
+    fetch, the isolated browser, yt-dlp's cookie jar -- asks this function
+    instead of keeping a stale second copy. A profile that will not open (or
+    has no session) is an empty answer, never an error.
+
+    Only cookies already scoped to the requested host are returned, so a
+    session for one site is never handed to another.
     """
 
     key = str(host or "").strip().lower()
     if not key:
-        return ""
-    if key in _COOKIE_HEADER_CACHE:
-        return _COOKIE_HEADER_CACHE[key]
-    header = ""
+        return []
+    if key in _COOKIE_ROW_CACHE:
+        return _COOKIE_ROW_CACHE[key]
+    rows: list[dict] = []
     profile = browser_profile_dir(create=False)
     if profile.is_dir():
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            return ""
+            return []
         try:
             with sync_playwright() as playwright:
                 context = playwright.chromium.launch_persistent_context(
@@ -1128,15 +1134,41 @@ def profile_cookie_header(host: str) -> str:
                     args=["--disable-dev-shm-usage", "--no-proxy-server"],
                 )
                 try:
-                    pairs = [
-                        f"{item['name']}={item['value']}"
+                    rows = [
+                        dict(item)
                         for item in context.cookies()
                         if item.get("value") and _profile_cookie_matches(item.get("domain"), key)
                     ]
                 finally:
                     context.close()
-            header = "; ".join(pairs)
         except Exception:  # noqa: BLE001 - a profile that will not open is no session
-            header = ""
+            rows = []
+    _COOKIE_ROW_CACHE[key] = rows
+    return rows
+
+
+def profile_cookie_header(host: str) -> str:
+    """The Cookie header Envoy's own profile holds for one host.
+
+    The sign-in window is the only place a human can hand Envoy a session, and
+    it writes that session into this profile. A read that needs the session
+    must therefore ask the same profile, not a stale copy.
+    """
+
+    key = str(host or "").strip().lower()
+    if not key:
+        return ""
+    if key in _COOKIE_HEADER_CACHE:
+        return _COOKIE_HEADER_CACHE[key]
+    header = "; ".join(
+        f"{item['name']}={item['value']}" for item in profile_cookie_rows(key) if item.get("name")
+    )
     _COOKIE_HEADER_CACHE[key] = header
     return header
+
+
+def reset_profile_cookie_cache() -> None:
+    """Forget cached profile cookies after a sign-in changed them."""
+
+    _COOKIE_HEADER_CACHE.clear()
+    _COOKIE_ROW_CACHE.clear()

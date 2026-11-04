@@ -5734,28 +5734,38 @@ def _credential_cookie_header(url: str) -> str:
 
     from . import features
 
-    if not features.credential_handoff_enabled():
-        return ""
-    try:
-        from .cookies import load_cookies_for
+    pairs: list[str] = []
+    if features.credential_handoff_enabled():
+        try:
+            from .cookies import load_cookies_for
 
-        cookies = load_cookies_for(url)
-    except Exception:  # noqa: BLE001 - a broken store must not break a read
-        return ""
-    pairs = [
-        f"{item['name']}={item['value']}"
-        for item in cookies
-        if item.get("name") and item.get("value") is not None
-    ]
-    if pairs:
-        return "; ".join(pairs)
-    try:
-        from . import browser
+            cookies = load_cookies_for(url)
+        except Exception:  # noqa: BLE001 - a broken store must not break a read
+            cookies = []
+        pairs = [
+            f"{item['name']}={item['value']}"
+            for item in cookies
+            if item.get("name") and item.get("value") is not None
+        ]
+    if not pairs and features.sign_in_enabled():
+        # The in-chat sign-in writes into Envoy's own profile, so the session
+        # the user just created is sent here without copying anything out of
+        # their own browsers. When the two sources disagree the imported store
+        # (an explicit user choice) wins, which keeps handoff behaviour intact.
+        try:
+            from . import authflow, browser
 
-        host = (urlparse(url).hostname or "").lower()
-        return browser.profile_cookie_header(host)
-    except Exception:  # noqa: BLE001 - the profile is an extra source, not a requirement
-        return ""
+            host = (urlparse(url).hostname or "").lower()
+            header = (
+                browser.profile_cookie_header(host)
+                if authflow.profile_session_known(host)
+                else ""
+            )
+        except Exception:  # noqa: BLE001 - the profile is an extra source, not a requirement
+            header = ""
+        if header:
+            pairs = [header]
+    return "; ".join(pairs)
 
 
 def _fetch_html(
@@ -11136,6 +11146,20 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             len(text.strip()) < _THIN_PLATFORM_PAGE_CHARS
             and is_platform_page(str(request.source.url or ""))
         )
+        thin_platform_action = (
+            _login_user_action(str(request.source.url or "")) if thin_platform_page else {}
+        )
+        thin_platform_need = (
+            [Need(
+                action_id=str(thin_platform_action["action_id"]),
+                type="authenticate",
+                purpose="read_source",
+                reason="The page renders its content only for a signed-in browser session",
+                resume_token=thin_platform_action.get("resume_token"),
+            )]
+            if thin_platform_action.get("action_id")
+            else []
+        )
         image_partial = (
             len(resources) < len(parser.images)
             or (image_note_total is not None and len(resources) < image_note_total)
@@ -11150,7 +11174,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video or ocr_unresolved or thin_platform_page else ReadResult.READY,
             blocks=blocks,
             resources=resources,
-            needs=ocr_visual_need,
+            needs=[*ocr_visual_need, *thin_platform_need],
             coverage=Coverage(
                 modalities={
                     "text": CoverageItem(
@@ -11188,7 +11212,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                                 ),
                                 *(
                                     [
-                                        "The platform page returned almost no text; it is rendered by scripts and needs cookies or a host browser"
+                                        "The platform page returned almost no text; it only renders inside a browser session that has cookies"
                                     ]
                                     if thin_platform_page
                                     else []
@@ -11206,6 +11230,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             "source_truncated": source_text_truncated,
                             "image_only": image_only,
                             **({"thin_platform_page": True} if thin_platform_page else {}),
+                            **(
+                                {"needs_user_action": thin_platform_action}
+                                if thin_platform_action.get("action_id")
+                                else {}
+                            ),
                             **(
                                 {
                                     "goal_terms": goal_terms,
@@ -11456,29 +11485,34 @@ def _login_user_action(
     host = urlparse(str(source_url or "")).hostname or ""
     question = (
         "This page needs a signed-in session or a verification step before "
-        "its player exposes the real source. Ask the user to import cookies "
-        "from a local browser, or to sign in once from a terminal."
+        "its player exposes the real source. Sign the user in once from the "
+        "chat: envoy_auth action open shows the site's own sign-in page and "
+        "the link reads normally afterwards."
     )
     if kind == "subtitle_login_required":
         question = (
             f"{host or 'This site'} publishes this video's subtitle tracks only "
             "to signed-in accounts; the page and the video itself read fine "
-            "anonymously. Import cookies only if the transcript matters: the "
-            "video does not need a login."
+            "anonymously. Signing the user in from the chat only buys the "
+            "transcript: the video does not need a login."
         )
     elif kind == "cookies_required":
         question = (
             f"{host or 'This site'} asked for fresh cookies before serving this "
             "source, and a signed-in account is not necessarily what it wants. "
-            "Ask the user to copy the cookies of that browser for this site, or "
-            "to open one visible window from their terminal so the site sets "
-            "them itself."
+            "Open its sign-in page with envoy_auth so the site sets the cookies "
+            "itself; importing cookies from another browser is the fallback."
         )
 
     from . import features
 
     handoff_enabled = features.credential_handoff_enabled()
-    action = _persisted_auth_action(source_url, purpose) if handoff_enabled else {}
+    sign_in_enabled = features.sign_in_enabled()
+    action = (
+        _persisted_auth_action(source_url, purpose)
+        if (handoff_enabled or sign_in_enabled)
+        else {}
+    )
     payload = {
         "kind": kind,
         "host": host,
@@ -11486,6 +11520,7 @@ def _login_user_action(
         "requires_human": True,
         "credential_handoff": {
             "enabled": handoff_enabled,
+            "in_chat_sign_in": sign_in_enabled,
             "scope": "this machine only",
         },
         "options": [
@@ -11534,17 +11569,22 @@ def _login_user_action(
             },
         ],
     }
+    if not sign_in_enabled:
+        payload["options"] = [
+            option for option in payload["options"] if option.get("action") != "in_chat_sign_in"
+        ]
     if not handoff_enabled:
-        # The switch is off (the shipped default). Say so once, in a form the
-        # model can relay but cannot act on itself: enabling is the user's step.
+        # Copying cookies out of the user's own browsers is the opt-in half.
+        # Say so once, in a form the model can relay but cannot act on itself:
+        # enabling it is the user's step, and the in-chat sign-in above does not
+        # need it.
         payload["credential_handoff"]["how_to_enable"] = (
-            "Credential handoff is off. The user can enable it once with "
-            "`envoy auth handoff on` (or ENVOY_CREDENTIAL_HANDOFF=1 for one "
-            "shell); only then can Envoy open a sign-in page in the chat or "
-            "reuse a browser session."
+            "Importing cookies from another browser is off. The user can enable "
+            "it once with `envoy auth handoff on` (or ENVOY_CREDENTIAL_HANDOFF=1 "
+            "for one shell); signing in from the chat works without it."
         )
         payload["options"] = [
-            option for option in payload["options"] if option.get("action") == "human_sign_in"
+            option for option in payload["options"] if option.get("action") != "import_cookies"
         ]
     if action.get("action_id"):
         action_id = str(action["action_id"])

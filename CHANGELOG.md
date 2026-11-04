@@ -1,5 +1,50 @@
 # 更新日志 / Changelog
 
+## Unreleased
+
+### 中文
+
+- 登录墙不再是终点。判定为墙的链接现在返回 `blocked` 的同时带一个 `authenticate` 需求，模型
+  在会话里调用 `envoy_auth` 的 `open` 动作即可弹出站点自己的登录页（多数带二维码），用户扫一次
+  后 `envoy_auth status` 变成 `signed_in`，再读同一链接就拿到正文，整个过程不需要终端、不需要
+  重启（`auth_session.py`、`mcp.py` `_action_text`；会话内登录默认开启，`ENVOY_IN_CHAT_SIGN_IN`）。
+- 只吐出标题的脚本渲染页（微信公众号、微博正文页这类）以前给 `partial` 却没有任何下一步；现在
+  `needs` 里带可执行的 `authenticate` 动作，`coverage.details.needs_user_action` 同时给面向人的
+  说明，读不到既不假装成功也不是死路（`reader.py`，`tests/cli/test_login_wall.py`）。
+- Cookie 只对「真在这台机器上完成过登录」的主机复用：未登录过的主机，公开链接不会为了取 Cookie
+  启动浏览器、也不多花计时（`authflow.profile_session_known` 门控 `browser.profile_cookie_rows`
+  / `profile_cookie_header`、`cookies.yt_dlp_cookie_file`、`reader._credential_cookie_header`）。
+  从用户自己浏览器导入 Cookie 仍需主动开启（`ENVOY_CREDENTIAL_HANDOFF`，默认关闭）。
+- 登录页 URL（`/login`、`/signin`、`/passport`、`/sso` 等）在页面渲染之前就算墙，不会把登录表单
+  当正文返回（`auth_session._looks_like_gate`）。
+- 429 等限流页不再可能被报成 `signed_in`：`signed_in` 仍要求页面出现过挑战、正文足够长、且不再
+  像墙。
+
+### English
+
+- A sign-in wall is no longer the end of a read. A walled link returns `blocked` together with an
+  `authenticate` need: the model calls the `open` action of `envoy_auth`, the site's own sign-in
+  page (usually its QR code) opens in the background, the user signs in once, `envoy_auth status`
+  turns `signed_in`, and the original link reads normally on the retry — no terminal and no restart
+  (`auth_session.py`, `mcp.py` `_action_text`; in-chat sign-in is on by default,
+  `ENVOY_IN_CHAT_SIGN_IN`).
+- A script-rendered page that yields only a title (a WeChat or Weibo article shell) used to come
+  back `partial` with no next step; it now carries an actionable `authenticate` need in `needs`,
+  plus a human-facing `coverage.details.needs_user_action`, so a thin read is neither sold as
+  success nor a dead end (`reader.py`, `tests/cli/test_login_wall.py`).
+- Cookies are reused only for a host where a sign-in actually finished: a public link never pays
+  for a browser launch or extra timing just to fetch cookies
+  (`authflow.profile_session_known` gates `browser.profile_cookie_rows` /
+  `profile_cookie_header`, `cookies.yt_dlp_cookie_file`, `reader._credential_cookie_header`).
+  Importing cookies from the user's own browser still requires opting in
+  (`ENVOY_CREDENTIAL_HANDOFF`, off by default).
+- A sign-in URL (`/login`, `/signin`, `/passport`, `/sso`, …) counts as a wall before the page
+  renders, so a sign-in form is never returned as the article body
+  (`auth_session._looks_like_gate`).
+- A rate-limited page (429) can no longer be reported as `signed_in`: `signed_in` still requires
+  that a challenge was seen, that the text is long enough, and that the page no longer looks like
+  a gate.
+
 ## 0.1.44 - 2026-11-03
 
 ### 中文
