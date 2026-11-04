@@ -10619,6 +10619,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             )
         if (
             _looks_like_login_wall(title, text)
+            and _looks_like_login_form(title, text)
             and not browser_attempted
             and not _looks_like_access_challenge(title, text)
             and not _looks_like_machine_error_payload(text)

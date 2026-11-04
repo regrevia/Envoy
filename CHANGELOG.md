@@ -4,6 +4,17 @@
 
 ### 中文
 
+- 可关闭的登录浮层不再算登录墙。点击关闭控件没生效的（没有 ×、或点完又弹回来），Envoy 会把
+  那一层「盖住视口且写着登录」的节点从页面里移除，再读下面的正文；只有移除后仍然读不到内容才算
+  真墙。抖音图文这类「弹登录框但正文就在底下」的链接现在后台直接读完，不会把登录推给用户
+  （`browser._strip_wall_dialogs`、`browser._load_visible_content`）。
+- 判定挑战页不再只看文本。`browser._page_state` 在整页命中「验证码/安全验证」等词时，会先取
+  「去掉弹层后的页面正文」：正文足够长且不含这些词，就按可读页处理。以前页面里残留一句
+  `验证码登录` 就能让有正文的页面被判成墙（`browser._read_main_content`、
+  `tests/cli/test_overlay_dismissal.py`）。
+- 静态 HTML 里的墙也不再一律跳过浏览器：只有真的是用户名/密码表单（标题是登录、有密码框、有
+  「忘记密码」这类）才快速失败；只出现登录措辞的页面会给隔离浏览器一次关闭浮层的机会
+  （`reader.py` 静态快速失败条件）。
 - 登录墙不再是终点。判定为墙的链接现在返回 `blocked` 的同时带一个 `authenticate` 需求，模型
   在会话里调用 `envoy_auth` 的 `open` 动作即可弹出站点自己的登录页（多数带二维码），用户扫一次
   后 `envoy_auth status` 变成 `signed_in`，再读同一链接就拿到正文，整个过程不需要终端、不需要
@@ -22,6 +33,20 @@
 
 ### English
 
+- A dismissible login overlay is no longer a sign-in wall. When clicking the close control has no
+  effect (no ×, or the prompt comes back), Envoy removes the covering layer that both fills the
+  viewport and talks about signing in, then reads the material underneath; only a page that still
+  has nothing after that is a gate. Douyin image posts — a login prompt floating over the published
+  text — now read to the end in the background instead of asking the user to sign in
+  (`browser._strip_wall_dialogs`, `browser._load_visible_content`).
+- Challenge detection no longer reads plain text alone. When the full page matches "验证码" /
+  "安全验证" wording, `browser._page_state` first takes the document text with floating layers
+  excluded: long and clean means a readable page. A leftover `验证码登录` in the DOM used to turn a
+  page that has its article into a wall (`browser._read_main_content`,
+  `tests/cli/test_overlay_dismissal.py`).
+- A wall in the static HTML no longer always skips the browser: only a real username/password form
+  (sign-in title, password field, "forgot password") fails fast; wording alone earns an isolated
+  browser attempt that may simply dismiss the prompt (`reader.py`).
 - A sign-in wall is no longer the end of a read. A walled link returns `blocked` together with an
   `authenticate` need: the model calls the `open` action of `envoy_auth`, the site's own sign-in
   page (usually its QR code) opens in the background, the user signs in once, `envoy_auth status`

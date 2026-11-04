@@ -620,6 +620,93 @@ def setup_browser() -> int:
     return 0
 
 
+# The material lives in the main document; an identity dialogue floating on top
+# of it is not the page. Both scripts below read or drop only the covering layer,
+# so a readable article is never thrown away along with the prompt.
+_MAIN_CONTENT_SCRIPT = r"""
+/* main-content */
+() => {
+  if (!document.body) return "";
+  const clone = document.body.cloneNode(true);
+  const drop = [
+    'script', 'style', 'noscript', 'template',
+    'dialog', '[role="dialog"]', '[aria-modal="true"]',
+    '[class*="modal" i]', '[class*="popup" i]', '[class*="mask" i]',
+    '[class*="overlay" i]', '[class*="login" i]', '[id*="login" i]',
+    '[class*="signin" i]', '[class*="sign-in" i]'
+  ].join(',');
+  for (const node of [...clone.querySelectorAll(drop)]) node.remove();
+  return (clone.textContent || "").replace(/[ \t]+/g, " ").trim();
+}
+"""
+
+_STRIP_WALL_DIALOG_SCRIPT = r"""
+/* strip-wall-dialog */
+() => {
+  const loginMarkers = /login|sign in|log in|登录|登陆|扫码|验证码|手机号|password|密码/i;
+  const drop = 'dialog,[role="dialog"],[aria-modal="true"],' +
+    '[class*="modal" i],[class*="popup" i],[class*="mask" i],' +
+    '[class*="overlay" i],[class*="login" i],[id*="login" i],' +
+    '[class*="signin" i],[class*="sign-in" i]';
+  let removed = 0;
+  for (const node of [...document.querySelectorAll(drop)]) {
+    const box = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    const covers =
+      (style.position === "fixed" || style.position === "absolute" ||
+       node.tagName === "DIALOG" || node.getAttribute("aria-modal") === "true") &&
+      box.width >= window.innerWidth * 0.3 &&
+      box.height >= window.innerHeight * 0.2;
+    if (!covers) continue;
+    const identity = [
+      node.getAttribute("class") || "", node.getAttribute("id") || "",
+      node.getAttribute("role") || "", node.getAttribute("aria-label") || "",
+      (node.innerText || "").slice(0, 400)
+    ].join(" ");
+    if (!loginMarkers.test(identity)) continue;
+    node.remove();
+    removed += 1;
+  }
+  if (removed) {
+    for (const root of [document.documentElement, document.body]) {
+      if (!root) continue;
+      root.style.overflow = "auto";
+      root.style.position = "static";
+    }
+  }
+  return removed;
+}
+"""
+
+_MAIN_CONTENT_MIN_CHARS = 400
+
+
+def _read_main_content(page) -> str:
+    """The page's own text with floating dialogues taken out of the copy."""
+
+    try:
+        text = str(page.evaluate(_MAIN_CONTENT_SCRIPT) or "")
+    except Exception:
+        return ""
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _strip_wall_dialogs(page) -> int:
+    """Remove a login layer that survived clicking, so the page behind it reads.
+
+    Some sites ship a modal with no working close control but leave the article
+    in the document underneath. Deleting that one layer is the difference
+    between reporting a sign-in wall and returning the material the page
+    already published; it only ever touches a positioned element that both
+    covers the viewport and talks about signing in.
+    """
+
+    try:
+        return int(page.evaluate(_STRIP_WALL_DIALOG_SCRIPT) or 0)
+    except Exception:
+        return 0
+
+
 def _page_state(page) -> tuple[str, str, bool]:
     title = str(page.title() or "").strip()
     try:
@@ -628,6 +715,15 @@ def _page_state(page) -> tuple[str, str, bool]:
         text = ""
     haystack = f"{title}\n{text[:5000]}".lower()
     challenge = any(marker in haystack for marker in _CHALLENGE_MARKERS)
+    if challenge:
+        # A dismissible prompt left in the DOM puts "登录" into the body text.
+        # When the document itself has real material and none of the challenge
+        # wording, this is an overlay on a readable page, not a gate.
+        main = _read_main_content(page)
+        if len(main) >= _MAIN_CONTENT_MIN_CHARS:
+            main_haystack = f"{title}\n{main[:5000]}".lower()
+            if not any(marker in main_haystack for marker in _CHALLENGE_MARKERS):
+                return title, main, False
     return title, text, challenge
 
 
@@ -747,7 +843,26 @@ def _load_visible_content(page) -> tuple[str, str]:
     except Exception:
         pass
     title, text, _challenge = _page_state(page)
+    if _looks_like_wall_text(title, text) and _strip_wall_dialogs(page):
+        # The prompt had no usable close control. Removing the layer answers the
+        # only question that matters: is there a readable page behind it? The
+        # capture below is taken from that same DOM, so it carries the material
+        # and not the prompt.
+        page.wait_for_timeout(250)
+        try:
+            _dismiss_login_overlays(page)
+        except Exception:
+            pass
+        title, text, _challenge = _page_state(page)
     return title, text
+
+
+def _looks_like_wall_text(title: str, text: str) -> bool:
+    """True when the page reads like a sign-in prompt rather than material."""
+
+    from .reader import _looks_like_login_wall
+
+    return _looks_like_login_wall(title, text)
 
 
 def _visible_browser_allowed(override: bool | None) -> bool:
@@ -1056,6 +1171,10 @@ def read_page(
 
             while time.monotonic() < deadline:
                 page.wait_for_timeout(500)
+                # Close any prompt before deciding the page is still walled; the
+                # user was asked to sign in, not to click the site's cookie
+                # banner or its "open in app" layer.
+                _load_visible_content(page)
                 _title, text, challenge = _page_state(page)
                 if not challenge and len(text) >= 20:
                     return _capture(page, source_url)
