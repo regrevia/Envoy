@@ -1159,6 +1159,31 @@ def _merge_ocr_region_text(regions: list[dict]) -> str:
     return "\n".join(rendered).strip()
 
 
+def _prefetch_gallery_images(
+    images: list[dict],
+    *,
+    max_bytes: int,
+    dns_cache: dict[str, str],
+) -> dict[str, tuple[Path, str]]:
+    """Download a gallery's pictures so a host that reads local files gets them.
+
+    This must not depend on OCR being installed: a host that declared
+    ``image_input: local_file`` wants the original picture, and the words are a
+    bonus only when this machine can read them.
+    """
+    files: dict[str, tuple[Path, str]] = {}
+    for item in images[:_IMAGE_NOTE_OCR_MAX_IMAGES]:
+        try:
+            files[item["resource_id"]] = _download_image_for_ocr(
+                item["image_url"],
+                max_bytes=max_bytes,
+                dns_cache=dns_cache,
+            )
+        except (OSError, httpx.HTTPError, PublicPageError, ValueError):
+            continue
+    return files
+
+
 def _image_note_ocr_text(
     images: list[dict],
     *,
@@ -1168,6 +1193,7 @@ def _image_note_ocr_text(
     max_bytes: int,
     dns_cache: dict[str, str],
     downloads: dict[str, tuple[Path, str]] | None = None,
+    prefetched: dict[str, tuple[Path, str]] | None = None,
 ) -> dict[str, str]:
     """OCR an image post's gallery so the words of the post come back as text.
 
@@ -1186,11 +1212,15 @@ def _image_note_ocr_text(
         profile = _IMAGE_NOTE_OCR_PROFILE
     for item in images[:_IMAGE_NOTE_OCR_MAX_IMAGES]:
         try:
-            image_path, image_sha256 = _download_image_for_ocr(
-                item["image_url"],
-                max_bytes=max_bytes,
-                dns_cache=dns_cache,
-            )
+            reused = (prefetched or {}).get(item["resource_id"])
+            if reused is not None:
+                image_path, image_sha256 = reused
+            else:
+                image_path, image_sha256 = _download_image_for_ocr(
+                    item["image_url"],
+                    max_bytes=max_bytes,
+                    dns_cache=dns_cache,
+                )
             if downloads is not None:
                 downloads[item["resource_id"]] = (image_path, image_sha256)
             result = _read_cached_image_ocr(
@@ -11004,6 +11034,12 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 or request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
             )
         )
+        if request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE:
+            image_local_files = _prefetch_gallery_images(
+                safe_images,
+                max_bytes=request.budget.max_download_bytes,
+                dns_cache=dns_cache,
+            )
         if gallery_ocr_active:
             try:
                 image_note_ocr = _image_note_ocr_text(
@@ -11014,6 +11050,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     max_bytes=request.budget.max_download_bytes,
                     dns_cache=dns_cache,
                     downloads=image_local_files,
+                    prefetched=image_local_files,
                 )
             except (OSError, httpx.HTTPError, PublicPageError, ValueError):
                 # The gallery's own words are a bonus; an unreachable image must
