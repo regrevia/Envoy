@@ -6,7 +6,6 @@ layout, reveal timing and the Chinese annotations are authored here.
 """
 import json
 import os
-import subprocess
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont

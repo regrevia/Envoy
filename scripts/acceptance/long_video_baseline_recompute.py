@@ -216,7 +216,6 @@ def _pair_divergence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _vtt_cues(path: Path) -> list[tuple[str, str]]:
     """Minimal WebVTT reader: one (timestamp, text) pair per cue."""
-    import re
 
     cues: list[tuple[str, str]] = []
     stamp: str | None = None
