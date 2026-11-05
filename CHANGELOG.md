@@ -1,5 +1,33 @@
 # 更新日志 / Changelog
 
+## 0.1.47 - 2026-11-06
+
+### 中文
+
+- `envoy doctor` 不再被 ASR 权重卡死：普通状态检查不再无条件对整个 checkpoint 做 SHA-256，
+  先看配置文件里记录的 `size` + `mtime_ns` 指纹，命中就沿用已存摘要；没命中才哈希，且限时
+  2 秒（`ENVOY_ASR_STATUS_HASH_TIMEOUT_SECONDS` 可调），超过 256 MB 的权重直接跳过
+  （`ENVOY_ASR_STATUS_HASH_MAX_BYTES` 可调）。哈希拿不到时如实报
+  `asr_model_verified: null`，不假装通过也不假装失败（`media._status_digest`、
+  `_sha256_file_bounded`、`_remember_checkpoint_fingerprint`）。
+- `envoy doctor --verify-asr` 语义不变：仍然完整哈希并跑一次短推理，是唯一会付全量读取代价的入口。
+- 连带修好视频读取的挂起：B 站等视频源在权重盘掉线时以前会卡在哈希上不返回，现在按 2 秒上限
+  继续，实测 `envoy read` 18.7 秒返回 `partial` + `missing_capability`，而不是无限等待。
+
+### English
+
+- `envoy doctor` no longer hangs on the ASR checkpoint: a plain status check stops hashing the whole
+  file. It first trusts the recorded `size` + `mtime_ns` fingerprint, hashes only on a miss, caps that
+  hash at 2 seconds (`ENVOY_ASR_STATUS_HASH_TIMEOUT_SECONDS`), and skips files over 256 MB
+  (`ENVOY_ASR_STATUS_HASH_MAX_BYTES`). When the digest is unavailable the status reports
+  `asr_model_verified: null` instead of guessing (`media._status_digest`, `_sha256_file_bounded`,
+  `_remember_checkpoint_fingerprint`).
+- `envoy doctor --verify-asr` keeps its meaning: the full hash plus a short inference run, and the only
+  path that pays the whole read.
+- The same fix unsticks video reads: a video source whose weight disk stalls used to block on the hash;
+  it now continues after the 2 second cap, and `envoy read` returns `partial` + `missing_capability`
+  in 18.7 seconds instead of waiting forever.
+
 ## 0.1.46 - 2026-11-06
 
 ### 中文

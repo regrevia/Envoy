@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import threading
 import time
 import urllib.request
 from contextlib import contextmanager, redirect_stdout
@@ -611,19 +612,31 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
     )
     model_verified: bool | None = None
     checkpoint_digest = None
+    checkpoint_path = asr_model_cache_dir() / f"{model_name}.pt"
+    recorded_fingerprint = _recorded_checkpoint_fingerprint(asr_config)
     if model_file_present and configured_digest:
-        checkpoint_digest = _sha256_file(
-            asr_model_cache_dir() / f"{model_name}.pt"
-        )
-        model_verified = checkpoint_digest == configured_digest
-        if not model_verified and asr_installed:
-            model_verified = checkpoint_digest == _model_expected_sha256(model_name)
+        if (
+            recorded_fingerprint
+            and recorded_fingerprint == _checkpoint_fingerprint(checkpoint_path)
+        ):
+            checkpoint_digest = configured_digest
+            model_verified = True
+        elif _checkpoint_hash_allowed(checkpoint_path, verify_asr):
+            checkpoint_digest = _status_digest(checkpoint_path, verify_asr)
+            if checkpoint_digest is not None:
+                model_verified = checkpoint_digest == configured_digest
+                if not model_verified and asr_installed:
+                    model_verified = (
+                        checkpoint_digest == _model_expected_sha256(model_name)
+                    )
+                if model_verified:
+                    _remember_checkpoint_fingerprint(
+                        model_name, checkpoint_digest, checkpoint_path
+                    )
     elif model_file_present and verify_asr and asr_installed:
         registry_digest = _model_expected_sha256(model_name)
         if registry_digest:
-            checkpoint_digest = _sha256_file(
-                asr_model_cache_dir() / f"{model_name}.pt"
-            )
+            checkpoint_digest = _sha256_file(checkpoint_path)
             model_verified = checkpoint_digest == registry_digest
     model_available = asr_installed and model_file_present and model_verified is True
     operational = "not_checked"
@@ -640,6 +653,10 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
                 operational = "failed"
             else:
                 persist_asr_selection(model_name, checkpoint_digest)
+                if checkpoint_digest:
+                    _remember_checkpoint_fingerprint(
+                        model_name, checkpoint_digest, checkpoint_path
+                    )
         else:
             operational = "failed"
         model_available = bool(model_verified and operational == "verified")
@@ -672,12 +689,125 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
     }
 
 
+_ASR_STATUS_HASH_MAX_BYTES = 256 * 1024 * 1024
+
+
+def _checkpoint_fingerprint(path: Path) -> dict[str, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _recorded_checkpoint_fingerprint(config: dict[str, Any]) -> dict[str, int] | None:
+    size = config.get("size")
+    mtime_ns = config.get("mtime_ns")
+    if isinstance(size, int) and isinstance(mtime_ns, int):
+        return {"size": size, "mtime_ns": mtime_ns}
+    return None
+
+
+def _checkpoint_hash_allowed(path: Path, verify_asr: bool) -> bool:
+    """A plain status check must not read a multi-hundred-megabyte checkpoint.
+
+    The digest is hashed once, then trusted through the recorded size and
+    mtime; `envoy doctor --verify-asr` opts back into the full read.
+    """
+    if verify_asr:
+        return True
+    try:
+        limit = int(
+            os.environ.get(
+                "ENVOY_ASR_STATUS_HASH_MAX_BYTES", str(_ASR_STATUS_HASH_MAX_BYTES)
+            )
+        )
+    except (TypeError, ValueError):
+        limit = _ASR_STATUS_HASH_MAX_BYTES
+    try:
+        return path.stat().st_size <= max(0, limit)
+    except OSError:
+        return False
+
+
+def _status_digest(path: Path, verify_asr: bool) -> str | None:
+    if verify_asr:
+        return _sha256_file(path)
+    return _sha256_file_bounded(path, _status_digest_seconds())
+
+
+def _remember_checkpoint_fingerprint(
+    model_name: str, digest: str, checkpoint: Path
+) -> None:
+    config = _read_asr_config()
+    if str(config.get("model") or "") != model_name:
+        return
+    if str(config.get("sha256") or "") != digest:
+        return
+    fingerprint = _checkpoint_fingerprint(checkpoint)
+    if not fingerprint:
+        return
+    if _recorded_checkpoint_fingerprint(config) == fingerprint:
+        return
+    payload = dict(config)
+    payload.update(fingerprint)
+    path = _asr_config_path()
+    descriptor, temporary = tempfile.mkstemp(prefix=".asr-", dir=str(path.parent))
+    try:
+        if os.name != "nt":
+            os.chmod(temporary, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(payload, output, ensure_ascii=False)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        if os.name != "nt":
+            path.chmod(0o600)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+_ASR_STATUS_HASH_TIMEOUT_SECONDS = 2.0
+
+
+def _status_digest_seconds() -> float:
+    raw = os.environ.get("ENVOY_ASR_STATUS_HASH_TIMEOUT_SECONDS", "")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _ASR_STATUS_HASH_TIMEOUT_SECONDS
+    return value if value > 0 else _ASR_STATUS_HASH_TIMEOUT_SECONDS
+
+
+def _sha256_file_bounded(path: Path, seconds: float) -> str | None:
+    """Hash only while the disk answers; a stalled mount must not hang status."""
+    outcome: dict[str, str] = {}
+
+    def _work() -> None:
+        try:
+            outcome["digest"] = _sha256_file(path)
+        except OSError:
+            return
+
+    worker = threading.Thread(target=_work, name="envoy-asr-digest", daemon=True)
+    worker.start()
+    worker.join(timeout=seconds)
+    if worker.is_alive():
+        return None
+    return outcome.get("digest")
 
 
 _ASR_DOWNLOAD_CHUNK_BYTES = 256 * 1024

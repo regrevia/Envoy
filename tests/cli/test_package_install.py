@@ -473,3 +473,81 @@ def test_a_uv_download_that_fails_its_checksum_is_refused(monkeypatch, tmp_path)
         package_install.resolve_uv()
 
     assert "SHA-256" in str(excinfo.value)
+
+
+def test_media_status_leaves_verification_unknown_for_an_oversized_checkpoint(
+    monkeypatch,
+    tmp_path,
+):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    (cache / "base.pt").write_bytes(b"large checkpoint")
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_ASR_STATUS_HASH_MAX_BYTES", "1")
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("base", "0" * 64)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(
+        media,
+        "_sha256_file",
+        lambda _path: pytest.fail("an oversized checkpoint must not be re-hashed"),
+    )
+
+    status = media.media_runtime_status()
+
+    assert status["asr_model_file_present"] is True
+    assert status["asr_model_verified"] is None
+    assert status["asr_model_available"] is False
+
+
+def test_media_status_bounds_a_stalled_checkpoint_read(monkeypatch, tmp_path):
+    import time
+
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    (cache / "base.pt").write_bytes(b"slow checkpoint")
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_ASR_STATUS_HASH_TIMEOUT_SECONDS", "0.05")
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("base", "0" * 64)
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(media, "_sha256_file", lambda _path: time.sleep(5))
+
+    status = media.media_runtime_status()
+
+    assert status["asr_model_verified"] is None
+    assert status["asr_model_available"] is False
+
+
+def test_media_status_reuses_a_recorded_checkpoint_fingerprint(monkeypatch, tmp_path):
+    from envoy_cli import media
+
+    cache = tmp_path / "whisper"
+    cache.mkdir()
+    checkpoint = cache / "small.pt"
+    checkpoint.write_bytes(b"fingerprinted checkpoint")
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(cache))
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
+    media.persist_asr_selection("small", media._sha256_file(checkpoint))
+    monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: object())
+
+    first = media.media_runtime_status()
+    config = media._read_asr_config()
+    monkeypatch.setattr(
+        media,
+        "_sha256_file",
+        lambda _path: pytest.fail("a recorded fingerprint must replace the re-hash"),
+    )
+    second = media.media_runtime_status()
+
+    assert first["asr_model_verified"] is True
+    assert config["size"] == checkpoint.stat().st_size
+    assert config["mtime_ns"] == checkpoint.stat().st_mtime_ns
+    assert second["asr_model_verified"] is True
