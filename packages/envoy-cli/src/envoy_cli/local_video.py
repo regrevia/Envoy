@@ -156,9 +156,17 @@ def _process_local_video(
         except (MediaBudgetExceeded, MediaCapabilityMissing, MediaProcessingError) as exc:
             unresolved.append(f"Local ASR did not complete ({type(exc).__name__})")
     elif not runtime.get("asr_installed"):
-        unresolved.append("Local video ASR is unavailable because Whisper is not installed")
+        unresolved.append(
+            "Local video ASR is unavailable because Whisper is not installed; "
+            f"run `envoy asr install --model {runtime.get('asr_model') or 'base'}` once "
+            "(about 140 MB) to enable it"
+        )
     else:
-        unresolved.append("Local video ASR is unavailable because its Whisper model is not prepared")
+        unresolved.append(
+            "Local video ASR is unavailable because its Whisper model is not prepared; "
+            f"run `envoy asr install --model {runtime.get('asr_model') or 'base'}` once "
+            "(about 140 MB) to enable it"
+        )
 
     if response is None:
         if not request.scope.include_visual:

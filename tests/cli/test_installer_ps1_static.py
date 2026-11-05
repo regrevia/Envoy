@@ -164,8 +164,8 @@ def test_shim_uses_the_oem_code_page_not_utf8(text: str):
     assert "[System.Text.Encoding]::Default" not in text
 
 
-def test_profiles_exist_and_default_to_full(text: str):
-    """Same three tiers as install.sh, same default.
+def test_profiles_exist_and_default_to_minimal(text: str):
+    """Same three tiers as install.sh, same default: the ~180 MB runtime.
 
     install.sh cannot be run from this file to compare, so pin the strings both
     installers must agree on.
@@ -178,6 +178,10 @@ def test_profiles_exist_and_default_to_full(text: str):
     assert '$Script:Profile -eq "full"' in text
     assert '$env:ENVOY_PROFILE' in text
     assert "expected minimal, standard or full" in text
+    assert '$env:ENVOY_PROFILE.ToLowerInvariant() } else { "minimal" }' in text
+    # The skip lines carry the first-use fetch command, not just a profile name.
+    assert "Chromium (about 683 MB) is fetched by" in text
+    assert "envoy asr install --model" in text
 
 
 def test_profile_provisioning_runs_outside_the_runtime_install(text: str):

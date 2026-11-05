@@ -1,0 +1,34 @@
+Traceback (most recent call last):
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/.venv/bin/envoy", line 10, in <module>
+    sys.exit(entrypoint())
+             ^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/entry.py", line 37, in entrypoint
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/entry.py", line 33, in main
+    return cli_main(arguments)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/cli.py", line 970, in main
+    response = read_public_page(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 10330, in read_public_page
+    return _read_public_page_with_retries(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 10336, in _read_public_page_with_retries
+    response = _read_public_page_once(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 3555, in wrapped
+    response = run_locked()
+               ^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 3464, in run_locked
+    return execute()
+           ^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 3458, in execute
+    return function(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 10491, in _read_public_page_once
+    max_work_seconds=min(_remaining_work_seconds(request), _SUBTITLE_PHASE_SECONDS),
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Desktop/2026/Envoy/packages/envoy-cli/src/envoy_cli/reader.py", line 3289, in _remaining_work_seconds
+    raise MediaBudgetExceeded("The request max_work_seconds budget is exhausted")
+envoy_cli.media.MediaBudgetExceeded: The request max_work_seconds budget is exhausted

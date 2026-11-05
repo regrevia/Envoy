@@ -1889,7 +1889,9 @@ def transcribe_audio_file(
         asr_installed = False
     if not asr_installed:
         raise MediaCapabilityMissing(
-            "Local ASR is unavailable; install Envoy's media extra to enable Whisper transcription"
+            "Local ASR is unavailable; install Envoy's media extra "
+            "(pip install 'envoy-cli[asr]') and run "
+            "`envoy asr install --model base` once to enable Whisper transcription"
         )
     source = Path(audio_path).expanduser().resolve()
     if not source.is_file() or source.stat().st_size <= 0:

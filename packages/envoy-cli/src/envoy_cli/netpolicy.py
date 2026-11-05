@@ -70,10 +70,16 @@ def detected_proxy() -> str | None:
     proxies = getproxies()
     for key in ("https", "http", "all", "socks"):
         value = proxies.get(key)
-        if value:
-            normalized = _normalize(str(value))
-            if normalized:
-                return normalized
+        if not value:
+            continue
+        candidate = str(value).strip()
+        # A SOCKS entry is advertised without a scheme; defaulting it to http
+        # would hand a SOCKS endpoint to an HTTP CONNECT proxy.
+        if key == "socks" and "://" not in candidate:
+            candidate = f"socks5://{candidate}"
+        normalized = _normalize(candidate)
+        if normalized:
+            return normalized
     return None
 
 

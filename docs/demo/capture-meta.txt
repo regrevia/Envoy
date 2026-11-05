@@ -1,0 +1,42 @@
+captured_at: 2026-11-06 (Asia/Shanghai)
+git_head: a51fb70ff5958ea82302fd4bf0db8cad888fd256 (工作区当时有未提交改动)
+
+command:
+  packages/envoy-cli/.venv/bin/envoy read --request-json - < /tmp/demo-request.json
+
+request body (与运行完全一致):
+  {"request_id":"demo-1","source":{"url":"https://www.youtube.com/watch?v=iG9CE55wbtY"},"budget":{"max_download_bytes":40000000,"max_work_seconds":600},"scope":{"start_seconds":0,"end_seconds":30}}
+
+exit_code: 0
+wall_time: real 0m2.247s
+stdout: /tmp/envoy-demo-read.json = 3248 bytes (单行 JSON, UTF-8)
+stderr: /tmp/envoy-demo-read.err = 0 bytes
+
+响应关键字段 (取自 stdout, 未改写):
+  protocol_version: envoy.read/1
+  request_id: demo-1
+  session_id: (见 captured-read.json)
+  material_id: mat-0f0f4328405a2e69fe5a7ef9
+  result: ready
+  execution_state: completed
+  expires_at: null
+  resources: []
+  needs: []
+  errors: []
+  blocks[0]: id=blk-title kind=heading origin=source_text
+  blocks[1]: id=blk-video-transcript kind=transcript origin=subtitle language=en
+             locator={type: video_time, start_seconds: 27.103, end_seconds: 31.105}
+             text="[00:27.103] Good morning. How are you?\n\n[00:29.702] (Audience) Good."
+  coverage.modalities.text: extraction=complete discovered=2 extracted=2 returned=1
+  coverage.modalities.video: extraction=partial
+             details={video_id: iG9CE55wbtY, duration_seconds: 1203,
+                      requested_range: {start_seconds: 0.0, end_seconds: 30.0},
+                      visual_inspection: not_performed,
+                      transcript_source: manual_subtitles, subtitle_language: en}
+  coverage.unresolved[0]: "Video frames were not inspected; this material contains transcript evidence only"
+  coverage.unresolved[1]: "Transcript coverage is limited to the requested range 00:00.000-00:30.000; other audio ranges were not read"
+
+说明:
+  - 本次运行的真实 stdout 完整保存在 ./captured-read.json，GIF 的所有数字都由它渲染而来。
+  - 运行通过系统代理访问 YouTube；耗时 2.2 s 是本机实测值，换网络会变。
+  - 未出现 token、邮箱或用户目录路径；命令里只用仓库相对路径。

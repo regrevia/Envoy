@@ -18,10 +18,14 @@
 #   ENVOY_VERSION        runtime version to install (default: release manifest)
 #   ENVOY_HOME           private runtime root (default: ~/.local/share/envoy-dsh/runtime)
 #   ENVOY_RUNTIME_BIN    explicit runtime to reuse instead of installing one
-#   ENVOY_PROFILE       minimal | standard | full (default: full, the recommended one)
-#                       minimal: runtime only, ~180 MB
+#   ENVOY_PROFILE       minimal | standard | full (default: minimal)
+#                       minimal (default): runtime only, ~180 MB; Chromium (~683 MB)
+#                        and the Whisper weights (~140 MB for `base`) are fetched
+#                        the first time a capability is needed, by the command the
+#                        capability error names
 #                       standard: runtime + Chromium, ~860 MB
-#                       full: runtime + Chromium + Whisper base, no later downloads
+#                       full: runtime + Chromium + Whisper base, nothing downloads
+#                        on first use
 #   ENVOY_SETUP_BROWSER override the profile's browser step: 1 download, 0 skip
 #   ENVOY_SETUP_MEDIA   override the profile's speech-recognition step: 1 setup, 0 skip
 #   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base)
@@ -46,7 +50,7 @@ RUNTIME_BIN="$RUNTIME_HOME/bin/envoy"
 RUNTIME_PIN="${ENVOY_RUNTIME_PIN:-$HOME/.envoy/runtime-path}"
 DSH_PROFILE="${DSH_PROFILE:-web}"
 DRY_RUN="${ENVOY_DRY_RUN:-0}"
-PROFILE="${ENVOY_PROFILE:-full}"
+PROFILE="${ENVOY_PROFILE:-minimal}"
 SETUP_BROWSER="${ENVOY_SETUP_BROWSER:-}"
 SETUP_MEDIA="${ENVOY_SETUP_MEDIA:-}"
 ASR_MODEL="${ENVOY_ASR_MODEL:-base}"
@@ -69,15 +73,16 @@ usage() {
   cat <<'EOF'
 usage: install.sh [--profile minimal|standard|full] [dsh|claude-code|codex|mcp|skill|all|path]
 
-  (no argument) every host detected on this machine, full profile
+  (no argument) every host detected on this machine, minimal profile
 
-  --profile minimal   runtime only, about 180 MB; nothing is downloaded later
-                      until you ask for it
+  --profile minimal   runtime only, about 180 MB (the default); Chromium and the
+                      Whisper weights are fetched the first time you need them,
+                      and the error names the command that fetches them
   --profile standard  runtime + Chromium, about 860 MB; reads rendered pages
                       and video pages, no speech recognition
-  --profile full      runtime + Chromium + Whisper base model (recommended);
-                      every capability this host exposes works offline after
-                      install, nothing downloads on first use
+  --profile full      runtime + Chromium + Whisper base model; every capability
+                      this host exposes works offline after install, nothing
+                      downloads on first use
 
   ENVOY_PROFILE sets the same thing without the flag; ENVOY_SETUP_BROWSER and
   ENVOY_SETUP_MEDIA override one step of the chosen profile.
@@ -270,9 +275,10 @@ expose_runtime() {
 }
 
 # Three profiles, one axis: how much of the optional surface is provisioned up
-# front. The default is the complete one, because a capability that silently
-# fails on first use costs the user more than the download it would have taken
-# at install time.
+# front. The default is minimal: the runtime is ~180 MB on disk, and the two large
+# artifacts (Chromium ~683 MB, Whisper `base` ~140 MB) are fetched the first time
+# a capability is needed, where the error names the exact command. A machine that
+# must never download later passes --profile full instead.
 apply_profile() {
   case "$PROFILE" in
     minimal|standard|full) ;;
@@ -292,12 +298,12 @@ apply_profile() {
   fi
 }
 
-# Chromium takes a minute or two and belongs to install time, not to the user's
-# first link: a read that downloads it would sit inside the host's tool deadline
-# and surface as a failed page instead of a one-time setup step.
+# Chromium takes a minute or two. `standard`/`full` fetch it here so the first
+# link never waits; the minimal default leaves it to `envoy browser setup`, and
+# the capability error names that command instead of reporting a failed page.
 provision_browser() {
   if [ "$SETUP_BROWSER" != "1" ]; then
-    printf 'envoy install: skipped browser setup (profile %s); run `envoy browser setup` before the first link\n' "$PROFILE"
+    printf 'envoy install: skipped browser setup (profile %s); Chromium (~683 MB) is fetched by `envoy browser setup` the first time a page needs it\n' "$PROFILE"
     return 0
   fi
   printf 'envoy install: browser runtime (one-time, about 1-2 minutes)\n'
@@ -305,11 +311,11 @@ provision_browser() {
 }
 
 # Speech recognition is the only base capability whose weights are not in the
-# wheel: install-time is where they belong, so `full` never downloads on the
-# first audio or subtitle-less video.
+# wheel. `full` prefetches them so the first audio or subtitle-less video never
+# waits; the minimal default leaves them to `envoy asr install --model base`.
 provision_media() {
   if [ "$SETUP_MEDIA" != "1" ]; then
-    printf 'envoy install: skipped speech recognition (profile %s); run `envoy asr install --model %s` if you need audio transcription\n' "$PROFILE" "$ASR_MODEL"
+    printf 'envoy install: skipped speech recognition (profile %s); Whisper weights (~140 MB for `base`) are fetched by `envoy asr install --model %s` the first time audio needs them\n' "$PROFILE" "$ASR_MODEL"
     return 0
   fi
   printf 'envoy install: speech recognition (Whisper %s, one-time; tens to hundreds of MB)\n' "$ASR_MODEL"

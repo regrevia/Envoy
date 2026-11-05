@@ -1,4 +1,9 @@
-# 安装档位：三档装什么，为什么默认完整档
+# 安装档位：三档装什么，为什么默认（曾经是完整档，现为最小档）
+
+> 2026-11-06 起默认档从 `full` 翻成 `minimal`：默认安装 ≈178 MB，Chromium（≈683 MB）
+> 与 Whisper 权重（≈140 MB）在首次需要时由报错里的命令取回。下面第一至五节保留
+> 0.1.26 时「默认完整档」的原始论证，作为当时的决策记录；当前行为与体积证据见
+> `docs/acceptance/minimal-install-2026-11-06.md`。
 
 - 基线：`main`（本文随 0.1.26 一起发）
 - 起因：用户要求「base 默认塞进去」+「可以提供多几个等级，用户可选简洁安装和完整安装，建议完整安装」
@@ -8,12 +13,13 @@
 
 | 档位 | 装什么 | 实测体积 | 首次使用时会不会下载 |
 | --- | --- | --- | --- |
-| `minimal` 简洁 | runtime | 178 MB | 读网页/PDF/图片不会；视频页、转写会 |
+| `minimal` 简洁（当前默认） | runtime | 178 MB | 读网页/PDF/图片不会；视频页、转写会 |
 | `standard` 标准 | runtime + Chromium | 178 + 683 MB | 视频页不会；转写会 |
-| `full` 完整（默认） | 上一档 + Whisper `base` | 上一档 + Whisper 依赖 + 权重 | 不会 |
+| `full` 完整（0.1.26 时的默认） | 上一档 + Whisper `base` | 上一档 + Whisper 依赖 + 权重 | 不会 |
 
-默认 `full`：现有契约是「装完就是完整的」，一次装齐比事后补救便宜；`minimal`/`standard`
-留给 CI、容器、磁盘吃紧的用户。
+0.1.26 时默认 `full`：当时的契约是「装完就是完整的」，一次装齐比事后补救便宜；`minimal`/`standard`
+留给 CI、容器、磁盘吃紧的用户。2026-11-06 改成默认 `minimal`：首次使用时的下载会明确点名命令，
+把 800+ MB 的选择权交回用户。
 
 ## 二、数字来源
 
@@ -33,7 +39,7 @@ envoy asr status --json                                     # asr_models_cached 
 ## 三、实现方式（两个安装器一致）
 
 ```sh
-install.sh [--profile minimal|standard|full] <host>     # ENVOY_PROFILE 同义，默认 full
+install.sh [--profile minimal|standard|full] <host>     # ENVOY_PROFILE 同义；0.1.26 默认 full，2026-11-06 起默认 minimal
 install.ps1 [-Profile minimal|standard|full] <host>
 ```
 

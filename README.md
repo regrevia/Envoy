@@ -18,6 +18,18 @@
 
 给 AI 一个链接，Envoy 把它变成带来源定位的材料，AI 再用它写你要的东西：Wiki、摘要、报告、脚本。网页、公众号、PDF、小红书图文、B 站视频、本地视频都行。
 
+发布出去的产品只有两样：命令行 `envoy`，和 Claude Code / Codex / DeepSeek Harness 的插件与 skills，都装在本机。仓库根目录 `docker-compose.yml` 那套 Web 界面（FastAPI + Next.js + MySQL）是遗留选项，装了 CLI 也不需要它。Python 包目前只随 GitHub Release 发 `envoy_cli-<版本>-py3-none-any.whl`，PyPI 上还没有发布。
+
+## 演示
+
+60 秒演示：一条真实链接 → 直接拿到 `[mm:ss]` 字幕片段 → 没读到的范围显式列为待覆盖（读 TED 演讲 0–30 秒）。
+
+![60 秒演示：链接 → [mm:ss] 片段 → 待覆盖](docs/demo/envoy-demo-60s.gif)
+
+录制与复现命令见 [docs/demo/README.md](docs/demo/README.md)。
+
+各站点实际能读到什么（YouTube / B 站 / Vimeo / Dailymotion / Instagram 的真实实测，含网络不通时自动走可信代理）见 [站点可读性说明](docs/acceptance/video-platforms-2026-11-06.md)。
+
 ## 安装
 
 三个宿主各一行。安装脚本只要求 `curl`：uv 和 Python 3.11 它自己装，装好会打印 `envoy install: runtime … protocol … browser …`。
@@ -33,15 +45,16 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
 
-默认是完整档：runtime、Chromium、Whisper `base` 一次装齐，装完读网页、看视频、转写都不用等到首次使用才下载（整份约 runtime 178 MB + 浏览器 683 MB + 转写权重约 140 MB；后两项的平台差异见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)）。只想要更小的安装：`--profile minimal`（只装 runtime，178 MB，读普通网页/PDF/图片）或 `--profile standard`（加 Chromium，683 MB，读需要渲染的页面和视频页，不转写）。重跑安装脚本并换成更高的档位就能补齐缺的能力，两步都是幂等的。
+默认是最小档：只装 runtime（≈178 MB，读普通网页、PDF、图片），Chromium 与 Whisper 权重都不在安装包里。第一次读需要渲染的页面时，错误直接给出 `envoy browser setup`（一次性下载 Chromium，约 683 MB，1–2 分钟）；第一次需要转写（字幕、语音、无字幕视频）时给出 `envoy asr install --model base`（权重约 140 MB）。不想等到首次使用：`--profile standard`（runtime + Chromium，≈860 MB）或 `--profile full`（再加 Whisper `base`，装完全部能力离线可用）。重跑安装脚本并换成更高的档位就能补齐缺的能力，两步都是幂等的；体积口径与平台差异见 [INSTALL.md](integrations/skills/envoy/INSTALL.md)。
 
 不确定宿主是哪个：把最后一段换成 `auto`，脚本会识别已装的 Claude Code / Codex / DSH，都没有就写 MCP 条目（`mcp`、`skill` 也可以单独装；`all` 等同于 `auto`）。只想先看它要做什么，命令前加 `ENVOY_DRY_RUN=1`。从镜像或本地目录安装时，把下载根换成 `ENVOY_RELEASES_BASE`、清单地址换成 `ENVOY_MANIFEST_URL`（目录按 `v<版本>/` 放产物与 `SHA256SUMS`），默认值不变；整仓换到 fork 时设 `ENVOY_REPO`（默认 `regrevia/Envoy`）。Windows PowerShell 用 `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex`（默认 auto，指定宿主时下载后 `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`）。
 
 装完两条自检：
 
 ```sh
-envoy doctor --json     # runtime.install.status 应为 pinned；browser.ready 与 asr_model_available 应为 true
-envoy browser setup     # 浏览器安装脚本已装好；这行用于补装或换版本，装完会自动清掉被替换的旧版本
+envoy doctor --json     # runtime.install.status 应为 pinned；最小档下 browser.ready 与 asr_model_available 先为 false，补齐后应为 true
+envoy browser setup     # 最小档装完没有 Chromium；这行补装（约 683 MB），也用于换版本，装完会自动清掉被替换的旧版本
+envoy asr install --model base   # 最小档没有 Whisper 权重；这行补装（约 140 MB）
 envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存会翻倍），--dry-run 只报不删
 ```
 
@@ -124,7 +137,7 @@ envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存
 
 ## 本地 Web 界面（Docker）
 
-**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-0.1.39-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
+**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-<版本>-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
 
 需要 Docker Desktop，仓库根目录：
 
@@ -177,15 +190,16 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 ```
 
-The default is the full profile: runtime, Chromium and the Whisper `base` model land in one pass, so reading pages, watching videos and transcribing audio never wait on a first-use download (about runtime 178 MB + browser 683 MB + weights ~140 MB; platform differences are in [INSTALL.md](integrations/skills/envoy/INSTALL.md)). For a smaller install use `--profile minimal` (runtime only, 178 MB: plain pages, PDFs, images) or `--profile standard` (adds Chromium, 683 MB: pages that need rendering and video pages, no transcription). Re-running the installer with a higher profile fills in the rest; both steps are idempotent.
+The default is the minimal profile: the runtime alone (about 178 MB - plain pages, PDFs, images), with Chromium and the Whisper weights left out of the install. The first page that needs rendering reports the exact command that fetches Chromium (`envoy browser setup`, a one-time ~683 MB download, 1-2 minutes), and the first transcript reports `envoy asr install --model base` (~140 MB of weights). A box that must not download later passes `--profile standard` (runtime + Chromium, about 860 MB) or `--profile full` (adds Whisper `base`, so every capability works offline after install). Re-running the installer with a higher profile fills in the rest; both steps are idempotent, and [INSTALL.md](integrations/skills/envoy/INSTALL.md) has the size accounting and platform differences.
 
 Not sure which host you have: use `auto` instead — it detects an installed Claude Code / Codex / DSH and falls back to an MCP entry (`mcp` and `skill` also install on their own; `all` is the same as `auto`). Add `ENVOY_DRY_RUN=1` to see what it would do first. To install from a mirror or a local directory, point `ENVOY_RELEASES_BASE` at the download root and `ENVOY_MANIFEST_URL` at the manifest (layout: `v<version>/` with the artifacts and `SHA256SUMS`); the defaults are unchanged; to point at a fork set `ENVOY_REPO` (default `regrevia/Envoy`). On Windows PowerShell: `irm https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.ps1 | iex` (auto by default; for one host download it and run `powershell -ExecutionPolicy Bypass -File install.ps1 dsh`).
 
 Two checks after installing:
 
 ```sh
-envoy doctor --json     # runtime.install.status should be pinned; browser.ready and asr_model_available should be true
-envoy browser setup     # the installer already provisions it; rerun to repair or change versions, stale copies are pruned
+envoy doctor --json     # runtime.install.status should be pinned; the minimal profile starts with browser.ready and asr_model_available false, and both turn true once fetched
+envoy browser setup     # the minimal install has no Chromium; this fetches it (~683 MB), and repairs or changes versions, pruned stale copies included
+envoy asr install --model base   # the minimal install has no Whisper weights; this fetches them (~140 MB)
 envoy browser prune     # reclaim browser downloads left behind by upgrades; --dry-run only reports
 ```
 
@@ -268,7 +282,7 @@ With vs without Envoy: see [Evaluation](#evaluation). Rerun with `scripts/accept
 
 ### Local web interface (Docker)
 
-**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-0.1.39-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
+**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-<版本>-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
 
 With Docker Desktop running, from the repository root:
 

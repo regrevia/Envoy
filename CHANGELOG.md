@@ -1,5 +1,82 @@
 # 更新日志 / Changelog
 
+## 0.1.46 - 2026-11-06
+
+### 中文
+
+- 默认安装包从 ~1 GB 降到 **178 MB**：`install.sh` / `install.ps1` 现在默认 `minimal` 档，只装
+  CLI 本体；Chromium（约 683 MB）和 Whisper 权重（base 约 140 MB）改成首次用到时按提示拉取。
+  跳过它们的安装不会静默——结束时打印 `envoy browser setup` 与 `envoy asr install --model base`
+  两条命令。要一次装全用 `--profile standard`（约 860 MB）。
+- 缺能力不再只报错：浏览器/ASR 未安装时，错误里带 `needs_user_action`（`kind=install_capability`、
+  `command`），宿主可以直接把安装命令转给用户；`envoy doctor --json` 同时给
+  `browser.ready` / `asr_model_available`（`browser.py`、`reader.py` `_capability_user_action`、
+  `local_video.py`、`media.py`）。
+- 直连不通时自动走用户可信代理：`netpolicy.proxy_plan()` 先直连，连接失败再用系统检测到的代理
+  重试，所有取页/取图/取 PDF/取媒体的入口共用这套计划（`reader._fetch_html`、`_fetch_source`、
+  `_read_pdf_source`、`_download_image_for_ocr`、`browser.py`、`media.py`、`collections.py`）。
+  `ENVOY_BROWSER_PROXY=off` 钉死直连，给具体地址则钉死该代理；证书校验两条路径都不关。
+- SOCKS 代理不再被当成 HTTP 代理：系统里只写了 `127.0.0.1:1080` 的 socks 条目会补 `socks5://`
+  再归一化，避免把 SOCKS 端点交给 HTTP CONNECT（`netpolicy.detected_proxy`）。
+- 视频早退不再吃掉视频：带专用提取器或直链的源以前会在「页面文本够长」时提前返回，字幕/ASR
+  根本没跑；现在这类源先走视频路径，失败才回落到页面文本（`reader._DEFERRED_VIDEO_FALLBACK`）。
+- 视频平台的真实读数写进验收页：YouTube 给 `[mm:ss]` 字幕片段，B 站/Dailymotion 在没有本地
+  Whisper 时只给页面文本并说明装哪一条命令，Vimeo 走代理回退后可读页面，Instagram 报
+  `auth_required` 并要求登录而不是假装读过
+  （`docs/acceptance/video-platforms-2026-11-06.md`）。
+- 长视频时间上限实测复算：10 次运行、9 个上限档，900 s 与 2400 s 两档都到 0 超限，重算脚本可重跑
+  （`docs/acceptance/long-video-baseline-2026-11-06.md`、
+  `scripts/acceptance/long_video_baseline_recompute.py`）。
+- 安装档位与首用命令单独成文（`docs/acceptance/minimal-install-2026-11-06.md`、
+  `DEV/INSTALL-PROFILES.md`、`integrations/skills/envoy/INSTALL.md`）。
+- README 首屏写明发布范围：真正发的是 CLI 与三个宿主的插件/skills；根目录 `docker-compose.yml`
+  那套 Web 界面（FastAPI + Next.js + MySQL）是遗留选项，CLI 不需要它；PyPI 上还没有发布，
+  Python 包只随 GitHub Release 提供 whl。
+- 60 秒演示 GIF 进 README（`docs/demo/envoy-demo-60s.gif`，链接 → `[mm:ss]` 片段 → 待覆盖范围）。
+
+### English
+
+- The default install drops from ~1 GB to **178 MB**: `install.sh` / `install.ps1` now default to the
+  `minimal` profile and install only the CLI. Chromium (~683 MB) and the Whisper weights (base,
+  ~140 MB) are fetched on first use, and skipping them is never silent — the installer prints
+  `envoy browser setup` and `envoy asr install --model base`. `--profile standard` (~860 MB) still
+  installs everything up front.
+- A missing capability is actionable instead of a dead end: browser/ASR errors carry
+  `needs_user_action` (`kind=install_capability`, `command`) so a host can hand the install command
+  to the user, and `envoy doctor --json` reports `browser.ready` / `asr_model_available` (`browser.py`,
+  `reader.py` `_capability_user_action`, `local_video.py`, `media.py`).
+- A blocked direct connection now falls back to the user's trusted proxy automatically:
+  `netpolicy.proxy_plan()` tries direct first and retries through the detected system proxy on a
+  connect failure, shared by every page/image/PDF/media fetch (`reader._fetch_html`, `_fetch_source`,
+  `_read_pdf_source`, `_download_image_for_ocr`, `browser.py`, `media.py`, `collections.py`).
+  `ENVOY_BROWSER_PROXY=off` pins direct, a concrete address pins that proxy, and certificate
+  verification stays on for both paths.
+- A SOCKS entry is no longer treated as HTTP: a scheme-less socks value gets `socks5://` before
+  normalization, so an HTTP CONNECT client is never handed a SOCKS endpoint
+  (`netpolicy.detected_proxy`).
+- Video no longer loses to an early page-text return: sources with a specialized extractor or a
+  direct media URL used to return the page as soon as it was long enough, without ever running
+  subtitles/ASR. They now take the video path first and fall back to page text only when it fails
+  (`reader._DEFERRED_VIDEO_FALLBACK`).
+- Real per-platform readings are recorded in an acceptance page: YouTube returns `[mm:ss]` subtitle
+  segments, Bilibili and Dailymotion return page text plus the exact install command when no local
+  Whisper exists, Vimeo is readable through the proxy fallback, and Instagram reports
+  `auth_required` and asks for a sign-in instead of pretending to have read the post
+  (`docs/acceptance/video-platforms-2026-11-06.md`).
+- The long-video time cap is measured and recomputed: 10 runs across 9 cap values, zero overruns at
+  both 900 s and 2400 s, with a rerunnable script
+  (`docs/acceptance/long-video-baseline-2026-11-06.md`,
+  `scripts/acceptance/long_video_baseline_recompute.py`).
+- Install profiles and first-use commands are documented separately
+  (`docs/acceptance/minimal-install-2026-11-06.md`, `DEV/INSTALL-PROFILES.md`,
+  `integrations/skills/envoy/INSTALL.md`).
+- The README first screen states the release scope: the shipped product is the CLI plus the plugins
+  and skills for the three hosts; the root `docker-compose.yml` web interface (FastAPI + Next.js +
+  MySQL) is a legacy option the CLI does not need; nothing is on PyPI yet, the wheel ships with the
+  GitHub release only.
+- A 60-second demo GIF leads the README (`docs/demo/envoy-demo-60s.gif`: link → `[mm:ss]` segments →
+  explicitly listed uncovered range).
+
 ## 0.1.45 - 2026-11-05
 
 ### 中文

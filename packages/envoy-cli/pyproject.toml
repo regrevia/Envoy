@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "envoy-cli"
-version = "0.1.45"
+version = "0.1.46"
 license = {text = "Apache-2.0"}
 description = "Independent Envoy link reader launcher"
 requires-python = ">=3.10"
@@ -28,6 +28,13 @@ ocr-vision = [
   "pyobjc-framework-Quartz>=10,<13; sys_platform == 'darwin'",
 ]
 ocr-rapid = ["Pillow>=10,<13", "rapidocr-onnxruntime>=1.3,<2"]
+# 能力别名：Chromium 二进制（约 683 MB）与 Whisper 权重（base 约 140 MB）不是 pip
+# 依赖，由 `envoy browser setup` / `envoy asr install --model base` 在首次使用时
+# 取回；这三个 extra 只固定 Python 侧，方便一行装齐对应能力。基础安装不装它们也
+# 能跑，缺能力时报带命令的提示，所以 `pip install envoy-cli` 仍然是可用默认。
+browser = ["playwright>=1.52,<2"]
+asr = ["openai-whisper==20250625"]
+full = ["playwright>=1.52,<2", "openai-whisper==20250625"]
 
 [project.scripts]
 envoy = "envoy_cli.entry:entrypoint"

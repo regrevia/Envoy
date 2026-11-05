@@ -1,0 +1,134 @@
+{
+  "protocol": "envoy.read/1",
+  "captured_at": "2026-11-06T01:12:00+08:00",
+  "host_os": "macOS (darwin)",
+  "proxy": "http://127.0.0.1:7897",
+  "samples": {
+    "short": {
+      "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      "title": "Me at the zoo",
+      "duration_seconds": 19,
+      "slot": "short (<300s)"
+    },
+    "long": {
+      "url": "https://www.youtube.com/watch?v=iCvmsMzlF7o",
+      "title": "The power of vulnerability (TEDxHouston)",
+      "duration_seconds": 1250,
+      "slot": "long (>1200s)"
+    }
+  },
+  "runs": [
+    {
+      "run_id": "short_900",
+      "sample": "short",
+      "cap_seconds": 900,
+      "exit_code": 0,
+      "elapsed_ms": 2095,
+      "output": "out_short_900.json",
+      "request": "req_short_900.json",
+      "round": 3,
+      "note": "same transcript sha as rounds 1-2; round 1 was timed in whole seconds (~2 s)"
+    },
+    {
+      "run_id": "short_900b",
+      "sample": "short",
+      "cap_seconds": 900,
+      "exit_code": 0,
+      "elapsed_ms": 2137,
+      "output": "out_short_900b.json",
+      "request": "req_short_900b.json",
+      "round": 2
+    },
+    {
+      "run_id": "short_2400",
+      "sample": "short",
+      "cap_seconds": 2400,
+      "exit_code": 0,
+      "elapsed_ms": 2274,
+      "output": "out_short_2400.json",
+      "request": "req_short_2400.json",
+      "round": 1
+    },
+    {
+      "run_id": "short_2400b",
+      "sample": "short",
+      "cap_seconds": 2400,
+      "exit_code": 0,
+      "elapsed_ms": 2090,
+      "output": "out_short_2400b.json",
+      "request": "req_short_2400b.json",
+      "round": 2
+    },
+    {
+      "run_id": "long_900",
+      "sample": "long",
+      "cap_seconds": 900,
+      "exit_code": 0,
+      "elapsed_ms": 2440,
+      "output": "out_long_900.json",
+      "request": "req_long_900.json",
+      "round": 1
+    },
+    {
+      "run_id": "long_900b",
+      "sample": "long",
+      "cap_seconds": 900,
+      "exit_code": 0,
+      "elapsed_ms": 2159,
+      "output": "out_long_900b.json",
+      "request": "req_long_900b.json",
+      "round": 2
+    },
+    {
+      "run_id": "long_2400",
+      "sample": "long",
+      "cap_seconds": 2400,
+      "exit_code": 0,
+      "elapsed_ms": 2333,
+      "output": "out_long_2400.json",
+      "request": "req_long_2400.json",
+      "round": 1
+    },
+    {
+      "run_id": "long_2400b",
+      "sample": "long",
+      "cap_seconds": 2400,
+      "exit_code": 0,
+      "elapsed_ms": 2189,
+      "output": "out_long_2400b.json",
+      "request": "req_long_2400b.json",
+      "round": 2
+    },
+    {
+      "run_id": "control_1",
+      "sample": "long",
+      "cap_seconds": 1,
+      "exit_code": 1,
+      "elapsed_ms": 193,
+      "output": "out_control_1.json",
+      "request": "req_control_1.json",
+      "stderr": "control_1_stderr.txt",
+      "round": 1,
+      "note": "negative control; cap=1 must overrun"
+    },
+    {
+      "run_id": "long_900_full",
+      "sample": "long",
+      "cap_seconds": 900,
+      "exit_code": 0,
+      "elapsed_ms": 2227,
+      "output": "out_long_full_900.json",
+      "request": "req_long_full_900.json",
+      "round": 1,
+      "note": "same 900 s cap with max_response_chars=30000, so the whole 391-cue transcript is returned; used to review the true tail of the timeline",
+      "compare": false,
+      "compare_exclusion": "different max_response_chars (30000 vs 12000 default), so its transcript is a superset; compared against ground truth instead"
+    }
+  ],
+  "ground_truth": {
+    "short": "ground-truth/gt_jNQXAC9IVRw.en.vtt",
+    "short_auto_variant": "ground-truth/gt_jNQXAC9IVRw.en-en.vtt",
+    "long": "ground-truth/gt_iCvmsMzlF7o.en.vtt",
+    "source": "yt-dlp --write-auto-subs/--write-subs download of the YouTube caption tracks; .en.vtt is the manual track"
+  }
+}

@@ -5,18 +5,22 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 codex
 #
 # Same contract as install.sh: one private pinned runtime, then the host plugin,
-# then the one-time Chromium download. With no argument it installs every host it
-# can detect.
+# then whichever capability downloads the profile asks for. With no argument it
+# installs every host it can detect.
 #
 # Environment overrides:
 #   ENVOY_VERSION       runtime version to install (default: release manifest)
 #   ENVOY_HOME          private runtime root (default: %LOCALAPPDATA%\envoy-dsh\runtime)
 #   ENVOY_UV_HOME       where the self-fetched uv binary is cached (default: %LOCALAPPDATA%\envoy-dsh\tools\uv)
 #   ENVOY_RUNTIME_BIN   explicit runtime to reuse instead of installing one
-#   ENVOY_PROFILE       minimal | standard | full (default: full, the recommended one)
-#                       minimal: runtime only, about 180 MB
+#   ENVOY_PROFILE       minimal | standard | full (default: minimal)
+#                       minimal (default): runtime only, about 180 MB; Chromium
+#                        (about 683 MB) and the Whisper weights (about 140 MB for
+#                        base) are fetched the first time a capability is needed,
+#                        by the command the capability error names
 #                       standard: runtime + Chromium, about 860 MB
-#                       full: runtime + Chromium + Whisper base, no later downloads
+#                       full: runtime + Chromium + Whisper base, nothing downloads
+#                        on first use
 #   ENVOY_SETUP_BROWSER override the profile's browser step: 1 download, 0 skip
 #   ENVOY_SETUP_MEDIA   override the profile's speech-recognition step: 1 setup, 0 skip
 #   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base)
@@ -66,9 +70,11 @@ $Script:ShimDir = Join-Path $Script:EnvoyHome "bin"
 $Script:DshProfile = if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { "web" }
 $Script:DryRun = ($env:ENVOY_DRY_RUN -eq "1")
 # Three profiles, one axis: how much optional surface is provisioned up front.
-# The default is the complete one, because a capability that silently fails on
-# first use costs more than the download it would have taken at install time.
-$Script:Profile = if ($Profile) { $Profile.ToLowerInvariant() } elseif ($env:ENVOY_PROFILE) { $env:ENVOY_PROFILE.ToLowerInvariant() } else { "full" }
+# The default is minimal: the runtime is about 180 MB on disk, and the two large
+# artifacts (Chromium about 683 MB, Whisper base about 140 MB) are fetched the
+# first time a capability is needed, where the error names the exact command. A
+# machine that must never download later passes -Profile full instead.
+$Script:Profile = if ($Profile) { $Profile.ToLowerInvariant() } elseif ($env:ENVOY_PROFILE) { $env:ENVOY_PROFILE.ToLowerInvariant() } else { "minimal" }
 $Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER } elseif ($Script:Profile -eq "minimal") { "0" } else { "1" }
 $Script:SetupMedia = if ($env:ENVOY_SETUP_MEDIA) { $env:ENVOY_SETUP_MEDIA } elseif ($Script:Profile -eq "full") { "1" } else { "0" }
 $Script:AsrModel = if ($env:ENVOY_ASR_MODEL) { $env:ENVOY_ASR_MODEL } else { "base" }
@@ -408,12 +414,13 @@ function Install-Runtime {
     Set-ExposedRuntime
 }
 
-# Chromium belongs to install time, not to the first link: a read that downloads
-# it would sit inside the host's tool deadline and look like a failed page.
+# Chromium takes a minute or two. standard/full fetch it here so the first link
+# never waits; the minimal default leaves it to `envoy browser setup`, and the
+# capability error names that command instead of reporting a failed page.
 function Provision-Browser {
     param([string]$Binary)
     if ($Script:SetupBrowser -ne "1") {
-        Write-Host "envoy install: skipped browser setup (profile $($Script:Profile)); run ``envoy browser setup`` before the first link"
+        Write-Host "envoy install: skipped browser setup (profile $($Script:Profile)); Chromium (about 683 MB) is fetched by ``envoy browser setup`` the first time a page needs it"
         return
     }
     Write-Host "envoy install: browser runtime (one-time, about 1-2 minutes)"
@@ -425,12 +432,12 @@ function Provision-Browser {
 }
 
 # Speech recognition is the only base capability whose weights are not in the
-# wheel: install-time is where they belong, so `full` never downloads on the
-# first audio or subtitle-less video.
+# wheel. full prefetches them so the first audio or subtitle-less video never
+# waits; the minimal default leaves them to `envoy asr install --model base`.
 function Provision-Media {
     param([string]$Binary)
     if ($Script:SetupMedia -ne "1") {
-        Write-Host "envoy install: skipped speech recognition (profile $($Script:Profile)); run ``envoy asr install --model $($Script:AsrModel)`` if you need audio transcription"
+        Write-Host "envoy install: skipped speech recognition (profile $($Script:Profile)); the Whisper weights (about 140 MB for base) are fetched by ``envoy asr install --model $($Script:AsrModel)`` the first time audio needs them"
         return
     }
     Write-Host "envoy install: speech recognition (Whisper $($Script:AsrModel), one-time; tens to hundreds of MB)"

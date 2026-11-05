@@ -306,6 +306,15 @@ class BrowserRuntimeUnavailable(RuntimeError):
         super().__init__(message)
         self.setup_required = setup_required
 
+    @property
+    def next_action(self) -> str | None:
+        """The command that fetches Chromium, or None when it would not help.
+
+        Kept as a property so callers never have to parse the message to tell a
+        missing browser (recoverable, one command) from a broken runtime.
+        """
+        return setup_command() if self.setup_required else None
+
 
 class BrowserReadError(RuntimeError):
     pass
@@ -1037,7 +1046,10 @@ def read_page(
             playwright_factory = sync_playwright
     except ImportError as exc:
         raise BrowserRuntimeUnavailable(
-            "Reinstall Envoy's CLI runtime and run `envoy browser setup`"
+            "Playwright is missing from this Envoy runtime, so Chromium cannot be "
+            "set up or launched. Reinstall the CLI with the browser extra: "
+            "`pip install 'envoy-cli[browser]'` (installer users: rerun it with "
+            "`--profile standard`), then run `envoy browser setup` once."
         ) from exc
 
     from .reader import _is_public_http_url
@@ -1056,8 +1068,9 @@ def read_page(
     ):
         raise BrowserRuntimeUnavailable(
             "Envoy's browser is not installed yet; run "
-            f"`{setup_command()}` once (about 1-2 minutes) and retry. "
-            "Reading did not start, so nothing was downloaded or marked as a page failure.",
+            f"`{setup_command()}` once (one-time download of about 683 MB, "
+            "1-2 minutes) and retry. Reading did not start, so nothing was "
+            "downloaded and this was not marked as a page failure.",
             setup_required=True,
         )
     profile = profile_dir or browser_profile_dir()

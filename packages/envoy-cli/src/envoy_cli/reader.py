@@ -1256,20 +1256,40 @@ def _download_image_for_ocr(
     }
     root = _material_root() / "ocr-inputs"
     root.mkdir(mode=0o700, exist_ok=True)
-    current_url = image_url
-    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
-        for _ in range(5):
-            if not _is_public_http_url(current_url, dns_cache):
-                raise PublicPageError("OCR image redirect resolved to a non-public address")
-            with client.stream("GET", current_url, headers=image_headers) as response:
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise PublicPageError("OCR image returned an invalid redirect")
-                    current_url = urljoin(current_url, location)
-                    continue
-                return _download_image_response(response, root, max_bytes)
-    raise PublicPageError("OCR image exceeded redirect limit")
+    # Image CDNs are often reachable only through the network the rest of the
+    # page was read through. A direct connection that times out or is refused
+    # says nothing about the image, so walk the same direct-then-proxy plan the
+    # HTML fetch uses instead of giving up on the picture.
+    last_error: Exception | None = None
+    for proxy in proxy_plan():
+        connect_timeout = 10 if proxy is None else 6
+        current_url = image_url
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(connect_timeout, read=45),
+                follow_redirects=False,
+                trust_env=False,
+                proxy=proxy,
+            ) as client:
+                for _ in range(5):
+                    if not _is_public_http_url(current_url, dns_cache):
+                        raise PublicPageError("OCR image redirect resolved to a non-public address")
+                    with client.stream("GET", current_url, headers=image_headers) as response:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise PublicPageError("OCR image returned an invalid redirect")
+                            current_url = urljoin(current_url, location)
+                            continue
+                        return _download_image_response(response, root, max_bytes)
+            raise PublicPageError("OCR image exceeded redirect limit")
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = exc
+            continue
+    raise PublicPageError(
+        "OCR image could not be fetched directly or through the configured proxy",
+        ErrorCode.NETWORK_ERROR,
+    ) from last_error
 
 
 def _download_image_response(response, root: Path, max_bytes: int) -> tuple[Path, str]:
@@ -1760,6 +1780,13 @@ _SKIP_MEDIA_FIRST: contextvars.ContextVar[bool] = contextvars.ContextVar(
 # used as the last resort.
 _SHORT_PUBLIC_FALLBACK: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "envoy_short_public_fallback", default=None
+)
+
+# A video page's public endpoint returns the description, not the transcript.
+# Returning it early would answer "what does this video say" with a caption, so
+# the media route runs first and this copy is only used when that route fails.
+_DEFERRED_VIDEO_FALLBACK: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "envoy_deferred_video_fallback", default=None
 )
 
 
@@ -6200,36 +6227,56 @@ def _fetch_source(
     max_bytes: int,
     dns_cache: dict[str, str],
 ) -> dict:
-    current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
-    with httpx.Client(timeout=httpx.Timeout(20, read=45), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
-        for _ in range(5):
-            if not _is_public_http_url(current_url, dns_cache):
-                raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
-            with client.stream("GET", current_url, headers=headers) as response:
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise PublicPageError("The source returned an invalid redirect")
-                    current_url = urljoin(current_url, location)
-                    continue
-                response.raise_for_status()
-                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                if not content_type.startswith("image/"):
-                    raise PublicPageError(
-                        f"Image source returned unsupported content type: {content_type or 'unknown'}",
-                        ErrorCode.UNSUPPORTED_SOURCE,
-                    )
-                content_length = response.headers.get("content-length")
-                if content_length and int(content_length) > max_bytes:
-                    raise PublicPageError("The image source exceeds Envoy's size limit")
-                return {
-                    "kind": "image",
-                    "url": _redact_url(current_url),
-                    "mime_type": content_type,
-                    "size_bytes": int(content_length) if content_length else None,
-                }
-    raise PublicPageError("The source exceeded the redirect limit")
+    last_error: Exception | None = None
+    for proxy in proxy_plan():
+        current_url = source_url
+        connect_timeout = 10 if proxy is None else 6
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(connect_timeout, read=45),
+                follow_redirects=False,
+                trust_env=False,
+                proxy=proxy,
+            ) as client:
+                for _ in range(5):
+                    if not _is_public_http_url(current_url, dns_cache):
+                        raise PublicPageError(
+                            "The source URL or redirect is not a public HTTP(S) address"
+                        )
+                    with client.stream("GET", current_url, headers=headers) as response:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise PublicPageError("The source returned an invalid redirect")
+                            current_url = urljoin(current_url, location)
+                            continue
+                        response.raise_for_status()
+                        content_type = (
+                            response.headers.get("content-type", "").split(";", 1)[0].lower()
+                        )
+                        if not content_type.startswith("image/"):
+                            raise PublicPageError(
+                                f"Image source returned unsupported content type: {content_type or 'unknown'}",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        content_length = response.headers.get("content-length")
+                        if content_length and int(content_length) > max_bytes:
+                            raise PublicPageError("The image source exceeds Envoy's size limit")
+                        return {
+                            "kind": "image",
+                            "url": _redact_url(current_url),
+                            "mime_type": content_type,
+                            "size_bytes": int(content_length) if content_length else None,
+                        }
+            raise PublicPageError("The source exceeded the redirect limit")
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = exc
+            continue
+    raise PublicPageError(
+        "The source could not be fetched directly or through the configured proxy",
+        ErrorCode.NETWORK_ERROR,
+    ) from last_error
 
 
 def _pdf_deadline(request: ReadRequest) -> float | None:
@@ -6358,128 +6405,143 @@ def _fetch_pdf_source(
             handle.close()
         handle = None
 
+    _proxies = proxy_plan()
     try:
-        with httpx.Client(timeout=httpx.Timeout(20, read=60), follow_redirects=False, trust_env=False, proxy=explicit_proxy()) as client:
-            for _ in range(5):
-                check_deadline()
-                if remaining_bytes <= 0:
-                    raise PublicPageError("The PDF exceeds Envoy's size limit")
-                if not _is_public_http_url(current_url, dns_cache):
-                    raise PublicPageError("The PDF URL or redirect is not a public HTTP(S) address")
-                redirected = False
-                attempt = 0
-                while attempt < MAX_FETCH_ATTEMPTS:
-                    check_deadline()
-                    # A read timeout used to throw away a 20 MB partial download
-                    # and ask for the whole file again; a third attempt on a
-                    # flaky link could never finish. Ask for the missing tail
-                    # instead and let the server say whether it agrees.
-                    resumable = temp_path is not None and size > 0
-                    request_headers = dict(headers)
-                    if resumable:
-                        request_headers["Range"] = f"bytes={size}-"
-                    try:
-                        with client.stream("GET", current_url, headers=request_headers) as response:
-                            if response.status_code in {301, 302, 303, 307, 308}:
-                                location = response.headers.get("location")
-                                if not location:
-                                    raise PublicPageError("The PDF server returned an invalid redirect")
-                                # A redirect body still spends the same budget.
-                                for chunk in response.iter_bytes():
-                                    remaining_bytes -= len(chunk)
-                                    check_deadline()
-                                    if remaining_bytes < 0:
-                                        raise PublicPageError("The PDF exceeds Envoy's size limit")
-                                discard_partial()
-                                current_url = urljoin(current_url, location)
-                                redirected = True
-                                break
-                            if response.status_code in {401, 403}:
-                                raise PublicPageError("The PDF source requires authentication", ErrorCode.AUTH_REQUIRED)
-                            if response.status_code == 416 and resumable:
-                                # The range no longer matches the resource: start over.
-                                discard_partial()
-                                attempt += 1
-                                continue
-                            if response.status_code in {408, 425, 429} or response.status_code >= 500:
-                                attempt += 1
-                                if attempt < MAX_FETCH_ATTEMPTS:
-                                    if deadline is not None and deadline - time.monotonic() <= 0.25 * attempt:
-                                        raise PublicPageError(
-                                            "PDF download exhausted max_work_seconds",
-                                            ErrorCode.BUDGET_EXCEEDED,
+        for _proxy_index, proxy in enumerate(_proxies):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(20, read=60), follow_redirects=False, trust_env=False, proxy=proxy) as client:
+                    for _ in range(5):
+                        check_deadline()
+                        if remaining_bytes <= 0:
+                            raise PublicPageError("The PDF exceeds Envoy's size limit")
+                        if not _is_public_http_url(current_url, dns_cache):
+                            raise PublicPageError("The PDF URL or redirect is not a public HTTP(S) address")
+                        redirected = False
+                        attempt = 0
+                        while attempt < MAX_FETCH_ATTEMPTS:
+                            check_deadline()
+                            # A read timeout used to throw away a 20 MB partial download
+                            # and ask for the whole file again; a third attempt on a
+                            # flaky link could never finish. Ask for the missing tail
+                            # instead and let the server say whether it agrees.
+                            resumable = temp_path is not None and size > 0
+                            request_headers = dict(headers)
+                            if resumable:
+                                request_headers["Range"] = f"bytes={size}-"
+                            try:
+                                with client.stream("GET", current_url, headers=request_headers) as response:
+                                    if response.status_code in {301, 302, 303, 307, 308}:
+                                        location = response.headers.get("location")
+                                        if not location:
+                                            raise PublicPageError("The PDF server returned an invalid redirect")
+                                        # A redirect body still spends the same budget.
+                                        for chunk in response.iter_bytes():
+                                            remaining_bytes -= len(chunk)
+                                            check_deadline()
+                                            if remaining_bytes < 0:
+                                                raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                        discard_partial()
+                                        current_url = urljoin(current_url, location)
+                                        redirected = True
+                                        break
+                                    if response.status_code in {401, 403}:
+                                        raise PublicPageError("The PDF source requires authentication", ErrorCode.AUTH_REQUIRED)
+                                    if response.status_code == 416 and resumable:
+                                        # The range no longer matches the resource: start over.
+                                        discard_partial()
+                                        attempt += 1
+                                        continue
+                                    if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                                        attempt += 1
+                                        if attempt < MAX_FETCH_ATTEMPTS:
+                                            if deadline is not None and deadline - time.monotonic() <= 0.25 * attempt:
+                                                raise PublicPageError(
+                                                    "PDF download exhausted max_work_seconds",
+                                                    ErrorCode.BUDGET_EXCEEDED,
+                                                )
+                                            time.sleep(0.25 * attempt)
+                                            continue
+                                    response.raise_for_status()
+                                    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                                    resuming = resumable and response.status_code == 206
+                                    if resuming:
+                                        content_range = response.headers.get("content-range", "")
+                                        if not content_range.replace(" ", "").startswith(f"bytes{size}-"):
+                                            discard_partial()
+                                            attempt += 1
+                                            continue
+                                    else:
+                                        discard_partial()
+                                    content_length = response.headers.get("content-length")
+                                    if content_length:
+                                        try:
+                                            if size + int(content_length) > max_bytes:
+                                                raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                        except ValueError:
+                                            pass
+                                    if resuming:
+                                        resumed_bytes += size
+                                        handle = open(temp_path, "ab")
+                                    else:
+                                        handle = tempfile.NamedTemporaryFile(
+                                            "wb",
+                                            prefix="envoy-pdf-",
+                                            suffix=".pdf",
+                                            delete=False,
                                         )
-                                    time.sleep(0.25 * attempt)
-                                    continue
-                            response.raise_for_status()
-                            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                            resuming = resumable and response.status_code == 206
-                            if resuming:
-                                content_range = response.headers.get("content-range", "")
-                                if not content_range.replace(" ", "").startswith(f"bytes{size}-"):
+                                        temp_path = Path(handle.name)
+                                    for chunk in response.iter_bytes():
+                                        check_deadline()
+                                        size += len(chunk)
+                                        if size > max_bytes:
+                                            raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                        digest.update(chunk)
+                                        handle.write(chunk)
+                                    finish_partial()
+                                    with temp_path.open("rb") as check:
+                                        head = check.read(5)
+                                    if not head.startswith(b"%PDF-"):
+                                        raise PublicPageError(
+                                            f"Expected a PDF source, received {content_type or 'unknown content'}",
+                                            ErrorCode.UNSUPPORTED_SOURCE,
+                                        )
+                                    return {
+                                        "url": _redact_url(current_url),
+                                        "path": str(temp_path),
+                                        "mime_type": "application/pdf",
+                                        "size_bytes": size,
+                                        "sha256": digest.hexdigest(),
+                                        "input_kind": "remote_pdf",
+                                        "resumed_bytes": resumed_bytes,
+                                    }
+                            except httpx.TransportError as exc:
+                                attempt += 1
+                                finish_partial()
+                                if _is_connect_failure(exc) or attempt >= MAX_FETCH_ATTEMPTS:
                                     discard_partial()
-                                    attempt += 1
-                                    continue
-                            else:
-                                discard_partial()
-                            content_length = response.headers.get("content-length")
-                            if content_length:
-                                try:
-                                    if size + int(content_length) > max_bytes:
-                                        raise PublicPageError("The PDF exceeds Envoy's size limit")
-                                except ValueError:
-                                    pass
-                            if resuming:
-                                resumed_bytes += size
-                                handle = open(temp_path, "ab")
-                            else:
-                                handle = tempfile.NamedTemporaryFile(
-                                    "wb",
-                                    prefix="envoy-pdf-",
-                                    suffix=".pdf",
-                                    delete=False,
-                                )
-                                temp_path = Path(handle.name)
-                            for chunk in response.iter_bytes():
-                                check_deadline()
-                                size += len(chunk)
-                                if size > max_bytes:
-                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
-                                digest.update(chunk)
-                                handle.write(chunk)
-                            finish_partial()
-                            with temp_path.open("rb") as check:
-                                head = check.read(5)
-                            if not head.startswith(b"%PDF-"):
-                                raise PublicPageError(
-                                    f"Expected a PDF source, received {content_type or 'unknown content'}",
-                                    ErrorCode.UNSUPPORTED_SOURCE,
-                                )
-                            return {
-                                "url": _redact_url(current_url),
-                                "path": str(temp_path),
-                                "mime_type": "application/pdf",
-                                "size_bytes": size,
-                                "sha256": digest.hexdigest(),
-                                "input_kind": "remote_pdf",
-                                "resumed_bytes": resumed_bytes,
-                            }
-                    except httpx.TransportError as exc:
-                        attempt += 1
-                        finish_partial()
-                        if _is_connect_failure(exc) or attempt >= MAX_FETCH_ATTEMPTS:
-                            discard_partial()
-                            raise
-                        if deadline is not None and deadline - time.monotonic() <= 0.25 * attempt:
-                            discard_partial()
-                            raise PublicPageError(
-                                "PDF download exhausted max_work_seconds",
-                                ErrorCode.BUDGET_EXCEEDED,
-                            )
-                        time.sleep(0.25 * attempt)
-                if redirected:
-                    continue
-            raise PublicPageError("The PDF source exceeded the redirect limit")
+                                    raise
+                                if deadline is not None and deadline - time.monotonic() <= 0.25 * attempt:
+                                    discard_partial()
+                                    raise PublicPageError(
+                                        "PDF download exhausted max_work_seconds",
+                                        ErrorCode.BUDGET_EXCEEDED,
+                                    )
+                                time.sleep(0.25 * attempt)
+                        if redirected:
+                            continue
+                    raise PublicPageError("The PDF source exceeded the redirect limit")
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if _proxy_index + 1 >= len(_proxies):
+                    raise PublicPageError(
+                        "The PDF could not be downloaded directly or through the configured proxy",
+                        ErrorCode.NETWORK_ERROR,
+                    ) from exc
+                # A direct connection that dies says nothing about the proxy:
+                # drop the partial file and start the download over on the next
+                # plan entry instead of reporting the source as unreachable.
+                discard_partial()
+                current_url = source_url
+                remaining_bytes = int(max_bytes)
     except BaseException:
         if handle is not None and not handle.closed:
             handle.close()
@@ -9345,7 +9407,7 @@ def _read_video_asr(request: ReadRequest, source_url: str) -> ReadResponse:
         )
     if not status["asr_installed"]:
         raise MediaCapabilityMissing(
-            "Local ASR is disabled; install envoy-cli[media] to enable it"
+            "Local ASR is disabled; install it with pip install 'envoy-cli[asr]' and fetch the model with envoy asr install --model base"
         )
     if not status["asr_model_available"]:
         raise MediaCapabilityMissing(
@@ -10326,9 +10388,11 @@ def _read_video_page_text(request: ReadRequest, source_url: str) -> ReadResponse
 
 def read_public_page(request: ReadRequest) -> ReadResponse:
     token = _SHORT_PUBLIC_FALLBACK.set(None)
+    video_token = _DEFERRED_VIDEO_FALLBACK.set(None)
     try:
         return _read_public_page_with_retries(request)
     finally:
+        _DEFERRED_VIDEO_FALLBACK.reset(video_token)
         _SHORT_PUBLIC_FALLBACK.reset(token)
 
 
@@ -10363,6 +10427,11 @@ def _read_public_page_with_retries(request: ReadRequest) -> ReadResponse:
                 for error in retried.errors
             ],
         })
+    deferred_video = _DEFERRED_VIDEO_FALLBACK.get()
+    if deferred_video is not None and response.result == ReadResult.BLOCKED:
+        return _public_api_fallback_response(
+            request, str(request.source.url), deferred_video
+        )
     short_fallback = _SHORT_PUBLIC_FALLBACK.get()
     if (
         short_fallback is not None
@@ -10470,8 +10539,21 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             fallback = None
         if fallback is not None:
             if len(str(fallback.get("text") or "")) >= _fallback_min_chars(fallback):
-                return _public_api_fallback_response(request, source_url, fallback)
-            _SHORT_PUBLIC_FALLBACK.set(fallback)
+                # A video page has a transcript behind the description. Take the
+                # description only when subtitles and ASR both come up empty.
+                prefers_media = (
+                    media_first
+                    and has_specialized_extractor(source_url)
+                    and not direct_video_path
+                    and not direct_douyin_note
+                    and not direct_xhs_note
+                )
+                if prefers_media:
+                    _DEFERRED_VIDEO_FALLBACK.set(fallback)
+                else:
+                    return _public_api_fallback_response(request, source_url, fallback)
+            else:
+                _SHORT_PUBLIC_FALLBACK.set(fallback)
 
     if (
         not direct_video_path
@@ -11970,6 +12052,31 @@ def _no_speech_partial(
     )
 
 
+_CAPABILITY_FIRST_USE_COMMANDS = (
+    ("envoy browser setup", "browser"),
+    ("envoy asr install", "speech_to_text"),
+)
+
+
+def _capability_user_action(message: str) -> dict | None:
+    """The fetch command that turns a missing capability into a working one.
+
+    The minimal install leaves Chromium (about 683 MB) and the Whisper weights
+    (about 140 MB for ``base``) out; each is fetched by the command its error
+    already names. Making that explicit stops a caller from reporting the page
+    as unreadable when one command would have read it.
+    """
+
+    for command, capability in _CAPABILITY_FIRST_USE_COMMANDS:
+        if command in message:
+            return {
+                "kind": "install_capability",
+                "capability": capability,
+                "command": command,
+            }
+    return None
+
+
 def _blocked(
     request: ReadRequest,
     code: ErrorCode,
@@ -11992,6 +12099,10 @@ def _blocked(
                     resume_token=action.get("resume_token"),
                 )
             )
+    if code == ErrorCode.MISSING_CAPABILITY:
+        capability_action = _capability_user_action(message)
+        if capability_action:
+            payload["needs_user_action"] = capability_action
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,

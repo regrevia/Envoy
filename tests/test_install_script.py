@@ -249,9 +249,9 @@ def test_unreachable_checksum_list_is_announced(tmp_path):
 
 
 def test_profiles_choose_how_much_is_provisioned(tmp_path):
-    """One knob, three tiers. A first link must never be the moment something
-    downloads, so the default profile is the complete one: runtime, Chromium
-    and the Whisper base model."""
+    """One knob, three tiers. The minimal profile is the ~180 MB runtime alone;
+    Chromium and Whisper arrive on first use, so a box that must never download
+    later asks for the complete tier explicitly."""
     expected = {
         "minimal": (False, False),
         "standard": (True, False),
@@ -265,12 +265,16 @@ def test_profiles_choose_how_much_is_provisioned(tmp_path):
         assert ("speech recognition (Whisper" in result.stdout) is wants_media, profile
 
 
-def test_full_is_the_default_profile(tmp_path):
+def test_minimal_is_the_default_profile(tmp_path):
+    """No argument is the ~180 MB runtime: the two large downloads stay out and
+    the installer names the command that fetches each on first use."""
     _, env = _stubs(tmp_path)
     result = _run(["mcp"], env)
     assert result.returncode == 0, result.stderr
-    assert "browser runtime (one-time" in result.stdout
-    assert "speech recognition (Whisper base" in result.stdout
+    assert "browser runtime (one-time" not in result.stdout
+    assert "speech recognition (Whisper base" not in result.stdout
+    assert "envoy browser setup" in result.stdout
+    assert "envoy asr install --model base" in result.stdout
 
 
 def test_profile_accepts_the_equals_form_and_the_env(tmp_path):

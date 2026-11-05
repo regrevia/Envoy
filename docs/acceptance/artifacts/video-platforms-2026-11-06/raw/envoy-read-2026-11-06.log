@@ -1,0 +1,108 @@
+=== vimeo3
+{
+ "name": "vimeo3",
+ "rc": 0,
+ "dur": 18.4,
+ "result": "ready",
+ "blocks": 2,
+ "chars": 767,
+ "coverage": {
+  "modalities": {
+   "text": {
+    "discovered": 1,
+    "extracted": 1,
+    "returned": 1,
+    "processed": null,
+    "delivered": null,
+    "observed": null,
+    "extraction": "complete",
+    "unresolved": [],
+    "details": {
+     "reader": "public_api:vimeo",
+     "backend": "vimeo",
+     "total_chars": 723,
+     "returned_chars": 723,
+     "continuation_available": false
+    }
+   }
+  },
+  "unresolved": [],
+  "sampled_ranges": []
+ },
+ "errors": [
+  {
+   "code": "missing_capability",
+   "message": "No transcript is available for this video; the text below is the page itself",
+   "retryable": false,
+   "action_required": false,
+   "details": {}
+  }
+ ],
+ "head": "The New Vimeo Player (You Know, For Videos)\nThe New Vimeo Player (You Know, For Videos)\nIt may look (mostly) the same on the surface, but under the hood we totally rebuilt our player. Here’s a quick rundown of some of the coolest new features:\n\n• Lightning fast playback\n• Redesigned Share screen\n• Closed caption and subtitle compatible\n• HTML5 by default\n• Purchase-from-player functionality for embedded Vimeo On Demand trailers\n• More responsive than ever (go ahead, resize it, we dare you!!!)\n\nWe’re really proud of these updates. So proud that we made a spiffy new page to showcase all the reas"
+}
+
+=== dm3
+{
+ "name": "dm3",
+ "rc": 2,
+ "dur": 29.1,
+ "result": "blocked",
+ "blocks": 0,
+ "chars": 0,
+ "coverage": {
+  "modalities": {},
+  "unresolved": [],
+  "sampled_ranges": []
+ },
+ "errors": [
+  {
+   "code": "missing_capability",
+   "message": "Public subtitle extraction failed; Local ASR is disabled; install envoy-cli[media] to enable it",
+   "retryable": false,
+   "action_required": true,
+   "details": {
+    "subtitle_status": "failed",
+    "subtitle_login_required": false
+   }
+  }
+ ],
+ "head": ""
+}
+
+=== ig3
+ Sign the user in once from the chat: envoy_auth action open shows the site's own sign-in page and the link reads normally afterwards.",
+     "requires_human": true,
+     "credential_handoff": {
+      "enabled": false,
+      "in_chat_sign_in": true,
+      "scope": "this machine only",
+      "how_to_enable": "Importing cookies from another browser is off. The user can enable it once with `envoy auth handoff on` (or ENVOY_CREDENTIAL_HANDOFF=1 for one shell); signing in from the chat works without it."
+     },
+     "options": [
+      {
+       "action": "in_chat_sign_in",
+       "requires_human": true,
+       "instruction": "Call envoy_auth with action open and this source_url; it returns a picture of the site's sign-in page (usually the QR code) to show the user. They scan once, the browser stays in the background, and this link reads normally once envoy_auth status reports signed_in.",
+       "effect": "The user signs in once from the chat, without a terminal, and Envoy's isolated profile keeps the session"
+      },
+      {
+       "action": "human_sign_in",
+       "requires_human": true,
+       "instruction": "From a terminal, read this page once with visible browser mode enabled and complete the normal sign-in there; the session is kept in ~/.envoy/browser-profile and reused by later headless reads.",
+       "effect": "One sign-in at the user's terminal keeps the local browser profile usable for later headless reads"
+      }
+     ],
+     "action_id": "auth-0b8fde2a513296a1",
+     "resume_token": "2845a222874785f7d27fa07eedf3b446",
+     "status": "pending",
+     "open_command": "envoy auth open --action-id auth-0b8fde2a513296a1",
+     "verify_command": "envoy auth verify --action-id auth-0b8fde2a513296a1"
+    },
+    "internal_retry_attempts": 1
+   }
+  }
+ ],
+ "head": ""
+}
+
+EXIT=0

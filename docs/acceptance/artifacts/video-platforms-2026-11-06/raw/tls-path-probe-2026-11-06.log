@@ -1,0 +1,18 @@
+=== tlsprobe
+{"site": "youtube", "path": "direct", "error": "ConnectTimeout: timed out"}
+{"site": "youtube", "path": "proxy", "status": 200, "bytes": 1481123, "final": "https://www.youtube.com/watch?v=iG9CE55wbtY"}
+{"site": "bilibili", "path": "direct", "status": 200, "bytes": 337025, "final": "https://www.bilibili.com/video/BV1zj411K7zL/"}
+{"site": "bilibili", "path": "proxy", "status": 200, "bytes": 330116, "final": "https://www.bilibili.com/video/BV1zj411K7zL/"}
+{"site": "vimeo", "path": "direct", "error": "ConnectTimeout: timed out"}
+{"site": "vimeo", "path": "proxy", "status": 200, "bytes": 13413, "final": "https://vimeo.com/76979871"}
+{"site": "dailymotion", "path": "direct", "error": "ConnectTimeout: timed out"}
+{"site": "dailymotion", "path": "proxy", "status": 200, "bytes": 197347, "final": "https://www.dailymotion.com/video/x8pnwbb"}
+{"site": "instagram", "path": "direct", "error": "ConnectTimeout: timed out"}
+{"site": "instagram", "path": "proxy", "status": 200, "bytes": 504505, "final": "https://www.instagram.com/p/Cz0h1Z1rG4K/"}
+=== vimeo direct-only (ENVOY_BROWSER_PROXY=off)
+ "rc": 2,
+ "dur": 31.7,
+ "result": "blocked",
+   "code": "missing_capability",
+   "message": "Public subtitle extraction failed; Local ASR is disabled; install it with pip install 'envoy-cli[asr]' and fetch the model with envoy asr install --model base",
+EXIT=0

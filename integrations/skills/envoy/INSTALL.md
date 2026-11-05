@@ -1,7 +1,7 @@
 # Envoy 安装 / Install
 
 Envoy 由三部分组成：Skill 指令、本地 CLI runtime、宿主 MCP 连接。当前开发版
-`0.1.45`，发行说明以 `CHANGELOG.md` 为准。
+`0.1.46`，发行说明以 `CHANGELOG.md` 为准。
 
 装哪个宿主都只需要一条命令：脚本先确认 `PATH` 上有够新的 `envoy`（已装且够新
 就复用），再装该宿主的插件。**不需要先手动装 CLI**，也不需要先跑
@@ -65,7 +65,7 @@ Windows 侧已在托管干净机 `windows-2022` 上跑过一次完整档 `instal
 ```bash
 dsh plugin --profile web add envoy-dsh
 # 或装发行包，不经过 npm
-dsh plugin --profile web add https://github.com/regrevia/Envoy/releases/download/v0.1.45/envoy-dsh-0.1.45.tgz
+dsh plugin --profile web add https://github.com/regrevia/Envoy/releases/download/v0.1.46/envoy-dsh-0.1.46.tgz
 ```
 
 桌面版把 CLI 装在应用包内，用脚本时它会自己找到。
@@ -101,12 +101,12 @@ curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/in
 `~/.envoy/skill/envoy`（`ENVOY_SKILL_DIR` 可改目标）。要手工来一遍：
 
 ```bash
-gh release download v0.1.45 --repo regrevia/Envoy --dir envoy-v0.1.45
-cd envoy-v0.1.45
-uv tool install --python 3.11 ./envoy_cli-0.1.45-py3-none-any.whl
+gh release download v0.1.46 --repo regrevia/Envoy --dir envoy-v0.1.46
+cd envoy-v0.1.46
+uv tool install --python 3.11 ./envoy_cli-0.1.46-py3-none-any.whl
 ```
 
-也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.45)
+也可以在 [GitHub Release](https://github.com/regrevia/Envoy/releases/tag/v0.1.46)
 页面上直接下载 wheel 与 `SHA256SUMS` 手工核对。下载慢或装依赖超时，给
 `install.sh` 设 `ENVOY_PYPI_INDEX_URL` 指向可用镜像即可。
 
@@ -135,16 +135,17 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","so
 
 ## 三档安装 / Three profiles
 
-默认是完整档，装完没有「首次使用时还要下载」的能力：
+默认是最小档：装完只有 runtime。「首次使用时才下载」的两项（Chromium、Whisper
+权重）由缺失时报错里的命令取回；想装完就能离线用全部能力，选 `full`。
 
 | 档位 | 装什么 | 大致体积 | 适合 |
 | --- | --- | --- | --- |
-| `minimal` 简洁 | 只有 runtime：读普通网页、PDF、图片 | 178 MB | 磁盘吃紧的容器 / CI |
+| `minimal` 简洁（默认） | 只有 runtime：读普通网页、PDF、图片 | 178 MB | 磁盘吃紧的容器 / CI，愿意首次需要时再下载 |
 | `standard` 标准 | runtime + Chromium：再加必须渲染的页面、视频页 | 178 + 683 MB | 只用网页能力，不需要转写 |
-| `full` 完整（默认，推荐） | 上一档 + Whisper `base`：字幕、语音、无字幕视频都能转写 | 上一档 + Whisper 依赖 + 权重约 140 MB | 默认选这个 |
+| `full` 完整（推荐给离线/计量网络） | 上一档 + Whisper `base`：字幕、语音、无字幕视频都能转写 | 上一档 + Whisper 依赖 + 权重约 140 MB | 装完不再下载，全部能力离线可用 |
 
 ```bash
-# 不写 --profile 就是完整档
+# 不写 --profile 就是最小档（178 MB）
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh
 # 只装 runtime
 curl -fsSL .../install.sh | sh -s -- --profile minimal dsh
@@ -173,10 +174,13 @@ Playwright 每升一次就换个浏览器版本、从不删旧的，所以升级
 即可，两步都是幂等的。
 
 English: the installer takes `--profile minimal|standard|full` (`ENVOY_PROFILE` is
-the same knob) and defaults to `full`, so a fresh install already has Chromium and
-the Whisper `base` model — nothing downloads on first use. Runtime 178 MB and
-Chromium 683 MB are measured on macOS; the Whisper dependency set (torch is most
-of it) varies by platform and is not measured here.
+the same knob) and defaults to `minimal` — the runtime alone, about 178 MB. The
+first page that needs rendering names `envoy browser setup` (a one-time ~683 MB
+Chromium download) and the first transcript names `envoy asr install --model base`
+(~140 MB of weights); `--profile full` prefetches both, so nothing downloads on
+first use. Runtime 178 MB was measured on macOS and Chromium 683 MB on the
+measured Windows host (see the size note above); the Whisper dependency set (torch
+is most of it) varies by platform and is not measured here.
 
 ## 更新与卸载 / Update and remove
 
@@ -185,7 +189,7 @@ of it) varies by platform and is not measured here.
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh -s -- dsh
 
 # 单独换 wheel
-uv tool install --force --python 3.11 ./envoy_cli-0.1.45-py3-none-any.whl
+uv tool install --force --python 3.11 ./envoy_cli-0.1.46-py3-none-any.whl
 
 # 卸载
 claude plugin uninstall envoy
