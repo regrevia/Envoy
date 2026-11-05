@@ -118,3 +118,33 @@ env envoy read --request-json /tmp/bili-req.json    # request shape below
 
 The `/tmp/bili-req.json` shape is what the acceptance harness submits; the read
 takes ~19 s here and writes the full JSON response.
+
+## Next Acceptance Order, item by item
+
+The five items below come from
+[platform-coverage-matrix-2026-10-21.md](platform-coverage-matrix-2026-10-21.md)
+and are restated here with the state this pass leaves them in. Nothing is
+promoted to "accepted" by this run; a platform is accepted only when a
+repeatable fixture and a real public sample both return video-level evidence.
+
+1. **Real YouTube and Bilibili subtitle/ASR after browser changes.** Partly
+   closed. YouTube returned timed subtitle segments. Bilibili returned page
+   text only, with `missing_capability` naming the local ASR install command:
+   this machine has no Whisper weights inside the reported cache, so the video
+   path could not run end to end. Open until one Bilibili sample returns
+   `[mm:ss]` segments or a local transcript.
+2. **A public Douyin sample with a dismissible popup.** Not run in this pass.
+   Open. The dismissal path is exercised elsewhere, but no Douyin sample from
+   this round is recorded here, so it is not claimed.
+3. **Instagram, Vimeo, and Dailymotion probed separately.** Closed as probes.
+   The three differ in kind and are reported as such: Vimeo is readable once
+   the proxy fallback engages, Instagram stops at a real login wall
+   (`auth_required`, no content read), Dailymotion returned `blocked` with zero
+   content. Open as acceptance until item 4 is met.
+4. **One repeatable fixture plus one real public sample per platform.** Not
+   met. The `raw/` directory holds real response bodies from real public URLs;
+   no fixtures were added, so no platform is accepted.
+5. **WeChat articles and direct PDF/CDN links stay separate source classes.**
+   Unchanged by this pass. The deferred video fallback added for item 1 only
+   applies to sources with a specialized extractor or a direct media URL, so
+   article and PDF/CDN access controls are untouched.
