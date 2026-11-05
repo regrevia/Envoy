@@ -15,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import threading
 import time
 import urllib.request
 from contextlib import contextmanager, redirect_stdout
