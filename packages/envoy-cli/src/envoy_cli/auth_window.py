@@ -171,7 +171,7 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
         try:
             from . import authflow
 
-            authflow.mark_profile_session(urlparse(str(url or "")).hostname or "")
+            authflow.mark_profile_session(urlparse(str(source_url or "")).hostname or "")
         except Exception:  # noqa: BLE001 - the verification result still stands
             pass
     elif looks_like_login:
