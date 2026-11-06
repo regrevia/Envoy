@@ -736,6 +736,20 @@ def _page_state(page) -> tuple[str, str, bool]:
     return title, text, challenge
 
 
+def _egress_blocked(title: str, text: str) -> bool:
+    """True when the page is the site refusing our network, not our reader.
+
+    Xiaohongshu answers a suspicious egress with a 41-character
+    `安全限制 / 300012` page: no login form, no article. Capturing it reports a
+    wall the page never had, and paging the user to sign in would be wrong. The
+    marker list already exists for the HTTP path, so it is imported lazily
+    instead of copied: `reader` imports this module.
+    """
+    from .reader import _challenge_suggests_egress_issue
+
+    return _challenge_suggests_egress_issue(title, text)
+
+
 def _guard_route(route, dns_cache: dict[str, str]) -> None:
     from .reader import _is_public_http_url
 
@@ -1110,6 +1124,7 @@ def read_page(
 
         challenge_proxy: str | None = None
         last_error: Exception | None = None
+        egress_title: str | None = None
         if only_proxy:
             selected = explicit_proxy() or detected_proxy()
             if not selected:
@@ -1136,8 +1151,13 @@ def read_page(
                 # challenge and escalate to a window the user never asked for.
                 _dismiss_overlays(page)
                 _close_extra_pages(context, page)
-                _title, _text, challenge = _page_state(page)
+                title, text, challenge = _page_state(page)
                 if not challenge:
+                    if _egress_blocked(title, text):
+                        # Risk control is per egress, so the next entry in
+                        # `proxy_plan()` is a different network and may pass.
+                        egress_title = title or text[:60]
+                        continue
                     return _capture(page, source_url)
                 challenge_proxy = proxy_server
                 break
@@ -1148,6 +1168,15 @@ def read_page(
         else:
             if last_error is not None:
                 raise last_error
+            if egress_title is not None:
+                # Every egress Envoy has was refused by the site's network risk
+                # control (Xiaohongshu's `安全限制` + error 300012). That is an
+                # egress problem, so it must not become `challenge_required` and
+                # ask the user for a sign-in the page never requested.
+                raise BrowserReadError(
+                    "The site refused every route Envoy tried with its network "
+                    f"risk control ({egress_title}); retry from another network"
+                )
             raise BrowserReadError("The page could not be opened")
 
         if time.monotonic() >= deadline:

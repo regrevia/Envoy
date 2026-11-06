@@ -1,5 +1,43 @@
 # 更新日志 / Changelog
 
+## 0.1.48 - 2026-11-06
+
+### 中文
+
+- 修好 DSH 插件里 MCP 连接起不来（`include:envoy-mcp` 纤维 `failed`、
+  `initial connection or tool synchronization failed`）：该条目原先用 `command: node`
+  启动桥接进程，而桌面宿主由 launchd/Explorer 用系统默认 PATH 拉起，PATH 上没有 `node`，
+  spawn 直接 ENOENT，连 MCP 握手都没开始。宿主自己就是 Node，改为
+  `command: !!js process.execPath`，用宿主自己的可执行文件启动（`cordis.patch.yml`）。
+- 插件 launcher 找 `envoy` 时不再只看 PATH：GUI 启动的进程 PATH 里没有 `~/.local/bin`，
+  现在按「`ENVOY_BIN` → PATH → 知名安装目录（`~/.local/bin`、uv tool shim、
+  Homebrew、`/usr/local/bin`）→ 私有安装」的顺序解析（`launch.cjs` `wellKnownDirs()`）。
+- 浏览器读取不再把站点的网络风控页误报成登录墙：小红书对可疑出口返回 41 字的
+  `安全限制 / 当前网络存在风险 / 300012` 页面，以前被当成「读取成功」，上层再把它当
+  `challenge_required`，让用户去扫码登录——页面从没要过登录。现在该页面被判为出口风控，
+  换 `proxy_plan()` 里的下一条出口（系统代理）重试；全部出口都被拒时如实返回
+  `network_error`（`browser._egress_blocked`，复用 `reader._challenge_suggests_egress_issue`
+  的标记集，错误码不再落成 `challenge_required`）。
+
+### English
+
+- Fixed the DSH plugin's MCP connection never starting (`include:envoy-mcp` fiber `failed`,
+  `initial connection or tool synchronization failed`): the entry launched the bridge with
+  `command: node`, but the desktop Host is started by launchd/Explorer with the system PATH,
+  which has no `node` on it, so the spawn died with ENOENT before the MCP handshake. The Host is
+  itself Node, so the entry now uses `command: !!js process.execPath` (`cordis.patch.yml`).
+- The plugin launcher no longer trusts PATH alone to find `envoy`: a GUI-launched process has no
+  `~/.local/bin` on PATH, so resolution is now `ENVOY_BIN` → PATH → well-known install
+  directories (`~/.local/bin`, uv tool shims, Homebrew, `/usr/local/bin`) → private install
+  (`launch.cjs` `wellKnownDirs()`).
+- Browser reads stop mislabelling a site's network risk control as a login wall: Xiaohongshu
+  answers a suspicious egress with a 41-character `安全限制 / 300012` page, which was captured as
+  a successful read and then reported as `challenge_required`, sending the user to a sign-in the
+  page never asked for. That page is now treated as an egress refusal and the next entry in
+  `proxy_plan()` (the system proxy) is tried; when every route is refused the read returns
+  `network_error` instead (`browser._egress_blocked`, reusing
+  `reader._challenge_suggests_egress_issue`'s marker set).
+
 ## 0.1.47 - 2026-11-06
 
 ### 中文

@@ -8,7 +8,8 @@
 // dependable.
 //
 // It keeps the documented contract: resolve `ENVOY_BIN`, then `envoy` on PATH,
-// then the private runtime under the Envoy data dir; compare `envoy --version`
+// then `envoy` in the well-known install directories, then the private runtime
+// under the Envoy data dir; compare `envoy --version`
 // against the required minimum; provision or upgrade the private runtime from
 // the release wheel when needed; then exec `envoy mcp` with stdio inherited so
 // the MCP client talks to the Envoy process directly.
@@ -26,7 +27,7 @@ const { homedir, tmpdir } = require('node:os')
 const { delimiter, join } = require('node:path')
 
 const IS_WINDOWS = process.platform === 'win32'
-const VERSION = process.env.ENVOY_DSH_VERSION || '0.1.47'
+const VERSION = process.env.ENVOY_DSH_VERSION || '0.1.48'
 const REQUIRED = process.env.ENVOY_DSH_REQUIRED_RUNTIME || VERSION
 const WHEEL =
   'https://github.com/regrevia/Envoy/releases/download/v' + VERSION +
@@ -52,8 +53,30 @@ const BIN_DIR = IS_WINDOWS ? join(RUNTIME, 'Scripts') : join(RUNTIME, 'bin')
 const RUNTIME_BIN = IS_WINDOWS ? join(BIN_DIR, 'envoy.exe') : join(BIN_DIR, 'envoy')
 const RUNTIME_PY = IS_WINDOWS ? join(BIN_DIR, 'python.exe') : join(BIN_DIR, 'python')
 
+// Directories a GUI launch never gets on PATH. A desktop Host is started by
+// launchd (macOS) or Explorer (Windows), so its PATH is the system default and
+// holds neither the uv tool shims nor Homebrew: `envoy` and `uv` live in
+// `~/.local/bin` and are invisible to the plain PATH lookup below, which would
+// push every such install into a wheel download it cannot complete either.
+function wellKnownDirs() {
+  if (IS_WINDOWS) {
+    const base = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+    return [join(base, 'Programs', 'Python', 'Scripts'), join(homedir(), 'AppData', 'Roaming', 'Python', 'Scripts')]
+  }
+  return [
+    join(homedir(), '.local', 'bin'),
+    join(homedir(), '.local', 'share', 'uv', 'tools', 'envoy-cli', 'bin'),
+    join(homedir(), '.cargo', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+  ]
+}
+
 // Resolve a command the way a shell would, honouring PATHEXT on Windows so
-// `uv.cmd` and `python.exe` are found.
+// `uv.cmd` and `python.exe` are found. PATH comes first, so an install the user
+// put on PATH on purpose still wins over the fallback list.
 function which(command) {
   if (!command) return ''
   if (command.indexOf('/') >= 0 || command.indexOf('\\') >= 0) {
@@ -63,6 +86,9 @@ function which(command) {
     ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
     : ['']
   const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean)
+  for (const dir of wellKnownDirs()) {
+    if (dirs.indexOf(dir) < 0) dirs.push(dir)
+  }
   for (const dir of dirs) {
     for (const ext of exts) {
       const candidate = join(dir, command + ext)

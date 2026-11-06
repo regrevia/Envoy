@@ -24,6 +24,27 @@ INDEX = PACKAGE_DIR / "index.js"
 PATCH = PACKAGE_DIR / "cordis.patch.yml"
 
 
+class _PatchLoader(yaml.SafeLoader):
+    """SafeLoader that keeps `!!js` scalars addressable instead of exploding.
+
+    The bundle patch is Cordis entry-list YAML, whose dialect adds a `!!js` tag
+    for a value the loader evaluates at runtime (the Host's `!!js` evaluator is
+    `with (ctx) { eval(expr) }`). PyYAML knows no such tag, so plain
+    `safe_load` raises; here the scalar is kept as `{"__jsExpr": source}` so a
+    test can assert both the literal expression and that the value is dynamic.
+    """
+
+
+_PatchLoader.add_constructor(
+    "tag:yaml.org,2002:js",
+    lambda loader, node: {"__jsExpr": loader.construct_scalar(node)},
+)
+
+
+def _load_patch() -> list:
+    return yaml.load(PATCH.read_text(encoding="utf-8"), Loader=_PatchLoader)
+
+
 def _node_command() -> list[str]:
     """The argv prefix that runs `node` on this host, spawnable by subprocess.
 
@@ -152,7 +173,7 @@ def test_patch_mounts_envoy_mcp_and_skill_provider():
 
 def _inflate_inline_launcher() -> str:
     """Recover launch.cjs from the gzipped+base64 payload in cordis.patch.yml."""
-    entry = yaml.safe_load(PATCH.read_text(encoding="utf-8"))[0]["insert"][0]
+    entry = _load_patch()[0]["insert"][0]
     stub = entry["config"]["args"][1]
     match = re.search(r"Buffer\.from\('([A-Za-z0-9+/=]+)'", stub)
     assert match, "inline launcher payload not found"
@@ -162,9 +183,13 @@ def _inflate_inline_launcher() -> str:
 def test_patch_launches_node_not_posix_shell():
     """Windows has no /bin/sh; the bridge must start the same way on every OS."""
     patch_text = PATCH.read_text(encoding="utf-8")
-    entry = yaml.safe_load(patch_text)[0]["insert"][0]
+    entry = _load_patch()[0]["insert"][0]
     config = entry["config"]
-    assert config["command"] == "node"
+    # Not "node": a desktop Host is started by launchd/Explorer with the system
+    # PATH, which has no node on it, so spawning a bare `node` dies with ENOENT
+    # before the MCP handshake starts. The Host is itself Node, so its own
+    # executable is the one node every Host is guaranteed to have.
+    assert config["command"] == {"__jsExpr": "process.execPath"}
     assert config["args"][0] == "-e"
     # The old launcher's fingerprints must be gone from the executable part.
     # (The prose may name /bin/sh while explaining why it is not used.)
@@ -188,7 +213,7 @@ def test_patch_inline_script_matches_the_launcher_source():
 
 def test_internal_launcher_stub_is_short_enough_for_cmd():
     """A .cmd shim runs through cmd.exe, which caps a command line at 8191 chars."""
-    entry = yaml.safe_load(PATCH.read_text(encoding="utf-8"))[0]["insert"][0]
+    entry = _load_patch()[0]["insert"][0]
     stub = entry["config"]["args"][1]
     assert len(stub) < 8000, f"inline stub is {len(stub)} chars; cmd.exe caps at 8191"
 
@@ -200,7 +225,7 @@ def _inline_script() -> str:
     command line on Windows (where `node` is often a .cmd shim) and fail for a
     reason that has nothing to do with the launcher.
     """
-    entry = yaml.safe_load(PATCH.read_text(encoding="utf-8"))[0]["insert"][0]
+    entry = _load_patch()[0]["insert"][0]
     return entry["config"]["args"][1]
 
 
