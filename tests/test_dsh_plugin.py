@@ -182,7 +182,6 @@ def _inflate_inline_launcher() -> str:
 
 def test_patch_launches_node_not_posix_shell():
     """Windows has no /bin/sh; the bridge must start the same way on every OS."""
-    patch_text = PATCH.read_text(encoding="utf-8")
     entry = _load_patch()[0]["insert"][0]
     config = entry["config"]
     # Not "node": a desktop Host is started by launchd/Explorer with the system

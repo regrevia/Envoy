@@ -736,18 +736,31 @@ def _page_state(page) -> tuple[str, str, bool]:
     return title, text, challenge
 
 
+# Wording a site uses when it refuses this network exit rather than the reader:
+# no login form, no article, and the only fix is a different exit. Kept apart
+# from the reader's wider challenge list because markers such as
+# `请求存在异常 / 限制本次访问` are also what a login-resolvable challenge says.
+_EGRESS_CONTROL_MARKERS = (
+    "安全限制",
+    "ip存在风险",
+    "ip 存在风险",
+    "切换可靠网络",
+    "访问过于频繁",
+    "请求过于频繁",
+    "too many requests",
+    "300012",
+)
+
+
 def _egress_blocked(title: str, text: str) -> bool:
     """True when the page is the site refusing our network, not our reader.
 
     Xiaohongshu answers a suspicious egress with a 41-character
-    `安全限制 / 300012` page: no login form, no article. Capturing it reports a
-    wall the page never had, and paging the user to sign in would be wrong. The
-    marker list already exists for the HTTP path, so it is imported lazily
-    instead of copied: `reader` imports this module.
+    `安全限制 / 300012` page. Capturing it reports a wall the page never had,
+    and paging the user to sign in would be wrong.
     """
-    from .reader import _challenge_suggests_egress_issue
-
-    return _challenge_suggests_egress_issue(title, text)
+    haystack = f"{title}\n{text[:5000]}".lower()
+    return any(marker in haystack for marker in _EGRESS_CONTROL_MARKERS)
 
 
 def _guard_route(route, dns_cache: dict[str, str]) -> None:
