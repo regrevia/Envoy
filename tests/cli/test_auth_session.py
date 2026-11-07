@@ -160,7 +160,10 @@ def test_envoy_auth_is_in_the_core_toolset_and_asks_nothing_new_of_a_host():
     ]
 
 
-def test_auth_payload_hands_the_model_a_line_that_renders_the_picture(monkeypatch):
+def test_auth_payload_hands_the_model_a_line_that_renders_the_picture(monkeypatch, tmp_path):
+    screen = tmp_path / "qr.png"
+    screen.write_bytes(b"png")
+    line = f"![扫码登录或验证](<{screen}>)"
     monkeypatch.setattr(
         mcp.auth_session,
         "start",
@@ -169,26 +172,26 @@ def test_auth_payload_hands_the_model_a_line_that_renders_the_picture(monkeypatc
             "host": "xiaohongshu.com",
             "source_url": url,
             "status": "waiting",
-            "screen_path": "/tmp/envoy-auth/qr.png",
+            "screen_path": str(screen),
             "screen_mime": "image/png",
         },
     )
     payload = mcp._auth_payload({"action": "open", "url": "https://www.xiaohongshu.com/explore/1"})
-    assert payload["picture_markdown"] == "![扫码登录或验证](</tmp/envoy-auth/qr.png>)"
+    assert payload["picture_markdown"] == line
     assert "picture_markdown" in payload["instruction"]
 
     monkeypatch.setattr(
         mcp.auth_session,
         "status",
-        lambda action_id: {"action_id": action_id, "status": "waiting", "screen_path": "/tmp/envoy-auth/qr.png"},
+        lambda action_id: {"action_id": action_id, "status": "waiting", "screen_path": str(screen)},
     )
     waiting = mcp._auth_payload({"action": "status", "action_id": "auth-abc"})
-    assert waiting["picture_markdown"] == "![扫码登录或验证](</tmp/envoy-auth/qr.png>)"
+    assert waiting["picture_markdown"] == line
 
     monkeypatch.setattr(
         mcp.auth_session,
         "status",
-        lambda action_id: {"action_id": action_id, "status": "signed_in", "screen_path": "/tmp/envoy-auth/qr.png"},
+        lambda action_id: {"action_id": action_id, "status": "signed_in", "screen_path": str(screen)},
     )
     signed_in = mcp._auth_payload({"action": "status", "action_id": "auth-abc"})
     assert "picture_markdown" not in signed_in
