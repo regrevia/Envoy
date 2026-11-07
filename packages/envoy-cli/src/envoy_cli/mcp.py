@@ -2103,6 +2103,34 @@ def _local_unsupported_payload(
     }
 
 
+def _picture_markdown(screen_path: Any, label: str = "扫码登录或验证") -> str:
+    """Turn a screenshot path into a line the model can relay verbatim.
+
+    A host that renders only text still shows the picture if the text carries
+    markdown image syntax pointing at the absolute path, so the human sees the
+    QR code without the model having to invent any markup of its own.
+    """
+
+    path = str(screen_path or "").strip()
+    if not path or not Path(path).is_absolute():
+        return ""
+    return f"![{label}](<{path}>)"
+
+
+def _egress_blocked_instruction(result: dict) -> str:
+    """The verdict a risk-control page earns: no picture, no retry, a new egress."""
+
+    detail = str(result.get("reason") or "the site refused this network's sign-in page")
+    return (
+        f"this sign-in cannot work here: {detail}. Do not show the screenshot and "
+        "do not ask the user to scan anything; scanning cannot clear a block the "
+        "site applies to the network itself. Tell them this link needs a different "
+        "network egress (their own connection, another proxy or VPN), and do not "
+        "call envoy_read on this link from this machine again while it reports the "
+        "same block."
+    )
+
+
 def _auth_payload(arguments: dict) -> dict:
     """Shape one envoy_auth call into a payload every host can render.
 
@@ -2158,11 +2186,20 @@ def _auth_payload(arguments: dict) -> dict:
             visible=bool(arguments.get("visible")),
         )
         payload.update(result)
+        if result.get("egress_blocked"):
+            payload["result"] = "blocked"
+            payload["instruction"] = _egress_blocked_instruction(result)
+            return payload
+        picture = _picture_markdown(result.get("screen_path"))
+        if picture:
+            payload["picture_markdown"] = picture
         payload["result"] = "ready" if result.get("screen_path") else "starting"
         payload["instruction"] = (
             "show the user the picture at screen_path (it is usually their sign-in "
             "QR code) and ask them to scan or finish the verification; the browser "
-            "keeps running in the background. When they say they are done, call "
+            "keeps running in the background. Relay picture_markdown as a line of "
+            "its own so the picture renders in the chat, and keep screen_path in "
+            "case they open it directly. When they say they are done, call "
             "envoy_auth {action:'status', action_id} and then re-read source_url "
             "with envoy_read; never repeat a read before the status says signed_in."
         )
@@ -2181,7 +2218,14 @@ def _auth_payload(arguments: dict) -> dict:
                 browser.reset_profile_cookie_cache()
             except Exception:  # noqa: BLE001 - a cache flush must not fail the call
                 pass
+        if result.get("egress_blocked"):
+            payload["result"] = "blocked"
+            payload["instruction"] = _egress_blocked_instruction(result)
+            return payload
         payload["result"] = "ready" if signed_in else "waiting"
+        waiting_picture = "" if signed_in else _picture_markdown(result.get("screen_path"))
+        if waiting_picture:
+            payload["picture_markdown"] = waiting_picture
         payload["instruction"] = (
             "the sign-in worked; the session now lives in Envoy's own profile and "
             "every later leg uses it (page fetch, isolated browser, yt-dlp subtitle "
@@ -2189,8 +2233,8 @@ def _auth_payload(arguments: dict) -> dict:
             "refuses, the site wants a different account or an extra step, not a "
             "second sign-in."
             if signed_in
-            else "still waiting for the human; show screen_path again if they lost "
-            "it, do not re-read the source yet"
+            else "still waiting for the human; relay picture_markdown again if they "
+            "lost it, do not re-read the source yet"
         )
     elif action == "cancel":
         if not action_id:

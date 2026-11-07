@@ -1,5 +1,34 @@
 # 更新日志 / Changelog
 
+## 0.1.49 - 2026-11-07
+
+### 中文
+
+- `envoy_auth` 的 `open` / `status` 现在把登录页截图变成一行可直接转发的
+  markdown（`picture_markdown`）：模型把这一行原样发出去，聊天里就渲染出二维码，
+  不用再让用户自己去找图片路径。相对路径一律不转，避免生成点不开的链接
+  （`mcp._picture_markdown`）。
+- 站点的网络风控页不再被当成「登录成功」。小红书对可疑出口连二维码创建接口都拒
+  （`error_code=300012`，跳到 `/website-login/error`），以前 `auth status` 会报
+  `signed_in`，调用方据此重读又失败一遍。现在这种页面判为 `failed` 并带
+  `egress_blocked`，`envoy_auth` 返回 `result: blocked` 与「别再扫码、换网络出口」
+  的指令，不再给出无意义的错误页截图（`auth_session._risk_controlled`）。
+
+### English
+
+- `envoy_auth` `open` / `status` turn the sign-in screenshot into one relayable
+  markdown line (`picture_markdown`), so the picture renders in the chat instead
+  of leaving the user to find the file path. Relative paths are never turned into
+  a link (`mcp._picture_markdown`).
+- A network risk-control page no longer counts as a finished sign-in.
+  Xiaohongshu refuses even its QR create API on a flagged egress
+  (`error_code=300012`, redirects to `/website-login/error`); `auth status` used
+  to report `signed_in`, sending the caller into a read that failed again. Such a
+  page is now `failed` with `egress_blocked`, `envoy_auth` answers
+  `result: blocked` with a "stop scanning, change the network egress" instruction,
+  and the useless error screenshot is no longer offered
+  (`auth_session._risk_controlled`).
+
 ## 0.1.48 - 2026-11-06
 
 ### 中文

@@ -60,6 +60,20 @@ _BLOCKED_HINTS = (
     "forbidden",
     "too many requests",
 )
+# A risk-control page refuses the sign-in entry itself (Xiaohongshu answers the
+# QR create API with error_code 300012 and lands on /website-login/error). No
+# scan can clear it: the verdict is about the network egress, so the state must
+# say so instead of reporting a sign-in that never happened.
+_RISK_CONTROL_HINTS = (
+    "安全限制",
+    "ip存在风险",
+    "ip 存在风险",
+    "切换可靠网络",
+    "访问过于频繁",
+    "请求过于频繁",
+    "too many requests",
+    "300012",
+)
 # A page that still sits on the site's sign-in path has not moved past the gate
 # even when its wording carries no hint word (a password form, a QR panel).
 _LOGIN_PATH_HINTS = ("/login", "/signin", "/sign-in", "/passport", "/auth/", "/sso")
@@ -87,6 +101,15 @@ def _looks_blocked(text: str) -> bool:
     if not text.strip():
         return False
     return any(hint in lowered for hint in _BLOCKED_HINTS)
+
+
+def _risk_controlled(title: str, text: str, url: str = "") -> bool:
+    """True when the site refused the network itself, not the sign-in step."""
+
+    haystack = f"{title}\n{text}\n{url}".lower()
+    if not haystack.strip():
+        return False
+    return any(hint in haystack for hint in _RISK_CONTROL_HINTS)
 
 
 def _login_url(url: str) -> str:
@@ -201,6 +224,8 @@ def start(
         "log_path": str(work / "session.log"),
         "browser_pid": current.get("pid"),
         "final_url": current.get("final_url") or "",
+        "egress_blocked": bool(current.get("egress_blocked")),
+        "reason": str(current.get("reason") or ""),
     }
 
 
@@ -222,6 +247,8 @@ def status(action_id: str) -> dict:
         "screen_path": screen if screen and Path(screen).exists() else "",
         "screen_mime": "image/png",
         "final_url": current.get("final_url") or "",
+        "egress_blocked": bool(current.get("egress_blocked")),
+        "reason": str(current.get("reason") or ""),
         "browser_alive": alive,
         "action_status": action.get("status"),
         "action_url": action.get("source_url"),
@@ -288,6 +315,7 @@ def _worker(
         {"status": "starting", "pid": os.getpid(), "updated_at": time.time()},
     )
     signed_in = False
+    risk_blocked = False
     status = "waiting"
     final_url = ""
     try:
@@ -353,6 +381,9 @@ def _worker(
                                 "updated_at": time.time(),
                             },
                         )
+                    if _risk_controlled(_title, text, final_url):
+                        risk_blocked = True
+                        break
                     if (
                         challenged
                         and len(text.strip()) > 20
@@ -363,7 +394,7 @@ def _worker(
                     if _looks_like_gate(_title, text, final_url):
                         challenged = True
                     time.sleep(1.5)
-                status = "signed_in" if signed_in else "waiting"
+                status = "failed" if risk_blocked else ("signed_in" if signed_in else "waiting")
             finally:
                 try:
                     context.close()
@@ -395,6 +426,14 @@ def _worker(
             "pid": None,
             "screenshot": str(shot) if shot.exists() else "",
             "final_url": final_url,
+            "egress_blocked": risk_blocked,
+            "reason": (
+                "the site's network risk control refused the sign-in page itself, "
+                "so this sign-in cannot clear it; a different network egress is "
+                "what the site asks for"
+                if risk_blocked
+                else ""
+            ),
             "updated_at": time.time(),
         },
     )

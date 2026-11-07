@@ -158,3 +158,71 @@ def test_envoy_auth_is_in_the_core_toolset_and_asks_nothing_new_of_a_host():
         "cancel",
         "import",
     ]
+
+
+def test_auth_payload_hands_the_model_a_line_that_renders_the_picture(monkeypatch):
+    monkeypatch.setattr(
+        mcp.auth_session,
+        "start",
+        lambda url, **kwargs: {
+            "action_id": "auth-abc",
+            "host": "xiaohongshu.com",
+            "source_url": url,
+            "status": "waiting",
+            "screen_path": "/tmp/envoy-auth/qr.png",
+            "screen_mime": "image/png",
+        },
+    )
+    payload = mcp._auth_payload({"action": "open", "url": "https://www.xiaohongshu.com/explore/1"})
+    assert payload["picture_markdown"] == "![扫码登录或验证](</tmp/envoy-auth/qr.png>)"
+    assert "picture_markdown" in payload["instruction"]
+
+    monkeypatch.setattr(
+        mcp.auth_session,
+        "status",
+        lambda action_id: {"action_id": action_id, "status": "waiting", "screen_path": "/tmp/envoy-auth/qr.png"},
+    )
+    waiting = mcp._auth_payload({"action": "status", "action_id": "auth-abc"})
+    assert waiting["picture_markdown"] == "![扫码登录或验证](</tmp/envoy-auth/qr.png>)"
+
+    monkeypatch.setattr(
+        mcp.auth_session,
+        "status",
+        lambda action_id: {"action_id": action_id, "status": "signed_in", "screen_path": "/tmp/envoy-auth/qr.png"},
+    )
+    signed_in = mcp._auth_payload({"action": "status", "action_id": "auth-abc"})
+    assert "picture_markdown" not in signed_in
+
+
+def test_a_relative_screenshot_path_never_becomes_a_chat_link():
+    assert mcp._picture_markdown("qr.png") == ""
+    assert mcp._picture_markdown("") == ""
+    assert mcp._picture_markdown(None) == ""
+
+
+def test_a_network_risk_control_page_is_not_a_signed_in_session():
+    blocked = "安全限制 当前网络存在风险，请切换可靠网络后重试 300012"
+    assert auth_session._risk_controlled("", blocked, "https://www.xiaohongshu.com/website-login/error") is True
+    assert auth_session._risk_controlled("", "扫码登录 请使用小红书App扫描二维码", "/login") is False
+    assert auth_session._risk_controlled("", "", "") is False
+
+
+def test_auth_payload_open_stops_at_the_network_verdict(monkeypatch):
+    monkeypatch.setattr(
+        mcp.auth_session,
+        "start",
+        lambda url, **kwargs: {
+            "action_id": "auth-abc",
+            "host": "www.xiaohongshu.com",
+            "source_url": url,
+            "status": "failed",
+            "screen_path": "/tmp/envoy-auth/blocked.png",
+            "egress_blocked": True,
+            "reason": "the site's network risk control refused the sign-in page itself",
+        },
+    )
+    payload = mcp._auth_payload({"action": "open", "url": "https://www.xiaohongshu.com/explore/1"})
+    assert payload["result"] == "blocked"
+    assert "picture_markdown" not in payload
+    assert "different network egress" in payload["instruction"]
+    assert "scan" in payload["instruction"]
