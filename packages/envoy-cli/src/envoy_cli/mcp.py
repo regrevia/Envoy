@@ -2306,12 +2306,36 @@ def _media_source_host(url: Any) -> bool:
     return any(host == suffix or host.endswith("." + suffix) for suffix in _MEDIA_SOURCE_HOSTS)
 
 
+_OBJECT_ARGUMENTS = ("budget", "retention", "scope", "host_capabilities", "source")
+
+
+def _coerce_object_arguments(prepared: dict) -> None:
+    """Decode JSON-stringified object parameters sent by some MCP hosts (#20)."""
+
+    for key in _OBJECT_ARGUMENTS:
+        raw = prepared.get(key)
+        if not isinstance(raw, str):
+            continue
+        stripped = raw.strip()
+        if not stripped.startswith("{"):
+            raise ValueError(f"{key} must be a JSON object")
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{key} must be a valid JSON object: {exc.msg}") from exc
+        if not isinstance(decoded, dict):
+            raise ValueError(f"{key} must be a JSON object")
+        prepared[key] = decoded
+
+
 def _default_budget_for(name: str, prepared: dict) -> None:
     """Give a media read enough time when the caller did not choose a budget."""
 
     if name != "envoy_read":
         return
     budget = prepared.get("budget")
+    if budget is not None and not isinstance(budget, dict):
+        raise ValueError("budget must be an object")
     if isinstance(budget, dict):
         budget = dict(budget)
         # The tool description tells callers to raise max_response_chars for long
@@ -2342,6 +2366,7 @@ def _server_arguments(name: str, arguments: dict) -> dict:
     """
 
     prepared = dict(arguments)
+    _coerce_object_arguments(prepared)
     model = {
         "envoy_read": ReadRequest,
         "envoy_read_local_video": LocalVideoReadRequest,
@@ -2955,3 +2980,4 @@ def main(toolset: str | None = None) -> int:
         print(f"envoy mcp: {exc}", file=sys.stderr)
         return 2
     return run_stream(sys.stdin, sys.stdout, selected_toolset)
+
