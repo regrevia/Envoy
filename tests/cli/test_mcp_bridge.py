@@ -1915,6 +1915,81 @@ def test_mcp_bridge_gives_media_reads_more_time_by_default(monkeypatch):
     assert "budget" not in plain
 
 
+def test_mcp_bridge_accepts_a_budget_serialized_as_a_json_string():
+    from envoy_cli import mcp
+    from envoy_core.schemas.read_v1 import ReadRequest
+
+    # Some hosts pass tool arguments as JSON strings. A string budget used to
+    # reach _default_budget_for unchanged; for a media source it was then read
+    # with .get and the tool call died inside the bridge as an internal error
+    # instead of answering as bad arguments (#20).
+    media = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://www.douyin.com/video/7705049748251725094"},
+            "goal": "g",
+            "budget": '{"max_work_seconds": 300}',
+        },
+    )
+    assert media["budget"] == {"max_work_seconds": 300}
+    assert ReadRequest.model_validate(media).budget.max_work_seconds == 300
+
+    # Surrounding whitespace and a non-media source go through the same door.
+    plain = mcp._server_arguments(
+        "envoy_read",
+        {
+            "source": {"url": "https://example.org/article"},
+            "goal": "g",
+            "budget": '  {"max_response_chars": 900}  ',
+        },
+    )
+    assert plain["budget"] == {"max_response_chars": 900}
+
+
+@pytest.mark.parametrize("budget", ["not json", "[300]", "300", "null", '"budget"'])
+def test_mcp_bridge_rejects_a_budget_that_is_not_a_json_object(budget):
+    from envoy_cli import mcp
+
+    with pytest.raises(ValueError):
+        mcp._server_arguments(
+            "envoy_read",
+            {
+                "source": {"url": "https://example.org/article"},
+                "goal": "g",
+                "budget": budget,
+            },
+        )
+
+
+def test_a_bad_budget_answers_as_invalid_arguments_not_an_internal_error(capsys):
+    from envoy_cli import mcp
+
+    exit_code = mcp.run_lines(
+        [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "envoy_read",
+                    "arguments": {
+                        "source": {"url": "https://example.org/article"},
+                        "goal": "g",
+                        "budget": "not json",
+                    },
+                },
+            },
+        ],
+        toolset="core",
+    )
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert exit_code == 0
+    assert lines[1]["error"]["code"] == -32602
+    assert "budget must be a JSON object" in lines[1]["error"]["message"]
+
+
 def test_a_search_receipt_hands_the_host_a_block_id_it_can_verify(tmp_path, monkeypatch, capsys):
     from envoy_cli import mcp, reader
 
