@@ -35,7 +35,7 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlparse
@@ -408,6 +408,20 @@ class _Context:
     timeout: float
     requests: list[str] = field(default_factory=list)
     authenticated: bool = False
+    deadline: float = 0.0
+
+    def timeout_left(self) -> float:
+        """What one HTTP call may still take under the request's deadline.
+
+        ``max_work_seconds`` is a ceiling for the whole read, not a fresh
+        allowance for every request: five API calls must still fit inside it.
+        """
+        if not self.deadline:
+            return self.timeout
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            raise GithubUnavailable("The work deadline was reached before GitHub answered")
+        return max(0.05, min(self.timeout, left))
 
 
 def _resolve_sha(ctx: _Context, link: GithubLink, ref: str) -> str:
@@ -418,7 +432,7 @@ def _resolve_sha(ctx: _Context, link: GithubLink, ref: str) -> str:
     data = _github_json(
         f"/repos/{link.full_name}/commits/{quote(ref, safe='/')}",
         token=ctx.token,
-        timeout=ctx.timeout,
+        timeout=ctx.timeout_left(),
     )
     ctx.requests.append(f"commits/{ref}")
     sha = str(data.get("sha") or "")
@@ -428,7 +442,7 @@ def _resolve_sha(ctx: _Context, link: GithubLink, ref: str) -> str:
 
 
 def _repo_meta(ctx: _Context, link: GithubLink) -> dict:
-    data = _github_json(f"/repos/{link.full_name}", token=ctx.token, timeout=ctx.timeout)
+    data = _github_json(f"/repos/{link.full_name}", token=ctx.token, timeout=ctx.timeout_left())
     ctx.requests.append(f"repos/{link.full_name}")
     return data
 
@@ -438,7 +452,7 @@ def _contents(ctx: _Context, link: GithubLink, ref: str, path: str) -> Any:
     data = _github_json(
         f"/repos/{link.full_name}/contents/{quote(path, safe='/')}{suffix}",
         token=ctx.token,
-        timeout=ctx.timeout,
+        timeout=ctx.timeout_left(),
     )
     ctx.requests.append(f"contents/{path}@{ref[:7] or 'default'}")
     return data
@@ -491,7 +505,7 @@ def _git_tree(ctx: _Context, link: GithubLink, sha: str, *, recursive: bool) -> 
     data = _github_json(
         f"/repos/{link.full_name}/git/trees/{sha}{suffix}",
         token=ctx.token,
-        timeout=ctx.timeout,
+        timeout=ctx.timeout_left(),
     )
     ctx.requests.append(f"git/trees/{sha[:7]}{'?recursive=1' if recursive else ''}")
     entries = data.get("tree")
@@ -565,17 +579,17 @@ def _tree_recursive(
     """
 
     budget = RECURSIVE_TREE_BUDGET_SECONDS
-    saved_timeout = ctx.timeout
-    ctx.timeout = max(1.0, min(saved_timeout, budget))
+    saved_deadline = ctx.deadline
+    ctx.deadline = min(saved_deadline, time.monotonic() + budget) if saved_deadline else time.monotonic() + budget
     began = time.monotonic()
     try:
         entries, truncated = _git_tree(ctx, link, sha, recursive=True)
     except GithubUnavailable as exc:
-        ctx.timeout = saved_timeout
+        ctx.deadline = saved_deadline
         kind = "timeout" if "timeout" in str(exc).lower() else "unavailable"
         return [], {}, kind
     finally:
-        ctx.timeout = saved_timeout
+        ctx.deadline = saved_deadline
 
     elapsed = time.monotonic() - began
     details: dict = {
@@ -632,6 +646,45 @@ def _split_lines(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Budget helpers
+# ---------------------------------------------------------------------------
+
+
+def _download_cap(request: ReadRequest) -> int:
+    """Bytes this read may download, honouring an explicit zero.
+
+    ``max_download_bytes`` defaults to 256 MiB, while this reader only needs
+    at most one 8 MiB file; the field is a ceiling, never permission to ignore
+    a caller who asked for zero.
+    """
+    raw = int(request.budget.max_download_bytes)
+    if raw <= 0:
+        return 0
+    return min(raw, MAX_FILE_BYTES)
+
+
+def _ref_path_alternatives(link: GithubLink) -> list[tuple[str, str]]:
+    """Re-split ``/tree/`` and ``/blob/`` URLs whose ref itself contains a slash.
+
+    ``github.com/o/r/blob/feature/auth/src/x.ts`` is ambiguous: the ref may be
+    ``feature`` or ``feature/auth``. Only a request can settle it, so the
+    caller tries these candidates in order and stops at the first hit.
+    """
+    if link.kind not in {"tree", "blob"} or not link.ref or not link.path:
+        return []
+    if _SHA_RE.match(link.ref):
+        return []
+    segments = link.path.split("/")
+    candidates: list[tuple[str, str]] = []
+    for take in range(1, min(3, len(segments) - 1) + 1):
+        ref = "/".join([link.ref, *segments[:take]])
+        rest = "/".join(segments[take:])
+        if rest:
+            candidates.append((ref, rest))
+    return candidates
+
+
+# ---------------------------------------------------------------------------
 # Response building
 # ---------------------------------------------------------------------------
 
@@ -644,10 +697,25 @@ class _Builder:
         self.blocks: list[MaterialBlock] = []
         self.truncated = False
         self._order = 0
-        hard_cap = min(int(request.budget.max_response_chars or 12_000), 20_000)
-        self._remaining = max(600, hard_cap - 500)
+        cap = int(request.budget.max_response_chars or 12_000)
+        cap = min(cap, int(request.budget.max_total_response_chars or cap), 20_000)
+        token_cap = request.budget.max_total_response_tokens or request.budget.max_response_tokens
+        if token_cap:
+            # Deliberately conservative: one token of code or Chinese is worth
+            # fewer than four characters, so the character cap stays the real
+            # one and the token cap only tightens it.
+            cap = min(cap, max(160, int(token_cap) * 3))
+        self.hard_cap = cap
+        self._remaining = max(0, cap)
 
-    def add(self, kind: MaterialKind, text: str, *, language: str | None = None) -> MaterialBlock | None:
+    def add(
+        self,
+        kind: MaterialKind,
+        text: str,
+        *,
+        language: str | None = None,
+        url: str | None = None,
+    ) -> MaterialBlock | None:
         if not text:
             return None
         text = text.strip("\n")
@@ -670,7 +738,7 @@ class _Builder:
             origin=MaterialOrigin.SOURCE_TEXT,
             locator=WebLocator(
                 type="web",
-                source_url=self.source_url,
+                source_url=url or self.source_url,
                 block_id=block_id,
                 quote=clipped[:MAX_LOCATOR_QUOTE_CHARS],
             ),
@@ -689,6 +757,7 @@ class _Readout:
     revision_basis: str = ""
     modality: str = "code"
     counts: dict = field(default_factory=dict)
+    material: dict | None = None
 
     def add_unresolved(self, message: str) -> None:
         if message not in self.unresolved:
@@ -951,15 +1020,17 @@ def _read_repo_or_tree(request: ReadRequest, link: GithubLink, ctx: _Context, st
     details["mode"] = details.get("plan")
     repo_url = f"https://github.com/{link.full_name}"
     listing = "\n".join(
-        _entry_line(entry, repo_url=repo_url, ref=ref) for entry in shown
+        _entry_line(entry, repo_url=repo_url, ref=sha) for entry in shown
     ) or "(empty directory)"
+    details["listing_pinned_to_commit"] = True
+    details["ref_display"] = ref
     builder.add(MaterialKind.LIST, listing)
 
     dir_urls: dict[str, str] = {}
     for entry in shown:
         if entry.get("type") != "tree":
             continue
-        url = _subdirectory_url(repo_url, ref, str(entry.get("path") or ""))
+        url = _subdirectory_url(repo_url, sha, str(entry.get("path") or ""))
         if url:
             dir_urls[str(entry.get("path"))] = url
     if dir_urls:
@@ -1011,12 +1082,39 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
         )
     builder = _Builder(request, link.url)
     ref = link.ref or "HEAD"
-    sha = link.sha or _resolve_sha(ctx, link, ref)
-    details: dict = {"ref": ref, "commit_sha": sha, "path": link.path}
+    sha = link.sha or ""
+    details: dict = {}
     unresolved: list[str] = []
+
+    if not sha:
+        try:
+            sha = _resolve_sha(ctx, link, ref)
+        except GithubError as first_error:
+            # ``/blob/feature/auth/src/x.ts`` parses as ref "feature" plus path
+            # "auth/src/x.ts". Spend at most three extra lookups settling that
+            # instead of returning a 404 that names the wrong ref.
+            for alt_ref, alt_path in _ref_path_alternatives(link):
+                candidate = replace(link, ref=alt_ref, path=alt_path)
+                try:
+                    sha = _resolve_sha(ctx, candidate, alt_ref)
+                except GithubError:
+                    continue
+                details["ref_path_reinterpreted"] = {
+                    "asked_ref": ref,
+                    "asked_path": link.path,
+                    "ref": alt_ref,
+                    "path": alt_path,
+                }
+                link, ref = candidate, alt_ref
+                break
+            else:
+                raise first_error
+    details.update({"ref": ref, "commit_sha": sha, "path": link.path})
 
     raw: bytes | None = None
     truncated_download = False
+    download_cap = _download_cap(request)
+    details["download_budget_bytes"] = download_cap
     content_sha: str | None = None
     api_size: int | None = None
     try:
@@ -1030,15 +1128,18 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
             raw = None
         api_size = data.get("size") if isinstance(data.get("size"), int) else None
         content_sha = str(data.get("sha") or "") or None
+        if raw is not None and download_cap and len(raw) > download_cap:
+            # One ceiling for both paths: an inline body may not exceed the same
+            # byte budget the raw download would have.
+            raw = raw[:download_cap]
+            truncated_download = True
+            details["download_budget_truncated"] = True
     if raw is None:
         # Files over the contents-API limit (1MB) return no inline body; raw bytes
         # are the only way to honour a line range, and they are bounded.
-        max_bytes = min(
-            max(int(request.budget.max_download_bytes or MAX_FILE_BYTES), 256 * 1024),
-            MAX_FILE_BYTES,
-        )
+        max_bytes = download_cap
         raw_url = f"{RAW_ROOT}/{link.owner}/{link.repo}/{sha}/{quote(link.path, safe='/')}"
-        raw, truncated_download = _github_raw(raw_url, token=ctx.token, timeout=ctx.timeout, max_bytes=max_bytes)
+        raw, truncated_download = _github_raw(raw_url, token=ctx.token, timeout=ctx.timeout_left(), max_bytes=max_bytes)
         ctx.requests.append(f"raw/{link.path}@{sha[:7]}")
         details["file_source"] = "raw.githubusercontent.com"
 
@@ -1104,11 +1205,30 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
             f"Commit: {sha}\nPath: {link.path}\nLines: {start}-{end} of {total_lines}\n"
             f"SHA-256: {content_hash or 'unavailable (file truncated)'}",
         )
-        builder.add(MaterialKind.CODE, body, language=language)
+        builder.add(
+            MaterialKind.CODE,
+            body,
+            language=language,
+            url=f"{link.url.split('#', 1)[0]}#L{start}-L{end}",
+        )
 
     returned_lines = min(len(selected), _count_lines(builder.blocks[-1]) if builder.blocks else len(selected))
+    delivered_end = start + returned_lines - 1 if returned_lines else None
+    details["line_end_delivered"] = delivered_end
+    details["line_range_returned"] = (
+        {"line_start": start, "line_end": delivered_end, "line_count": returned_lines}
+        if total_lines
+        else None
+    )
     if builder.truncated:
         unresolved.append("The response character budget truncated the returned file text")
+        if returned_lines and returned_lines < len(selected):
+            # The request said L(start)-L(end); measure what actually shipped.
+            details["line_range_truncated_by_budget"] = True
+            unresolved.append(
+                f"Only lines {start}-{delivered_end} fit in this response; the requested range "
+                f"ended at L{end} — ask for a narrower range to read the rest"
+            )
     revision_basis = (
         f"github\0blob\0{link.full_name}\0{sha}\0{link.path}\0L{start}-L{end}"
         if total_lines
@@ -1118,7 +1238,12 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
         blocks=builder.blocks,
         details=details,
         unresolved=unresolved,
-        partial=builder.truncated or truncated_download or range_outside_file,
+        partial=(
+            builder.truncated
+            or truncated_download
+            or range_outside_file
+            or bool(details.get("line_range_truncated_by_budget"))
+        ),
         revision_basis=revision_basis,
         modality="code",
         counts={
@@ -1126,6 +1251,21 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
             "extracted": total_lines,
             "returned": returned_lines,
         },
+        material=(
+            {
+                # The decoded file bytes, trailing newline included: a
+                # character offset into this text must match the real file.
+                "text": text,
+                "line_count": total_lines,
+                "line_number_offset": 1,
+                "path": link.path,
+                "commit_sha": sha,
+                "git_blob_sha": content_sha,
+                "content_hash": content_hash,
+            }
+            if total_lines and not truncated_download
+            else None
+        ),
     )
 
 
@@ -1157,11 +1297,8 @@ def _language_for_path(path: str) -> str | None:
 def _read_raw(request: ReadRequest, link: GithubLink, ctx: _Context, started: float) -> _Readout:
     builder = _Builder(request, link.url)
     unresolved: list[str] = []
-    max_bytes = min(
-        max(int(request.budget.max_download_bytes or MAX_FILE_BYTES), 256 * 1024),
-        MAX_FILE_BYTES,
-    )
-    data, truncated = _github_raw(link.url, token=ctx.token, timeout=ctx.timeout, max_bytes=max_bytes)
+    max_bytes = _download_cap(request)
+    data, truncated = _github_raw(link.url, token=ctx.token, timeout=ctx.timeout_left(), max_bytes=max_bytes)
     ctx.requests.append("raw.githubusercontent.com")
     text = data.decode("utf-8", errors="replace")
     lines = _split_lines(text)
@@ -1210,6 +1347,20 @@ def _read_raw(request: ReadRequest, link: GithubLink, ctx: _Context, started: fl
         details=details,
         unresolved=unresolved,
         partial=builder.truncated or truncated,
+        material=(
+            {
+                # The decoded file bytes, trailing newline included: a
+                # character offset into this text must match the real file.
+                "text": text,
+                "line_count": total_lines,
+                "line_number_offset": 1,
+                "path": link.path,
+                "commit_sha": resolved_sha,
+                "content_hash": content_hash,
+            }
+            if total_lines and not truncated
+            else None
+        ),
         revision_basis=f"github\0raw\0{link.full_name}\0{link.ref}\0{link.path}\0{content_hash or ''}",
         modality="code",
         counts={"discovered": total_lines, "extracted": total_lines, "returned": min(end - start + 1, total_lines) if total_lines else 0},
@@ -1227,7 +1378,7 @@ def _read_commit(request: ReadRequest, link: GithubLink, ctx: _Context, started:
     data = _github_json(
         f"/repos/{link.full_name}/commits/{quote(link.sha, safe='')}",
         token=ctx.token,
-        timeout=ctx.timeout,
+        timeout=ctx.timeout_left(),
     )
     ctx.requests.append(f"commits/{link.sha[:7]}")
     sha = str(data.get("sha") or link.sha)
@@ -1326,23 +1477,66 @@ def _read_commit(request: ReadRequest, link: GithubLink, ctx: _Context, started:
 # ---------------------------------------------------------------------------
 
 
-def _comment_summaries(ctx: _Context, link: GithubLink, number: int, unresolved: list[str]) -> tuple[list[dict], int]:
+def _delivered_comment_lines(block: MaterialBlock | None) -> int:
+    """Count comment lines that are actually in the response, not fetched ones."""
+
+    if block is None or not isinstance(block.content, TextContent):
+        return 0
+    return sum(1 for line in block.content.text.splitlines() if line.startswith("- "))
+
+
+def _comment_summaries(
+    ctx: _Context,
+    link: GithubLink,
+    number: int,
+    unresolved: list[str],
+    *,
+    total: int | None = None,
+) -> dict:
+    """Fetch one page of comments and report found/fetched/delivered honestly.
+
+    The thread itself may hold thousands of comments; this reader fetches one
+    page of ``MAX_COMMENT_SUMMARIES`` so a PR read stays one or two requests.
+    The metadata names the page that would continue, instead of leaving the
+    caller to guess whether it saw the whole discussion.
+    """
+
+    info: dict = {
+        "items": [],
+        "found": total,
+        "fetched": 0,
+        "delivered": 0,
+        "complete": False,
+        "next_page": 1,
+        "next_api": f"/repos/{link.full_name}/issues/{number}/comments?per_page={MAX_COMMENT_SUMMARIES}&page=1",
+    }
     try:
         data = _github_json(
             f"/repos/{link.full_name}/issues/{number}/comments?per_page={MAX_COMMENT_SUMMARIES}",
             token=ctx.token,
-            timeout=ctx.timeout,
+            timeout=ctx.timeout_left(),
         )
         ctx.requests.append(f"issues/{number}/comments")
     except GithubError as exc:
         unresolved.append(f"Comments were not fetched ({type(exc).__name__})")
-        return [], 0
+        info["error"] = type(exc).__name__
+        return info
     if isinstance(data, list):
         comments = data
     elif isinstance(data, dict) and isinstance(data.get("comments"), list):
         comments = data["comments"]
     else:
-        return [], 0
+        return info
+    info["fetched"] = len(comments)
+    if info["found"] is None:
+        info["found"] = len(comments)
+    info["complete"] = info["fetched"] >= info["found"] and info["fetched"] < MAX_COMMENT_SUMMARIES
+    info["next_page"] = None if info["complete"] else 2
+    info["next_api"] = (
+        None
+        if info["complete"]
+        else f"/repos/{link.full_name}/issues/{number}/comments?per_page={MAX_COMMENT_SUMMARIES}&page=2"
+    )
     summaries = []
     for comment in comments[:MAX_COMMENT_SUMMARIES]:
         if not isinstance(comment, dict):
@@ -1353,14 +1547,15 @@ def _comment_summaries(ctx: _Context, link: GithubLink, number: int, unresolved:
             "created_at": comment.get("created_at"),
             "body": _short(str(comment.get("body") or ""), 600),
         })
-    return summaries, len(comments)
+    info["items"] = summaries
+    return info
 
 
 def _read_pull(request: ReadRequest, link: GithubLink, ctx: _Context, started: float) -> _Readout:
     number = int(link.number or 0)
     builder = _Builder(request, link.url)
     unresolved: list[str] = []
-    data = _github_json(f"/repos/{link.full_name}/pulls/{number}", token=ctx.token, timeout=ctx.timeout)
+    data = _github_json(f"/repos/{link.full_name}/pulls/{number}", token=ctx.token, timeout=ctx.timeout_left())
     ctx.requests.append(f"pulls/{number}")
     title = str(data.get("title") or "")
     body = str(data.get("body") or "")
@@ -1413,7 +1608,7 @@ def _read_pull(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
         files_data = _github_json(
             f"/repos/{link.full_name}/pulls/{number}/files?per_page=100",
             token=ctx.token,
-            timeout=ctx.timeout,
+            timeout=ctx.timeout_left(),
         )
         ctx.requests.append(f"pulls/{number}/files")
         if isinstance(files_data, list):
@@ -1452,16 +1647,26 @@ def _read_pull(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
         )
 
     comment_count = int(data.get("comments") or 0)
-    summaries, fetched = _comment_summaries(ctx, link, number, unresolved)
-    if comment_count and not summaries:
-        unresolved.append(f"{comment_count} comments exist but none were fetched")
+    comments = _comment_summaries(ctx, link, number, unresolved, total=comment_count or None)
+    summaries = comments["items"]
+    details["comments"] = comments
     details["comment_summaries"] = summaries
     if summaries:
-        builder.add(
+        comment_block = builder.add(
             MaterialKind.PARAGRAPH,
             "\n".join(
                 f"- {item['author']} ({item['created_at']}): {item['body']}" for item in summaries
             ),
+        )
+        comments["delivered"] = _delivered_comment_lines(comment_block)
+        if comments["delivered"] < comments["fetched"]:
+            unresolved.append(
+                f"Only {comments['delivered']} of the {comments['fetched']} fetched comments fit in this response"
+            )
+    if comments["found"] and comments["fetched"] < comments["found"]:
+        unresolved.append(
+            f"{comments['found']} comments exist but only the first {comments['fetched']} were fetched; "
+            f"the thread continues on comments page {comments['next_page']} of the GitHub API"
         )
     unresolved.append("Pull request review comments (inline diff discussions) are not fetched")
     if unresolved:
@@ -1486,7 +1691,7 @@ def _read_issue(request: ReadRequest, link: GithubLink, ctx: _Context, started: 
     number = int(link.number or 0)
     builder = _Builder(request, link.url)
     unresolved: list[str] = []
-    data = _github_json(f"/repos/{link.full_name}/issues/{number}", token=ctx.token, timeout=ctx.timeout)
+    data = _github_json(f"/repos/{link.full_name}/issues/{number}", token=ctx.token, timeout=ctx.timeout_left())
     ctx.requests.append(f"issues/{number}")
     title = str(data.get("title") or "")
     body = str(data.get("body") or "")
@@ -1520,16 +1725,27 @@ def _read_issue(request: ReadRequest, link: GithubLink, ctx: _Context, started: 
         builder.add(MaterialKind.PARAGRAPH, details["body"])
         if details["body_truncated"]:
             unresolved.append(f"The issue body was truncated to {MAX_BODY_CHARS} characters")
-    summaries, _fetched = _comment_summaries(ctx, link, number, unresolved)
+    issue_comment_total = data.get("comments") if isinstance(data.get("comments"), int) else None
+    comments = _comment_summaries(ctx, link, number, unresolved, total=issue_comment_total)
+    summaries = comments["items"]
+    details["comments"] = comments
     details["comment_summaries"] = summaries
-    if isinstance(data.get("comments"), int) and data["comments"] and not summaries:
-        unresolved.append(f"{data['comments']} comments exist but none were fetched")
     if summaries:
-        builder.add(
+        comment_block = builder.add(
             MaterialKind.PARAGRAPH,
             "\n".join(
                 f"- {item['author']} ({item['created_at']}): {item['body']}" for item in summaries
             ),
+        )
+        comments["delivered"] = _delivered_comment_lines(comment_block)
+        if comments["delivered"] < comments["fetched"]:
+            unresolved.append(
+                f"Only {comments['delivered']} of the {comments['fetched']} fetched comments fit in this response"
+            )
+    if comments["found"] and comments["fetched"] < comments["found"]:
+        unresolved.append(
+            f"{comments['found']} comments exist but only the first {comments['fetched']} were fetched; "
+            f"the thread continues on comments page {comments['next_page']} of the GitHub API"
         )
     if unresolved:
         builder.add(MaterialKind.PARAGRAPH, "\n".join(f"Note: {item}" for item in unresolved))
@@ -1555,7 +1771,7 @@ def _read_issue(request: ReadRequest, link: GithubLink, ctx: _Context, started: 
 
 def _read_gist(request: ReadRequest, link: GithubLink, ctx: _Context, started: float) -> _Readout:
     builder = _Builder(request, link.url)
-    data = _github_json(f"/gists/{link.gist_id}", token=ctx.token, timeout=ctx.timeout)
+    data = _github_json(f"/gists/{link.gist_id}", token=ctx.token, timeout=ctx.timeout_left())
     ctx.requests.append(f"gists/{link.gist_id}")
     description = str(data.get("description") or "")
     files = data.get("files") if isinstance(data.get("files"), dict) else {}
@@ -1602,7 +1818,12 @@ def _read_gist(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
 # ---------------------------------------------------------------------------
 
 
-def read_github_source(request: ReadRequest, source_url: str | None = None) -> ReadResponse | None:
+def read_github_source(
+    request: ReadRequest,
+    source_url: str | None = None,
+    *,
+    material_sink: dict | None = None,
+) -> ReadResponse | None:
     """Read a GitHub URL with the REST API, or return ``None`` to fall back.
 
     ``None`` means "this is not a GitHub resource this reader owns" (site pages,
@@ -1639,12 +1860,28 @@ def read_github_source(request: ReadRequest, source_url: str | None = None) -> R
             details={"reader": "github", "github_error_code": "invalid_line_range"},
         )
 
+    if int(request.budget.max_download_bytes) <= 0:
+        # A zero byte budget is an instruction, not a missing value: do not spend
+        # a single request on it.
+        return _blocked(
+            request,
+            ErrorCode.BUDGET_EXCEEDED,
+            "max_download_bytes is 0, so no GitHub request was made",
+            details={
+                "reader": "github",
+                "download_budget_bytes": 0,
+                "hint": "Raise budget.max_download_bytes to read this source",
+            },
+        )
+
     started = time.monotonic()
     token = _token()
+    work_seconds = float(request.budget.max_work_seconds or DEFAULT_TIMEOUT)
     ctx = _Context(
         token=token,
-        timeout=max(5.0, min(DEFAULT_TIMEOUT, float(request.budget.max_work_seconds or DEFAULT_TIMEOUT))),
+        timeout=min(DEFAULT_TIMEOUT, work_seconds),
         authenticated=bool(token),
+        deadline=started + work_seconds,
     )
     try:
         if link.kind in {"repo", "tree"}:
@@ -1734,8 +1971,14 @@ def read_github_source(request: ReadRequest, source_url: str | None = None) -> R
                 "api_requests": list(ctx.requests),
             },
         )
-    except Exception:  # noqa: BLE001 - a reader bug must not be worse than today's path
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        # An adapter bug must not be worse than the generic path: returning
+        # ``None`` lets the caller read the page the way it did before GitHub
+        # was recognised, instead of failing a source that is readable.
         return None
+
+    if material_sink is not None and readout.material is not None:
+        material_sink.update(readout.material)
 
     return _response(
         request,

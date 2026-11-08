@@ -203,13 +203,15 @@ def test_one_level_listing_names_readable_subdirectory_urls(api):
     details = response.coverage.modalities["code"].details
     assert details["plan"] == "one_level"
     assert details["listing_source"] == "git_trees"
+    # Navigation pins the commit it listed, so a directory opened later cannot
+    # silently show a different revision than this listing.
     assert details["subdirectory_urls"] == {
-        "packages": "https://github.com/acme/widget/tree/main/packages",
+        "packages": f"https://github.com/acme/widget/tree/{COMMIT_SHA}/packages",
     }
     body = _text(response)
     # A directory line is directly re-readable, so the caller can walk the tree
     # one cheap request at a time instead of asking for the whole repository.
-    assert "https://github.com/acme/widget/tree/main/packages" in body
+    assert f"https://github.com/acme/widget/tree/{COMMIT_SHA}/packages" in body
 
 
 def test_huge_tree_is_capped_and_says_so(api):
@@ -401,7 +403,7 @@ def test_subdirectory_listing_never_touches_the_tree_endpoint(api):
     body = _text(response)
     assert "scripts/build.sh" in body
     assert "scripts/lib/" in body
-    assert "https://github.com/acme/widget/tree/main/scripts/lib" in body
+    assert f"https://github.com/acme/widget/tree/{COMMIT_SHA}/scripts/lib" in body
 
 
 # ---------------------------------------------------------------------------
@@ -762,6 +764,204 @@ def test_reader_dispatches_github_urls_to_the_github_reader(monkeypatch):
     sentinel = object()
     monkeypatch.setattr(reader_module, "_is_public_http_url", lambda *args, **kwargs: True)
     monkeypatch.setattr(reader_module, "is_collection_url", lambda url: False)
-    monkeypatch.setattr(github_source, "read_github_source", lambda request, source_url=None: sentinel)
+    monkeypatch.setattr(
+        github_source,
+        "read_github_source",
+        lambda request, source_url=None, **kwargs: sentinel,
+    )
 
     assert reader_module._read_public_page_once(_request("https://github.com/acme/widget")) is sentinel
+
+
+# ---------------------------------------------------------------------------
+# Budget, continuation and line numbers
+# ---------------------------------------------------------------------------
+
+
+def test_zero_download_budget_makes_no_request(api):
+    """An explicit zero budget is an instruction, not a missing default."""
+
+    from envoy_core.schemas.read_v1 import Budget
+
+    fake = api({"/repos/acme/widget": {}})
+    request = _request("https://github.com/acme/widget").model_copy(
+        update={"budget": Budget(max_download_bytes=0)}
+    )
+
+    response = github_source.read_github_source(request)
+
+    assert response is not None
+    assert response.result is ReadResult.BLOCKED
+    assert [error.code for error in response.errors] == [ErrorCode.BUDGET_EXCEEDED]
+    assert fake.calls == []
+
+
+def test_comment_pagination_names_what_is_missing(api):
+    """A capped read must say what it did not deliver, not look complete."""
+
+    comments = [
+        {
+            "user": {"login": f"user{index}"},
+            "created_at": "2024-01-03T00:00:00Z",
+            "body": f"note {index}",
+        }
+        for index in range(20)
+    ]
+    api({
+        "/repos/acme/widget/issues/7": {
+            "title": "Crash on empty input",
+            "body": "It crashes.",
+            "state": "open",
+            "user": {"login": "ada"},
+            "labels": [],
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z",
+            "comments": 57,
+        },
+        "/repos/acme/widget/issues/7/comments": comments,
+    })
+
+    response = _read("https://github.com/acme/widget/issues/7")
+
+    found = response.coverage.modalities["text"].details["comments"]
+    assert found["found"] == 57
+    assert found["fetched"] == 20
+    assert found["delivered"] == 20
+    assert found["complete"] is False
+    assert found["next_page"] == 2
+    assert any("57 comments exist" in note for note in response.coverage.unresolved)
+
+
+def test_github_material_keeps_bytes_and_block_ids(api, tmp_path, monkeypatch):
+    """A later turn must resolve the same block ids against the same bytes."""
+
+    from envoy_cli import reader as reader_module
+
+    api({
+        "/repos/acme/widget": {"default_branch": "main", "size": 4},
+        "/repos/acme/widget/commits/main": {"sha": COMMIT_SHA},
+        f"/repos/acme/widget/git/trees/{COMMIT_SHA}": {
+            "truncated": False,
+            "tree": [{"path": "README.md", "type": "blob", "size": 5}],
+        },
+    })
+    response = _read("https://github.com/acme/widget")
+    material = {"text": "hello\nworld", "line_count": 2, "path": "README.md"}
+    request = _request("https://github.com/acme/widget").model_copy(
+        update={"session_id": "sess-1"}
+    )
+    monkeypatch.setattr(reader_module, "_material_root", lambda: tmp_path)
+
+    attached = reader_module._attach_github_material(request, response, material)
+
+    assert attached.material_id
+    stored = reader_module._load_matching_material(
+        attached.material_id, str(response.source_revision), "sess-1"
+    )
+    assert stored is not None
+    assert stored["source_kind"] == "github"
+    assert stored["text"] == "hello\nworld"
+    assert [block["id"] for block in stored["blocks"]] == [
+        block.id for block in response.blocks
+    ]
+
+
+def test_github_range_locator_points_at_the_lines():
+    """A range citation must name the lines it came from, not just the file."""
+
+    from envoy_cli import reader as reader_module
+
+    stored = {
+        "source_kind": "github",
+        "source_url": "https://github.com/acme/widget/blob/main/src/app.py",
+        "text": "one\ntwo\nthree\nfour",
+        "line_count": 4,
+        "line_number_offset": 1,
+    }
+
+    locator = reader_module._evidence_text_locator(
+        stored, "blk-code-0001", "two\nthree", 4, 13
+    )
+
+    assert locator.source_url.endswith("#L2-L3")
+    assert locator.block_id == "blk-code-0001"
+
+
+def test_a_blob_read_hands_back_the_bytes_a_later_turn_needs(api):
+    """The material sink must carry continuous text, not just the excerpt."""
+
+    file_text = "import os\n\ndef main():\n    return 0\n"
+    api({
+        f"/repos/acme/widget/contents/src/app.py?ref={BLOB_SHA}": _file_payload(file_text),
+    })
+    sink: dict = {}
+
+    response = github_source.read_github_source(
+        _request(f"https://github.com/acme/widget/blob/{BLOB_SHA}/src/app.py"),
+        material_sink=sink,
+    )
+
+    assert response is not None
+    assert sink["text"] == file_text
+    assert sink["line_count"] == 4
+    assert sink["line_number_offset"] == 1
+    assert sink["commit_sha"] == BLOB_SHA
+    assert sink["path"] == "src/app.py"
+
+
+def test_a_code_block_locator_names_the_range_once(api):
+    api({
+        f"/repos/acme/widget/contents/src/app.py?ref={BLOB_SHA}": _file_payload("a\nb\nc\nd\n"),
+    })
+
+    response = _read(f"https://github.com/acme/widget/blob/{BLOB_SHA}/src/app.py#L2-L3")
+
+    block = [item for item in response.blocks if item.kind.value == "code"][0]
+    # The fragment the caller asked for must not be pasted twice.
+    assert block.locator.source_url.endswith("#L2-L3")
+    assert block.locator.source_url.count("#") == 1
+
+
+def test_a_search_hit_names_its_own_lines(tmp_path, monkeypatch):
+    """A hit inside a file must cite its lines, not the range the read asked for."""
+
+    import json
+
+    from envoy_cli import reader as reader_module
+    from envoy_core.schemas.read_v1 import MaterialSearchRequest
+
+    monkeypatch.setattr(reader_module, "_material_root", lambda: tmp_path)
+    text = "".join(
+        f"def needle():\n" if number == 12 else f"line {number}\n"
+        for number in range(1, 21)
+    )
+    material_id = "mat-" + "a" * 24
+    payload = {
+        "text": text,
+        "source_kind": "github",
+        "source_url": "https://github.com/acme/widget/blob/main/src/app.py#L1-L5",
+        "source_revision": "rev-1",
+        "session_id": "sess-1",
+        "line_count": 20,
+        "line_number_offset": 1,
+        "blocks": [],
+        "budget_state": {"returned_chars": 0, "returned_ranges": []},
+    }
+    (tmp_path / f"{material_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / f"{material_id}.expires").write_text(
+        str(__import__("time").time() + 600), encoding="ascii"
+    )
+
+    result = reader_module.search_material(
+        MaterialSearchRequest(
+            request_id="req-search",
+            material_id=material_id,
+            session_id="sess-1",
+            query="needle",
+            max_results=1,
+        )
+    )
+
+    hit = result.blocks[0]
+    assert hit.locator.source_url.endswith("#L12")
+    assert "#L1-L5" not in hit.locator.source_url

@@ -3787,6 +3787,25 @@ def _evidence_text_locator(stored: dict, block_id: str, content: str, start: int
                 coordinate_system="normalized_top_left",
                 bbox=[float(value) for value in span.get("bbox") or []],
             )
+    if source_kind == "github":
+        line_count = int(stored.get("line_count") or 0)
+        if line_count > 0:
+            text = str(stored.get("text") or "")
+            offset = max(1, int(stored.get("line_number_offset") or 1))
+            start = max(0, min(int(start), len(text)))
+            end = max(start, min(int(end), len(text)))
+            first_line = offset + text.count("\n", 0, start)
+            last_line = offset + text.count("\n", 0, max(start, end - 1))
+            base_url = source_url.split("#", 1)[0]
+            fragment = (
+                f"#L{first_line}-L{last_line}" if last_line > first_line else f"#L{first_line}"
+            )
+            return WebLocator(
+                type="web",
+                source_url=f"{base_url}{fragment}",
+                block_id=block_id,
+                quote=content[:MAX_LOCATOR_QUOTE_CHARS],
+            )
     return WebLocator(
         type="web",
         source_url=source_url,
@@ -5473,8 +5492,13 @@ def search_material(request: MaterialSearchRequest) -> ReadResponse:
                 block_id="blk-body-0001",
                 quote=content[:MAX_LOCATOR_QUOTE_CHARS],
             )
+        block_id = f"blk-search-{start}-{end}-{_stable_evidence_digest(material_id, start, content)}"
+        if stored.get("source_kind") == "github":
+            # A search hit in a file has a line, not just a URL. Keep the
+            # fragment the read asked for out of the base and name the hit.
+            locator = _evidence_text_locator(stored, block_id, content, start, end)
         blocks.append(MaterialBlock(
-            id=f"blk-search-{start}-{end}-{_stable_evidence_digest(material_id, start, content)}",
+            id=block_id,
             kind=(
                 MaterialKind.TRANSCRIPT
                 if stored.get("source_kind") == "video"
@@ -10467,6 +10491,72 @@ def _read_public_page_with_retries(request: ReadRequest) -> ReadResponse:
     return response
 
 
+def _attach_github_material(
+    request: ReadRequest, response: ReadResponse, material: dict
+) -> ReadResponse:
+    """Persist what a GitHub read returned so a later turn can continue it.
+
+    The response carries the block view a caller cites; this record carries the
+    continuous text those citations index by character offset, plus the commit
+    the bytes were read at. A replay in another session can therefore prove it
+    saw the same file, not just the same URL.
+    """
+
+    text = str(material.get("text") or "")
+    if not text or response.material_id:
+        return response
+    if request.retention.derived_ttl_seconds <= 0:
+        return response
+    if len(text) > MAX_SEARCH_CACHE_CHARS:
+        # Same ceiling the PDF and text paths use: cache what a later search can
+        # actually serve, and let the caller re-read larger files directly.
+        return response
+    source_revision = str(response.source_revision or "")
+    material_id = _material_id(
+        str(request.source.url),
+        source_revision,
+        request.session_id,
+        request.request_id,
+    )
+    delivered_all = str(getattr(response.result, "value", response.result)) == "complete"
+    returned = len(text) if delivered_all else 0
+    blocks = []
+    for position, block in enumerate(response.blocks):
+        blocks.append({
+            "id": str(block.id),
+            "content": {"type": "text", "text": _evidence_text(block.content)},
+            "locator": _evidence_locator_dict(block.locator),
+            "order": int(block.order or position),
+        })
+    payload = {
+        **material,
+        "blocks": blocks,
+        "source_kind": "github",
+        "source_url": str(request.source.url),
+        "source_revision": source_revision,
+        "session_id": request.session_id,
+        "text": text,
+        "budget_state": {
+            "max_total_response_chars": request.budget.max_total_response_chars,
+            "max_total_response_tokens": request.budget.max_total_response_tokens,
+            "max_expansion_rounds": request.budget.max_expansion_rounds,
+            "returned_chars": returned,
+            "returned_tokens": 0,
+            "expansion_rounds": 0,
+            "returned_ranges": [[0, returned]] if returned else [],
+        },
+        "expires_at": time.time() + min(
+            request.retention.derived_ttl_seconds,
+            MATERIAL_TTL_SECONDS,
+        ),
+    }
+    try:
+        _store_material(material_id, payload, merge=False)
+    except OSError:
+        return response
+    return response.model_copy(update={"material_id": material_id})
+
+
 @_serialize_read_request
 def _read_public_page_once(request: ReadRequest) -> ReadResponse:
     source_url = request.source.url
@@ -10501,8 +10591,13 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         # process and still yields only a rendered page title.
         from .github_source import read_github_source
 
-        github_response = read_github_source(request, source_url=source_url)
+        github_material: dict = {}
+        github_response = read_github_source(
+            request, source_url=source_url, material_sink=github_material
+        )
         if github_response is not None:
+            if github_material:
+                return _attach_github_material(request, github_response, github_material)
             return github_response
     direct_video_path = source_path.endswith(DIRECT_VIDEO_SUFFIXES)
     direct_douyin_note = (
