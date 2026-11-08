@@ -34,7 +34,7 @@ for _path in (
 import pytest
 
 from envoy_cli import github_source
-from envoy_core.schemas.read_v1 import ErrorCode, ReadRequest, ReadResult, Scope, SourceRef
+from envoy_core.schemas.read_v1 import Budget, ErrorCode, ReadRequest, ReadResult, Scope, SourceRef
 
 BLOB_SHA = "a" * 40
 COMMIT_SHA = "b" * 40
@@ -919,6 +919,30 @@ def test_a_code_block_locator_names_the_range_once(api):
     block = [item for item in response.blocks if item.kind.value == "code"][0]
     # The fragment the caller asked for must not be pasted twice.
     assert block.locator.source_url.endswith("#L2-L3")
+    assert block.locator.source_url.count("#") == 1
+
+
+def test_a_budget_cut_file_cites_the_lines_it_shipped(api):
+    """Truncated output must not cite lines the caller never received."""
+
+    file_text = "".join(f"line {number:03d}\n" for number in range(1, 41))
+    api({
+        f"/repos/acme/widget/contents/src/app.py?ref={BLOB_SHA}": _file_payload(file_text),
+    })
+    request = ReadRequest(
+        request_id="req-budget",
+        source=SourceRef(url=f"https://github.com/acme/widget/blob/{BLOB_SHA}/src/app.py"),
+        budget=Budget(max_response_chars=300, max_total_response_chars=600),
+    )
+
+    response = github_source.read_github_source(request)
+    assert response is not None
+    block = [item for item in response.blocks if item.kind.value == "code"][0]
+    returned = response.coverage.modalities["code"].details["line_range_returned"]
+    assert returned["line_count"] < 40, "the fixture must actually be truncated"
+    assert response.coverage.modalities["code"].details["line_range_truncated_by_budget"] is True
+    # The fragment names the delivered end, not the requested one.
+    assert block.locator.source_url.endswith(f"#L1-L{returned['line_end']}")
     assert block.locator.source_url.count("#") == 1
 
 

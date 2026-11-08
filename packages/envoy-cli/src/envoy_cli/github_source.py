@@ -1193,6 +1193,7 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
 
     selected = lines[start - 1 : end] if total_lines else []
     body = "\n".join(selected)
+    code_block: MaterialBlock | None = None
     if not total_lines:
         builder.add(MaterialKind.HEADING, f"{link.full_name}/{link.path}")
         builder.add(MaterialKind.PARAGRAPH, "The file is empty.")
@@ -1205,15 +1206,22 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
             f"Commit: {sha}\nPath: {link.path}\nLines: {start}-{end} of {total_lines}\n"
             f"SHA-256: {content_hash or 'unavailable (file truncated)'}",
         )
-        builder.add(
-            MaterialKind.CODE,
-            body,
-            language=language,
-            url=f"{link.url.split('#', 1)[0]}#L{start}-L{end}",
-        )
+        code_block = builder.add(MaterialKind.CODE, body, language=language)
 
-    returned_lines = min(len(selected), _count_lines(builder.blocks[-1]) if builder.blocks else len(selected))
+    returned_lines = min(len(selected), _count_lines(code_block))
     delivered_end = start + returned_lines - 1 if returned_lines else None
+    if code_block is not None and returned_lines:
+        # A citation should name the lines the caller actually got. When the
+        # response budget cuts the range short, pointing the fragment at the
+        # whole requested range would claim coverage the caller never saw.
+        fragment = f"#L{start}" if delivered_end == start else f"#L{start}-L{delivered_end}"
+        code_text = code_block.content.text if isinstance(code_block.content, TextContent) else ""
+        code_block.locator = WebLocator(
+            type="web",
+            source_url=f"{link.url.split('#', 1)[0]}{fragment}",
+            block_id=code_block.id,
+            quote=code_text[:MAX_LOCATOR_QUOTE_CHARS],
+        )
     details["line_end_delivered"] = delivered_end
     details["line_range_returned"] = (
         {"line_start": start, "line_end": delivered_end, "line_count": returned_lines}

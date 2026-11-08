@@ -13,6 +13,8 @@
   （`reader.search_material` 对 `source_kind="github"` 走行号定位）。
 - 单个代码块的定位器不再把 fragment 拼两遍（此前会读成
   `…#L1-L30#L1-L30`）。
+- 代码块的 fragment 落在真正交付的末行：请求整个文件而响应预算只放下前 92 行时，
+  引用是 `#L1-L92`，不会让人以为这一屏就是全部 881 行。
 - GitHub 的下载字节与读取窗口共用一次请求的预算：`max_download_bytes` 设 0 时直接
   返回 `budget_exceeded`，不发请求；`max_work_seconds` 是整次读取的硬截止。
 - 任务检查点：`budget_exceeded`、`network_error`、`rate_limited`、`auth_required`、
@@ -33,6 +35,9 @@
   (`reader.search_material` uses the line locator for `source_kind="github"`).
 - A code block locator no longer carries its fragment twice (it used to read
   `…#L1-L30#L1-L30`).
+- A code block's fragment now ends on the line actually delivered: asking for a
+  whole file that only fits 92 lines into the response budget cites `#L1-L92`
+  instead of implying the screen holds all 881 lines.
 - GitHub download bytes and the read window share one request budget:
   `max_download_bytes: 0` answers `budget_exceeded` without making a request, and
   `max_work_seconds` is the hard deadline for the whole read.
