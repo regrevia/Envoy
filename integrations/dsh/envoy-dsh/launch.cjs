@@ -285,9 +285,16 @@ if (IS_WINDOWS && !env.PATHEXT) env.PATHEXT = '.COM;.EXE;.BAT;.CMD'
 
 // A .cmd shim (what `install.ps1` puts on PATH) needs cmd.exe to start.
 const [command, commandArgs] = shellInvocation(binary, ['mcp'])
+// `envoy.exe` is a console-subsystem binary and the DSH desktop Host is a GUI
+// process with no console, so Windows allocates a brand-new console for it:
+// every Host start left a console window titled with the runtime path sitting
+// on the desktop for the whole session, and closing it by hand kills the MCP
+// bridge. windowsHide passes CREATE_NO_WINDOW, which keeps the console but
+// drops its window. Ignored on macOS and Linux.
 const child = spawn(command, commandArgs, {
   stdio: [process.stdin, process.stdout, process.stderr],
   env,
+  windowsHide: true,
 })
 child.on('error', (error) => fail('cannot start ' + binary + ': ' + error.message))
 child.on('exit', (code, signal) => {
