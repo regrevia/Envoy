@@ -1,5 +1,47 @@
 # 更新日志 / Changelog
 
+## 0.1.50 - 2026-11-08
+
+### 中文
+
+- GitHub 文件阅读接进 Envoy 既有的材料机制：`envoy read` 读 `blob` / `raw` 之后返回
+  `material_id`，同一 `session_id` 的下一轮可以直接 `envoy search` 搜索、用
+  `envoy_verify` 校验引用，不用重新下载。材料里存的是文件原文（字符偏移与真实文件
+  对得上）、`line_count` 和行号起点，而不是这次只交付的那一段。
+- 搜索结果里的引用现在指向命中本身：`blk-search-*` 的 `source_url` 是
+  `…long_task.py#L535`，不是把读取范围 `#L1-L30` 抄给每个命中
+  （`reader.search_material` 对 `source_kind="github"` 走行号定位）。
+- 单个代码块的定位器不再把 fragment 拼两遍（此前会读成
+  `…#L1-L30#L1-L30`）。
+- GitHub 的下载字节与读取窗口共用一次请求的预算：`max_download_bytes` 设 0 时直接
+  返回 `budget_exceeded`，不发请求；`max_work_seconds` 是整次读取的硬截止。
+- 任务检查点：`budget_exceeded`、`network_error`、`rate_limited`、`auth_required`、
+  `challenge_required` 这类可恢复错误让任务停在 `blocked`，不再记成 `failed`；同一个
+  `receipt_id` / `operation_id` 提交两次只生效一次，不重复推进偏移、不重复计费。
+- 没有 `applied_receipts` 字段的旧检查点仍然能加载。
+
+### English
+
+- GitHub file reads now use Envoy's existing material store: `envoy read` on a
+  `blob` / `raw` returns a `material_id`, and a later turn with the same
+  `session_id` can `envoy search` or `envoy_verify` it without downloading the
+  file again. The stored text is the file itself (character offsets line up with
+  the real file), plus `line_count` and the line-number origin, not only the
+  range this read delivered.
+- A search hit cites the hit: `blk-search-*` locators are
+  `…long_task.py#L535` instead of repeating the read's `#L1-L30` for every match
+  (`reader.search_material` uses the line locator for `source_kind="github"`).
+- A code block locator no longer carries its fragment twice (it used to read
+  `…#L1-L30#L1-L30`).
+- GitHub download bytes and the read window share one request budget:
+  `max_download_bytes: 0` answers `budget_exceeded` without making a request, and
+  `max_work_seconds` is the hard deadline for the whole read.
+- Task checkpoints: recoverable errors (`budget_exceeded`, `network_error`,
+  `rate_limited`, `auth_required`, `challenge_required`) park the task in
+  `blocked` instead of `failed`; the same `receipt_id` / `operation_id` applied
+  twice only takes effect once, without advancing offsets or billing twice.
+- Older checkpoints without `applied_receipts` still load.
+
 ## 0.1.49 - 2026-11-07
 
 ### 中文
