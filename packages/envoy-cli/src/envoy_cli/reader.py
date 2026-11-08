@@ -4007,6 +4007,14 @@ def _evidence_revision_kind(stored: dict, source_revision: str | None) -> str:
         return "unknown"
     if stored.get("source_kind") == "pdf":
         return "byte_digest"
+    basis = stored.get("revision_basis")
+    if isinstance(basis, str) and basis.startswith(("github\0blob\0", "github\0raw\0")):
+        # A file read pins the bytes to a commit, a path and a line range; the
+        # response digest is computed from exactly that basis. Calling it a
+        # byte digest is honest as long as the digest still matches.
+        if hashlib.sha256(basis.encode("utf-8")).hexdigest() == source_revision:
+            return "byte_digest"
+        return "unknown"
     source_url = stored.get("source_url")
     if isinstance(source_url, str) and source_url:
         if source_revision == hashlib.sha256(source_url.encode("utf-8")).hexdigest():

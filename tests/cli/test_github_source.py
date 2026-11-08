@@ -922,6 +922,89 @@ def test_a_code_block_locator_names_the_range_once(api):
     assert block.locator.source_url.count("#") == 1
 
 
+def test_a_tree_listing_stays_searchable_after_the_read(api):
+    api({
+        "/repos/acme/widget/commits/main": {"sha": COMMIT_SHA},
+        f"/repos/acme/widget/contents/src?ref={COMMIT_SHA}": [
+            {"type": "file", "name": "app.py", "path": "src/app.py", "size": 10},
+        ],
+    })
+    request = ReadRequest(
+        request_id="req-tree-material",
+        source=SourceRef(url="https://github.com/acme/widget/tree/main/src"),
+    )
+    sink: dict = {}
+
+    github_source.read_github_source(request, material_sink=sink)
+
+    assert "app.py" in sink["text"]
+    # A rendered listing is not a file: it must not claim GitHub line numbers.
+    assert sink["line_count"] == 0
+
+
+def test_an_issue_body_stays_searchable_after_the_read(api):
+    api({
+        "/repos/acme/widget/issues/7": {
+            "title": "Crash on empty input",
+            "body": "It crashes.",
+            "state": "open",
+            "user": {"login": "ada"},
+            "labels": [],
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z",
+            "comments": 1,
+        },
+        "/repos/acme/widget/issues/7/comments": [
+            {"user": {"login": "bob"}, "created_at": "2024-01-03T00:00:00Z", "body": "Reproduced"},
+        ],
+    })
+    request = ReadRequest(
+        request_id="req-issue-material",
+        source=SourceRef(url="https://github.com/acme/widget/issues/7"),
+    )
+    sink: dict = {}
+
+    github_source.read_github_source(request, material_sink=sink)
+
+    assert "It crashes." in sink["text"]
+    assert "Reproduced" in sink["text"]
+
+
+def test_a_slashed_branch_name_is_settled_by_asking(api):
+    """``/tree/feature/auth/src`` parses as ref "feature"; a lookup settles it."""
+
+    fake = api({
+        "/repos/acme/widget/commits/feature/auth": {"sha": COMMIT_SHA},
+        f"/repos/acme/widget/contents/src?ref={COMMIT_SHA}": [
+            {"type": "file", "name": "app.py", "path": "src/app.py", "size": 10},
+        ],
+    })
+
+    response = _read("https://github.com/acme/widget/tree/feature/auth/src")
+
+    details = response.coverage.modalities["code"].details
+    assert details["ref"] == "feature/auth"
+    assert details["path"] == "src"
+    assert details["ref_path_reinterpreted"]["asked_ref"] == "feature"
+    assert details["ref_path_reinterpreted"]["asked_path"] == "auth/src"
+    # The wrong split costs one extra lookup, not a wall of retries.
+    assert len(fake.calls) <= 4
+
+
+def test_a_slashed_branch_name_works_for_a_file_too(api):
+    api({
+        "/repos/acme/widget/commits/feature/auth": {"sha": BLOB_SHA},
+        f"/repos/acme/widget/contents/src/app.py?ref={BLOB_SHA}": _file_payload("x\ny\n"),
+    })
+
+    response = _read("https://github.com/acme/widget/blob/feature/auth/src/app.py")
+
+    details = response.coverage.modalities["code"].details
+    assert details["ref"] == "feature/auth"
+    assert details["path"] == "src/app.py"
+    assert details["commit_sha"] == BLOB_SHA
+
+
 def test_a_budget_cut_file_cites_the_lines_it_shipped(api):
     """Truncated output must not cite lines the caller never received."""
 

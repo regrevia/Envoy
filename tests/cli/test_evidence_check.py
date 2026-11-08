@@ -368,6 +368,12 @@ def test_revision_kind_names_what_the_digest_covers():
     # Anything else stays unclaimed rather than being passed off as a byte digest.
     assert _evidence_revision_kind({"source_kind": "text", "source_url": url}, "b" * 64) == "unknown"
     assert _evidence_revision_kind({"source_kind": "pdf"}, None) == "unknown"
+    # A GitHub file read digests a basis that names commit, path and range.
+    basis = "github\0blob\0acme/widget\0" + "c" * 40 + "\0src/app.py\0L1-L9"
+    digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()
+    stored = {"source_kind": "github", "revision_basis": basis}
+    assert _evidence_revision_kind(stored, digest) == "byte_digest"
+    assert _evidence_revision_kind(stored, "d" * 64) == "unknown"
 
 
 def test_a_pdf_check_reports_the_revision_it_traces_to(tmp_path):

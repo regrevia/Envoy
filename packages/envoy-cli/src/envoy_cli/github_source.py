@@ -684,6 +684,34 @@ def _ref_path_alternatives(link: GithubLink) -> list[tuple[str, str]]:
     return candidates
 
 
+def _resolve_ref_or_reinterpret(
+    ctx: _Context, link: GithubLink, ref: str, details: dict
+) -> tuple[GithubLink, str, str]:
+    """Resolve a branch name, retrying with a slashed ref re-split.
+
+    ``github.com/o/r/tree/feature/auth/src`` parses as ref ``feature`` plus path
+    ``auth/src``. Only a request settles that ambiguity, so try the alternatives
+    before handing back the 404 that names the wrong ref.
+    """
+    try:
+        return link, ref, _resolve_sha(ctx, link, ref)
+    except GithubError as first_error:
+        for alt_ref, alt_path in _ref_path_alternatives(link):
+            candidate = replace(link, ref=alt_ref, path=alt_path)
+            try:
+                sha = _resolve_sha(ctx, candidate, alt_ref)
+            except GithubError:
+                continue
+            details["ref_path_reinterpreted"] = {
+                "asked_ref": ref,
+                "asked_path": link.path,
+                "ref": alt_ref,
+                "path": alt_path,
+            }
+            return candidate, alt_ref, sha
+        raise first_error
+
+
 # ---------------------------------------------------------------------------
 # Response building
 # ---------------------------------------------------------------------------
@@ -912,7 +940,7 @@ def _read_repo_or_tree(request: ReadRequest, link: GithubLink, ctx: _Context, st
     else:
         ref = link.ref or "HEAD"
 
-    sha = _resolve_sha(ctx, link, ref)
+    link, ref, sha = _resolve_ref_or_reinterpret(ctx, link, ref, details)
     details["ref"] = ref
     details["commit_sha"] = sha
     if link.path:
@@ -1087,28 +1115,7 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
     unresolved: list[str] = []
 
     if not sha:
-        try:
-            sha = _resolve_sha(ctx, link, ref)
-        except GithubError as first_error:
-            # ``/blob/feature/auth/src/x.ts`` parses as ref "feature" plus path
-            # "auth/src/x.ts". Spend at most three extra lookups settling that
-            # instead of returning a 404 that names the wrong ref.
-            for alt_ref, alt_path in _ref_path_alternatives(link):
-                candidate = replace(link, ref=alt_ref, path=alt_path)
-                try:
-                    sha = _resolve_sha(ctx, candidate, alt_ref)
-                except GithubError:
-                    continue
-                details["ref_path_reinterpreted"] = {
-                    "asked_ref": ref,
-                    "asked_path": link.path,
-                    "ref": alt_ref,
-                    "path": alt_path,
-                }
-                link, ref = candidate, alt_ref
-                break
-            else:
-                raise first_error
+        link, ref, sha = _resolve_ref_or_reinterpret(ctx, link, ref, details)
     details.update({"ref": ref, "commit_sha": sha, "path": link.path})
 
     raw: bytes | None = None
@@ -1270,11 +1277,33 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
                 "commit_sha": sha,
                 "git_blob_sha": content_sha,
                 "content_hash": content_hash,
+                # source_revision is a digest of this basis, so a citation
+                # check can say what it covers: a commit, a path and a range.
+                "revision_basis": revision_basis,
             }
             if total_lines and not truncated_download
             else None
         ),
     )
+
+
+def _rendered_material(readout: _Readout) -> dict | None:
+    """Let a listing or thread stay searchable after the read that fetched it.
+
+    Only the file reader carries the file's own bytes; for a tree, an issue or a
+    pull request the blocks are the whole content. ``line_count: 0`` keeps
+    search citations on the bare URL: line numbers of a rendered view say
+    nothing about the real page, and a citation pointing nowhere is worse than
+    one that only names the source.
+    """
+    parts = [
+        block.content.text
+        for block in readout.blocks
+        if isinstance(block.content, TextContent) and block.content.text
+    ]
+    if not parts:
+        return None
+    return {"text": "\n\n".join(parts), "line_count": 0, "line_number_offset": 1}
 
 
 def _count_lines(block: MaterialBlock | None) -> int:
@@ -1350,6 +1379,7 @@ def _read_raw(request: ReadRequest, link: GithubLink, ctx: _Context, started: fl
     builder.add(MaterialKind.CODE, "\n".join(lines[start - 1 : end]), language=_language_for_path(link.path))
     if unresolved:
         builder.add(MaterialKind.PARAGRAPH, "\n".join(f"Note: {item}" for item in unresolved))
+    raw_basis = f"github\0raw\0{link.full_name}\0{link.ref}\0{link.path}\0{content_hash or ''}"
     return _Readout(
         blocks=builder.blocks,
         details=details,
@@ -1365,11 +1395,12 @@ def _read_raw(request: ReadRequest, link: GithubLink, ctx: _Context, started: fl
                 "path": link.path,
                 "commit_sha": resolved_sha,
                 "content_hash": content_hash,
+                "revision_basis": raw_basis,
             }
             if total_lines and not truncated
             else None
         ),
-        revision_basis=f"github\0raw\0{link.full_name}\0{link.ref}\0{link.path}\0{content_hash or ''}",
+        revision_basis=raw_basis,
         modality="code",
         counts={"discovered": total_lines, "extracted": total_lines, "returned": min(end - start + 1, total_lines) if total_lines else 0},
     )
@@ -1984,6 +2015,9 @@ def read_github_source(
         # ``None`` lets the caller read the page the way it did before GitHub
         # was recognised, instead of failing a source that is readable.
         return None
+
+    if readout.material is None and readout.blocks:
+        readout.material = _rendered_material(readout)
 
     if material_sink is not None and readout.material is not None:
         material_sink.update(readout.material)
