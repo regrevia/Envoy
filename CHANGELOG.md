@@ -1,5 +1,33 @@
 # 更新日志 / Changelog
 
+## 0.1.51 - 2026-11-09
+
+### 中文
+
+- 目录、issue、PR 读完也留在材料里：下一轮可以直接搜索这次交付的清单或正文，不必
+  重新抓取；它们的引用停在裸 URL，因为渲染视图的行号并不对应真实页面。
+- 带斜杠的分支名（`/tree/feature/auth/src`）不再读错：链接本身只能按第一段切成
+  `ref=feature`，现在这次读失败时会用候选切分再问一次 API，选中的切分写进
+  `coverage.modalities.code.details["ref_path_reinterpreted"]`，不会静默读成另一个
+  东西，也不会退化成浏览器。
+- GitHub 文件读的 `source_revision` 现在能说明它覆盖什么：`source_revision_kind`
+  是 `byte_digest`（依据是 commit、路径和行范围，digest 与依据对得上才认）。
+
+### English
+
+- Directory, issue and pull-request reads also stay in the material store: a
+  later turn can search the listing or body they delivered without fetching it
+  again. Their citations stop at the bare URL, because line numbers of a
+  rendered view say nothing about the real page.
+- A branch name containing slashes (`/tree/feature/auth/src`) no longer reads
+  the wrong thing: the link alone can only split it as `ref=feature`, so when
+  that read fails the candidate splits are asked for once more, and the one that
+  worked is recorded in `coverage.modalities.code.details["ref_path_reinterpreted"]`
+  instead of silently reading something else or falling back to a browser.
+- A GitHub file read's `source_revision` now says what it covers:
+  `source_revision_kind` is `byte_digest` (the basis is commit, path and line
+  range; the digest is only accepted while it still matches that basis).
+
 ## 0.1.50 - 2026-11-08
 
 ### 中文
@@ -21,14 +49,6 @@
   `challenge_required` 这类可恢复错误让任务停在 `blocked`，不再记成 `failed`；同一个
   `receipt_id` / `operation_id` 提交两次只生效一次，不重复推进偏移、不重复计费。
 - 没有 `applied_receipts` 字段的旧检查点仍然能加载。
-- 带斜杠的分支名（`/tree/feature/auth/src`）不再读错：链接本身只能按第一段切成
-  `ref=feature`，现在这次读失败时会用候选切分再问一次 API，选中的切分写进
-  `coverage.modalities.code.details["ref_path_reinterpreted"]`，不会静默读成另一个
-  东西，也不会退化成浏览器。
-- 目录、issue、PR 读完也留在材料里：下一轮可以直接搜索这次交付的清单或正文，不必
-  重新抓取；它们的引用停在裸 URL，因为渲染视图的行号并不对应真实页面。
-- GitHub 文件读的 `source_revision` 现在能说明它覆盖什么：`source_revision_kind`
-  是 `byte_digest`（依据是 commit、路径和行范围，digest 与依据对得上才认）。
 
 ### English
 
@@ -54,18 +74,6 @@
   `blocked` instead of `failed`; the same `receipt_id` / `operation_id` applied
   twice only takes effect once, without advancing offsets or billing twice.
 - Older checkpoints without `applied_receipts` still load.
-- A branch name containing slashes (`/tree/feature/auth/src`) no longer reads
-  the wrong thing: the link alone can only split it as `ref=feature`, so when
-  that read fails the candidate splits are asked for once more, and the one that
-  worked is recorded in `coverage.modalities.code.details["ref_path_reinterpreted"]`
-  instead of silently reading something else or falling back to a browser.
-- Directory, issue and pull-request reads also stay in the material store: a
-  later turn can search the listing or body they delivered without fetching it
-  again. Their citations stop at the bare URL, because line numbers of a
-  rendered view say nothing about the real page.
-- A GitHub file read's `source_revision` now says what it covers:
-  `source_revision_kind` is `byte_digest` (the basis is commit, path and line
-  range; the digest is only accepted while it still matches that basis).
 
 ## 0.1.49 - 2026-11-07
 
