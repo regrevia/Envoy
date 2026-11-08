@@ -932,7 +932,7 @@ def test_a_search_hit_names_its_own_lines(tmp_path, monkeypatch):
 
     monkeypatch.setattr(reader_module, "_material_root", lambda: tmp_path)
     text = "".join(
-        f"def needle():\n" if number == 12 else f"line {number}\n"
+        "def needle():\n" if number == 12 else f"line {number}\n"
         for number in range(1, 21)
     )
     material_id = "mat-" + "a" * 24
