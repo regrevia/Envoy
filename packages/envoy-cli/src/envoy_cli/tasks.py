@@ -151,6 +151,7 @@ def apply_receipt(
     receipt: dict,
     *,
     offset: int,
+    receipt_id: str | None = None,
 ) -> dict:
     """Fold one real receipt into the task, without inventing any delivery.
 
@@ -159,6 +160,12 @@ def apply_receipt(
     character position in a document for a text one. A fresh media read starts
     at 0, so 0 is a real offset and never a reason to refuse the receipt.
     """
+    identity = str(
+        receipt_id
+        or receipt.get("receipt_id")
+        or receipt.get("operation_id")
+        or ""
+    ).strip()
     path = _task_path(task_id)
     with _locked(path):
         path, task = _load(task_id)
@@ -166,16 +173,28 @@ def apply_receipt(
             material = task.material(url)
         except KeyError as exc:
             raise TaskError(f"Task {task_id} has no source {url}") from exc
+        if identity and identity in task.applied_receipts:
+            # A retried apply reports the state it already reached instead of
+            # folding the same characters (and the same cost) in again.
+            payload = _with_material_progress(lt.to_checkpoint(task), task)
+            payload["receipt_id"] = identity
+            payload["duplicate"] = True
+            return payload
         try:
             delivered = material.with_delivery(receipt, offset=offset)
         except lt.TaskBlocked as exc:
             task = task.with_material(replace(material, state=lt.BLOCKED, errors=(exc.code,)))
-            task = task.record_error(f"{url}: {exc.code}")
+            task = task.record_error(f"{url}: {exc.code}").record_receipt(identity)
             payload = _save(path, task, now=_now())
             payload["blocked"] = {"code": exc.code, "message": str(exc)}
+            if identity:
+                payload["receipt_id"] = identity
             return payload
-        saved = task.with_material(delivered)
-        return _save(path, saved, now=_now())
+        saved = task.with_material(delivered).record_receipt(identity)
+        payload = _save(path, saved, now=_now())
+        if identity:
+            payload["receipt_id"] = identity
+        return payload
 
 
 def next_request(
@@ -282,6 +301,7 @@ def handle(payload: dict) -> dict:
             str(payload.get("source") or payload.get("url") or ""),
             receipt,
             offset=offset,
+            receipt_id=payload.get("receipt_id") or payload.get("operation_id"),
         )
     if action == "next":
         return next_request(

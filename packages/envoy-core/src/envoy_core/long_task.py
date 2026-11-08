@@ -237,6 +237,25 @@ def _page_numbers(blocks: Any) -> list[int]:
     return pages
 
 
+# A pause, not an ending: the same material can be read again once the
+# condition clears. Marking these FAILED put them in FINISHED_STATES, so resume
+# answered "already_finished" and the only way forward was a brand-new task.
+_RECOVERABLE_CODES = frozenset({
+    "auth_required",
+    "challenge_required",
+    "budget_exceeded",
+    "network_error",
+    "rate_limited",
+})
+
+
+def _recoverable(codes: Sequence[str], details: Mapping[str, Any]) -> bool:
+    if any(code in _RECOVERABLE_CODES for code in codes):
+        return True
+    retry_after = details.get("retry_after_seconds")
+    return isinstance(retry_after, (int, float)) and retry_after > 0
+
+
 def _error_codes(receipt: Mapping[str, Any]) -> list[str]:
     errors = receipt.get("errors")
     if not isinstance(errors, list):
@@ -400,7 +419,7 @@ class MaterialCheckpoint:
                 pages.append(page)
         result = receipt.get("result")
         if codes:
-            new_state = FAILED
+            new_state = BLOCKED if _recoverable(codes, details) else FAILED
         elif result == "complete":
             new_state = COMPLETED
         elif result == "blocked":
@@ -632,6 +651,9 @@ class LongTask:
     created_at: str | None = None
     updated_at: str | None = None
     errors: tuple[str, ...] = ()
+    # Receipt keys already folded in. A caller that retries an apply after a
+    # timeout must not charge the same delivery twice.
+    applied_receipts: tuple[str, ...] = ()
 
     def material(self, url: str) -> MaterialCheckpoint:
         for item in self.materials:
@@ -650,6 +672,12 @@ class LongTask:
 
     def record_error(self, message: str) -> "LongTask":
         return replace(self, errors=self.errors + (message,))
+
+    def record_receipt(self, receipt_id: str) -> "LongTask":
+        if not receipt_id or receipt_id in self.applied_receipts:
+            return self
+        kept = (self.applied_receipts + (receipt_id,))[-64:]
+        return replace(self, applied_receipts=kept)
 
     def finished(self) -> bool:
         return self.state in TERMINAL_TASK_STATES or all(
@@ -719,6 +747,7 @@ def to_checkpoint(task: LongTask) -> dict[str, Any]:
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "errors": list(task.errors),
+        "applied_receipts": list(task.applied_receipts),
         "materials": [
             {
                 "url": item.url,
@@ -844,5 +873,9 @@ def from_checkpoint(payload: Mapping[str, Any]) -> LongTask:
         created_at=payload.get("created_at") if isinstance(payload.get("created_at"), str) else None,
         updated_at=payload.get("updated_at") if isinstance(payload.get("updated_at"), str) else None,
         errors=tuple(str(e) for e in payload.get("errors") or []),
+        # v1 checkpoints have no receipt log and load with an empty one.
+        applied_receipts=tuple(
+            str(item) for item in payload.get("applied_receipts") or [] if str(item)
+        ),
     )
     return replace(task, state=overall_state(task))

@@ -203,7 +203,9 @@ def test_one_unreadable_source_does_not_stop_the_other(
     assert code == 0
     by_url = {item["url"]: item for item in applied["materials"]}
     assert by_url[SOURCE]["delivered_ranges"] == [[0, 12000]]
-    assert by_url[OTHER]["state"] == "failed"
+    # A dropped connection is a pause, not an ending: the source stays
+    # resumable instead of being written off as failed.
+    assert by_url[OTHER]["state"] == "blocked"
     assert by_url[OTHER]["delivered_ranges"] == []
 
 
@@ -459,3 +461,59 @@ def test_get_says_a_video_is_finished_even_when_chars_remain(monkeypatch, tmp_pa
     assert item["is_finished"] is True
     assert item["remaining_seconds"] == 0.0
     assert item["resume_kind"] == "expand"
+
+
+def test_budget_exhausted_receipt_stays_resumable(monkeypatch, tmp_path, capsys):
+    """A budget stop must keep the next request reachable, not end the task."""
+
+    _create(monkeypatch, tmp_path, capsys)
+    _run(
+        {"action": "apply", "task_id": "task-1", "source": SOURCE, "offset": 0,
+         "receipt": _receipt(returned=2000, next_offset=2000, result="partial",
+                             errors=[{"code": "budget_exceeded"}])},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    code, payload = _run({"action": "get", "task_id": "task-1"},
+                         monkeypatch, tmp_path, capsys)
+
+    assert code == 0
+    item = payload["materials"][0]
+    # The characters that did arrive are still counted, and the pause is not
+    # mistaken for the end of the material.
+    assert item["state"] == "blocked"
+    assert item["is_finished"] is False
+    assert item["delivered_ranges"] == [[0, 2000]]
+
+    code, nxt = _run(
+        {"action": "next", "task_id": "task-1", "source": SOURCE, "max_chars": 8000},
+        monkeypatch, tmp_path, capsys,
+    )
+
+    assert code == 0
+    assert nxt["result"] == "ready"
+    assert nxt["request"]["offset"] == 2000
+
+
+def test_the_same_receipt_twice_does_not_advance_twice(monkeypatch, tmp_path, capsys):
+    _create(monkeypatch, tmp_path, capsys)
+    receipt = {**_receipt(), "receipt_id": "receipt-1"}
+    first = _run(
+        {"action": "apply", "task_id": "task-1", "source": SOURCE, "offset": 0,
+         "receipt": receipt},
+        monkeypatch, tmp_path, capsys,
+    )[1]
+    second = _run(
+        {"action": "apply", "task_id": "task-1", "source": SOURCE, "offset": 0,
+         "receipt": receipt},
+        monkeypatch, tmp_path, capsys,
+    )[1]
+
+    assert first["receipt_id"] == "receipt-1"
+    assert "duplicate" not in first
+    assert second["duplicate"] is True
+    assert second["receipt_id"] == "receipt-1"
+    by_url = {item["url"]: item for item in second["materials"]}
+    # One delivery, one range: a retried apply must not pay twice.
+    assert by_url[SOURCE]["delivered_ranges"] == [[0, 12000]]
+    assert by_url[SOURCE]["next_offset"] == 12000
