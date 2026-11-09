@@ -752,7 +752,7 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
         "asr_backend": backend,
         "asr_installed": asr_installed,
         "asr_model": model_name,
-        "asr_cpp_binary": whisper_cpp_binary(),
+        "asr_cpp_binary": whisper_cpp_binary() if backend == "whisper.cpp" else None,
         "asr_cpp_model": str(cpp_model) if cpp_model else None,
         "asr_models_cached": (
             sorted(set(cached_asr_models()) | set(whisper_cpp_models()))
@@ -772,6 +772,7 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
             model_verified=model_verified,
             operational=operational,
             asr_config=asr_config,
+            model_name=model_name,
         ),
     }
 
@@ -784,6 +785,7 @@ def _asr_next_step(
     model_verified: bool | None,
     operational: str,
     asr_config: dict[str, Any],
+    model_name: str,
 ) -> str | None:
     """Say what a user has to do next, in the terms of the backend in use.
 
@@ -796,13 +798,16 @@ def _asr_next_step(
         if model_file_present:
             return None
         return (
-            "download a GGML model with envoy asr install --model <model>, "
+            f"download a GGML model with envoy asr install --model {model_name}, "
             "or point ENVOY_WHISPER_CPP_MODEL at an existing .bin file"
         )
     if bool(asr_config.get("enabled")) and not asr_installed:
-        return "rerun envoy asr install --model <model>; runtime updates may replace injected media dependencies"
+        return (
+            f"rerun envoy asr install --model {model_name}; runtime updates may "
+            "replace injected media dependencies"
+        )
     if not asr_installed or not model_file_present or model_verified is False:
-        return "run envoy asr setup --model <model>"
+        return f"run envoy asr setup --model {model_name}"
     if model_verified is None and operational == "not_checked":
         return "run envoy doctor --verify-asr"
     return None
@@ -2355,7 +2360,8 @@ def transcribe_audio_file(
     if asr_backend() is None:
         raise MediaCapabilityMissing(
             "Local ASR is unavailable: neither openai-whisper (importable by this "
-            "interpreter) nor a whisper.cpp CLI with a GGML model was found"
+            "interpreter) nor a whisper.cpp CLI with a GGML model was found; run "
+            f"`envoy asr install --model {model_name}` to fetch one"
         )
     source = Path(audio_path).expanduser().resolve()
     if not source.is_file() or source.stat().st_size <= 0:

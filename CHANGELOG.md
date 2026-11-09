@@ -1,5 +1,32 @@
 # 更新日志 / Changelog
 
+## 0.1.54 - 2026-11-09
+
+### 中文
+
+- 分享短链（例如 `v.douyin.com/...`）现在先解析成它指向的
+  `/video/<id>` 页面，再走视频分支：本地语音转写与关键帧不会再因为链接里
+  没有 `/video/` 路径而回落成整页 DOM 文本。
+- 本机装了 whisper.cpp 的 `whisper-cli` 并备好 GGML 模型时，转写直接走它；
+  即使当前解释器没有 numpy 或 openai-whisper 也能完成，不再报「媒体能力缺失」。
+  `envoy doctor` 的状态会说明这次用的是哪个后端、哪个模型文件，以及缺模型时
+  该跑哪条命令。
+- 本地语音不可用时，报错信息会带上取模型的具体命令，而不是只说「不可用」。
+
+### English
+
+- A share link (for example `v.douyin.com/...`) is resolved to the
+  `/video/<id>` page it points at before the video branch runs: local speech
+  transcription and keyframes no longer fall back to raw page DOM text just
+  because the link carries no `/video/` path.
+- When whisper.cpp's `whisper-cli` and a GGML model are present, transcription
+  runs through it, even if the current interpreter has no numpy or
+  openai-whisper, instead of reporting a missing media capability. `envoy doctor`
+  now says which backend and model file were used, and which command fetches a
+  model when one is missing.
+- The local-speech-unavailable error names the command that fetches a model
+  instead of only saying it is unavailable.
+
 ## 0.1.53 - 2026-11-09
 
 ### 中文

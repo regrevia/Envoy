@@ -1821,6 +1821,66 @@ def _is_single_video_path(value: str) -> bool:
     )
 
 
+# A share sheet hands out a redirect link (`v.douyin.com/<token>`) whose path is
+# not a player path, so every "is this one video" test said no and the read fell
+# through to the rendered page: comments and recommendations came back, the video
+# never did. One hop through the redirect turns it into the `/video/<id>` page the
+# existing media route already handles.
+_SHORT_VIDEO_LINK_HOSTS = frozenset({"v.douyin.com"})
+_SHORT_VIDEO_LINK_HOPS = 4
+_SHORT_VIDEO_LINK_SECONDS = 8.0
+
+
+def _resolve_short_video_url(
+    source_url: str, dns_cache: dict[str, str] | None = None
+) -> str:
+    """Follow a video share link to its canonical page, or leave it untouched.
+
+    Only the location header is read: the caller wants the canonical URL, and
+    downloading the page here would spend the read budget twice. Every hop is
+    checked against the public-address guard, and any failure keeps the original
+    link so a broken redirect still gets a normal page read.
+    """
+
+    if (urlparse(source_url).hostname or "").lower() not in _SHORT_VIDEO_LINK_HOSTS:
+        return source_url
+    dns_cache = dns_cache if dns_cache is not None else {}
+    headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
+    for proxy in proxy_plan():
+        current = source_url
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(_SHORT_VIDEO_LINK_SECONDS),
+                follow_redirects=False,
+                trust_env=False,
+                proxy=proxy,
+            ) as client:
+                for _ in range(_SHORT_VIDEO_LINK_HOPS):
+                    if not _is_public_http_url(current, dns_cache):
+                        return source_url
+                    with client.stream("GET", current, headers=headers) as response:
+                        location = response.headers.get("location")
+                        if response.status_code not in {301, 302, 303, 307, 308}:
+                            break
+                        if not location:
+                            return source_url
+                    current = urljoin(current, location)
+                if not _url_is_video_page(current):
+                    return source_url
+                parts = urlparse(current)
+                if re.fullmatch(r"/video/[^/]+", parts.path):
+                    # `/video/<id>` is self-contained. Dropping the share
+                    # tracking query keeps the material identity stable between
+                    # the share link and the page link.
+                    return urlunparse(
+                        (parts.scheme, parts.netloc, parts.path, "", "", "")
+                    )
+                return current
+        except (httpx.TimeoutException, httpx.TransportError):
+            continue
+    return source_url
+
+
 def _http_media_candidates(values: list[str] | None) -> list[str]:
     """Keep only directly downloadable media URLs.
 
@@ -10587,8 +10647,8 @@ def _attach_github_material(
 
 @_serialize_read_request
 def _read_public_page_once(request: ReadRequest) -> ReadResponse:
-    source_url = request.source.url
     dns_cache: dict[str, str] = {}
+    source_url = _resolve_short_video_url(request.source.url, dns_cache)
     browser_snapshot = None
     browser_snapshot_for_video = False
     if not _is_public_http_url(source_url, dns_cache):
