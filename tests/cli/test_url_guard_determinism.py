@@ -98,3 +98,52 @@ def test_policy_rejection_is_not_registered_as_a_dns_failure(lookups):
     assert reader._public_url_rejection("http://localhost:8080/x", {}) == reader.POLICY_REJECTION
     # Only the two host names above were looked up; literals and bad schemes never resolve.
     assert [host for host, _port in calls] == ["example.com"]
+
+
+def test_a_name_answered_from_the_fake_ip_pool_is_fetchable(lookups):
+    _calls, state = lookups
+    # A TUN proxy in fake-IP mode answers every A record from its own pool
+    # (198.18.0.0/15 by default) and routes the connection by name, so the
+    # address says nothing about where the request really goes (#19).
+    state["addresses"] = ["198.18.4.7"]
+    assert reader._public_url_rejection("https://example.com/a", {}) is None
+    assert reader._is_public_http_url("https://example.com/a", {}) is True
+
+
+def test_a_mixed_answer_is_still_a_policy_refusal(lookups):
+    _calls, state = lookups
+    # A name that answers with the pool *and* with a private address is the
+    # machine's own network, not a proxy placeholder.
+    state["addresses"] = ["198.18.4.7", "10.0.0.8"]
+    assert reader._public_url_rejection("https://example.com/a", {}) == reader.POLICY_REJECTION
+
+
+def test_a_literal_fake_ip_url_is_not_trusted(lookups):
+    _calls, state = lookups
+    # The allowance is about a DNS answer, never about a URL a caller wrote.
+    state["addresses"] = ["198.18.4.7"]
+    assert reader._public_url_rejection("https://198.18.4.7/a", {}) == reader.POLICY_REJECTION
+
+
+def test_the_fake_ip_pool_can_be_extended_by_the_environment(lookups, monkeypatch):
+    _calls, state = lookups
+    monkeypatch.setenv(reader.FAKE_IP_ENV_VAR, "not-a-cidr, 100.64.0.0/10")
+    state["addresses"] = ["100.100.1.9"]
+    # A malformed entry is skipped instead of disabling the pool entirely.
+    assert reader._public_url_rejection("https://example.com/a", {}) is None
+
+
+def test_a_refusal_explains_the_fake_ip_pool_without_a_second_lookup(lookups):
+    calls, state = lookups
+    state["addresses"] = ["10.0.0.8"]
+    response = reader._read_public_page_once(_request("https://internal.example/a"))
+    assert len(calls) == 1, calls
+    assert response.errors[0].code.value == "source_unavailable"
+    message = response.errors[0].message
+    assert message.startswith("Only public HTTP(S) URLs are allowed")
+    # A refused name is told how to declare a proxy's placeholder pool; a refused
+    # literal address is not, because no proxy answered the name there.
+    assert reader.FAKE_IP_ENV_VAR in message
+    assert reader.DEFAULT_FAKE_IP_RANGES in message
+    literal = reader._read_public_page_once(_request("https://10.0.0.8/a"))
+    assert reader.FAKE_IP_ENV_VAR not in literal.errors[0].message

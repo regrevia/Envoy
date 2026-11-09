@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlsplit, urlunsplit
 
-from .netpolicy import proxy_plan
+from .netpolicy import is_fake_ip, proxy_plan
 
 
 class MediaProcessingError(RuntimeError):
@@ -261,7 +261,7 @@ def public_network_guard():
                     raise MediaUnsafeAddress(
                         "Media extraction attempted a non-public network target"
                     ) from None
-                if not address.is_global:
+                if not address.is_global and not is_fake_ip(address):
                     raise MediaUnsafeAddress(
                         "Media extraction attempted a non-public network target"
                     )
@@ -276,10 +276,12 @@ def public_network_guard():
                 or parsed.password is not None
             ):
                 raise MediaUnsafeAddress("Media extraction attempted a non-public HTTP(S) URL")
+            literal = True
             try:
                 address = ipaddress.ip_address(parsed.hostname.split("%", 1)[0])
                 addresses = [address]
             except ValueError:
+                literal = False
                 try:
                     answers = original_resolver(
                         parsed.hostname,
@@ -301,7 +303,10 @@ def public_network_guard():
                         raise MediaUnsafeAddress(
                             "Media extraction attempted a non-public network target"
                         ) from None
-            if not addresses or any(not address.is_global for address in addresses):
+            if not addresses or any(
+                not address.is_global and (literal or not is_fake_ip(address))
+                for address in addresses
+            ):
                 raise MediaUnsafeAddress(
                     "Media extraction attempted a non-public network target"
                 )

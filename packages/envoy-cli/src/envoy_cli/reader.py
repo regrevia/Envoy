@@ -34,7 +34,14 @@ from urllib.parse import (
 from ._lazy_module import lazy_attr, lazy_module
 
 from .video import extract_public_subtitles, has_specialized_extractor
-from .netpolicy import detected_proxy, explicit_proxy, proxy_plan
+from .netpolicy import (
+    DEFAULT_FAKE_IP_RANGES,
+    FAKE_IP_ENV_VAR,
+    detected_proxy,
+    explicit_proxy,
+    is_fake_ip,
+    proxy_plan,
+)
 from .platforms import (
     classify_public_url,
     extract_xhs_note_images,
@@ -869,7 +876,7 @@ def _public_url_rejection(value: str, dns_cache: dict[str, str] | None = None) -
                 if dns_cache is not None:
                     dns_cache[host] = DNS_FAILURE
                 return DNS_FAILURE
-            verdict = PUBLIC_URL if _all_global(addresses) else POLICY_REJECTION
+            verdict = PUBLIC_URL if _all_global(addresses, from_name=True) else POLICY_REJECTION
             if dns_cache is not None:
                 dns_cache[host] = verdict
             return None if verdict == PUBLIC_URL else verdict
@@ -878,8 +885,17 @@ def _public_url_rejection(value: str, dns_cache: dict[str, str] | None = None) -
         return POLICY_REJECTION
 
 
-def _all_global(addresses: set) -> bool:
-    return bool(addresses) and all(address.is_global for address in addresses)
+def _all_global(addresses: set, *, from_name: bool = False) -> bool:
+    if not addresses:
+        return False
+    if all(address.is_global for address in addresses):
+        return True
+    if not from_name:
+        return False
+    # Only a name can be answered by a fake-IP proxy. Every address has to be in
+    # the placeholder pool: a name that resolves to the pool *and* to a private
+    # address is still the machine's own network, not a proxy answer.
+    return all(is_fake_ip(address) for address in addresses)
 
 
 _GOOGLE_DOC_FORMATS = {"document": "docx", "spreadsheets": "xlsx", "presentation": "pptx"}
@@ -10581,7 +10597,26 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 "The host name does not resolve from this machine, so the source cannot be reached (DNS lookup failed)",
                 details={"reader": "url_guard"},
             )
-        return _blocked(request, ErrorCode.SOURCE_UNAVAILABLE, "Only public HTTP(S) URLs are allowed")
+        note = ""
+        host = (urlparse(source_url).hostname or "").rstrip(".").lower()
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            # A TUN proxy in fake-IP mode answers DNS with a placeholder from its
+            # own pool and routes the connection by name. A refused name is worth
+            # explaining even when that pool is not configured on this machine.
+            note = (
+                " (the host name resolves to a non-public address; a TUN proxy in "
+                "fake-IP mode answers DNS with a placeholder from its own pool and "
+                "routes the connection by name — if one is running here, list its "
+                f"pool in {FAKE_IP_ENV_VAR}, the built-in default is {DEFAULT_FAKE_IP_RANGES})"
+            )
+        return _blocked(
+            request,
+            ErrorCode.SOURCE_UNAVAILABLE,
+            "Only public HTTP(S) URLs are allowed" + note,
+            details={"reader": "url_guard"},
+        )
     source_path = urlparse(source_url).path.lower()
     if is_collection_url(source_url):
         return _blocked(

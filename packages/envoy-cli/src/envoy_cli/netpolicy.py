@@ -13,6 +13,7 @@ a direct connection and never fall back.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import getproxies
@@ -97,3 +98,41 @@ def proxy_plan() -> list[str | None]:
 def proxy_configured() -> bool:
     """Whether any proxy is available to Envoy at all."""
     return explicit_proxy() is not None or detected_proxy() is not None
+
+
+FAKE_IP_ENV_VAR = "ENVOY_FAKE_IP_RANGES"
+
+#: RFC 2544 benchmarking space. A TUN proxy in fake-IP mode (Clash/mihomo,
+#: Surge, Loon, Shadowrocket by default) answers its own DNS with a placeholder
+#: from this pool and routes the connection by the name it was asked for, so the
+#: answer never names the destination. Other pools differ, hence the override.
+DEFAULT_FAKE_IP_RANGES = "198.18.0.0/15"
+
+
+def fake_ip_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """The address pools a fake-IP DNS answer may come from, in configured order."""
+    networks = []
+    for item in os.getenv(FAKE_IP_ENV_VAR, DEFAULT_FAKE_IP_RANGES).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            # A malformed entry must not disable the guard; the default pool
+            # still applies when the variable is empty or unusable.
+            continue
+    return tuple(networks)
+
+
+def is_fake_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether a resolved address can only be a fake-IP placeholder.
+
+    This answers a question about a DNS *answer*, never about a URL written by a
+    caller: a literal ``http://198.18.0.1/`` still has to be refused, because a
+    pool address typed by hand is not a name a proxy will route.
+    """
+    return any(
+        address.version == network.version and address in network
+        for network in fake_ip_networks()
+    )
