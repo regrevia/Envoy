@@ -69,6 +69,18 @@ def test_dry_run_does_not_touch_the_profile(tmp_path):
     assert bin_dir.is_dir()
 
 
+def test_fresh_codex_dry_run_plans_runtime_and_host_without_installing(tmp_path):
+    bin_dir, env = _stubs(tmp_path)
+    (bin_dir / "envoy").unlink()
+    env["PATH"] = f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"
+    result = _run(["--profile", "standard", "codex"], env)
+    assert result.returncode == 0, result.stderr
+    assert "browser setup" in result.stdout
+    assert "codex plugin marketplace add" in result.stdout
+    assert "hook install --host codex" in result.stdout
+    assert not (tmp_path / "home" / ".local" / "share" / "envoy-dsh" / "runtime").exists()
+
+
 def test_mcp_target_merges_instead_of_replacing(tmp_path):
     """Claude Desktop and Cursor users only need an MCP entry; the script must
     keep the other servers already in that file."""

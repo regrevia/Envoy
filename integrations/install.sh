@@ -505,6 +505,12 @@ ensure_profile() {
 # Every host-facing step resolves the binary through here, so the plugin that
 # gets registered and the runtime that serves it are always the same one.
 envoy_binary() {
+  # No executable is created by a dry run. Report the planned runtime path
+  # instead of failing before the host and optional setup steps are printed.
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '%s' "$RUNTIME_BIN"
+    return 0
+  fi
   pinned="$(pinned_runtime)"
   if [ -n "$pinned" ]; then
     printf '%s' "$pinned"
