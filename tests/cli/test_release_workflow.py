@@ -86,7 +86,19 @@ def test_npm_publish_stays_optional_and_never_hides_a_failure(text: str):
     assert "|| true" not in text
 
 
-def test_release_uploads_dist_and_notes_from_changelog(text: str):
+def test_release_publishes_this_versions_changelog_section(text: str):
+    """GitHub rejects a release body longer than 125,000 characters.
+
+    The changelog passed that limit, so the release carries only this version's
+    section: a step extracts it from CHANGELOG.md into RELEASE_NOTES.md, and
+    that file is what --notes-file reads. It is written outside dist/, so it is
+    not uploaded as an asset.
+    """
     assert 'gh release create "$RELEASE_TAG" dist/*' in text
     assert "--verify-tag" in text
-    assert "--notes-file CHANGELOG.md" in text
+    assert "--notes-file RELEASE_NOTES.md" in text
+    assert "--notes-file CHANGELOG.md" not in text
+    assert 'Path("CHANGELOG.md").read_text(encoding="utf-8")' in text
+    assert 'Path("RELEASE_NOTES.md").write_text(notes, encoding="utf-8")' in text
+    assert "CHANGELOG.md has no section for {version}" in text
+    assert text.index('Path("RELEASE_NOTES.md")') < text.index("gh release create")
