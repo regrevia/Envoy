@@ -1,5 +1,25 @@
 # 更新日志 / Changelog
 
+## 0.1.53 - 2026-11-09
+
+### 中文
+
+- 全新机器上按文档跑 Codex 安装器的 dry run，不再在列出插件与 hook 步骤之前以
+  「没找到 envoy runtime」退出：dry run 不创建可执行文件，所以它报告计划中的
+  runtime 路径，而不是去要求一个这次运行故意没装的 runtime。
+- 前端与后端的版本约束升级：`@types/react`、`@types/node`、`autoprefixer`、
+  `eslint-config-next`、`pydantic`、`setuptools`、`yt-dlp`。
+
+### English
+
+- A documented Codex installer dry run on a fresh machine no longer exits with
+  "no envoy runtime found" before it prints the plugin and hook steps: a dry run
+  creates no executable, so it reports the planned runtime path instead of
+  demanding the runtime it deliberately did not install.
+- Frontend and backend version constraints were refreshed: `@types/react`,
+  `@types/node`, `autoprefixer`, `eslint-config-next`, `pydantic`, `setuptools`,
+  `yt-dlp`.
+
 ## 0.1.52 - 2026-11-09
 
 ### 中文
