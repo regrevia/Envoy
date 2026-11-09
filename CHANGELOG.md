@@ -1,5 +1,39 @@
 # 更新日志 / Changelog
 
+## 0.1.52 - 2026-11-09
+
+### 中文
+
+- 开着伪装 IP（fake-IP）的 TUN 代理时，公网链接不再一律被当成内网拒绝：域名解析
+  结果全部落在代理的占位池里就按域名放行，字面 IP 永远不走这条路，混合答案仍然
+  拒绝。池子默认 `198.18.0.0/15`，可用 `ENVOY_FAKE_IP_RANGES` 声明自己的；写错的
+  条目会被跳过并回落到默认。拒绝文案只说该去声明池子，不再点名解析到的地址——
+  判定只做一次解析，不为了装饰错误再查一次。
+- MCP 客户端把对象参数写成 JSON 字符串时，不再以 `-32603` 内部错误结束：
+  `budget`、`retention`、`host_capabilities` 会被解码回对象，解不开的明确回
+  `-32602` 并说明是哪个参数，而不是崩在工具实现里。`envoy_task` 的 `source` 依旧是
+  URL 字符串，不会被当成对象。
+- Windows 上每次启动桌面 Host 都会在桌面上留下一个整会话期的控制台窗口，手动关掉
+  它就等于杀掉 MCP 桥：启动器现在传 `CREATE_NO_WINDOW`，控制台还在，窗口不再出现。
+
+### English
+
+- With a fake-IP TUN proxy running, public links are no longer refused as
+  private ones: a name whose every resolved address is inside the proxy's
+  placeholder pool is accepted by name, a literal address never is, and a mixed
+  answer is still a refusal. The pool defaults to `198.18.0.0/15` and can be
+  declared with `ENVOY_FAKE_IP_RANGES`; malformed entries are skipped and fall
+  back to the default. The refusal names the pool to declare instead of the
+  address it saw, because the decision costs exactly one lookup.
+- An MCP client that stringifies its object arguments no longer ends in a
+  `-32603` internal error: `budget`, `retention` and `host_capabilities` are
+  decoded back into objects, and a value that will not decode answers `-32602`
+  naming the parameter. `envoy_task`'s `source` stays a URL string and is never
+  read as an object.
+- On Windows every desktop Host start left a console window on the desktop for
+  the whole session, and closing it killed the MCP bridge: the launcher now
+  passes `CREATE_NO_WINDOW`, so the console stays and its window does not.
+
 ## 0.1.51 - 2026-11-09
 
 ### 中文
