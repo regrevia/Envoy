@@ -9455,7 +9455,11 @@ def _read_video_asr(request: ReadRequest, source_url: str) -> ReadResponse:
         )
     if not status["asr_installed"]:
         raise MediaCapabilityMissing(
-            "Local ASR is disabled; install it with pip install 'envoy-cli[asr]' and fetch the model with envoy asr install --model base"
+            "Local ASR is disabled: openai-whisper is not importable by the Python "
+            "interpreter running Envoy, so a whisper installed into a different "
+            "virtualenv is invisible here. Install the extra in the environment "
+            "that runs Envoy (uv tool install --force 'envoy-cli[asr]' for a uv "
+            "tool install), then fetch the model with envoy asr install --model base"
         )
     if not status["asr_model_available"]:
         raise MediaCapabilityMissing(

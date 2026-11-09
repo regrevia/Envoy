@@ -1069,9 +1069,6 @@ def _download_audio_for_asr_worker(
     max_download_bytes: int,
     max_work_seconds: int,
 ) -> dict[str, Any]:
-    YoutubeDL = _load_yt_dlp()
-    if YoutubeDL is None:
-        raise MediaCapabilityMissing("yt-dlp is not installed")
     byte_limit = max(int(max_download_bytes), 0)
     work_limit = max(int(max_work_seconds), 1)
     if byte_limit <= 0:
@@ -1081,6 +1078,26 @@ def _download_audio_for_asr_worker(
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     started = time.monotonic()
     deadline = started + work_limit
+    # Only a URL that already names media is streamed directly; a page URL
+    # still goes to the extractor, so this never costs the page path a request.
+    direct = (
+        _try_download_direct_media(source_url, root, byte_limit, deadline)
+        if _looks_like_media_url(source_url)
+        else None
+    )
+    if direct is not None:
+        return {
+            "status": "ready",
+            "path": direct["path"],
+            "video_id": None,
+            "title": None,
+            "duration": direct.get("duration"),
+            "downloaded_bytes": direct.get("downloaded_bytes"),
+            "source": "direct",
+        }
+    YoutubeDL = _load_yt_dlp()
+    if YoutubeDL is None:
+        raise MediaCapabilityMissing("yt-dlp is not installed")
     options = {
         **_yt_dlp_cookie_options(source_url),
         "ignoreconfig": True,

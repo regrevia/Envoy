@@ -1119,3 +1119,88 @@ def test_audio_window_decode_reports_a_missing_ffmpeg(monkeypatch):
         assert "FFmpeg" in str(exc)
     else:
         raise AssertionError("a missing FFmpeg must not decode to silence")
+
+
+def test_a_captured_cdn_url_streams_itself_instead_of_the_extractor(tmp_path, monkeypatch):
+    """A signed player URL is not a page: the extractor refuses its format."""
+
+    from envoy_cli import media
+
+    captured = tmp_path / "video.mp4"
+    captured.write_bytes(b"twelve-bytes")
+    asked = []
+
+    def direct(url, root, byte_limit, deadline):
+        asked.append(url)
+        return {"path": str(captured), "duration": None, "downloaded_bytes": 12}
+
+    def refuse_extractor():
+        raise AssertionError("a captured CDN URL must not reach the extractor")
+
+    monkeypatch.setattr(media, "_try_download_direct_media", direct)
+    monkeypatch.setattr(media, "_load_yt_dlp", refuse_extractor)
+    _run_ytdlp_inline(monkeypatch, media)
+
+    url = "https://v3-web.douyinvod.com/abc/video/tos/cn/tos-cn-ve/token/1.mp4"
+    result = media.download_audio_for_asr(
+        url,
+        tmp_path,
+        max_download_bytes=1024,
+        max_work_seconds=30,
+    )
+
+    assert asked == [url]
+    assert result["path"] == str(captured)
+    assert result["downloaded_bytes"] == 12
+    assert result["source"] == "direct"
+
+
+def test_a_page_url_still_goes_to_the_extractor(tmp_path, monkeypatch):
+    from envoy_cli import media
+
+    asked = []
+
+    def direct(url, root, byte_limit, deadline):
+        asked.append(url)
+        return {"path": str(tmp_path / "never"), "duration": None, "downloaded_bytes": 1}
+
+    monkeypatch.setattr(media, "_try_download_direct_media", direct)
+    _run_ytdlp_inline(monkeypatch, media)
+
+    monkeypatch.setattr(media, "_load_yt_dlp", lambda: _FakePageYDL(tmp_path))
+    monkeypatch.setattr(media, "version", lambda _name: "2026.8.19")
+
+    result = media.download_audio_for_asr(
+        "https://video.example/watch/1",
+        tmp_path,
+        max_download_bytes=1024,
+        max_work_seconds=30,
+    )
+
+    assert asked == []
+    assert result["path"] == str(tmp_path / "audio.m4a")
+
+
+class _FakePageYDL:
+    def __init__(self, tmp_path: Path):
+        self._tmp_path = tmp_path
+
+    def __call__(self, _options):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def extract_info(self, _url, download):
+        assert download is True
+        path = self._tmp_path / "audio.m4a"
+        path.write_bytes(b"audio")
+        return {
+            "id": "sample",
+            "title": "Sample",
+            "duration": 30,
+            "requested_downloads": [{"filepath": str(path)}],
+        }
