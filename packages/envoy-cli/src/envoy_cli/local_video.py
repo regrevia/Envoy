@@ -146,6 +146,7 @@ def _process_local_video(
                         "downloaded_bytes": 0,
                         "automatic": False,
                         "available_languages": [],
+                        "transcript_segment_count": len(cues),
                         "cues": cues,
                     },
                 )
@@ -197,7 +198,22 @@ def _process_local_video(
         "filename": path.name,
         "sha256": digest,
         "duration_seconds": duration,
+        # A local file is read in place: nothing was downloaded and nothing has
+        # to be reclaimed, which is a different statement from "unknown".
         "downloaded_bytes": 0,
+        "media_fetched": False,
+        "raw_media_retention": "local_file",
+        # The caller already owns this file: nothing was copied, so there is no
+        # kept-media path to echo back and no lease to expire.
+        "raw_media_path": None,
+        # The transcript lives in the material; the source file stays where the
+        # user put it, so there is no expiry to report for the media itself.
+        "raw_media_expires_at": None,
+        "processed_until_seconds": details.get("processed_until_seconds") or duration,
+        "asr_duration_ms": details.get("asr_duration_ms")
+        or (response.usage.local or {}).get("asr_duration_ms"),
+        "transcript_language": details.get("subtitle_language")
+        or (response.usage.local or {}).get("asr_language"),
     })
     video_coverage = response.coverage.modalities.get("video") or CoverageItem()
     modalities = dict(response.coverage.modalities)
@@ -217,6 +233,25 @@ def _process_local_video(
             },
         )
     return response
+
+
+def read_local_video_from_read_request(request: ReadRequest, path: Path) -> ReadResponse:
+    """Read a local video named by a normal ``envoy_read`` request.
+
+    ``envoy_read`` documents ``source.url`` as accepting a local path or a
+    ``file://`` URL; this adapter keeps that promise without a second entry
+    point: the same validated ``ReadRequest`` fields drive the local reader.
+    """
+
+    payload = request.model_dump(mode="json")
+    payload.pop("source", None)
+    payload["path"] = str(path)
+    payload = {
+        key: value
+        for key, value in payload.items()
+        if key in LocalVideoReadRequest.model_fields
+    }
+    return read_local_video(LocalVideoReadRequest.model_validate(payload))
 
 
 def read_local_video(request: LocalVideoReadRequest) -> ReadResponse:

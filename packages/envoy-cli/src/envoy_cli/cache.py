@@ -270,8 +270,7 @@ def cache_status(
         items = sorted(directory.iterdir()) if directory.is_dir() else []
         ocr[name.replace("-", "_")] = _summary(items)
 
-    materials = root / MATERIAL_DIR
-    media = sorted(materials.glob(f"{MEDIA_PREFIX}*")) if materials.is_dir() else []
+    media = sorted(root.glob(f"{MEDIA_PREFIX}*")) if root.is_dir() else []
     live_media = []
     for path in media:
         material_id = path.name.removeprefix(MEDIA_PREFIX)
@@ -370,16 +369,33 @@ def prune_cache(
         elif frame.name.removeprefix(FRAMES_PREFIX) not in live:
             removed.append(_remove(frame, root, dry_run))
 
-    materials = root / MATERIAL_DIR
-    if materials.is_dir():
-        for media in sorted(materials.glob(f"{MEDIA_PREFIX}*")):
-            material_id = media.name.removeprefix(MEDIA_PREFIX)
-            try:
-                populated = media.is_dir() and not media.is_symlink() and any(media.iterdir())
-            except OSError:
-                populated = False
-            if material_id not in live or not populated:
+    for media in sorted(root.glob(f"{MEDIA_PREFIX}*")):
+        # Kept media lives directly under the material root, beside the
+        # material files, which is where ``reader`` writes it. A media
+        # directory carries its own deadline (``.expires``) because it is
+        # reclaimed much earlier than the material text it belongs to.
+        if media.is_symlink():
+            removed.append(_remove(media, root, dry_run))
+            continue
+        if media.is_dir():
+            expires_at = _text_float(media / ".expires")
+            if expires_at is not None and current >= expires_at:
                 removed.append(_remove(media, root, dry_run))
+                continue
+        material_id = media.name.removeprefix(MEDIA_PREFIX)
+        try:
+            populated = (
+                media.is_dir()
+                and not media.is_symlink()
+                and any(
+                    entry.name != ".expires"
+                    for entry in media.iterdir()
+                )
+            )
+        except OSError:
+            populated = False
+        if material_id not in live or not populated:
+            removed.append(_remove(media, root, dry_run))
 
     for name in OCR_CACHE_DIRS:
         directory = root / name

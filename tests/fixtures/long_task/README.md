@@ -35,7 +35,7 @@ contract.
 |---|---|---|
 | `video_asr_partial.json` | 10458 | `1c69c798525f7e05c52f8563d70a6f35cacef6dad96b447960147d8bd2f98bb0` |
 | `video_asr_complete.json` | 10254 | `824111a48d35554c22cacdbf0e639fa49eef5996989fa72d8678139b0b4b8944` |
-| `page_video_asr_partial.json` | 43322 | `0f6a823c6b57f071306e7402c348c084212ba369138a93b455f1f79a512cd7ab` |
+| `page_video_asr_partial.json` | 43478 | `4553b49fbc5242936f0d3a1cca9336fc2a68452c6d5b1c66370943703e1eff11` |
 | `video_subtitles.json` | 9117 | `3c35c212cdd381595a5dd043a51e5d952c04cfab8272e1c5a5adb0575ab08354` |
 
 This table is the output of the guard test, not a hand-maintained list:

@@ -1,5 +1,48 @@
 # 更新日志 / Changelog
 
+## 0.1.55 - 2026-11-10
+
+### 中文
+
+- 本地视频可以像链接一样读：`envoy read` 与 `envoy_read` 的 `source.url`
+  给绝对路径或 `file://` URL 时，直接走本地视频读取（本机 Whisper 转写，
+  可选择关键帧），不再把它当成网址去请求。原文件不上传、不复制，返回的定位
+  信息用内容哈希与文件名，不暴露绝对路径。
+- 保留下来的源视频默认是**短期租借**而不是永久档案：`retention.raw_media`
+  默认 `session`，最多保留 30 分钟（`ENVOY_MEDIA_RETENTION_SECONDS` 可调），
+  响应里的 `raw_media_retention` / `raw_media_path` / `raw_media_ttl_seconds` /
+  `raw_media_expires_at` 说明实际发生了什么、文件在哪、什么时候消失。
+- 清理真正生效了：保留目录此前被写到 `<数据根>/materials/video-*`，而清理
+  扫的是 `<数据根>/video-*`，两边不是同一个地方，所以过期文件从来没被回收。
+  现在写入、每次读取后的自动回收、`envoy cache prune` 都指向同一个目录。
+- 只为「保留」而下载的情况被去掉：本机没有语音转写、也没有要求关键帧时，
+  不会仅因为保留策略就下载整段视频。`speech_coverage` 不再超过 1.0。
+- `envoy doctor` 的 `asr_cpp_binary` 只报告当前后端实际使用的 whisper.cpp
+  可执行文件，不再在后端是 openai-whisper 时也报一个路径。
+
+### English
+
+- A local video is now readable like a link: when `source.url` in `envoy read`
+  or `envoy_read` is an absolute path or a `file://` URL, the request goes
+  through local-video reading (on-device Whisper, optional keyframes) instead of
+  being requested as a web address. The original file is never uploaded or
+  copied, and locators carry a content hash plus the filename rather than the
+  absolute path.
+- Kept source video is a short lease, not an archive: `retention.raw_media`
+  defaults to `session`, held for at most 30 minutes (tune with
+  `ENVOY_MEDIA_RETENTION_SECONDS`). `raw_media_retention`, `raw_media_path`,
+  `raw_media_ttl_seconds` and `raw_media_expires_at` say what actually happened,
+  where the file is, and when it goes away.
+- Pruning actually works now: kept media was written under
+  `<data root>/materials/video-*` while pruning swept `<data root>/video-*`, so
+  expired files were never reclaimed. Writing, the sweep after every read, and
+  `envoy cache prune` now agree on one directory.
+- A retention policy no longer causes a download by itself: with no speech
+  runtime and no requested frames, the video is not fetched just to be kept.
+  `speech_coverage` no longer exceeds 1.0.
+- `envoy doctor`'s `asr_cpp_binary` reports the whisper.cpp binary the active
+  backend actually uses, instead of naming one while openai-whisper is active.
+
 ## 0.1.54 - 2026-11-09
 
 ### 中文

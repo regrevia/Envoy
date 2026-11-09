@@ -174,7 +174,11 @@ class Budget(ContractModel):
 
 
 class Retention(ContractModel):
-    raw_media: Literal["ephemeral", "session", "persistent"] = "ephemeral"
+    # Kept media is the default so a caller can look at the file it just asked
+    # about, but the reader bounds its lifetime to MEDIA_RETENTION_SECONDS (30
+    # minutes) and reports the exact deadline, so it is reclaimed instead of
+    # accumulating: this is a short lease, not an archive.
+    raw_media: Literal["ephemeral", "session", "persistent"] = "session"
     derived_ttl_seconds: int = Field(default=86_400, ge=0, le=31_536_000)
 
 

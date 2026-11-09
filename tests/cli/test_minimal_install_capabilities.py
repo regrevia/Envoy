@@ -100,6 +100,9 @@ def test_the_asr_status_names_the_fetch_command(monkeypatch):
         return real_find_spec(name, *args, **kwargs)
 
     monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    # whisper.cpp is the preferred backend when its binary is on PATH, so a
+    # host that has it would otherwise report ASR as installed.
+    monkeypatch.setattr(media, "whisper_cpp_binary", lambda: None)
     monkeypatch.setattr(media, "_read_asr_config", lambda: {"enabled": True})
 
     status = media.media_runtime_status()
@@ -117,6 +120,7 @@ def test_transcription_without_whisper_names_the_fetch_command(monkeypatch):
         return real_find_spec(name, *args, **kwargs)
 
     monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    monkeypatch.setattr(media, "whisper_cpp_binary", lambda: None)
 
     with pytest.raises(media.MediaCapabilityMissing) as caught:
         media.transcribe_audio_file("not-there.wav")

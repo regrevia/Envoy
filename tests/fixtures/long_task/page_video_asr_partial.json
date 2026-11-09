@@ -1561,9 +1561,11 @@
           "transcript_confidence": "normal",
           "frame_inspection": "host_capability_missing",
           "media_fetched": true,
-          "raw_media_retention": "ephemeral",
+          "raw_media_retention": "session",
           "raw_media_reused": false,
-          "raw_media_path": null
+          "raw_media_path": "<capture-data-root>/video-browser/source-2a0f3d8d1f111ce1f9a3-.mp4",
+          "raw_media_ttl_seconds": 1800,
+          "raw_media_expires_at": "<capture-clock>"
         }
       }
     },
@@ -1590,9 +1592,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "419969f",
+    "commit": "8d4bf1f",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_page_video_asr_partial",
-    "generated_at": "2026-10-31",
+    "generated_at": "2026-11-09",
     "replaced_call": "reader.transcribe_audio_file (inside the page-video evidence path) plus the page media probe and duration probe",
     "fake_output": "{\"status\": \"partial\", ...} part of the same fake as video_asr_partial, fed through the page evidence builder instead of the direct-video path",
     "proof_scope": "proves the checkpoint fold of the only reader dialect that carries transcript_processed_until_seconds / transcript_delivered_until_seconds / transcript_unprocessed_seconds; does not prove page-level video extraction against a live site, transcription quality, or that the delivered-text cutoff equals the transcription cursor",

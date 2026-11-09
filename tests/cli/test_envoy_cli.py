@@ -1110,6 +1110,13 @@ def test_direct_video_without_native_host_capability_is_reported_as_unsupported(
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
+    # This case is about the capability gap, not about this machine: pin the
+    # ASR runtime so a host with whisper installed does not turn the expected
+    # ``missing_capability`` into a download attempt.
+    runtime = dict(reader.media_runtime_status())
+    runtime["asr_installed"] = False
+    runtime["asr_model_available"] = False
+    monkeypatch.setattr(reader, "media_runtime_status", lambda: runtime)
     monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": "https://cdn.example.org/lesson.mp4",

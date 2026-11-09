@@ -591,6 +591,10 @@ def test_whisper_worker_keeps_progress_output_off_protocol_stdout(monkeypatch, c
     from types import SimpleNamespace
     from envoy_cli import media
 
+    # A host that ships whisper.cpp makes ``asr_backend`` pick it, which would
+    # bypass the injected ``whisper`` module; pin the Python backend.
+    monkeypatch.setattr(media, "asr_backend", lambda: "openai_whisper")
+
     class Model:
         def transcribe(self, *_args, **_kwargs):
             print("Detected language: English")
@@ -1019,6 +1023,8 @@ def test_whisper_worker_emits_timestamped_segments_in_bounded_chunks(monkeypatch
     import sys
     import types
     from envoy_cli import media
+
+    monkeypatch.setattr(media, "asr_backend", lambda: "openai_whisper")
 
     chunks = []
 

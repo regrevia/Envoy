@@ -572,6 +572,15 @@ content hash and filename instead of exposing its absolute path. If Whisper is
 unavailable, report the capability gap; frame-only inspection is available when
 explicitly requested and the host supports it.
 
+Read the transcript first: it is the cheap answer. A minutes-long talk comes
+back as one text block of `[mm:ss.000]` cues, costing tokens in proportion to
+how much is spoken, not to how many frames a video has. Looking at the same
+file frame by frame costs thousands of image tokens, so only ask for frames
+(`scope.include_visual: true` plus the two host capabilities) when the question
+is genuinely visual. The path must be absolute or a `file://` URL; a relative
+path is not resolved against the caller's directory, so pass what the user
+dropped in.
+
 For CLI-only workflows, use `envoy observe-visual --request-json -` to submit
 the host's inspection of a returned resource. It accepts `envoy.observe/1` JSON
 with `request_id`, `material_id`, `session_id`, `resource_id`,
@@ -718,12 +727,17 @@ evidence. The ASR model is never sent to a provider. Check which checkpoint is i
 envoy asr status
 ```
 
-Downloaded source video is temporary by default: it is deleted after the read.
-Set `retention.raw_media` to `persistent` on the read (or in the read request
-JSON) to keep the video under Envoy's data root, so reading the same
-`source_revision` again reuses those bytes instead of downloading them again;
-the reused run reports `raw_media_reused: true`. Kept media counts as disk
-usage, not evidence, and can be inspected or deleted:
+Downloaded source video is kept briefly by default: `retention.raw_media`
+defaults to `session`, and Envoy keeps the file under its data root for at most
+30 minutes (`MEDIA_RETENTION_SECONDS`, overridable with
+`ENVOY_MEDIA_RETENTION_SECONDS`). The reply states what actually happened in
+`coverage.modalities.video.details`: `raw_media_retention`, `raw_media_path`,
+`raw_media_ttl_seconds` and `raw_media_expires_at`, so the host can inspect the
+file now and knows when it disappears. Set `retention.raw_media: "persistent"`
+when those bytes must be reused by a later read of the same `source_revision`;
+the reused run reports `raw_media_reused: true`. Set `"ephemeral"` to drop the
+file as soon as the read finishes. Reclaiming is automatic (every read sweeps
+expired leases) and manual:
 
 ```bash
 envoy cache status

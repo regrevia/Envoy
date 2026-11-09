@@ -2398,10 +2398,21 @@ def _attach_browser_video_evidence(
         and request.host_capabilities.video_input == "frames"
         and request.host_capabilities.image_input == ImageInputCapability.LOCAL_FILE
     )
-    retention_mode = str(getattr(request.retention, "raw_media", "ephemeral") or "ephemeral")
-    keep_media = retention_mode == "persistent" and int(
-        getattr(request.retention, "derived_ttl_seconds", 0) or 0
-    ) > 0
+    retention_mode = str(getattr(request.retention, "raw_media", "session") or "session")
+    requested_ttl = int(getattr(request.retention, "derived_ttl_seconds", 0) or 0)
+    if retention_mode == "ephemeral":
+        media_ttl_seconds = 0
+    elif requested_ttl > 0:
+        media_ttl_seconds = min(requested_ttl, MEDIA_RETENTION_SECONDS)
+    else:
+        # ``session``/``persistent`` without an explicit TTL still gets the
+        # short media lease: kept bytes are never an archive.
+        media_ttl_seconds = MEDIA_RETENTION_SECONDS
+    keep_media = retention_mode != "ephemeral" and media_ttl_seconds > 0
+    # Only an explicit persistent request with a TTL asks for the source file
+    # as the deliverable. ``session`` keeps bytes a read already needed, but it
+    # must never be the reason a video is downloaded.
+    deliver_media_only = retention_mode == "persistent" and requested_ttl > 0
     runtime = media_runtime_status()
     asr_ready = bool(runtime.get("asr_installed") and runtime.get("asr_model_available"))
     media_budget = int(request.budget.max_download_bytes or 0)
@@ -2466,7 +2477,10 @@ def _attach_browser_video_evidence(
                 "visual_inspection": "not_performed",
             },
         )
-    if not asr_ready and not frame_enabled and not keep_media:
+    # A retention policy must never by itself cause a download: keeping media
+    # is only meaningful for bytes this read already needed, and only an
+    # explicit persistent request makes the file itself the deliverable.
+    if not asr_ready and not frame_enabled and not deliver_media_only:
         # Nothing in this response would consume the media, so do not spend the
         # probe requests or the download only to report that ASR cannot run.
         visual_requirement = None
@@ -2504,7 +2518,12 @@ def _attach_browser_video_evidence(
                 "media_fetch_skipped": "local_asr_unavailable",
                 "media_selection": "not_probed",
                 "media_selection_reason": "no_consumer",
+                # Nothing was downloaded, so there is no file to point at and
+                # no lease to report; ``media_fetched`` says the same thing.
                 "raw_media_retention": retention_mode,
+                "raw_media_path": None,
+                "raw_media_ttl_seconds": None,
+                "raw_media_expires_at": None,
                 "transcript_source": "unavailable",
                 "visual_inspection": "not_performed",
                 **(
@@ -2636,7 +2655,7 @@ def _attach_browser_video_evidence(
             },
         )
     if keep_media:
-        media_dir.mkdir(mode=0o700, exist_ok=True)
+        _write_media_deadline(media_dir, media_ttl_seconds)
 
     duration = float(duration_seconds or 0)
     downloaded = None
@@ -2698,7 +2717,7 @@ def _attach_browser_video_evidence(
                     max_work_seconds=_remaining_work_seconds(request),
                 )
             downloaded_bytes = int(downloaded.get("downloaded_bytes") or video_path.stat().st_size)
-            if keep_media and not asr_ready and not frame_enabled:
+            if deliver_media_only and not asr_ready and not frame_enabled:
                 # The caller asked for the source file and nothing else: no ASR
                 # runtime and no frame consumer are installed, so the download
                 # itself is the whole deliverable. Report it as delivered rather
@@ -2716,7 +2735,11 @@ def _attach_browser_video_evidence(
                     "media_only": True,
                     "raw_media_retention": retention_mode,
                     "raw_media_reused": media_reused,
-                    "raw_media_path": str(video_path),
+                    "raw_media_path": str(video_path) if keep_media else None,
+                    "raw_media_ttl_seconds": media_ttl_seconds if keep_media else None,
+                    "raw_media_expires_at": (
+                        _media_deadline_iso(media_dir) if keep_media else None
+                    ),
                     "media_file_name": video_path.name,
                 }
                 media_only_coverage = video_coverage.model_copy(
@@ -2997,6 +3020,10 @@ def _attach_browser_video_evidence(
                     "raw_media_retention": retention_mode,
                     "raw_media_reused": media_reused,
                     "raw_media_path": str(video_path) if keep_media else None,
+                    "raw_media_ttl_seconds": media_ttl_seconds if keep_media else None,
+                    "raw_media_expires_at": (
+                        _media_deadline_iso(media_dir) if keep_media else None
+                    ),
                 },
             })
             modalities = dict(response.coverage.modalities)
@@ -10498,7 +10525,120 @@ def _read_video_page_text(request: ReadRequest, source_url: str) -> ReadResponse
     return fallback
 
 
+# Kept media is a short lease: long enough for the caller to inspect the file
+# it just asked about, short enough that abandoned downloads are reclaimed
+# within half an hour. Override with ENVOY_MEDIA_RETENTION_SECONDS.
+def _media_retention_seconds() -> int:
+    raw = os.environ.get("ENVOY_MEDIA_RETENTION_SECONDS", "").strip()
+    if not raw:
+        return 1800
+    try:
+        return max(0, min(int(float(raw)), 86_400))
+    except ValueError:
+        return 1800
+
+
+MEDIA_RETENTION_SECONDS = _media_retention_seconds()
+
+
+def _local_file_source_path(source_url: str | None) -> Path | None:
+    """Return the local file this source URL names, or ``None`` for a remote read.
+
+    ``envoy_read`` accepts ``source.url`` as an HTTP(S) URL or a local path, and
+    the local-video reader is the only implementation that can serve a file on
+    this machine. Deciding here, before any URL validation, keeps a path from
+    being resolved as a host name and reported as a proxy/DNS problem.
+    """
+
+    raw = str(source_url or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("file://"):
+        parsed = urlparse(raw)
+        if parsed.netloc not in ("", "localhost"):
+            return None
+        raw = unquote(parsed.path)
+    elif "://" in raw:
+        return None
+    if not raw:
+        return None
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_absolute():
+        return None
+    try:
+        if candidate.is_file():
+            return candidate
+    except OSError:
+        return None
+    return None
+
+
+def _write_media_deadline(directory: Path, ttl_seconds: int) -> None:
+    """Record when this kept-media directory may be deleted.
+
+    The deadline lives next to the file so ``envoy cache prune`` and a manual
+    look at the directory agree, and so a media lease can expire long before
+    the transcript material it belongs to.
+    """
+
+    try:
+        directory.mkdir(mode=0o700, exist_ok=True)
+        pending = directory / ".expires.tmp"
+        pending.write_text(f"{time.time() + ttl_seconds:.3f}", encoding="ascii")
+        os.replace(pending, directory / ".expires")
+    except OSError:
+        pass
+
+
+def _media_deadline(directory: Path) -> float | None:
+    try:
+        return float((directory / ".expires").read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _media_deadline_iso(directory: Path) -> str | None:
+    deadline = _media_deadline(directory)
+    if deadline is None:
+        return None
+    return datetime.fromtimestamp(deadline, tz=timezone.utc).isoformat()
+
+
+def _reclaim_expired_media() -> None:
+    """Delete kept-media directories whose lease ran out.
+
+    Called after every read so that a caller who never runs
+    ``envoy cache prune`` still leaves nothing behind for long. Reclaiming
+    space must never fail a read, so every error is ignored.
+    """
+
+    try:
+        root = _material_root()
+    except (OSError, RuntimeError):
+        return
+    now = time.time()
+    for directory in root.glob("video-*"):
+        if directory.is_symlink():
+            continue
+        deadline = _media_deadline(directory)
+        if deadline is None or now < deadline:
+            continue
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def read_public_page(request: ReadRequest) -> ReadResponse:
+    try:
+        return _read_public_page_dispatch(request)
+    finally:
+        _reclaim_expired_media()
+
+
+def _read_public_page_dispatch(request: ReadRequest) -> ReadResponse:
+    local_path = _local_file_source_path(request.source.url)
+    if local_path is not None:
+        from .local_video import read_local_video_from_read_request
+
+        return read_local_video_from_read_request(request, local_path)
     token = _SHORT_PUBLIC_FALLBACK.set(None)
     video_token = _DEFERRED_VIDEO_FALLBACK.set(None)
     try:
@@ -12157,7 +12297,7 @@ def _transcript_confidence(
     callers that only know the clip length keep the old behaviour.
     """
 
-    speech_seconds = 0.0
+    segment_spans: list[tuple[float, float]] = []
     for segment in segments or []:
         try:
             start = float(segment.get("start", segment.get("start_seconds")))
@@ -12165,7 +12305,7 @@ def _transcript_confidence(
         except (TypeError, ValueError):
             continue
         if end > start:
-            speech_seconds += end - start
+            segment_spans.append((start, end))
     try:
         duration = float(duration_seconds or 0)
     except (TypeError, ValueError):
@@ -12179,13 +12319,23 @@ def _transcript_confidence(
     except (TypeError, ValueError):
         span_end = duration
     span = span_end - span_start
+    # Whisper rounds the last window up to its 30s boundary, so a segment can
+    # end past the clip: count only the part inside the span actually
+    # transcribed, or speech_coverage exceeds 100% and the number stops being
+    # evidence of anything.
+    speech_seconds = 0.0
+    for start, end in segment_spans:
+        clipped_start = max(start, span_start)
+        clipped_end = min(end, span_end) if span_end > 0 else end
+        if clipped_end > clipped_start:
+            speech_seconds += clipped_end - clipped_start
     if span <= 0:
         # No usable processed span (unknown range or a single point): fall back
         # to the whole clip rather than dividing by zero.
         span = duration
     if span <= 30:
-        return "normal", speech_seconds, speech_seconds / span if span else 0.0
-    ratio = speech_seconds / span
+        return "normal", speech_seconds, min(1.0, speech_seconds / span) if span else 0.0
+    ratio = min(1.0, speech_seconds / span)
     if ratio < 0.02 or (len(segments) <= 2 and speech_seconds < 8):
         return "low", speech_seconds, ratio
     return "normal", speech_seconds, ratio

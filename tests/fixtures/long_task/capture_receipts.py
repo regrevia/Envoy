@@ -59,9 +59,38 @@ def _fixture_dir() -> Path:
     return Path(override) if override else FIXTURE_DIR
 
 
+CAPTURE_CLOCK = "<capture-clock>"
+CAPTURE_DATA_ROOT = "<capture-data-root>"
+
+
+def _stable_for_capture(value, data_root: str | None):
+    """Replace the facts that differ on every capture run.
+
+    A receipt fixture proves the response *shape*, so the kept-media path and
+    its lease deadline — derived from the run's temporary directory and clock —
+    are written as placeholders while every other field keeps its real value.
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: (
+                CAPTURE_CLOCK
+                if key == "raw_media_expires_at" and value[key]
+                else _stable_for_capture(item, data_root)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_stable_for_capture(item, data_root) for item in value]
+    if isinstance(value, str) and data_root and value.startswith(data_root):
+        return CAPTURE_DATA_ROOT + value[len(data_root):]
+    return value
+
+
 def _dump(name: str, receipt: ReadResponse, provenance: dict) -> dict:
     payload = receipt.model_dump(mode="json")
     payload["_provenance"] = provenance
+    payload = _stable_for_capture(payload, os.getenv("ENVOY_LOCAL_DATA_DIR"))
     out_dir = _fixture_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / name).write_text(

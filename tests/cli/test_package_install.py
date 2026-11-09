@@ -406,6 +406,7 @@ def test_doctor_reports_configured_asr_dependency_lost_after_tool_reinstall(
     monkeypatch.delenv("ENVOY_ASR_MODEL", raising=False)
     media.persist_asr_selection("small")
     monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: None)
+    monkeypatch.setattr(media, "whisper_cpp_binary", lambda: None)
 
     status = media.media_runtime_status()
 

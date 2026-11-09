@@ -87,9 +87,8 @@ def test_prune_browser_media_keeps_only_the_current_prefix(tmp_path):
 
 def test_cache_status_and_prune_cover_raw_video_media(tmp_path):
     root = tmp_path / "data"
-    materials = root / "materials"
-    populated = materials / "video-mat-000000000000000000000001"
-    empty = materials / "video-mat-000000000000000000000002"
+    populated = root / "video-mat-000000000000000000000001"
+    empty = root / "video-mat-000000000000000000000002"
     populated.mkdir(parents=True)
     empty.mkdir()
     (populated / "source-abc-video.mp4").write_bytes(b"0" * 32)
