@@ -594,19 +594,90 @@ def _verify_whisper_inference(model_name: str) -> None:
         raise MediaProcessingError("Whisper smoke inference returned an invalid result")
 
 
-def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
+WHISPER_CPP_BIN_ENV = "ENVOY_WHISPER_CPP"
+WHISPER_CPP_MODEL_ENV = "ENVOY_WHISPER_CPP_MODEL"
+WHISPER_CPP_MODEL_CACHE_ENV = "ENVOY_WHISPER_CPP_MODEL_CACHE"
+
+
+def whisper_cpp_binary() -> str | None:
+    """The whisper.cpp CLI this machine can drive, if it carries one."""
+    explicit = os.getenv(WHISPER_CPP_BIN_ENV, "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        return str(candidate) if candidate.is_file() else None
+    return shutil.which("whisper-cli") or shutil.which("whisper-cpp")
+
+
+def whisper_cpp_model_cache_dir() -> Path:
+    return Path(
+        os.getenv(
+            WHISPER_CPP_MODEL_CACHE_ENV,
+            str(Path.home() / ".cache" / "whisper.cpp"),
+        )
+    ).expanduser()
+
+
+def whisper_cpp_model_path(model_name: str) -> Path | None:
+    explicit = os.getenv(WHISPER_CPP_MODEL_ENV, "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        return candidate if candidate.is_file() else None
+    candidate = whisper_cpp_model_cache_dir() / f"ggml-{model_name}.bin"
+    return candidate if candidate.is_file() else None
+
+
+def whisper_cpp_models() -> list[str]:
+    root = whisper_cpp_model_cache_dir()
+    if not root.is_dir():
+        return []
+    names = [
+        item.name[len("ggml-") : -len(".bin")]
+        for item in sorted(root.glob("ggml-*.bin"))
+    ]
+    return [name for name in names if name]
+
+
+def asr_backend() -> str | None:
+    """Which local ASR engine Envoy can actually drive on this machine.
+
+    The interpreter that runs Envoy often has no Whisper while the machine
+    still carries whisper.cpp and its GGML models; probing only
+    ``import whisper`` turned a prepared engine into ``engine_missing``.
+    """
+    requested = os.getenv("ENVOY_ASR_BACKEND", "").strip().lower()
     try:
-        asr_installed = importlib.util.find_spec("whisper") is not None
+        python_whisper = importlib.util.find_spec("whisper") is not None
     except (ImportError, ValueError):
-        asr_installed = False
+        python_whisper = False
+    cpp_ready = bool(whisper_cpp_binary())
+    if requested in {"whisper.cpp", "whisper-cpp", "cpp"}:
+        return "whisper.cpp" if cpp_ready else None
+    if requested in {"python", "openai-whisper", "whisper"}:
+        return "openai-whisper" if python_whisper else None
+    if python_whisper:
+        return "openai-whisper"
+    return "whisper.cpp" if cpp_ready else None
+
+
+def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
+    backend = asr_backend()
+    python_whisper = backend == "openai-whisper"
+    asr_installed = backend is not None
     try:
         yt_dlp_version = version("yt-dlp")
     except PackageNotFoundError:
         yt_dlp_version = None
     model_name = selected_asr_model()
+    cpp_model = (
+        whisper_cpp_model_path(model_name) if backend == "whisper.cpp" else None
+    )
     model_file_present = (
-        model_name in SUPPORTED_ASR_MODELS
-        and (asr_model_cache_dir() / f"{model_name}.pt").is_file()
+        cpp_model is not None
+        if backend == "whisper.cpp"
+        else (
+            model_name in SUPPORTED_ASR_MODELS
+            and (asr_model_cache_dir() / f"{model_name}.pt").is_file()
+        )
     )
     asr_config = _read_asr_config()
     configured_digest = (
@@ -618,7 +689,7 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
     checkpoint_digest = None
     checkpoint_path = asr_model_cache_dir() / f"{model_name}.pt"
     recorded_fingerprint = _recorded_checkpoint_fingerprint(asr_config)
-    if model_file_present and configured_digest:
+    if python_whisper and model_file_present and configured_digest:
         if (
             recorded_fingerprint
             and recorded_fingerprint == _checkpoint_fingerprint(checkpoint_path)
@@ -629,7 +700,7 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
             checkpoint_digest = _status_digest(checkpoint_path, verify_asr)
             if checkpoint_digest is not None:
                 model_verified = checkpoint_digest == configured_digest
-                if not model_verified and asr_installed:
+                if not model_verified and python_whisper:
                     model_verified = (
                         checkpoint_digest == _model_expected_sha256(model_name)
                     )
@@ -637,17 +708,23 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
                     _remember_checkpoint_fingerprint(
                         model_name, checkpoint_digest, checkpoint_path
                     )
-    elif model_file_present and verify_asr and asr_installed:
+    elif model_file_present and verify_asr and python_whisper:
         registry_digest = _model_expected_sha256(model_name)
         if registry_digest:
             checkpoint_digest = _sha256_file(checkpoint_path)
             model_verified = checkpoint_digest == registry_digest
-    model_available = asr_installed and model_file_present and model_verified is True
+    model_available = (
+        bool(cpp_model)
+        if backend == "whisper.cpp"
+        else asr_installed and model_file_present and model_verified is True
+    )
     operational = "not_checked"
     if verify_asr and not asr_installed:
         operational = "engine_missing"
     elif verify_asr and not model_file_present:
         operational = "model_missing"
+    elif verify_asr and backend == "whisper.cpp":
+        operational = "not_checked"
     elif verify_asr:
         if model_verified:
             try:
@@ -671,26 +748,64 @@ def media_runtime_status(*, verify_asr: bool = False) -> dict[str, Any]:
         "yt_dlp_supported": bool(
             yt_dlp_version and _version_tuple(yt_dlp_version) >= MIN_YT_DLP_VERSION
         ),
-        "asr_engine": "openai-whisper" if asr_installed else None,
+        "asr_engine": backend,
+        "asr_backend": backend,
         "asr_installed": asr_installed,
         "asr_model": model_name,
-        "asr_models_cached": cached_asr_models(),
+        "asr_cpp_binary": whisper_cpp_binary(),
+        "asr_cpp_model": str(cpp_model) if cpp_model else None,
+        "asr_models_cached": (
+            sorted(set(cached_asr_models()) | set(whisper_cpp_models()))
+            if backend == "whisper.cpp"
+            else cached_asr_models()
+        ),
         "asr_model_from_cache": model_name != str(asr_config.get("model") or ""),
         "asr_model_available": model_available,
         "asr_configured": bool(asr_config.get("enabled")) or bool(os.getenv("ENVOY_ASR_MODEL", "").strip()),
         "asr_model_file_present": model_file_present,
         "asr_model_verified": model_verified,
         "asr_operational": operational,
-        "asr_next_step": (
-            "rerun envoy asr install --model <model>; runtime updates may replace injected media dependencies"
-            if bool(asr_config.get("enabled")) and not asr_installed
-            else "run envoy asr setup --model <model>"
-            if asr_installed and (not model_file_present or model_verified is False)
-            else "run envoy doctor --verify-asr"
-            if model_file_present and model_verified is None and operational == "not_checked"
-            else None
+        "asr_next_step": _asr_next_step(
+            backend=backend,
+            asr_installed=asr_installed,
+            model_file_present=model_file_present,
+            model_verified=model_verified,
+            operational=operational,
+            asr_config=asr_config,
         ),
     }
+
+
+def _asr_next_step(
+    *,
+    backend: str | None,
+    asr_installed: bool,
+    model_file_present: bool,
+    model_verified: bool | None,
+    operational: str,
+    asr_config: dict[str, Any],
+) -> str | None:
+    """Say what a user has to do next, in the terms of the backend in use.
+
+    whisper.cpp needs a GGML file next to a binary, not a `.pt` checkpoint in a
+    torch cache, so pointing it at `envoy asr setup` would send the user to a
+    download that cannot help them.
+    """
+
+    if backend == "whisper.cpp":
+        if model_file_present:
+            return None
+        return (
+            "download a GGML model with envoy asr install --model <model>, "
+            "or point ENVOY_WHISPER_CPP_MODEL at an existing .bin file"
+        )
+    if bool(asr_config.get("enabled")) and not asr_installed:
+        return "rerun envoy asr install --model <model>; runtime updates may replace injected media dependencies"
+    if not asr_installed or not model_file_present or model_verified is False:
+        return "run envoy asr setup --model <model>"
+    if model_verified is None and operational == "not_checked":
+        return "run envoy doctor --verify-asr"
+    return None
 
 
 _ASR_STATUS_HASH_MAX_BYTES = 256 * 1024 * 1024
@@ -949,6 +1064,26 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
 
 
 def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
+    if asr_backend() == "whisper.cpp":
+        # This backend is already a binary plus a GGML file; there is nothing to
+        # download through torch and no `.pt` checkpoint to verify.
+        if model_name not in SUPPORTED_ASR_MODELS:
+            raise MediaCapabilityMissing(f"Unsupported Whisper model name: {model_name}")
+        model_path = whisper_cpp_model_path(model_name)
+        if model_path is None:
+            raise MediaCapabilityMissing(
+                f"whisper.cpp has no GGML model named '{model_name}' under "
+                f"{whisper_cpp_model_cache_dir()}; download ggml-{model_name}.bin "
+                "there, or point ENVOY_WHISPER_CPP_MODEL at it"
+            )
+        return {
+            "model": model_name,
+            "cache_dir": str(whisper_cpp_model_cache_dir()),
+            "path": str(model_path),
+            "backend": "whisper.cpp",
+            "available": True,
+            "downloaded_bytes": model_path.stat().st_size,
+        }
     try:
         asr_installed = importlib.util.find_spec("whisper") is not None
     except (ImportError, ValueError):
@@ -1710,6 +1845,142 @@ def _decode_audio_window(
     return np.frombuffer(completed.stdout, dtype="<f4").astype("float32", copy=True)
 
 
+def _transcribe_window_with_whisper_cpp(
+    audio_path: str | Path,
+    start_seconds: float,
+    duration_seconds: float,
+    *,
+    binary: str,
+    model_path: Path,
+    language: str,
+    workdir: Path,
+    chunk_index: int,
+    timeout_seconds: float,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Cut one window to a 16 kHz WAV and hand it to the whisper.cpp CLI.
+
+    The cut goes through FFmpeg straight to a file, so this backend needs
+    neither numpy nor torch: a machine with only the whisper.cpp binary and a
+    GGML model can transcribe. `None` means the window held no audio at all.
+    """
+    ffmpeg = shutil.which(os.getenv("FFMPEG_BIN", "ffmpeg"))
+    if not ffmpeg:
+        raise MediaCapabilityMissing("FFmpeg is required to cut audio for whisper.cpp")
+    wav_path = workdir / f"chunk-{chunk_index:05d}.wav"
+    command = [
+        ffmpeg,
+        "-nostdin",
+        "-v", "error",
+        "-ss", f"{max(float(start_seconds), 0.0):.3f}",
+        "-t", f"{max(float(duration_seconds), 0.0):.3f}",
+        "-i", str(audio_path),
+        "-f", "wav",
+        "-acodec", "pcm_s16le",
+        "-ac", "1",
+        "-ar", "16000",
+        "-y", str(wav_path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            timeout=max(30.0, float(duration_seconds) * 4 + 10),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise MediaProcessingError(
+            f"Could not decode audio window ({type(exc).__name__})"
+        ) from exc
+    if completed.returncode != 0:
+        raise MediaProcessingError(
+            f"Could not decode audio window (ffmpeg exit {completed.returncode})"
+        )
+    try:
+        if wav_path.stat().st_size <= 44:
+            return None, ""
+    except OSError as exc:
+        raise MediaProcessingError(
+            f"Could not decode audio window ({type(exc).__name__})"
+        ) from exc
+    return _transcribe_wav_with_whisper_cpp(
+        wav_path,
+        binary=binary,
+        model_path=model_path,
+        language=language,
+        workdir=workdir,
+        chunk_index=chunk_index,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _transcribe_wav_with_whisper_cpp(
+    wav_path: Path,
+    *,
+    binary: str,
+    model_path: Path,
+    language: str,
+    workdir: Path,
+    chunk_index: int,
+    timeout_seconds: float,
+) -> tuple[list[dict[str, Any]], str]:
+    import json
+
+    output_prefix = workdir / f"chunk-{chunk_index:05d}"
+    command = [
+        binary,
+        "-m", str(model_path),
+        "-f", str(wav_path),
+        "-oj",
+        "-of", str(output_prefix),
+        "-nt",
+        "-l", language or "auto",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            timeout=max(30.0, float(timeout_seconds)),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise MediaProcessingError(
+            f"whisper.cpp could not transcribe the audio ({type(exc).__name__})"
+        ) from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise MediaProcessingError(
+            f"whisper.cpp exited {completed.returncode}: "
+            f"{detail[-1] if detail else 'no detail'}"
+        )
+    payload_path = Path(f"{output_prefix}.json")
+    try:
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise MediaProcessingError(
+            f"whisper.cpp produced no readable JSON ({type(exc).__name__})"
+        ) from exc
+    detected = str((payload.get("result") or {}).get("language") or language or "")
+    segments: list[dict[str, Any]] = []
+    for item in payload.get("transcription") or []:
+        if not isinstance(item, dict):
+            continue
+        offsets = item.get("offsets") or {}
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        segments.append(
+            {
+                "start": float(offsets.get("from") or 0) / 1000.0,
+                "end": float(offsets.get("to") or 0) / 1000.0,
+                "text": text,
+            }
+        )
+    for suffix in (".wav", ".json"):
+        try:
+            Path(f"{output_prefix}{suffix}").unlink()
+        except OSError:
+            pass
+    return segments, detected
+
+
 def _whisper_worker(
     audio_path: str,
     model_name: str,
@@ -1720,12 +1991,30 @@ def _whisper_worker(
 ) -> None:
     try:
         with redirect_stdout(sys.stderr):
-            import whisper
+            import tempfile
 
-            model = whisper.load_model(
-                model_name,
-                device="cpu",
-                download_root=download_root,
+            backend = asr_backend()
+            cpp_binary = whisper_cpp_binary() if backend == "whisper.cpp" else None
+            cpp_model = whisper_cpp_model_path(model_name) if cpp_binary else None
+            if cpp_binary and cpp_model is None:
+                raise MediaCapabilityMissing(
+                    f"whisper.cpp has no GGML model for '{model_name}'"
+                )
+            whisper = None
+            model = None
+            if cpp_binary is None:
+                import whisper as whisper_module
+
+                whisper = whisper_module
+                model = whisper.load_model(
+                    model_name,
+                    device="cpu",
+                    download_root=download_root,
+                )
+            cpp_workdir = (
+                Path(tempfile.mkdtemp(prefix="envoy-whisper-cpp-"))
+                if cpp_binary
+                else None
             )
             # A whole-file decode pins the whole recording in memory (~230 MB
             # per hour at 16 kHz), so a long video would be limited by RAM
@@ -1736,48 +2025,77 @@ def _whisper_worker(
             # FFmpeg is missing or refuses the file.
             audio = None
             ffmpeg = shutil.which(os.getenv("FFMPEG_BIN", "ffmpeg"))
-            language = None
+            language = ""
             cursor = float(start_seconds)
-            while cursor < end_seconds:
-                chunk_duration = min(float(ASR_CHUNK_SECONDS), end_seconds - cursor)
-                if audio is not None:
-                    start_sample = int(cursor * 16_000)
-                    end_sample = int((cursor + chunk_duration) * 16_000)
-                    audio_chunk = audio[start_sample:end_sample]
-                else:
-                    try:
-                        audio_chunk = _decode_audio_window(
-                            audio_path, cursor, chunk_duration, ffmpeg=ffmpeg
+            chunk_index = 0
+            try:
+                while cursor < end_seconds:
+                    chunk_duration = min(float(ASR_CHUNK_SECONDS), end_seconds - cursor)
+                    if cpp_binary:
+                        chunk_segments, detected = _transcribe_window_with_whisper_cpp(
+                            audio_path,
+                            cursor,
+                            chunk_duration,
+                            binary=cpp_binary,
+                            model_path=cpp_model,
+                            language=language,
+                            workdir=cpp_workdir,
+                            chunk_index=chunk_index,
+                            timeout_seconds=max(60.0, chunk_duration * 8 + 30),
                         )
-                    except (MediaCapabilityMissing, MediaProcessingError, ImportError):
-                        audio = whisper.load_audio(audio_path, sr=16_000)
-                        audio_duration = len(audio) / 16_000
-                        end_seconds = min(float(end_seconds), audio_duration)
-                        continue
-                if len(audio_chunk) <= 0:
-                    break
-                result = model.transcribe(
-                    audio_chunk,
-                    task="transcribe",
-                    language=language,
-                    temperature=0,
-                    fp16=False,
-                    verbose=False,
-                    condition_on_previous_text=False,
-                )
-                language = str(result.get("language") or language or "")
-                chunk_end = min(end_seconds, cursor + (len(audio_chunk) / 16_000))
-                result_connection.send({
-                    "event": "chunk",
-                    "start_seconds": cursor,
-                    "end_seconds": chunk_end,
-                    "language": language,
-                    "segments": normalize_asr_segments(
-                        result.get("segments") or [],
-                        offset_seconds=cursor,
-                    ),
-                })
-                cursor = chunk_end
+                        chunk_index += 1
+                        chunk_end = min(end_seconds, cursor + chunk_duration)
+                        segments_for_chunk = (
+                            []
+                            if chunk_segments is None
+                            else normalize_asr_segments(
+                                chunk_segments, offset_seconds=cursor
+                            )
+                        )
+                        language = detected or language
+                    else:
+                        if audio is not None:
+                            start_sample = int(cursor * 16_000)
+                            end_sample = int((cursor + chunk_duration) * 16_000)
+                            audio_chunk = audio[start_sample:end_sample]
+                        else:
+                            try:
+                                audio_chunk = _decode_audio_window(
+                                    audio_path, cursor, chunk_duration, ffmpeg=ffmpeg
+                                )
+                            except (MediaCapabilityMissing, MediaProcessingError, ImportError):
+                                audio = whisper.load_audio(audio_path, sr=16_000)
+                                audio_duration = len(audio) / 16_000
+                                end_seconds = min(float(end_seconds), audio_duration)
+                                continue
+                        if len(audio_chunk) <= 0:
+                            break
+                        result = model.transcribe(
+                            audio_chunk,
+                            task="transcribe",
+                            language=language or None,
+                            temperature=0,
+                            fp16=False,
+                            verbose=False,
+                            condition_on_previous_text=False,
+                        )
+                        language = str(result.get("language") or language or "")
+                        chunk_end = min(end_seconds, cursor + (len(audio_chunk) / 16_000))
+                        segments_for_chunk = normalize_asr_segments(
+                            result.get("segments") or [],
+                            offset_seconds=cursor,
+                        )
+                    result_connection.send({
+                        "event": "chunk",
+                        "start_seconds": cursor,
+                        "end_seconds": chunk_end,
+                        "language": language,
+                        "segments": segments_for_chunk,
+                    })
+                    cursor = chunk_end
+            finally:
+                if cpp_workdir is not None:
+                    shutil.rmtree(cpp_workdir, ignore_errors=True)
             result_connection.send({"event": "complete", "end_seconds": cursor, "language": language or ""})
     except Exception as exc:
         try:
@@ -2034,15 +2352,10 @@ def transcribe_audio_file(
     end_seconds: float | None = None,
     source_revision: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        asr_installed = importlib.util.find_spec("whisper") is not None
-    except (ImportError, ValueError):
-        asr_installed = False
-    if not asr_installed:
+    if asr_backend() is None:
         raise MediaCapabilityMissing(
-            "Local ASR is unavailable; install Envoy's media extra "
-            "(pip install 'envoy-cli[asr]') and run "
-            "`envoy asr install --model base` once to enable Whisper transcription"
+            "Local ASR is unavailable: neither openai-whisper (importable by this "
+            "interpreter) nor a whisper.cpp CLI with a GGML model was found"
         )
     source = Path(audio_path).expanduser().resolve()
     if not source.is_file() or source.stat().st_size <= 0:
