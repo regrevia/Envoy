@@ -83,7 +83,8 @@ def _stable_for_capture(value, data_root: str | None):
     if isinstance(value, list):
         return [_stable_for_capture(item, data_root) for item in value]
     if isinstance(value, str) and data_root and value.startswith(data_root):
-        return CAPTURE_DATA_ROOT + value[len(data_root):]
+        # Normalise the separator: a receipt is one file for both platforms.
+        return CAPTURE_DATA_ROOT + value[len(data_root):].replace("\\", "/")
     return value
 
 

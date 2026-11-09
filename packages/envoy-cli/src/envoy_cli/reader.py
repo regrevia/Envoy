@@ -10558,6 +10558,11 @@ def _local_file_source_path(source_url: str | None) -> Path | None:
         if parsed.netloc not in ("", "localhost"):
             return None
         raw = unquote(parsed.path)
+        if re.match(r"^/[A-Za-z]:", raw):
+            # ``Path.as_uri()`` writes ``file:///C:/Users/...``: the path starts
+            # with a slash that Windows does not carry. Dropping it keeps the
+            # same URL working on both platforms.
+            raw = raw[1:]
     elif "://" in raw:
         return None
     if not raw:
