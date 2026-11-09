@@ -1,5 +1,5 @@
 # Runtime extras that are always installed (media CLI tooling + browser automation).
 # The heavy ASR/OCR stack lives in requirements-media-extras.txt behind WITH_MEDIA.
 setuptools<85
-yt-dlp>=2026.8.19
+yt-dlp>=2026.10.26
 playwright>=1.52.0
