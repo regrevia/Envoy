@@ -98,8 +98,32 @@ jobs:
           fi
           printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > ~/.npmrc
           npm publish dist/envoy-dsh-*.tgz --access public
+      # The changelog is now well past GitHub's 125,000-character release body
+      # limit, so the release carries this version's section instead of the file.
+      - name: 提取本次版本的更新说明 / Extract the notes for this release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["RELEASE_TAG"].removeprefix("v")
+          text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(
+              rf"^## {re.escape(version)}\s[^\n]*\n(.*?)(?=^## |\Z)",
+              text,
+              re.MULTILINE | re.DOTALL,
+          )
+          if match is None:
+              raise SystemExit(f"CHANGELOG.md has no section for {version}")
+          notes = f"## {version}\n\n{match.group(1).strip()}\n"
+          Path("RELEASE_NOTES.md").write_text(notes, encoding="utf-8")
+          print(f"{len(notes)} characters of notes for {version}")
+          PY
       - name: Publish GitHub Release (Chinese first, English below)
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --notes-file CHANGELOG.md
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --notes-file RELEASE_NOTES.md
