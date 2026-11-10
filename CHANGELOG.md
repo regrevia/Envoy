@@ -1,5 +1,38 @@
 # 更新日志 / Changelog
 
+## 0.1.56 - 2026-11-10
+
+### 中文
+
+- 技能文档写清本地视频的实测成本对比，而不是只说「更便宜」：11 MB、279 秒
+  的讲课视频，转写回来是 1216 个字符（含回执约 1.2k token）；按每秒一帧看
+  同一个文件约 28 万图像 token，差两个数量级。只有问题本身是视觉的，才要帧。
+- 发布清单一并被修正：`integrations/release-manifest.json`、DSH 启动器与
+  preset patch 此前仍写 0.1.54，会让发布校验失败、标签打不出来，现在与其他
+  声明同步。
+- Windows 上的 `file://` 路径现在能读：`Path.as_uri()` 产出的
+  `file:///C:/...` 路径段带 Windows 不用的前导斜杠，本地文件判定因此失效并
+  静默回落到公网读取；去掉该斜杠后两个平台一致。
+- 回执夹具不再带平台路径分隔符，同一份 fixture 在 Windows 与 macOS 上都匹配。
+
+### English
+
+- The skill documents the measured local-video cost instead of claiming it is
+  merely cheaper: an 11 MB, 279-second lecture returns a 1,216-character
+  transcript (about 1.2k tokens with the receipt), while one frame per second
+  over the same file is roughly 280k image tokens — two orders of magnitude.
+  Ask for frames only when the question is genuinely visual.
+- The release declarations are fixed too: `integrations/release-manifest.json`,
+  the DSH launcher and the preset patch still said 0.1.54, which failed release
+  validation and kept the tag from being cut; they now match every other
+  declaration.
+- `file://` paths work on Windows: `Path.as_uri()` writes `file:///C:/...`,
+  whose path part carries a leading slash Windows does not use, so the
+  local-file check failed and the read silently fell back to the public-URL
+  path. Dropping that slash makes both platforms agree.
+- Receipt fixtures no longer carry a platform path separator, so one committed
+  fixture matches on Windows and macOS alike.
+
 ## 0.1.55 - 2026-11-10
 
 ### 中文

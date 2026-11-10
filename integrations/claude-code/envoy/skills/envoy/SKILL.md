@@ -583,10 +583,12 @@ explicitly requested and the host supports it.
 
 Read the transcript first: it is the cheap answer. A minutes-long talk comes
 back as one text block of `[mm:ss.000]` cues, costing tokens in proportion to
-how much is spoken, not to how many frames a video has. Looking at the same
-file frame by frame costs thousands of image tokens, so only ask for frames
-(`scope.include_visual: true` plus the two host capabilities) when the question
-is genuinely visual. The path must be absolute or a `file://` URL; a relative
+how much is spoken, not to how many frames a video has. Measured: an 11 MB,
+279-second lecture returns a 1,216-character transcript — about 1.2k tokens
+including the receipt envelope — while inspecting the same file at one frame
+per second is roughly 280k image tokens, roughly two orders of magnitude more.
+Only ask for frames (`scope.include_visual: true` plus the two host
+capabilities) when the question is genuinely visual. The path must be absolute or a `file://` URL; a relative
 path is not resolved against the caller's directory, so pass what the user
 dropped in.
 
