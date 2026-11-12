@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://envoy.dev/schemas/envoy.evidence-index/1",
+  "title": "Envoy Evidence Index v1",
+  "description": "references/evidence-index.json: one row per citable passage. `kind` is the modality directory; `locator_kind` is the precise place type. `file` holds the quote itself so a citation and its copy cannot disagree.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "evidence_id",
+      "block_id",
+      "kind",
+      "locator",
+      "file",
+      "sha256",
+      "chars"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "evidence_id": {
+        "type": "string",
+        "pattern": "^ev-[a-f0-9]{16}$"
+      },
+      "block_id": {
+        "type": "string"
+      },
+      "kind": {
+        "enum": [
+          "text",
+          "transcript",
+          "visual"
+        ]
+      },
+      "locator": {
+        "title": "Locator",
+        "description": "A place in the source medium, kept in that medium's own coordinates.",
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "web",
+              "pdf_page",
+              "video_time",
+              "audio_time",
+              "image_region",
+              "office_location"
+            ]
+          }
+        },
+        "additionalProperties": true
+      },
+      "file": {
+        "type": "string",
+        "pattern": "^evidence/(text|transcript|visual)/ev-[a-f0-9]{16}\\.txt$"
+      },
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "chars": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "locator_kind": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  }
+}

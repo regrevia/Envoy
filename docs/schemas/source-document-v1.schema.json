@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://envoy.dev/schemas/envoy.source-document/1",
+  "title": "Envoy Source Document v1",
+  "description": "A read answer normalised into ordered, locatable sections. Produced by `envoy evidence export`; never the source of truth for a material.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source",
+    "sections",
+    "coverage"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "envoy.source-document/1"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "material_id",
+        "type",
+        "title",
+        "url",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^src-[a-f0-9]{24}$"
+        },
+        "material_id": {
+          "type": "string",
+          "pattern": "^mat-[a-f0-9]{24}$"
+        },
+        "type": {
+          "enum": [
+            "web",
+            "pdf",
+            "video",
+            "audio",
+            "image",
+            "github",
+            "office"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "title",
+          "start",
+          "end",
+          "locator",
+          "evidence_ids"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "section_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "locator": {
+            "oneOf": [
+              {
+                "title": "Locator",
+                "description": "A place in the source medium, kept in that medium's own coordinates.",
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "web",
+                      "pdf_page",
+                      "video_time",
+                      "audio_time",
+                      "image_region",
+                      "office_location"
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^ev-[a-f0-9]{16}$"
+            }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "text",
+        "transcript",
+        "ocr",
+        "visual",
+        "page_count",
+        "indexed_page_count",
+        "unpinned_blocks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "boolean"
+        },
+        "transcript": {
+          "type": "boolean"
+        },
+        "ocr": {
+          "type": "boolean"
+        },
+        "visual": {
+          "type": "boolean"
+        },
+        "page_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "indexed_page_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "unpinned_blocks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

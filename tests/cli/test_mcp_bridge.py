@@ -443,7 +443,7 @@ def test_mcp_bridge_hands_direct_video_to_native_video_host(monkeypatch, capsys)
     from envoy_cli import mcp, reader
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": "https://cdn.example.org/clip.mp4",
             "mime_type": "video/mp4",
@@ -835,7 +835,7 @@ def test_mcp_bridge_read_returns_protocol_result(monkeypatch, capsys):
 
     html = "<html><head><title>Guide</title></head><body><p>Use the worker first.</p></body></html>"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None: ("https://example.org/", html))
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None, **_kwargs: ("https://example.org/", html))
 
     exit_code = mcp.run_lines([{
         "jsonrpc": "2.0",
@@ -973,7 +973,7 @@ def test_mcp_bridge_modern_tool_call_returns_complete_structured_result(monkeypa
 
     html = "<html><head><title>Guide</title></head><body><p>Use a dedicated worker.</p></body></html>"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None: ("https://example.org/", html))
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None, **_kwargs: ("https://example.org/", html))
     metadata = {
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -1068,7 +1068,7 @@ def test_legacy_mcp_tool_keeps_text_fallback_for_structured_material(monkeypatch
 
     html = "<html><head><title>Guide</title></head><body><p>Use a dedicated worker.</p></body></html>"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _limit, _cache=None: ("https://example.org/", html))
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _limit, _cache=None, **_kwargs: ("https://example.org/", html))
     mcp.run_lines([{
         "jsonrpc": "2.0",
         "id": 0,
@@ -1273,7 +1273,7 @@ def test_mcp_bridge_compact_arguments_are_completed_server_side(monkeypatch, cap
 
     html = "<html><head><title>Guide</title></head><body><p>Use a dedicated worker.</p></body></html>"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None: ("https://example.org/", html))
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _cache=None, **_kwargs: ("https://example.org/", html))
     metadata = {
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -1545,7 +1545,7 @@ def test_envoy_read_leaves_public_urls_on_the_public_reader(monkeypatch, capsys)
         "_fetch_html",
         # Readable body on purpose: the public reader keeps pages of 20+ characters
         # on the plain HTTP path, so this test does not depend on a browser install.
-        lambda _url, _max_bytes, _cache=None: (
+        lambda _url, _max_bytes, _cache=None, **_kwargs: (
             "https://example.org/",
             "<html><body><p>Hello there. This page keeps a readable paragraph.</p></body></html>",
         ),

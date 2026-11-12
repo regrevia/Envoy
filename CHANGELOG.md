@@ -1,5 +1,206 @@
 # 更新日志 / Changelog
 
+## 0.1.57 - 2026-11-12
+
+### 中文
+
+- 什么时候算读完，改成按任务需要判断，不再看字数：正文里有任务要的段落和数值、
+  并且停在所请求的段尾，才算完成；被截断、缺表格/图片/附件/代码块、正文是
+  登录或 JavaScript 壳、返回的是导航或无关内容、答案要跨轮留存，才升级到
+  `envoy_read`。判不出来时说明可能缺什么，不靠怀疑升级。取工具的选择也只说
+  一次：有 `gh` 或 `git` 就先用它们，没有时 GitHub 链接走 API 路径。
+- GitHub 的 403 不再一律当限流：权限不足返回 `github_forbidden` 并提示配置
+  `GITHUB_TOKEN`，仓库被禁返回 `github_blocked` 且不可重试；真的配额耗尽才是
+  `github_rate_limited`，`details.github_quota` 带总量、剩余、重置时间与
+  `Retry-After`。
+- 一次读取的证据可以导出成目录，交给别的工具用：`envoy evidence export` 把保留的
+  材料写成 Evidence Pack（源文档、章节、原文证据、覆盖缺口、清单），同一份材料导出
+  两次 `pack_id` 与每个 `evidence_id` 完全相同；证据文件带 sha256，引用能指回原文，
+  PDF 页码、视频时间、GitHub 行号都保持原样，没读到的部分在 `coverage.json` 里标明。
+  `envoy evidence verify` 重新算一遍清单与证据摘要，被改过就报 `damaged`。导出失败
+  不碰原材料，目标目录已存在时报 `pack_exists`，`--overwrite` 才覆盖。
+- 新增可选扩展层，默认全关，普通读链接不受影响、也不多发一次模型调用：
+  `envoy extensions status|enable|disable` 管开关（`ENVOY_EXTENSIONS` 按名字覆盖单个
+  开关），`envoy evidence export|cangjie` 由 `evidence_pack_export`、
+  `cangjie_adapter` 开关控制，知识单元写入由 `knowledge_units` 控制；`evidence check`、
+  `evidence verify`、`knowledge list|show`、`extensions status` 不需要任何开关，关掉
+  扩展不会让已有材料变得更难读。扩展失败只报错，不影响这次读取或已存材料。
+- 新增知识单元（`envoy knowledge …`）：一条主张连同它的出处、适用条件、边界和测试
+  问题一起存，`unit_id` 由主张内容算出；`verify` 要求每个 `source_ref` 的
+  `evidence_id` 在当前材料的证据索引里、版本未移动、定位仍对得上，未验证的进不了
+  `verified`；`promote` 还要求条件、步骤、边界、测试都不为空。每次改动是一个新版本，
+  `rollback` 把旧版本恢复成新的当前版本，`archive` 只回收不删除。多份材料可以支持
+  同一条，冲突记成 `contradicts`。
+- 新增 Cangjie 适配器（`envoy evidence cangjie`）：把已校验的 Evidence Pack 转成
+  材质文档，段落按阅读顺序、定位原样保留，ASR 转写与 OCR 文本标成 `inferred`、
+  原始字幕和正文标成 `source`；先校验包再转换，包被改过就拒转，写入是原子的，
+  转换前后包内容逐字节不变。不跑五代理蒸馏、不调模型（`adapter.distilled` 为 false）。
+- 新增 `docs/architecture/evidence-pack-v1.md`、`knowledge-units-v1.md`、
+  `cangjie-adapter.md` 与 `docs/schemas/` 下的 v1 JSON Schema，说明标识符、覆盖缺口、
+  扩展开关与失败边界。
+
+- 每次读 GitHub 都在 commit 下定版一份轻量快照（`details.repository_snapshot`）：
+  哪些目录已展开、哪些只列出未展开、每个文件读到百分之多少、哪些只列出没读过、
+  哪段区间还没解析。第二次读同一 commit 时状态会累积（部分读变完整读），索引按
+  仓库 + commit 落本地，不复制仓库、不建数据库；记账失败不会影响这次读取本身。
+- 两种本地语音转写后端现在返回同一种结果：`segments`、`language`、`duration`、
+  `model`、`backend`、`processed_until`、`resume_available`、`status`。调用方
+  不再按引擎分支；`resume_available` 在转完时为 false、还有音频没听时为 true，
+  `processed_until` 是已确认听过的进度，读数与回执都记后端。旧的
+  `next_seconds`、`duration_seconds` 保留一个版本作别名，checkpoint 格式不变。
+- 同一个公开地址读第二次不必再下一次：成功响应的正文按「地址 + 凭据 + 字节上限」
+  存一份本地条目，cookie 只进摘要、不进磁盘，新鲜期内直接复用；过期后带
+  `ETag`/`Last-Modified` 发条件请求，`304` 时用回原正文。`Cache-Control` 的
+  `no-store`、`private`、`no-cache`、`Vary: *`、`Authorization` 一律不存，`max-age`
+  为零不存，`Expires` 已经是过去时不存、`Age` 超过 `max-age` 也不存，来源给的时长
+  比默认新鲜期短就按来源的算；判断的是最终响应的策略，重定向到别处之后 `private`
+  或 `no-store` 一样生效，目标地址换了凭据则不存；失败永不写入缓存；命中前重新做一次
+  公共地址校验，并核对最终地址当前的凭据，凭据不同的读不会共用同一条正文；
+  多个进程同时读同一地址时只有一个真正发请求。读取结果在 `details.fetch_cache`
+  报告 `bypass`（缓存关闭）、`miss`、`hit` 或 `revalidated`。GitHub 索引和 HTTP
+  条目都计入 `envoy cache status`，`envoy cache prune` 按年龄回收它们。
+
+- 一次给多个链接：`envoy batch` 把地址排队读完，进度写在磁盘上，中断后
+  `envoy batch --resume` 只重跑没完成的；登录墙按站点暂停而不是整批停下，
+  `--login-first` 先登录再读，`--retry-login`、`--retry-failed`、`--cancel`
+  分别处理补读和收尾。普通单条读取的路径不变。
+- 媒体 worker 改在私有工作目录里启动，并把子进程的 stderr 带回来：调用目录里有
+  同名 `struct.py` 这类文件时不再把 worker 搞崩；worker 真的死掉时，报错里带它
+  自己打的最后几千字节，而不是一句「exited without a result」。
+- 图片和视频帧被预算截掉时说清事实：几张里内联了几张、卡在
+  `budget.max_visual_inputs` 还是像素预算、内联文件落在哪个目录、要改成多少才能
+  全带上；因为这些没内联的图，不再笼统地写成「有些图片没包含」。
+- 缺能力的报错本身可执行：`details.needs_user_action` 给出安装命令、要下载多大
+  （Chromium 约 683 MB、Whisper base 约 140 MB）和 `ask_first`，让调用方先问用户
+  再装；不装也照样给页面文字，不把「没装」说成读不了。
+- 视频转写只说它真覆盖了什么：读的是请求区间就写清区间、只用了站点的人工字幕轨
+  就写明不是自动字幕也没转音频、字幕轨比视频短就写到哪一秒、ASR 停在
+  `budget.max_work_seconds` 后面还剩多少没听，并给出从该秒继续读的写法。
+- 帧提取和语音提取失败时，`errors` 里带 `stage`（`speech_extraction`、
+  `frame_extraction`、`frame_lease`）和 worker 原始原因，`result: partial` 不再
+  和「干净完成」长得一样。
+
+- `envoy read-local-video` 的帮助写明请求形状：本地文件放顶层 `path`，不是
+  `source.url`（后者是 `envoy_read` 的形状，这个子命令会拒绝）；四份技能文档
+  同步了这句，从 `envoy_read` 示例复制来的请求不会再落地就失败。
+
+### English
+
+- Reading is complete when the body carries what the task needs, not when it passes
+  a character count: the requested passage or values are present and the text ends
+  where the requested section ends. Escalate to `envoy_read` on evidence — a
+  truncated body, a missing table/figure/attachment/code block, a login or
+  JavaScript shell, navigation or off-topic text, or an answer that must outlive the
+  turn. When completeness cannot be judged, say what may be missing instead of
+  escalating on suspicion. Tool selection is stated once: use `gh` or `git` first
+  when either is at hand; without them a GitHub link takes the API path.
+- A GitHub 403 is no longer always a rate limit: missing permission returns
+  `github_forbidden` with a `GITHUB_TOKEN` hint, a blocked repository returns
+  `github_blocked` and is not retryable, and only an exhausted quota is
+  `github_rate_limited`, whose `details.github_quota` carries the limit, remaining
+  count, reset time and `Retry-After`.
+- A read's evidence can now be exported as a directory other tools can consume:
+  `envoy evidence export` writes an Evidence Pack (source document, sections, the
+  verbatim evidence, coverage gaps, manifest). Exporting the same material twice
+  yields identical `pack_id` and `evidence_id` values; evidence files carry their
+  sha256, a citation points back into the original text, PDF page numbers, video
+  timestamps and GitHub line numbers keep their own coordinates, and anything not
+  read is stated in `coverage.json`. `envoy evidence verify` recomputes the
+  manifest and evidence digests and reports `damaged` when a file was touched. A
+  failed export leaves the source material untouched; an existing target is
+  `pack_exists` unless `--overwrite` is given.
+- A new optional extension layer, off by default, adds no cost to ordinary link
+  reading and no extra model call: `envoy extensions status|enable|disable` manages
+  the switches (`ENVOY_EXTENSIONS` overrides one name at a time), `envoy evidence
+  export|cangjie` are gated by `evidence_pack_export` and `cangjie_adapter`,
+  knowledge-unit writes by `knowledge_units`; `evidence check`, `evidence verify`,
+  `knowledge list|show` and `extensions status` need no flag, so turning an
+  extension off never makes existing material harder to read. An extension failure
+  reports an error and leaves the read and the stored material alone.
+- Knowledge Units (`envoy knowledge …`): a claim stored with its sources, conditions,
+  limits and test questions, with `unit_id` derived from the claim itself. `verify`
+  requires every `source_ref` to resolve in the current material's evidence index,
+  at the claimed revision, with a matching locator — unverified evidence cannot
+  reach `verified`; `promote` additionally requires conditions, steps, limits and
+  at least one test. Every edit is a new version, `rollback` restores an old version
+  as a new current one, and `archive` retires without deleting. Several materials
+  may support one unit; a conflicting one is recorded as `contradicts`.
+- A Cangjie adapter (`envoy evidence cangjie`): converts a verified Evidence Pack
+  into a material document with segments in reading order and locators unchanged,
+  labelling ASR transcripts and OCR text `inferred` and original captions and body
+  text `source`. It verifies the pack before converting, refuses a pack that no
+  longer matches its manifest, writes atomically, and leaves the pack byte-identical.
+  No five-agent distillation and no model call (`adapter.distilled` is false).
+- New docs: `docs/architecture/evidence-pack-v1.md`, `knowledge-units-v1.md`,
+  `cangjie-adapter.md`, and v1 JSON Schemas under `docs/schemas/` covering the
+  identifiers, coverage gaps, extension gates and failure boundaries.
+
+- Every GitHub read pins a lightweight snapshot at its commit
+  (`details.repository_snapshot`): which directories were expanded, which were only
+  listed, how much of each file was actually read, which files were never read, and
+  which ranges remain unresolved. A second read of the same commit accumulates
+  (a partial file becomes complete), the index is stored locally keyed by repository
+  and commit, no repository copy and no database, and a failure to record never
+  breaks the read itself.
+- Both local speech backends now return one shape: `segments`, `language`,
+  `duration`, `model`, `backend`, `processed_until`, `resume_available`, `status`.
+  Callers no longer branch on the engine; `resume_available` is false when the
+  transcription finished and true while audio is still unheard, `processed_until`
+  is the confirmed cursor, and the reading and its details name the backend. The
+  old `next_seconds` and `duration_seconds` stay as aliases for one release and the
+  checkpoint format is unchanged.
+- Reading the same public address twice no longer downloads it twice: the body of a
+  successful response is kept locally under "address + credentials + size cap", with
+  the cookie going into the digest only and never onto disk, and served from there
+  while fresh. A stale entry sends a conditional request carrying its `ETag` and
+  `Last-Modified`, and a `304` reuses the body already held. `no-store`, `private`,
+  `no-cache`, `Vary: *` and `Authorization` are never stored, a `max-age` of zero is
+  refused, an `Expires` already in the past or an `Age` past the `max-age` is refused
+  too, a shorter origin lifetime wins over the default freshness window, and the policy
+  that counts is the final response's: `private` or `no-store` behind a redirect still
+  refuses storage, and a target that needs other credentials is not stored at all. A
+  failed response never becomes cached content, the public-address check and the final
+  address's current credentials are both re-checked before every hit, two reads with
+  different credentials never share a body, and
+  concurrent readers of the
+  same address let one request through. `details.fetch_cache` reports `bypass`
+  (cache disabled), `miss`, `hit` or `revalidated`. GitHub indexes and HTTP entries
+  both appear in `envoy cache status`, and `envoy cache prune` reclaims them by age.
+
+- Many links at once: `envoy batch` queues addresses and reads them, keeps its
+  progress on disk so `envoy batch --resume` re-runs only the unfinished items,
+  pauses per site instead of stopping the whole batch at a login wall,
+  `--login-first` signs in before reading, and `--retry-login`,
+  `--retry-failed` and `--cancel` handle the follow-up. Single reads are
+  unchanged.
+- The media worker now starts in a private working directory and brings its
+  child's stderr back: a stray `struct.py` in the caller's directory can no
+  longer crash it, and a worker that really dies reports the last few kilobytes
+  it wrote instead of "exited without a result".
+- Budget-capped images and video frames state the facts: how many of how many
+  were inlined, which budget capped them (`budget.max_visual_inputs` or the
+  pixel budget), where the inlined files live, and what to raise to carry them
+  all; omitted images are no longer reported as "some images were missing".
+- A missing-capability error is actionable on its own:
+  `details.needs_user_action` carries the install command, the download size
+  (about 683 MB for Chromium, about 140 MB for Whisper base) and `ask_first`, so
+  the caller asks before installing. Without it the page text still comes back,
+  so "not installed" is never dressed up as "unreadable".
+- A video transcript states what it actually covered: the requested range when
+  one was read, that only the site's manual subtitle track was used (not
+  automatic captions, no local ASR), where a subtitle track ends short of the
+  video, and how much audio remains unheard when ASR stopped at
+  `budget.max_work_seconds` — plus how to resume from that second.
+- Frame and speech extraction failures now carry `errors` with a `stage`
+  (`speech_extraction`, `frame_extraction`, `frame_lease`) and the worker's own
+  reason, so `result: partial` no longer looks like a clean finish.
+
+- `envoy read-local-video --help` states the request shape: the local file
+  goes in the top-level `path` field, not `source.url` (that is the
+  `envoy_read` shape, and this subcommand rejects it); the four skill copies
+  say the same, so a request copied from an `envoy_read` example no longer
+  fails on arrival.
+
 ## 0.1.56 - 2026-11-10
 
 ### 中文

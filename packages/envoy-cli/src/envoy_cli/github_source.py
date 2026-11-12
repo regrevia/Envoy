@@ -41,6 +41,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
+from . import github_index
+
 from envoy_core.schemas.read_v1 import (
     Coverage,
     CoverageItem,
@@ -138,13 +140,39 @@ class GithubUnauthorized(GithubError):
     """401: the configured token is not accepted."""
 
 
+class GithubForbidden(GithubError):
+    """403 that is not a rate limit: a permission, policy or block refusal.
+
+    Separate from :class:`GithubRateLimited` because the two need opposite
+    advice: a rate limit clears with time or a token, a permission refusal does
+    not clear by retrying. ``reason`` is ``"permission"`` or ``"blocked"``.
+    """
+
+    def __init__(self, message: str, *, reason: str = "permission", **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.reason = reason
+
+
 class GithubRateLimited(GithubError):
     """403/429 rate limit. Carries the reset instant so the caller can wait."""
 
-    def __init__(self, message: str, *, reset_at: str | None = None, reset_epoch: int | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reset_at: str | None = None,
+        reset_epoch: int | None = None,
+        limit: int | None = None,
+        remaining: int | None = None,
+        retry_after_seconds: int | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(message, **kwargs)
         self.reset_epoch = reset_epoch
         self.reset_at = reset_at
+        self.limit = limit
+        self.remaining = remaining
+        self.retry_after_seconds = retry_after_seconds
 
 
 class GithubUnavailable(GithubError):
@@ -163,6 +191,38 @@ def _http_headers(token: str | None, accept: str) -> dict[str, str]:
     return headers
 
 
+def _int_header(headers: dict[str, str], name: str) -> int | None:
+    value = str(headers.get(name) or "").strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _rate_limit_signal(status: int, message: str, headers: dict[str, str], remaining: int | None) -> bool:
+    """Whether this response is a quota refusal rather than a permission refusal.
+
+    403 is overloaded by GitHub: it means exhausted quota, a secondary (abuse)
+    limit, a token that lacks a scope, or a blocked/archived repository. Only
+    the first two clear with time, so only those become ``GithubRateLimited`` —
+    treating every 403 as a rate limit tells the caller to retry a permission
+    problem forever. ``429`` is always a quota response.
+    """
+
+    if status == 429:
+        return True
+    if remaining == 0:
+        return True
+    lower = message.lower()
+    if "rate limit" in lower or "abuse detection" in lower:
+        return True
+    if headers.get("retry-after") and "permission" not in lower:
+        return True
+    return False
+
+
 def _http_error(status: int, url: str, body: bytes, headers: dict[str, str]) -> GithubError:
     payload: dict = {}
     try:
@@ -173,24 +233,30 @@ def _http_error(status: int, url: str, body: bytes, headers: dict[str, str]) -> 
         payload = {}
     message = str(payload.get("message") or f"GitHub returned HTTP {status}")
     lower = message.lower()
-    reset_header = str(headers.get("x-ratelimit-reset") or "")
-    remaining = str(headers.get("x-ratelimit-remaining") or "")
-    reset_epoch: int | None = None
+    reset_epoch = _int_header(headers, "x-ratelimit-reset")
+    remaining_count = _int_header(headers, "x-ratelimit-remaining")
     reset_at: str | None = None
-    try:
-        reset_epoch = int(reset_header) if reset_header else None
-    except ValueError:
-        reset_epoch = None
     if reset_epoch is not None:
         reset_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(reset_epoch))
     besides = {"status": status, "url": url, "payload": payload, "headers": headers}
-    if status in {403, 429} and (
-        remaining == "0" or "rate limit" in lower or "secondary rate" in lower
-    ):
+    if status in {403, 429} and _rate_limit_signal(status, message, headers, remaining_count):
         return GithubRateLimited(
             f"GitHub API rate limit reached ({message})",
             reset_at=reset_at,
             reset_epoch=reset_epoch,
+            limit=_int_header(headers, "x-ratelimit-limit"),
+            remaining=remaining_count,
+            retry_after_seconds=_int_header(headers, "retry-after"),
+            **besides,
+        )
+    if status == 403:
+        blocked = any(
+            marker in lower
+            for marker in ("blocked", "dmca", "disabled", "archived", "repository access")
+        )
+        return GithubForbidden(
+            f"GitHub refused access ({message})",
+            reason="blocked" if blocked else "permission",
             **besides,
         )
     if status == 404:
@@ -915,6 +981,34 @@ def _entry_line(entry: dict, *, repo_url: str = "", ref: str = "") -> str:
     return f"- {raw_path}{size_text}"
 
 
+def _record_snapshot(
+    details: dict,
+    repository: str,
+    commit_sha: str,
+    recorder: Any,
+    **kwargs: Any,
+) -> str | None:
+    """Record this read in the per-commit index and attach its manifest.
+
+    The index answers "what has this session already covered at this commit",
+    which a single-URL reader cannot otherwise express: a caller sees an
+    unexpanded directory and an empty one identically. Recording is best-effort
+    — a state directory that cannot be written degrades to the manifest of this
+    call, never to a failed read.
+    """
+
+    if not repository or not commit_sha:
+        return None
+    try:
+        index, persisted = recorder(repository, commit_sha, **kwargs)
+        snapshot = github_index.manifest(index)
+        snapshot["persisted"] = persisted
+        details["repository_snapshot"] = snapshot
+        return github_index.describe(index)
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+        return None
+
+
 def _read_repo_or_tree(request: ReadRequest, link: GithubLink, ctx: _Context, started: float) -> _Readout:
     builder = _Builder(request, link.url)
     details: dict = {}
@@ -1005,6 +1099,19 @@ def _read_repo_or_tree(request: ReadRequest, link: GithubLink, ctx: _Context, st
     details["entries_shown"] = len(shown)
     details["dirs_shown"] = sum(1 for entry in shown if entry.get("type") == "tree")
     details["files_shown"] = len(shown) - details["dirs_shown"]
+    snapshot_note = _record_snapshot(
+        details,
+        link.full_name,
+        sha,
+        github_index.record_listing,
+        path=link.path or "",
+        plan=str(details.get("plan") or "one_level"),
+        entries=ordered,
+        recursive=str(details.get("plan") or "") == "recursive",
+        tree_truncated=bool(details.get("tree_truncated")),
+        capped_by_api=bool(details.get("listing_capped_by_api")),
+        capped_by_reader=bool(details.get("entries_capped_by_reader")),
+    )
     if details.get("listing_capped_by_api"):
         unresolved.append(
             f"GitHub's contents API returns at most {MAX_ONE_LEVEL_ENTRIES} children for a "
@@ -1074,6 +1181,8 @@ def _read_repo_or_tree(request: ReadRequest, link: GithubLink, ctx: _Context, st
         )
     if details.get("listing_hint"):
         builder.add(MaterialKind.PARAGRAPH, str(details["listing_hint"]))
+    if snapshot_note:
+        builder.add(MaterialKind.PARAGRAPH, snapshot_note)
     if unresolved:
         builder.add(MaterialKind.PARAGRAPH, "\n".join(f"Note: {item}" for item in unresolved))
 
@@ -1244,6 +1353,25 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
                 f"Only lines {start}-{delivered_end} fit in this response; the requested range "
                 f"ended at L{end} — ask for a narrower range to read the rest"
             )
+    partial = (
+        builder.truncated
+        or truncated_download
+        or range_outside_file
+        or bool(details.get("line_range_truncated_by_budget"))
+    )
+    snapshot_note = _record_snapshot(
+        details,
+        link.full_name,
+        sha,
+        github_index.record_file,
+        path=link.path,
+        total_lines=total_lines,
+        delivered_start=start,
+        delivered_end=delivered_end,
+        complete=not partial and start == 1 and delivered_end == total_lines,
+    )
+    if snapshot_note:
+        builder.add(MaterialKind.PARAGRAPH, snapshot_note)
     revision_basis = (
         f"github\0blob\0{link.full_name}\0{sha}\0{link.path}\0L{start}-L{end}"
         if total_lines
@@ -1253,12 +1381,7 @@ def _read_blob(request: ReadRequest, link: GithubLink, ctx: _Context, started: f
         blocks=builder.blocks,
         details=details,
         unresolved=unresolved,
-        partial=(
-            builder.truncated
-            or truncated_download
-            or range_outside_file
-            or bool(details.get("line_range_truncated_by_budget"))
-        ),
+        partial=partial,
         revision_basis=revision_basis,
         modality="code",
         counts={
@@ -1940,6 +2063,17 @@ def read_github_source(
         else:  # pragma: no cover - parse_github_url never emits another kind
             return None
     except GithubRateLimited as exc:
+        quota = {
+            key: value
+            for key, value in {
+                "limit": exc.limit,
+                "remaining": exc.remaining,
+                "reset_at": exc.reset_at,
+                "reset_epoch": exc.reset_epoch,
+                "retry_after_seconds": exc.retry_after_seconds,
+            }.items()
+            if value is not None
+        }
         details = {
             "reader": "github",
             "github_error_code": "github_rate_limited",
@@ -1947,16 +2081,69 @@ def read_github_source(
             "reset_at": exc.reset_at,
             "reset_epoch": exc.reset_epoch,
             "authenticated": ctx.authenticated,
+            "github_quota": quota,
             "api_requests": list(ctx.requests),
-            "hint": "Set GITHUB_TOKEN (or GH_TOKEN) to raise the API quota, then retry after the reset time",
+            "hint": (
+                "Wait for the reset time, then retry"
+                if ctx.authenticated
+                else "Set GITHUB_TOKEN (or GH_TOKEN) to raise the API quota, then retry after the reset time"
+            ),
         }
+        if exc.retry_after_seconds:
+            details["retry_after_seconds"] = exc.retry_after_seconds
+        when = (
+            f"{exc.retry_after_seconds} seconds"
+            if exc.retry_after_seconds
+            else (exc.reset_at or "the reset time")
+        )
         return _blocked(
             request,
             ErrorCode.NETWORK_ERROR,
-            f"GitHub API rate limit reached; retry after {exc.reset_at or 'the reset time'} "
-            f"or set GITHUB_TOKEN to raise the quota",
+            f"GitHub API rate limit reached; retry after {when}"
+            + ("" if ctx.authenticated else " or set GITHUB_TOKEN to raise the quota"),
             retryable=True,
             details=details,
+        )
+    except GithubForbidden as exc:
+        # A permission refusal and a blocked repository are both 403 but need
+        # different advice: the first is fixed with a token, the second never
+        # clears by retrying.
+        if exc.reason == "blocked":
+            return _blocked(
+                request,
+                ErrorCode.SOURCE_UNAVAILABLE,
+                f"GitHub refused access to {_safe_url(link.url)} (403: blocked, disabled, or "
+                f"access-restricted repository). Retrying will not change this",
+                details={
+                    "reader": "github",
+                    "github_error_code": "github_blocked",
+                    "status": 403,
+                    "reason": exc.reason,
+                    "api_requests": list(ctx.requests),
+                    "hint": "Open the page in a browser to see GitHub's reason; no token fixes a blocked repository",
+                },
+            )
+        return _blocked(
+            request,
+            ErrorCode.AUTH_REQUIRED,
+            f"GitHub refused access to {_safe_url(link.url)} (403). The request reached GitHub but "
+            f"this identity may not read it",
+            action_required=True,
+            details={
+                "reader": "github",
+                "github_error_code": "github_forbidden",
+                "status": 403,
+                "reason": exc.reason,
+                "authenticated": ctx.authenticated,
+                "api_requests": list(ctx.requests),
+                "hint": (
+                    "The configured token lacks access: grant it repo read access (and authorize "
+                    "SSO for the organization) or use a token that can see this repository"
+                    if ctx.authenticated
+                    else "Set GITHUB_TOKEN with repo read access; private repositories answer 403 or "
+                    "404 to anonymous requests"
+                ),
+            },
         )
     except GithubNotFound:
         return _blocked(

@@ -16,7 +16,7 @@ import tempfile
 import time
 import zipfile
 from contextvars import ContextVar
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from functools import wraps
 from io import BytesIO
@@ -48,7 +48,7 @@ from .platforms import (
     is_collection_url,
     is_platform_page,
 )
-from . import storage
+from . import http_cache, storage
 from .media import (
     MediaBudgetExceeded,
     MediaCapabilityMissing,
@@ -2664,8 +2664,10 @@ def _attach_browser_video_evidence(
     transcript_segments: list[dict] = []
     language = None
     asr_model = None
+    asr_backend = None
     asr_status = None
     asr_processed_until = None
+    asr_resume_available = None
     asr_elapsed_ms = None
     downloaded_bytes = None
     frame_response = response
@@ -2785,8 +2787,14 @@ def _attach_browser_video_evidence(
                     transcript_source = "asr" if transcript_segments else "no_speech"
                     language = asr_result.get("language")
                     asr_model = asr_result.get("model")
+                    asr_backend = asr_result.get("backend")
                     asr_status = asr_result.get("status")
-                    asr_processed_until = asr_result.get("next_seconds")
+                    # Canonical cursor first; `next_seconds` is the deprecated
+                    # alias older media results still carry.
+                    asr_processed_until = asr_result.get(
+                        "processed_until", asr_result.get("next_seconds")
+                    )
+                    asr_resume_available = asr_result.get("resume_available")
                     asr_elapsed_ms = asr_result.get("elapsed_ms")
                     if not transcript_segments:
                         unresolved.append("ASR completed without speech segments")
@@ -2834,8 +2842,10 @@ def _attach_browser_video_evidence(
                 else request.source.label or "Video transcript",
                 "language": language,
                 "model": asr_model,
+                "backend": asr_backend,
                 "transcription_status": asr_status,
                 "processed_until_seconds": asr_processed_until,
+                "resume_available": asr_resume_available,
                 "cues": transcript_segments,
             }
             # Charge the page blocks already in this answer against the same
@@ -2883,7 +2893,13 @@ def _attach_browser_video_evidence(
                     ),
                     parent_id=response.blocks[0].id if response.blocks else None,
                     order=len(blocks),
-                    quality=Quality(engine=f"whisper-{asr_model or 'local'}"),
+                    quality=Quality(
+                        engine=(
+                            "whisper.cpp"
+                            if str(asr_backend or "").lower().startswith("whisper.cpp")
+                            else f"whisper-{asr_model or 'local'}"
+                        )
+                    ),
                 ))
             returned_segments = len(delivered_spans)
             segment_inventory = len(transcript_lines["spans"])
@@ -2985,7 +3001,9 @@ def _attach_browser_video_evidence(
                     "transcript_source": transcript_source,
                     "transcript_language": language,
                     "asr_model": asr_model,
+                    "asr_backend": asr_backend,
                     "asr_duration_ms": asr_elapsed_ms,
+                    "asr_resume_available": asr_resume_available,
                     "page_chapter_count": len(chapter_blocks),
                     "page_chapter_span": list(chapter_span) if chapter_span else None,
                     "chapters_incomplete": chapters_incomplete,
@@ -6093,6 +6111,8 @@ def _fetch_html(
     source_url: str,
     max_bytes: int = MAX_HTML_BYTES,
     dns_cache: dict[str, str] | None = None,
+    *,
+    stats: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     dns_cache = dns_cache if dns_cache is not None else {}
     last_error: Exception | None = None
@@ -6110,7 +6130,7 @@ def _fetch_html(
                 trust_env=False,
                 proxy=proxy,
             ) as client:
-                return _fetch_html_via(client, source_url, max_bytes, dns_cache)
+                return _fetch_html_via(client, source_url, max_bytes, dns_cache, stats=stats)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc
     raise PublicPageError(
@@ -6124,237 +6144,342 @@ def _fetch_html_via(
     source_url: str,
     max_bytes: int,
     dns_cache: dict[str, str],
+    *,
+    stats: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     current_url = source_url
     headers = {"User-Agent": "Envoy/0.1 (+https://github.com/regrevia/Envoy)"}
+    # A body already on disk for this URL, credential set and byte cap can be
+    # served without touching the network; a stale one is revalidated with
+    # If-None-Match/If-Modified-Since instead of downloaded again. The mirror of
+    # this is http_cache.store() at the end of a successful body read.
+    cache_cookie = _credential_cookie_header(source_url) or ""
+    cache_enabled = http_cache.cache_enabled()
+    cache_entry = None
+    cache_conditional: dict[str, str] = {}
 
-    for _ in range(5):
-        if not _is_public_http_url(current_url, dns_cache):
-            raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
-        cookie_header = _credential_cookie_header(current_url)
-        if cookie_header:
-            headers["Cookie"] = cookie_header
-        else:
-            headers.pop("Cookie", None)
-        for attempt in range(MAX_FETCH_ATTEMPTS):
-            try:
-                with client.stream("GET", current_url, headers=headers) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise PublicPageError("The source returned an invalid redirect")
-                        current_url = urljoin(current_url, location)
-                        break
-                    if response.status_code in {401, 403}:
-                        raise PublicPageError(
-                            "The source requires access that Envoy cannot provide",
-                            ErrorCode.AUTH_REQUIRED,
-                            details={
-                                "http_status": response.status_code,
-                                "final_url": _redact_url(current_url),
-                                "diagnosis": "access_required",
-                                "user_check_recommended": True,
-                                "proxy_configured": _http_proxy_configured(),
-                            },
+    def _fresh_cached_body():
+        """Serve the entry for this exact request when it is still fresh."""
+        nonlocal cache_entry, cache_conditional
+        cache_entry = http_cache.load(
+            source_url, cookie=cache_cookie, max_bytes=max_bytes
+        )
+        if cache_entry is None:
+            cache_conditional = {}
+            return None
+        final_url = str(cache_entry.get("final_url") or source_url)
+        # The body was public when it was stored; the address it came from has
+        # to resolve to a public host again before any of it is handed out.
+        if not http_cache.fresh(cache_entry) or not _is_public_http_url(
+            final_url, dns_cache
+        ):
+            cache_conditional = http_cache.validators(cache_entry)
+            return None
+        # Storing already required the last hop to carry the key's credentials;
+        # a hit re-checks them because a redirect target can start sending a
+        # different cookie while the source URL stays the same.
+        if cache_cookie != (_credential_cookie_header(final_url) or ""):
+            cache_conditional = http_cache.validators(cache_entry)
+            return None
+        cache_conditional = {}
+        if stats is not None:
+            stats["fetch_cache"] = "hit"
+        return final_url, str(cache_entry["body"])
+
+    cached = _fresh_cached_body() if cache_enabled else None
+    if not cache_enabled and stats is not None:
+        stats["fetch_cache"] = "bypass"
+    if cached is not None:
+        return cached
+    # Two readers of the same address share one request: whoever holds the lock
+    # fetches and stores, and a reader that acquires it afterwards is served from
+    # the entry that fetch wrote. A lock that cannot be taken degrades to a plain
+    # fetch, so this only ever costs a duplicate request, never a failed read.
+    lock = (
+        http_cache.fetch_lock(source_url, cookie=cache_cookie, max_bytes=max_bytes)
+        if cache_enabled
+        else nullcontext()
+    )
+    with lock:
+        if cache_enabled:
+            cached = _fresh_cached_body()
+            if cached is not None:
+                return cached
+        for _ in range(5):
+            if not _is_public_http_url(current_url, dns_cache):
+                raise PublicPageError("The source URL or redirect is not a public HTTP(S) address")
+            cookie_header = _credential_cookie_header(current_url)
+            if cookie_header:
+                headers["Cookie"] = cookie_header
+            else:
+                headers.pop("Cookie", None)
+            request_headers = dict(headers)
+            if cache_conditional and current_url == source_url:
+                request_headers.update(cache_conditional)
+            for attempt in range(MAX_FETCH_ATTEMPTS):
+                try:
+                    with client.stream("GET", current_url, headers=request_headers) as response:
+                        if response.status_code == 304:
+                            if (
+                                cache_entry is not None
+                                and cache_conditional
+                                and current_url == source_url
+                            ):
+                                http_cache.touch(
+                                    source_url, cookie=cache_cookie, max_bytes=max_bytes
+                                )
+                                if stats is not None:
+                                    stats["fetch_cache"] = "revalidated"
+                                return str(cache_entry["final_url"]), str(
+                                    cache_entry["body"]
+                                )
+                            raise PublicPageError(
+                                "The source answered 304 Not Modified without a conditional request"
+                            )
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise PublicPageError("The source returned an invalid redirect")
+                            current_url = urljoin(current_url, location)
+                            break
+                        if response.status_code in {401, 403}:
+                            raise PublicPageError(
+                                "The source requires access that Envoy cannot provide",
+                                ErrorCode.AUTH_REQUIRED,
+                                details={
+                                    "http_status": response.status_code,
+                                    "final_url": _redact_url(current_url),
+                                    "diagnosis": "access_required",
+                                    "user_check_recommended": True,
+                                    "proxy_configured": _http_proxy_configured(),
+                                },
+                            )
+                        if response.status_code == 404:
+                            raise PublicPageError(
+                                "The source returned HTTP 404. This may be a removed or private item, an invalid share link, or an upstream proxy response; Envoy cannot distinguish these from the response alone.",
+                                ErrorCode.SOURCE_UNAVAILABLE,
+                                details={
+                                    "http_status": 404,
+                                    "final_url": _redact_url(current_url),
+                                    "diagnosis": "source_or_route_not_found",
+                                    "user_check_recommended": True,
+                                    "proxy_configured": _http_proxy_configured(),
+                                    "suggested_next_action": "Ask the user to open the same link in their regular browser. If it opens there, ask whether to use an already configured or user-approved trusted proxy.",
+                                },
+                            )
+                        if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                            if attempt + 1 < MAX_FETCH_ATTEMPTS:
+                                time.sleep(0.25 * (attempt + 1))
+                                continue
+                        response.raise_for_status()
+                        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                        if content_type == "application/pdf":
+                            content_length = response.headers.get("content-length")
+                            if content_length:
+                                try:
+                                    if int(content_length) > max_bytes:
+                                        raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                except ValueError:
+                                    pass
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                body.extend(chunk)
+                                if len(body) > max_bytes:
+                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
+                            pdf_data = bytes(body)
+                            if not pdf_data.startswith(b"%PDF-"):
+                                raise PublicPageError("The server declared PDF content but returned invalid PDF data")
+                            raise DetectedPDF({
+                                "url": _redact_url(current_url),
+                                "data": pdf_data,
+                                "mime_type": "application/pdf",
+                            })
+                        if content_type.startswith("image/"):
+                            raise DetectedImage({
+                                "url": _redact_url(current_url),
+                                "mime_type": content_type,
+                            })
+                        if content_type.startswith(("video/", "audio/")):
+                            raise DetectedMedia({
+                                "url": _redact_url(current_url),
+                                "mime_type": content_type,
+                                "sensitive_url": any(
+                                    _is_sensitive_query_key(key)
+                                    for key, _value in parse_qsl(
+                                        urlparse(current_url).query,
+                                        keep_blank_values=True,
+                                    )
+                                ),
+                                "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
+                            })
+                        hint_path = urlparse(current_url).path.lower()
+                        if hint_path.endswith(IWORK_SUFFIXES):
+                            raise PublicPageError(
+                                "This is an Apple iWork file (Pages/Numbers/Keynote). "
+                                "Export it as .docx/.xlsx/.pptx or PDF and read that link instead",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        if hint_path.endswith(BINARY_SHEET_SUFFIXES):
+                            raise PublicPageError(
+                                "This is a binary Excel workbook (.xlsb). "
+                                "Save it as .xlsx and read that link instead",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        document_path = urlparse(current_url).path.lower()
+                        is_office_content = content_type in (
+                            OFFICE_CONTENT_TYPES - {"application/zip"}
                         )
-                    if response.status_code == 404:
-                        raise PublicPageError(
-                            "The source returned HTTP 404. This may be a removed or private item, an invalid share link, or an upstream proxy response; Envoy cannot distinguish these from the response alone.",
-                            ErrorCode.SOURCE_UNAVAILABLE,
-                            details={
-                                "http_status": 404,
-                                "final_url": _redact_url(current_url),
-                                "diagnosis": "source_or_route_not_found",
-                                "user_check_recommended": True,
-                                "proxy_configured": _http_proxy_configured(),
-                                "suggested_next_action": "Ask the user to open the same link in their regular browser. If it opens there, ask whether to use an already configured or user-approved trusted proxy.",
-                            },
+                        if not is_office_content and document_path.endswith(OFFICE_SUFFIXES):
+                            is_office_content = content_type in {
+                                "",
+                                "application/zip",
+                                "application/octet-stream",
+                                "binary/octet-stream",
+                            }
+                        if is_office_content:
+                            content_length = response.headers.get("content-length")
+                            if content_length:
+                                try:
+                                    if int(content_length) > MAX_TEXT_SOURCE_BYTES:
+                                        raise PublicPageError(
+                                            "The document exceeds Envoy's size limit"
+                                        )
+                                except ValueError:
+                                    pass
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                body.extend(chunk)
+                                if len(body) > MAX_TEXT_SOURCE_BYTES:
+                                    raise PublicPageError("The document exceeds Envoy's size limit")
+                            document_data = bytes(body)
+                            if not document_data.startswith(b"PK\x03\x04"):
+                                raise PublicPageError(
+                                    "The server declared a ZIP document but returned other data",
+                                    ErrorCode.UNSUPPORTED_SOURCE,
+                                )
+                            raise DetectedOffice({
+                                "url": _redact_url(current_url),
+                                "data": document_data,
+                                "mime_type": content_type or "application/zip",
+                            })
+                        text_path = urlparse(current_url).path.lower()
+                        is_text_content = (
+                            content_type in TEXT_CONTENT_TYPES
+                            or content_type in RTF_CONTENT_TYPES
+                            or (
+                                content_type in {"", "application/octet-stream"}
+                                and (
+                                    text_path.endswith(TEXT_SUFFIXES)
+                                    or text_path.endswith(RTF_SUFFIXES)
+                                )
+                            )
                         )
-                    if response.status_code in {408, 425, 429} or response.status_code >= 500:
-                        if attempt + 1 < MAX_FETCH_ATTEMPTS:
-                            time.sleep(0.25 * (attempt + 1))
-                            continue
-                    response.raise_for_status()
-                    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                    if content_type == "application/pdf":
+                        if is_text_content:
+                            content_length = response.headers.get("content-length")
+                            if content_length:
+                                try:
+                                    if int(content_length) > MAX_TEXT_SOURCE_BYTES:
+                                        raise PublicPageError("The text document exceeds Envoy's size limit")
+                                except ValueError:
+                                    pass
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                body.extend(chunk)
+                                if len(body) > MAX_TEXT_SOURCE_BYTES:
+                                    raise PublicPageError("The text document exceeds Envoy's size limit")
+                            charset = getattr(response, "encoding", None) or "utf-8"
+                            raise DetectedText({
+                                "url": _redact_url(current_url),
+                                "data": bytes(body),
+                                "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
+                                "encoding": charset,
+                            })
+                        if content_type in {"", "application/octet-stream", "binary/octet-stream"}:
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                body.extend(chunk)
+                                if len(body) > _SNIFF_MAX_BYTES:
+                                    raise PublicPageError(
+                                        "The source is served as a binary download that is too large to read as text",
+                                        ErrorCode.UNSUPPORTED_SOURCE,
+                                    )
+                            sniffed = _sniff_plain_text(bytes(body))
+                            if sniffed is not None:
+                                sniffed_data, sniffed_encoding = sniffed
+                                raise DetectedText({
+                                    "url": _redact_url(current_url),
+                                    "data": sniffed_data,
+                                    "mime_type": "text/plain",
+                                    "encoding": sniffed_encoding,
+                                })
+                            raise PublicPageError(
+                                f"Static reader only accepts HTML pages, received {content_type}",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        if content_type in LEGACY_OFFICE_CONTENT_TYPES or text_path.endswith(
+                            LEGACY_OFFICE_SUFFIXES
+                        ):
+                            raise PublicPageError(
+                                "This is a legacy binary Office file (.doc/.xls/.ppt). "
+                                "Save or export it as .docx/.xlsx and read that link instead",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
+                        if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
+                            raise PublicPageError(
+                                f"Static reader only accepts HTML pages, received {content_type}",
+                                ErrorCode.UNSUPPORTED_SOURCE,
+                            )
                         content_length = response.headers.get("content-length")
                         if content_length:
                             try:
                                 if int(content_length) > max_bytes:
-                                    raise PublicPageError("The PDF exceeds Envoy's size limit")
+                                    raise PublicPageError("The public page exceeds Envoy's size limit")
                             except ValueError:
                                 pass
                         body = bytearray()
                         for chunk in response.iter_bytes():
                             body.extend(chunk)
                             if len(body) > max_bytes:
-                                raise PublicPageError("The PDF exceeds Envoy's size limit")
-                        pdf_data = bytes(body)
-                        if not pdf_data.startswith(b"%PDF-"):
-                            raise PublicPageError("The server declared PDF content but returned invalid PDF data")
-                        raise DetectedPDF({
-                            "url": _redact_url(current_url),
-                            "data": pdf_data,
-                            "mime_type": "application/pdf",
-                        })
-                    if content_type.startswith("image/"):
-                        raise DetectedImage({
-                            "url": _redact_url(current_url),
-                            "mime_type": content_type,
-                        })
-                    if content_type.startswith(("video/", "audio/")):
-                        raise DetectedMedia({
-                            "url": _redact_url(current_url),
-                            "mime_type": content_type,
-                            "sensitive_url": any(
-                                _is_sensitive_query_key(key)
-                                for key, _value in parse_qsl(
-                                    urlparse(current_url).query,
-                                    keep_blank_values=True,
-                                )
-                            ),
-                            "unsafe_handoff_url": not _video_handoff_url_is_safe(current_url),
-                        })
-                    hint_path = urlparse(current_url).path.lower()
-                    if hint_path.endswith(IWORK_SUFFIXES):
-                        raise PublicPageError(
-                            "This is an Apple iWork file (Pages/Numbers/Keynote). "
-                            "Export it as .docx/.xlsx/.pptx or PDF and read that link instead",
-                            ErrorCode.UNSUPPORTED_SOURCE,
-                        )
-                    if hint_path.endswith(BINARY_SHEET_SUFFIXES):
-                        raise PublicPageError(
-                            "This is a binary Excel workbook (.xlsb). "
-                            "Save it as .xlsx and read that link instead",
-                            ErrorCode.UNSUPPORTED_SOURCE,
-                        )
-                    document_path = urlparse(current_url).path.lower()
-                    is_office_content = content_type in (
-                        OFFICE_CONTENT_TYPES - {"application/zip"}
-                    )
-                    if not is_office_content and document_path.endswith(OFFICE_SUFFIXES):
-                        is_office_content = content_type in {
-                            "",
-                            "application/zip",
-                            "application/octet-stream",
-                            "binary/octet-stream",
-                        }
-                    if is_office_content:
-                        content_length = response.headers.get("content-length")
-                        if content_length:
-                            try:
-                                if int(content_length) > MAX_TEXT_SOURCE_BYTES:
-                                    raise PublicPageError(
-                                        "The document exceeds Envoy's size limit"
-                                    )
-                            except ValueError:
-                                pass
-                        body = bytearray()
-                        for chunk in response.iter_bytes():
-                            body.extend(chunk)
-                            if len(body) > MAX_TEXT_SOURCE_BYTES:
-                                raise PublicPageError("The document exceeds Envoy's size limit")
-                        document_data = bytes(body)
-                        if not document_data.startswith(b"PK\x03\x04"):
-                            raise PublicPageError(
-                                "The server declared a ZIP document but returned other data",
-                                ErrorCode.UNSUPPORTED_SOURCE,
-                            )
-                        raise DetectedOffice({
-                            "url": _redact_url(current_url),
-                            "data": document_data,
-                            "mime_type": content_type or "application/zip",
-                        })
-                    text_path = urlparse(current_url).path.lower()
-                    is_text_content = (
-                        content_type in TEXT_CONTENT_TYPES
-                        or content_type in RTF_CONTENT_TYPES
-                        or (
-                            content_type in {"", "application/octet-stream"}
-                            and (
-                                text_path.endswith(TEXT_SUFFIXES)
-                                or text_path.endswith(RTF_SUFFIXES)
-                            )
-                        )
-                    )
-                    if is_text_content:
-                        content_length = response.headers.get("content-length")
-                        if content_length:
-                            try:
-                                if int(content_length) > MAX_TEXT_SOURCE_BYTES:
-                                    raise PublicPageError("The text document exceeds Envoy's size limit")
-                            except ValueError:
-                                pass
-                        body = bytearray()
-                        for chunk in response.iter_bytes():
-                            body.extend(chunk)
-                            if len(body) > MAX_TEXT_SOURCE_BYTES:
-                                raise PublicPageError("The text document exceeds Envoy's size limit")
-                        charset = getattr(response, "encoding", None) or "utf-8"
-                        raise DetectedText({
-                            "url": _redact_url(current_url),
-                            "data": bytes(body),
-                            "mime_type": content_type if content_type in TEXT_CONTENT_TYPES else "text/plain",
-                            "encoding": charset,
-                        })
-                    if content_type in {"", "application/octet-stream", "binary/octet-stream"}:
-                        body = bytearray()
-                        for chunk in response.iter_bytes():
-                            body.extend(chunk)
-                            if len(body) > _SNIFF_MAX_BYTES:
-                                raise PublicPageError(
-                                    "The source is served as a binary download that is too large to read as text",
-                                    ErrorCode.UNSUPPORTED_SOURCE,
-                                )
-                        sniffed = _sniff_plain_text(bytes(body))
-                        if sniffed is not None:
-                            sniffed_data, sniffed_encoding = sniffed
-                            raise DetectedText({
-                                "url": _redact_url(current_url),
-                                "data": sniffed_data,
-                                "mime_type": "text/plain",
-                                "encoding": sniffed_encoding,
-                            })
-                        raise PublicPageError(
-                            f"Static reader only accepts HTML pages, received {content_type}",
-                            ErrorCode.UNSUPPORTED_SOURCE,
-                        )
-                    if content_type in LEGACY_OFFICE_CONTENT_TYPES or text_path.endswith(
-                        LEGACY_OFFICE_SUFFIXES
-                    ):
-                        raise PublicPageError(
-                            "This is a legacy binary Office file (.doc/.xls/.ppt). "
-                            "Save or export it as .docx/.xlsx and read that link instead",
-                            ErrorCode.UNSUPPORTED_SOURCE,
-                        )
-                    if content_type and content_type not in {"text/html", "application/xhtml+xml"}:
-                        raise PublicPageError(
-                            f"Static reader only accepts HTML pages, received {content_type}",
-                            ErrorCode.UNSUPPORTED_SOURCE,
-                        )
-                    content_length = response.headers.get("content-length")
-                    if content_length:
-                        try:
-                            if int(content_length) > max_bytes:
                                 raise PublicPageError("The public page exceeds Envoy's size limit")
-                        except ValueError:
-                            pass
-                    body = bytearray()
-                    for chunk in response.iter_bytes():
-                        body.extend(chunk)
-                        if len(body) > max_bytes:
-                            raise PublicPageError("The public page exceeds Envoy's size limit")
-                    encoding = getattr(response, "encoding", None) or "utf-8"
-                    return current_url, bytes(body).decode(encoding, errors="replace")
-            except httpx.TransportError as exc:
-                if _is_connect_failure(exc) or attempt + 1 >= MAX_FETCH_ATTEMPTS:
-                    raise
-                time.sleep(0.25 * (attempt + 1))
+                        encoding = getattr(response, "encoding", None) or "utf-8"
+                        page_text = bytes(body).decode(encoding, errors="replace")
+                        if stats is not None and "fetch_cache" not in stats:
+                            stats["fetch_cache"] = "miss"
+                        # Store only when this read's credential is the one the
+                        # final hop actually used: a redirect target that needs a
+                        # different cookie must not share a body with the source.
+                        final_cookie = _credential_cookie_header(current_url) or ""
+                        if final_cookie == cache_cookie:
+                            # The body is filed under the source address, so
+                            # validators (which describe the final response) are
+                            # dropped after a redirect; Cache-Control and Vary
+                            # still apply and are passed through untouched.
+                            stored_headers = response.headers
+                            if current_url != source_url:
+                                stored_headers = {
+                                    name: value
+                                    for name, value in response.headers.items()
+                                    if name.lower() not in {"etag", "last-modified"}
+                                }
+                            http_cache.store(
+                                source_url,
+                                cookie=cache_cookie,
+                                max_bytes=max_bytes,
+                                body=page_text,
+                                final_url=current_url,
+                                status=response.status_code,
+                                headers=stored_headers,
+                            )
+                        return current_url, page_text
+                except httpx.TransportError as exc:
+                    if _is_connect_failure(exc) or attempt + 1 >= MAX_FETCH_ATTEMPTS:
+                        raise
+                    time.sleep(0.25 * (attempt + 1))
+                else:
+                    break
             else:
-                break
-        else:
-            continue
-    raise PublicPageError("The source exceeded the redirect limit")
+                continue
+        raise PublicPageError("The source exceeded the redirect limit")
 
 
 def _fetch_source(
@@ -9339,6 +9464,47 @@ def _video_subtitle_response(
     speech_ratio = 0.0
     processed_from = float(requested_start or 0.0)
     processed_until = extracted.get("processed_until_seconds")
+    # A transcript that stops early must say where it stopped, what stopped it
+    # and how to get the rest; "partial" on its own reads like the video only
+    # had that much speech.
+    transcript_limit_notes: list[str] = []
+    if transcript_processing_partial:
+        duration_value = extracted.get("duration")
+        if processed_until is not None:
+            covered = (
+                f"Local ASR transcribed {_format_video_time(processed_from)}"
+                f"-{_format_video_time(float(processed_until))}"
+            )
+            if isinstance(duration_value, (int, float)) and float(duration_value) > 0:
+                covered += f" of {_format_video_time(float(duration_value))}"
+            covered += (
+                f" before budget.max_work_seconds={request.budget.max_work_seconds} "
+                "ran out; later audio is untranscribed. Re-read with "
+                f"scope.start_seconds={int(float(processed_until))} to continue from "
+                "there, or raise budget.max_work_seconds"
+            )
+            transcript_limit_notes.append(covered)
+        else:
+            transcript_limit_notes.append(
+                "Local ASR returned a partial transcript without reporting how far it "
+                "reached; audio coverage is incomplete"
+            )
+    if not is_asr and not transcript_processing_partial:
+        duration_value = extracted.get("duration")
+        track_end = max(
+            (float(item["end_seconds"]) for item in spans),
+            default=None,
+        )
+        if (
+            track_end is not None
+            and isinstance(duration_value, (int, float))
+            and float(duration_value) > track_end + 5.0
+        ):
+            transcript_limit_notes.append(
+                f"The site's subtitle track ends at {_format_video_time(track_end)} of "
+                f"{_format_video_time(float(duration_value))}; audio after that has no "
+                "published captions, and auto-generated captions were not used"
+            )
     if is_asr:
         speech_confidence, speech_seconds, speech_ratio = _transcript_confidence(
             spans,
@@ -9356,16 +9522,7 @@ def _video_subtitle_response(
         source_unresolved.append(
             "No transcript cues intersect the requested video time range"
         )
-    if transcript_processing_partial:
-        processed_until = extracted.get("processed_until_seconds")
-        if processed_until is not None:
-            source_unresolved.append(
-                f"Local ASR stopped at {_format_video_time(float(processed_until))}; later audio remains untranscribed"
-            )
-        else:
-            source_unresolved.append(
-                "Local ASR returned a partial transcript; audio coverage is incomplete"
-            )
+    source_unresolved.extend(transcript_limit_notes)
     should_store_material = (
         bool(full_text)
         and not retention_disabled
@@ -9413,10 +9570,7 @@ def _video_subtitle_response(
         )
     if returned_end < len(full_text) or source_truncated:
         unresolved_text.append("Transcript text is limited by the response or local extraction budget")
-    if transcript_processing_partial:
-        unresolved_text.append(
-            "Local ASR only covered the reported time range before its work budget was reached"
-        )
+    unresolved_text.extend(transcript_limit_notes)
     if continuation_storage_failed:
         unresolved_text.append("Subtitle continuation cache could not be written")
     if retention_disabled and response_partial:
@@ -9606,7 +9760,11 @@ def _read_video_asr(request: ReadRequest, source_url: str) -> ReadResponse:
             "language": asr_result.get("language"),
             "model": asr_result.get("model"),
             "transcription_status": asr_result.get("status"),
-            "processed_until_seconds": asr_result.get("next_seconds"),
+            "processed_until_seconds": asr_result.get(
+                "processed_until", asr_result.get("next_seconds")
+            ),
+            "backend": asr_result.get("backend"),
+            "resume_available": asr_result.get("resume_available"),
             "asr_duration_ms": asr_result.get("elapsed_ms"),
             "downloaded_bytes": downloaded.get("downloaded_bytes"),
             "media_download_ms": downloaded.get("elapsed_ms"),
@@ -9643,6 +9801,8 @@ def _video_frame_base_response(
     title: str,
     duration: float | None,
     unresolved: list[str] | None = None,
+    errors: list[ReadError] | None = None,
+    details: dict | None = None,
 ) -> ReadResponse:
     safe_url = _redact_url(source_url)
     safe_title = title or request.source.label or "Video"
@@ -9682,9 +9842,11 @@ def _video_frame_base_response(
                 details={
                     "duration_seconds": duration,
                     "visual_inspection": "not_performed",
+                    **(details or {}),
                 },
             ),
         }),
+        errors=list(errors or []),
     )
 
 
@@ -10003,24 +10165,47 @@ def _attach_video_frames(
             "Media extraction resolved a non-public network address",
         )
     except (MediaCapabilityMissing, MediaProcessingError) as exc:
+        # `extraction: failed` on its own reads like a clean partial. The stage
+        # and the worker's own words are what let a caller act on it.
+        capability_missing = isinstance(exc, MediaCapabilityMissing)
         video_coverage = video_coverage.model_copy(update={
             "extraction": "failed",
             "unresolved": list(dict.fromkeys([*video_coverage.unresolved, str(exc)])),
+            "details": {
+                **video_coverage.details,
+                "frame_extraction": "capability_missing" if capability_missing else "failed",
+            },
         })
         return response.model_copy(update={
             "result": ReadResult.PARTIAL,
+            "errors": [*response.errors, ReadError(
+                code=(
+                    ErrorCode.MISSING_CAPABILITY
+                    if capability_missing
+                    else ErrorCode.NETWORK_ERROR
+                ),
+                message=str(exc),
+                retryable=not capability_missing,
+                action_required=capability_missing,
+                details={"stage": "frame_extraction", "reason": str(exc)},
+            )],
             "coverage": _replace_video_coverage(response.coverage, video_coverage),
         })
     except OSError as exc:
+        message = f"Could not persist leased video frames ({type(exc).__name__})"
         video_coverage = video_coverage.model_copy(update={
             "extraction": "failed",
-            "unresolved": list(dict.fromkeys([
-                *video_coverage.unresolved,
-                f"Could not persist leased video frames ({type(exc).__name__})",
-            ])),
+            "unresolved": list(dict.fromkeys([*video_coverage.unresolved, message])),
+            "details": {**video_coverage.details, "frame_extraction": "failed"},
         })
         return response.model_copy(update={
             "result": ReadResult.PARTIAL,
+            "errors": [*response.errors, ReadError(
+                code=ErrorCode.INTERNAL_ERROR,
+                message=message,
+                retryable=True,
+                details={"stage": "frame_lease", "reason": str(exc)},
+            )],
             "coverage": _replace_video_coverage(response.coverage, video_coverage),
         })
 
@@ -11007,6 +11192,15 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             str(subtitle_result.get("title") or ""),
                             subtitle_result.get("duration"),
                             [f"No transcript is available ({exc})"],
+                            errors=[ReadError(
+                                code=ErrorCode.EMPTY_CONTENT,
+                                message=f"No transcript is available ({exc})",
+                                details={
+                                    "stage": "speech_extraction",
+                                    "reason": str(exc),
+                                },
+                            )],
+                            details={"speech_extraction": "no_speech"},
                         )
                         return _attach_video_frames(request, source_url, frame_base)
                     if subtitle_login_required:
@@ -11047,6 +11241,16 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             str(subtitle_result.get("title") or ""),
                             subtitle_result.get("duration"),
                             [f"Local speech extraction failed ({exc})"],
+                            errors=[ReadError(
+                                code=ErrorCode.NETWORK_ERROR,
+                                message=f"Local speech extraction failed ({exc})",
+                                retryable=True,
+                                details={
+                                    "stage": "speech_extraction",
+                                    "reason": str(exc),
+                                },
+                            )],
+                            details={"speech_extraction": "failed"},
                         )
                         return _attach_video_frames(request, source_url, frame_base)
                     subtitle_message = message or status
@@ -11100,6 +11304,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
         })
     if request.source.kind.value not in {"auto", "article", "video"}:
         return _blocked(request, ErrorCode.UNSUPPORTED_SOURCE, "The independent Skill currently reads public HTML pages")
+    fetch_stats: dict[str, str] = {}
     try:
         browser_error = None
         browser_attempted = browser_snapshot is not None
@@ -11113,6 +11318,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     share_export_url(source_url),
                     min(MAX_HTML_BYTES, request.budget.max_download_bytes or MAX_HTML_BYTES),
                     dns_cache,
+                    stats=fetch_stats,
                 )
             except DetectedPDF as detected_pdf:
                 return _parse_pdf_source(
@@ -11547,6 +11753,28 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             and not retention_disabled
             and not already_returned
         )
+        # A budget-capped image set is reported as what was inlined and where
+        # the files are, never as an unexplained "some images were missing".
+        omitted_images = max(0, len(parser.images) - len(safe_images))
+        image_coverage_note = ""
+        if omitted_images:
+            inlined_dir = ""
+            if image_local_files:
+                try:
+                    inlined_dir = str(next(iter(image_local_files.values()))[0].parent)
+                except (StopIteration, IndexError):
+                    inlined_dir = ""
+            image_coverage_note = (
+                f"{len(safe_images)} of {len(parser.images)} source images were inlined"
+                f"; {omitted_images} did not fit budget.max_visual_inputs={visual_budget}"
+            f" (raise it to {len(parser.images)} to inline them)"
+            )
+            if skipped_sensitive_images:
+                image_coverage_note += (
+                    f"; {skipped_sensitive_images} were skipped as non-public addresses"
+                )
+            if inlined_dir:
+                image_coverage_note += f"; the inlined files are under {inlined_dir}"
         source_coverage_unresolved = [
             *(
                 ["Page video detected but not attributed to this note; video-level evidence was not extracted"]
@@ -11557,11 +11785,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 if source_text_truncated
                 else []
             ),
-            *(
-                ["Some source images were not included in this response"]
-                if len(safe_images) < len(parser.images)
-                else []
-            ),
+            *([image_coverage_note] if image_coverage_note else []),
             *(
                 ["Embedded video resources were discovered but not processed"]
                 if video_urls
@@ -11906,6 +12130,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                         ),
                         details={
                             "reader": "isolated_chromium" if browser_used else "static_http",
+                            **(
+                                {"fetch_cache": fetch_stats["fetch_cache"]}
+                                if not browser_used and fetch_stats.get("fetch_cache")
+                                else {}
+                            ),
                             "total_chars": len(text),
                             "returned_chars": len(returned_text),
                             "continuation_available": can_continue,
@@ -12409,9 +12638,12 @@ def _no_speech_partial(
     )
 
 
+# capability, install command, what the install costs. The size is what makes
+# the question answerable: a caller must be able to say "this needs a 683 MB
+# download, do you want it, or is the text alone enough?".
 _CAPABILITY_FIRST_USE_COMMANDS = (
-    ("envoy browser setup", "browser"),
-    ("envoy asr install", "speech_to_text"),
+    ("envoy browser setup", "browser", "about 683 MB of Chromium"),
+    ("envoy asr install", "speech_to_text", "about 140 MB of Whisper base weights"),
 )
 
 
@@ -12422,14 +12654,28 @@ def _capability_user_action(message: str) -> dict | None:
     (about 140 MB for ``base``) out; each is fetched by the command its error
     already names. Making that explicit stops a caller from reporting the page
     as unreadable when one command would have read it.
+
+    ``ask_first`` is what keeps that honest in both directions: the caller is
+    told the download, so it can ask the person whether the extra capability is
+    wanted instead of silently pulling hundreds of megabytes, and it is told the
+    read still works without it, so a text-only need does not become an install
+    prompt.
     """
 
-    for command, capability in _CAPABILITY_FIRST_USE_COMMANDS:
+    for command, capability, download in _CAPABILITY_FIRST_USE_COMMANDS:
         if command in message:
             return {
                 "kind": "install_capability",
                 "capability": capability,
                 "command": command,
+                "download": download,
+                "ask_first": True,
+                "question": (
+                    f"This read needs {capability} that the minimal install leaves out. "
+                    f"Installing it takes {download} (`{command}`). "
+                    "Ask whether that is wanted before running it; the page text "
+                    "alone is available without it."
+                ),
             }
     return None
 

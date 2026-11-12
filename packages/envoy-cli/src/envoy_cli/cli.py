@@ -20,7 +20,13 @@ from envoy_core.schemas.read_v1 import (
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from . import cache as cache_storage
+from . import batch as batch_queue
+from . import extensions as extension_flags
 from . import install_state
+from .features import ConfigError
+from . import knowledge_units
+from . import cangjie_adapter
+from . import evidence_pack
 from . import storage as state_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
 from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_status, render_hook_status
@@ -72,12 +78,34 @@ def _parser() -> argparse.ArgumentParser:
 
     read = subparsers.add_parser("read", help="read a public link")
     read.add_argument("--request-json", required=True, help="read an envoy.read/1 request from this path or '-' for stdin")
+    read.add_argument(
+        "--login-first",
+        action="store_true",
+        help="if the site asks for a sign-in, open its own sign-in page and reuse the session instead of stopping",
+    )
+    read.add_argument(
+        "--wait-login",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="with --login-first: wait this long for the sign-in, then read the link again",
+    )
 
-    local_video = subparsers.add_parser("read-local-video", help="transcribe and inspect a local video file")
+    local_video = subparsers.add_parser(
+        "read-local-video",
+        help="transcribe and inspect a local video file",
+        epilog=(
+            "The request is an envoy.read/1 document with the local file in the top-level "
+            "`path` field. `source.url` is the shape envoy_read accepts from an MCP host; "
+            "this subcommand rejects it, so a request copied from an envoy_read example "
+            "must move the path to the top level."
+        ),
+    )
     local_video.add_argument(
         "--request-json",
         required=True,
-        help="read an envoy.read/1 local-video request from this path or '-' for stdin",
+        help="read an envoy.read/1 local-video request from this path or '-' for stdin "
+        "(the local file goes in the top-level `path` field, not `source.url`)",
     )
 
     observe = subparsers.add_parser(
@@ -111,6 +139,67 @@ def _parser() -> argparse.ArgumentParser:
         help="read an envoy.evidence/1 request from this path or '-' for stdin",
     )
     evidence_check.add_argument("--json", action="store_true", help="print the response as JSON")
+
+    evidence_export = evidence_commands.add_parser("export", help="write one retained material as an Evidence Pack")
+    evidence_export.add_argument("--material", required=True, help="material id from an earlier read")
+    evidence_export.add_argument("--out", required=True, help="directory to write the pack into")
+    evidence_export.add_argument("--overwrite", action="store_true", help="replace a pack already in that directory")
+    evidence_export.add_argument("--json", action="store_true", help="print the manifest as JSON")
+    evidence_verify = evidence_commands.add_parser("verify", help="recompute a pack's identity and evidence digests")
+    evidence_verify.add_argument("--pack", required=True, help="pack directory written by evidence export")
+    evidence_verify.add_argument("--json", action="store_true")
+    evidence_cangjie = evidence_commands.add_parser(
+        "cangjie",
+        help="convert a verified pack into a Cangjie-shaped material document",
+    )
+    evidence_cangjie.add_argument("--pack", required=True, help="pack directory written by evidence export")
+    evidence_cangjie.add_argument("--out", required=True, help="path to write the converted material to")
+    evidence_cangjie.add_argument("--json", action="store_true")
+
+    extensions_parser = subparsers.add_parser(
+        "extensions",
+        help="list or switch opt-in extensions; ordinary reads never need one",
+    )
+    extension_commands = extensions_parser.add_subparsers(dest="extension_command")
+    extension_status = extension_commands.add_parser("status", help="show every extension and whether it is on")
+    extension_status.add_argument("--json", action="store_true")
+    for extension_verb, extension_help in (("enable", "turn on"), ("disable", "turn off")):
+        extension_switch = extension_commands.add_parser(extension_verb, help=f"{extension_help} one extension")
+        extension_switch.add_argument("name", choices=sorted(extension_flags.FLAGS))
+
+    knowledge = subparsers.add_parser(
+        "knowledge",
+        help="store candidate knowledge units with the evidence each one rests on",
+    )
+    knowledge_commands = knowledge.add_subparsers(dest="knowledge_command")
+    knowledge_create = knowledge_commands.add_parser("create", help="store a candidate unit from a JSON body")
+    knowledge_create.add_argument("--file", help="read the unit body from this path instead of stdin")
+    knowledge_create.add_argument("--json", action="store_true")
+    knowledge_list = knowledge_commands.add_parser("list", help="list stored units")
+    knowledge_list.add_argument("--status", choices=list(knowledge_units.STATUSES))
+    knowledge_list.add_argument("--json", action="store_true")
+    knowledge_show = knowledge_commands.add_parser("show", help="show one unit with its history")
+    knowledge_show.add_argument("unit_id")
+    knowledge_show.add_argument("--json", action="store_true")
+    knowledge_verify = knowledge_commands.add_parser("verify", help="check every source ref against its material")
+    knowledge_verify.add_argument("unit_id")
+    knowledge_verify.add_argument("--json", action="store_true")
+    knowledge_promote = knowledge_commands.add_parser("promote", help="mark a verified unit usable")
+    knowledge_promote.add_argument("unit_id")
+    knowledge_archive = knowledge_commands.add_parser("archive", help="stop using a unit without deleting it")
+    knowledge_archive.add_argument("unit_id")
+    knowledge_archive.add_argument("--reason")
+    knowledge_update = knowledge_commands.add_parser("update", help="edit a unit into a new version")
+    knowledge_update.add_argument("unit_id")
+    knowledge_update.add_argument("--file", help="read the patch from this path instead of stdin")
+    knowledge_rollback = knowledge_commands.add_parser("rollback", help="restore an older body as a new version")
+    knowledge_rollback.add_argument("unit_id")
+    knowledge_rollback.add_argument("--version", type=int, required=True)
+    knowledge_relate = knowledge_commands.add_parser("relate", help="record how two units bear on each other")
+    knowledge_relate.add_argument("unit_id")
+    knowledge_relate.add_argument("--type", required=True, choices=list(knowledge_units.RELATION_TYPES))
+    knowledge_relate.add_argument("--to", required=True)
+    knowledge_relate.add_argument("--evidence", help="read the evidence refs (JSON array) from this path instead of stdin")
 
     discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
@@ -160,6 +249,32 @@ def _parser() -> argparse.ArgumentParser:
         help="retry only unfinished items whose reason contains this word (for example auth)",
     )
     collect_parser.add_argument("--json", action="store_true")
+
+    batch_parser = subparsers.add_parser(
+        "batch",
+        help="run a list of links as one resumable queue",
+    )
+    batch_parser.add_argument("--url", action="append", default=[], help="one link; repeatable")
+    batch_parser.add_argument("--urls-file", help="one link per line; blank lines and # comments are ignored")
+    batch_parser.add_argument("--batch-id", help="name a new batch, or continue that same list")
+    batch_parser.add_argument("--resume", metavar="BATCH_ID", help="continue a batch that paused")
+    batch_parser.add_argument("--retry-login", action="store_true", help="retry items a sign-in wall stopped")
+    batch_parser.add_argument("--retry-failed", action="store_true", help="retry items that failed or were blocked")
+    batch_parser.add_argument("--concurrency", type=int, default=1)
+    batch_parser.add_argument("--max-work-seconds", type=int, default=None)
+    batch_parser.add_argument("--goal", default="")
+    batch_parser.add_argument("--list", action="store_true", help="list batches and their progress")
+    batch_parser.add_argument("--show", metavar="BATCH_ID", help="print one batch and its items")
+    batch_parser.add_argument("--login", metavar="BATCH_ID", help="open the sign-in page for a batch that needs one")
+    batch_parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="with --login: wait for the sign-in, then continue the batch",
+    )
+    batch_parser.add_argument("--visible", action="store_true", help="with --login: show the sign-in browser window")
+    batch_parser.add_argument("--timeout", type=int, default=300)
+    batch_parser.add_argument("--cancel", metavar="BATCH_ID")
+    batch_parser.add_argument("--json", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="check the independent Skill runtime")
     doctor.add_argument("--json", action="store_true", help="print machine-readable output")
@@ -603,6 +718,270 @@ def _run_auth(args) -> int:
     return 0
 
 
+def _print_json(payload) -> None:
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _batch_urls(args) -> list:
+    urls = list(args.url or [])
+    if args.urls_file:
+        try:
+            text = Path(args.urls_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+            raise SystemExit(1)
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                urls.append(line)
+    return urls
+
+
+def _print_batch(summary: dict, as_json: bool) -> int:
+    if as_json:
+        print(json.dumps(summary, ensure_ascii=False))
+    else:
+        print(batch_queue.render_summary(summary))
+    return 0 if summary.get("status") == "completed" else 2
+
+
+def _run_batch(args) -> int:
+    try:
+        if args.list:
+            rows = batch_queue.list_batches()
+            if args.json:
+                print(json.dumps({"batches": rows}, ensure_ascii=False))
+                return 0
+            if not rows:
+                print("没有批次。envoy batch --url <link> 开始一个。")
+                return 0
+            for row in rows:
+                print(
+                    f"{row['batch_id']}  {row['status']:<10} "
+                    f"{row['completed']}/{row['total']}  {row['updated_at'] or ''}"
+                )
+            return 0
+        if args.show:
+            state = batch_queue.load_batch(args.show)
+            if args.json:
+                print(json.dumps(state, ensure_ascii=False))
+                return 0
+            print(batch_queue.render_report(state))
+            return 0
+        if args.cancel:
+            print(json.dumps(batch_queue.cancel_batch(args.cancel), ensure_ascii=False))
+            return 0
+        if args.login:
+            payload = batch_queue.login_batch(
+                args.login,
+                timeout_seconds=args.timeout,
+                visible=args.visible,
+                wait=args.wait,
+            )
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                lines = [f"批次 {payload['batch_id']} · {payload.get('status')}"]
+                if payload.get("screen_path"):
+                    lines.append(f"登录页截图 {payload['screen_path']}")
+                if payload.get("error"):
+                    lines.append(payload["error"])
+                if payload.get("next"):
+                    lines.append(payload["next"])
+                print("\n".join(lines))
+            return 0 if payload.get("status") not in {"unavailable", "failed"} else 2
+        if args.resume:
+            summary = batch_queue.run_batch(
+                args.resume,
+                retry_login=args.retry_login,
+                retry_failed=args.retry_failed,
+                max_work_seconds=args.max_work_seconds,
+                concurrency=args.concurrency,
+            )
+            return _print_batch(summary, args.json)
+        urls = _batch_urls(args)
+        if not urls:
+            print(json.dumps({
+                "error": "invalid_request",
+                "message": "envoy batch needs --url, --urls-file or --resume",
+            }, ensure_ascii=False))
+            return 1
+        summary = batch_queue.run_batch(
+            urls=urls,
+            retry_login=args.retry_login,
+            retry_failed=args.retry_failed,
+            max_work_seconds=args.max_work_seconds,
+            concurrency=args.concurrency,
+        )
+        return _print_batch(summary, args.json)
+    except batch_queue.BatchError as exc:
+        print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+        return 1
+
+
+def _extension_off(name: str) -> int:
+    print(
+        json.dumps(
+            {
+                "error": "extension_disabled",
+                "message": f"{name} is off; enable it with: envoy extensions enable {name}",
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 1
+
+
+def _read_json_argument(path: str | None) -> object:
+    text = sys.stdin.read() if not path or path == "-" else Path(path).read_text(encoding="utf-8")
+    return json.loads(text)
+
+
+def _run_evidence(args) -> int:
+    if args.evidence_command == "check":
+        try:
+            payload = sys.stdin.read() if args.request_json == "-" else Path(args.request_json).read_text(encoding="utf-8")
+            check_request = EvidenceCheckRequest.model_validate_json(payload)
+            check_response = check_evidence(check_request)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+            return 1
+        print(json.dumps(check_response.model_dump(mode="json"), ensure_ascii=False))
+        return 0 if check_response.resolution == "matched" else 2
+    if args.evidence_command == "export":
+        if not extension_flags.enabled(extension_flags.EVIDENCE_PACK_EXPORT):
+            return _extension_off(extension_flags.EVIDENCE_PACK_EXPORT)
+        try:
+            result = evidence_pack.write_pack(args.material, args.out, overwrite=args.overwrite)
+        except evidence_pack.PackError as exc:
+            print(json.dumps({"error": exc.code, "message": str(exc), **exc.details}, ensure_ascii=False))
+            return 1
+        if args.json:
+            _print_json(result)
+        else:
+            print(evidence_pack.render_summary(result))
+        return 0
+    if args.evidence_command == "verify":
+        try:
+            report = evidence_pack.verify_pack(args.pack)
+        except evidence_pack.PackError as exc:
+            print(json.dumps({"error": exc.code, "message": str(exc), **exc.details}, ensure_ascii=False))
+            return 1
+        if args.json:
+            _print_json(report)
+        else:
+            print(
+                f"{report['pack_id']} {'valid' if report['valid'] else 'damaged'}"
+                + "".join(f"\n  {problem}" for problem in report["problems"])
+            )
+        return 0 if report["valid"] else 2
+    if args.evidence_command == "cangjie":
+        if not extension_flags.enabled(extension_flags.CANGJIE_ADAPTER):
+            return _extension_off(extension_flags.CANGJIE_ADAPTER)
+        try:
+            converted = cangjie_adapter.to_cangjie_material(args.pack)
+            written = cangjie_adapter.write(converted, args.out)
+        except cangjie_adapter.AdapterError as exc:
+            print(json.dumps({"error": exc.code, "message": str(exc)}, ensure_ascii=False))
+            return 1
+        if args.json:
+            _print_json({**converted, "out": str(written)})
+        else:
+            print(cangjie_adapter.render_summary(converted, written))
+        return 0
+    print(
+        json.dumps(
+            {"error": "invalid_request", "message": "choose: envoy evidence check|export|verify|cangjie"},
+            ensure_ascii=False,
+        )
+    )
+    return 1
+
+
+def _run_extensions(args) -> int:
+    if args.extension_command in {"enable", "disable"}:
+        wanted = args.extension_command == "enable"
+        try:
+            report = extension_flags.set_enabled(args.name, wanted)
+        except (extension_flags.UnknownExtension, ConfigError) as exc:
+            print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+            return 1
+        effective = next(row for row in report["extensions"] if row["name"] == args.name)
+        print(f"{args.name} is {'on' if effective['enabled'] else 'off'}")
+        if effective["enabled"] != wanted:
+            print(
+                f"{extension_flags.ENV_FLAG} overrides the stored switch; unset it to change this",
+            )
+            return 1
+        return 0
+    report = extension_flags.status()
+    if getattr(args, "json", False):
+        _print_json(report)
+    else:
+        print(extension_flags.render_status(report))
+    return 0
+
+
+def _knowledge_error(exc) -> int:
+    details = getattr(exc, "details", None) or {}
+    print(json.dumps({"error": getattr(exc, "code", "invalid_request"), "message": str(exc), **details}, ensure_ascii=False))
+    return 1
+
+
+def _run_knowledge(args) -> int:
+    command = args.knowledge_command
+    writing = command in {"create", "update", "verify", "promote", "archive", "relate"}
+    if writing and not extension_flags.enabled(extension_flags.KNOWLEDGE_UNITS):
+        return _extension_off(extension_flags.KNOWLEDGE_UNITS)
+    try:
+        if command == "create":
+            unit = knowledge_units.create_unit(_read_json_argument(args.file))
+        elif command == "list":
+            rows = knowledge_units.list_units(status=args.status)
+            if args.json:
+                _print_json(rows)
+            else:
+                print(knowledge_units.render_list(rows))
+            return 0
+        elif command == "show":
+            unit = knowledge_units.load_unit(args.unit_id)
+        elif command == "verify":
+            unit = knowledge_units.verify_unit(args.unit_id)
+        elif command == "promote":
+            unit = knowledge_units.promote_unit(args.unit_id)
+        elif command == "archive":
+            unit = knowledge_units.archive_unit(args.unit_id, reason=args.reason or "")
+        elif command == "update":
+            unit = knowledge_units.update_unit(args.unit_id, _read_json_argument(args.file))
+        elif command == "rollback":
+            unit = knowledge_units.rollback_unit(args.unit_id, args.version)
+        elif command == "relate":
+            unit = knowledge_units.relate_units(
+                args.unit_id, args.type, args.to, _read_json_argument(args.evidence)
+            )
+        else:
+            print(
+                json.dumps(
+                    {
+                        "error": "invalid_request",
+                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|update|rollback|relate",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 1
+    except (knowledge_units.UnitError, evidence_pack.PackError) as exc:
+        return _knowledge_error(exc)
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
+        return 1
+    if getattr(args, "json", False):
+        _print_json(unit)
+    else:
+        print(knowledge_units.render_unit(unit))
+    return 0
+
+
 def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "discover":
@@ -756,6 +1135,8 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                 print(f"未完成 {len(summary['pending'])} 条，状态保存在 {summary['sources']}")
             print(f"续跑：envoy collect --url {summary['profile_url']} --out {summary['output']}")
         return 0
+    if args.command == "batch":
+        return _run_batch(args)
     if args.command == "doctor":
         runtime = media_runtime_status(verify_asr=args.verify_asr)
         runtime["browser"] = browser_runtime.browser_runtime_status()
@@ -806,18 +1187,11 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             print(cache_storage.render_prune(report))
         return 0
     if args.command == "evidence":
-        if args.evidence_command != "check":
-            print(json.dumps({"error": "invalid_request", "message": "choose: envoy evidence check --request-json <file>"}, ensure_ascii=False))
-            return 1
-        try:
-            payload = sys.stdin.read() if args.request_json == "-" else Path(args.request_json).read_text(encoding="utf-8")
-            check_request = EvidenceCheckRequest.model_validate_json(payload)
-            check_response = check_evidence(check_request)
-        except (OSError, ValueError) as exc:
-            print(json.dumps({"error": "invalid_request", "message": str(exc)}, ensure_ascii=False))
-            return 1
-        print(json.dumps(check_response.model_dump(mode="json"), ensure_ascii=False))
-        return 0 if check_response.resolution == "matched" else 2
+        return _run_evidence(args)
+    if args.command == "extensions":
+        return _run_extensions(args)
+    if args.command == "knowledge":
+        return _run_knowledge(args)
     if args.command == "auth":
         return _run_auth(args)
     if args.command == "browser":
@@ -967,8 +1341,20 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         else:
             request = ReadRequest.model_validate_json(payload)
             operation_request = request
-            response = read_public_page(request)
-        print(json.dumps(response.model_dump(mode="json"), ensure_ascii=False))
+            login_handoff = None
+            if getattr(args, "login_first", False):
+                outcome = batch_queue.login_first(
+                    request,
+                    timeout_seconds=max(0, int(getattr(args, "wait_login", 0) or 0)),
+                )
+                response = outcome["response"]
+                login_handoff = outcome["handoff"]
+            else:
+                response = read_public_page(request)
+        payload_out = response.model_dump(mode="json")
+        if locals().get("login_handoff"):
+            payload_out["login_handoff"] = login_handoff
+        print(json.dumps(payload_out, ensure_ascii=False))
         return 0 if response.result.value in {"ready", "partial"} else 2
     except PublicPageError as exc:
         print(json.dumps({

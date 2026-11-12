@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 
@@ -146,3 +147,48 @@ def test_cli_reports_and_prunes_the_configured_root(tmp_path, monkeypatch, capsy
     assert cli.main(["cache", "prune"]) == 0
     assert "removed 2 entries" in capsys.readouterr().out
     assert not (tmp_path / f"{EXPIRED}.json").exists()
+
+
+def _aged(path: Path, *, seconds_ago: float) -> Path:
+    path.write_text("{}", encoding="utf-8")
+    stamp = time.time() - seconds_ago
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_status_accounts_for_shared_derivation_caches(tmp_path):
+    index = tmp_path / cache.GITHUB_INDEX_DIR
+    index.mkdir()
+    _aged(index / "owner__repo__abc.json", seconds_ago=60)
+    _aged(index / "owner__repo__def.json", seconds_ago=cache.GITHUB_INDEX_MAX_AGE_SECONDS + 60)
+    bodies = tmp_path / cache.HTTP_CACHE_DIR
+    bodies.mkdir()
+    _aged(bodies / ("a" * 64 + ".json"), seconds_ago=60)
+    _aged(bodies / ("." + "b" * 64 + ".lock"), seconds_ago=cache.HTTP_CACHE_MAX_AGE_SECONDS + 60)
+
+    report = cache.cache_status(tmp_path)
+
+    assert report["categories"]["github_index"]["count"] == 2
+    assert report["categories"]["github_index"]["expired_count"] == 1
+    assert report["categories"]["http_cache"]["count"] == 2
+    assert report["categories"]["http_cache"]["expired_count"] == 1
+    assert report["total_bytes"] > 0
+
+
+def test_prune_reclaims_only_aged_derivation_cache_entries(tmp_path):
+    index = tmp_path / cache.GITHUB_INDEX_DIR
+    index.mkdir()
+    fresh_index = _aged(index / "owner__repo__abc.json", seconds_ago=60)
+    old_index = _aged(index / "owner__repo__def.json", seconds_ago=cache.GITHUB_INDEX_MAX_AGE_SECONDS + 60)
+    bodies = tmp_path / cache.HTTP_CACHE_DIR
+    bodies.mkdir()
+    fresh_body = _aged(bodies / ("a" * 64 + ".json"), seconds_ago=60)
+    old_body = _aged(bodies / ("c" * 64 + ".json"), seconds_ago=cache.HTTP_CACHE_MAX_AGE_SECONDS + 60)
+
+    report = cache.prune_cache(tmp_path)
+
+    assert not old_index.exists()
+    assert not old_body.exists()
+    assert fresh_index.is_file()
+    assert fresh_body.is_file()
+    assert report["freed_bytes"] > 0

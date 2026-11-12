@@ -184,9 +184,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "419969f",
+    "commit": "f858a79",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_asr_complete",
-    "generated_at": "2026-10-31",
+    "generated_at": "2026-11-11",
     "replaced_call": "reader.transcribe_audio_file",
     "fake_output": "{\"status\": \"success\", \"language\": \"en\", \"model\": \"base\", \"elapsed_ms\": 200, \"next_seconds\": 600.0, \"segments\": 300 cues covering 0-600 s}",
     "proof_scope": "proves the finished shape of a video material whose transcript covers the whole duration; does not prove that real ASR ever reaches this state",

@@ -70,7 +70,7 @@
         "observed": null,
         "extraction": "partial",
         "unresolved": [
-          "Local ASR only covered the reported time range before its work budget was reached"
+          "Local ASR transcribed 00:00.000-02:00.000 of 01:00:00.000 before budget.max_work_seconds=180 ran out; later audio is untranscribed. Re-read with scope.start_seconds=120 to continue from there, or raise budget.max_work_seconds"
         ],
         "details": {
           "source": "video_asr",
@@ -152,7 +152,7 @@
     },
     "unresolved": [
       "Video frames were not inspected; this material contains transcript evidence only",
-      "Local ASR stopped at 02:00.000; later audio remains untranscribed"
+      "Local ASR transcribed 00:00.000-02:00.000 of 01:00:00.000 before budget.max_work_seconds=180 ran out; later audio is untranscribed. Re-read with scope.start_seconds=120 to continue from there, or raise budget.max_work_seconds"
     ],
     "sampled_ranges": [
       {
@@ -187,9 +187,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "419969f",
+    "commit": "f858a79",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_asr_partial",
-    "generated_at": "2026-10-31",
+    "generated_at": "2026-11-11",
     "replaced_call": "reader.transcribe_audio_file",
     "fake_output": "{\"status\": \"partial\", \"language\": \"en\", \"model\": \"base\", \"elapsed_ms\": 200, \"next_seconds\": 120.0, \"segments\": 60 cues covering 0-120 s}",
     "proof_scope": "proves that a reader-shaped partial-ASR receipt folds into a media-pending checkpoint that is not finished and whose resume routing is a range read; does not prove transcription quality, cue timing, duplicate avoidance, or resume after a real process interruption",

@@ -61,11 +61,12 @@ def test_a_missing_browser_is_reported_as_a_user_action():
         action_required=True,
     )
     action = response.errors[0].details["needs_user_action"]
-    assert action == {
-        "kind": "install_capability",
-        "capability": "browser",
-        "command": "envoy browser setup",
-    }
+    assert action["kind"] == "install_capability"
+    assert action["capability"] == "browser"
+    assert action["command"] == "envoy browser setup"
+    assert action["ask_first"] is True
+    assert "683 MB" in action["download"]
+    assert "683 MB" in action["question"]
 
 
 def test_a_missing_asr_model_is_reported_as_a_user_action():

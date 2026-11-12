@@ -77,19 +77,26 @@ def test_generated_dsh_plugin_copy_matches_the_canonical_skill():
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_plain_fetch_gate_is_numeric_so_it_can_be_decided_without_judgement():
-    """A model cannot weigh "blocked or truncated" in the abstract.
+def test_plain_fetch_completion_is_judged_by_the_task_not_a_character_count():
+    """Length is not the stop condition; the task's requirement is.
 
-    The gate only holds if the model can count: a plain fetch that came back
-    with a real body is the answer, and the escalation list is evidence, not
-    suspicion. These numbers are the contract; keep them in sync with the prose.
+    A body that stops mid-sentence, or that never carries the needed table,
+    figure, or passage, is not an answer even at a thousand characters.
+    Escalation stays evidence-shaped, and honest uncertainty is the fallback.
     """
 
     for path in SKILL_FILES:
         body = path.read_text(encoding="utf-8")
+        assert "800 characters" not in body, path
         for phrase in (
-            "800 characters or more of article text",
-            "fewer than 200 characters came back",
+            "passage or values the task",
+            "ends where the requested section ends",
+            "mid-sentence",
+            "the body is truncated",
+            "the table, figure, attachment, or code block the answer needs is absent",
+            "off-topic",
+            "what may be missing",
+            "almost always a shell",
             "application/pdf",
             "enable JavaScript",
             "envoy_replay",
@@ -114,10 +121,15 @@ def test_skill_table_routes_github_to_the_api_path_and_names_the_limits():
         "commit SHA",
         "diff and stats",
         "coverage.unresolved",
-        "github_rate_limited",
-        "gh` or `git",
+        "a permission 403 asks for access",
+        "a quota 403 gives the reset time",
     ):
         assert phrase in row, phrase
+    # Tool selection is one rule, stated once for every host, not per row.
+    assert "gh` or `git" not in row, row
+    assert text.count("gh` or `git") == 1
+    normalized = " ".join(text.split())
+    assert "`gh` or `git` comes first when either is at hand" in normalized
     # The page-only route keeps the honest limit for hosts without an API path.
     fallback = next(
         line
@@ -138,6 +150,8 @@ def test_envoy_read_description_leads_with_routing_and_keeps_needs_host():
     for phrase in (
         "host's own fetch",
         "Skip it for material already in this turn's context",
+        "A plain fetch is complete when its body carries the passage",
+        "Escalate only on evidence",
         "gh or git when they are at hand",
         "goes through the GitHub API with no browser",
         "coverage.unresolved",

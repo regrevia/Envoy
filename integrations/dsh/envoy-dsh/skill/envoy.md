@@ -29,22 +29,34 @@ call:
 | Video or audio: transcript, timeline, frames | `mcp__envoy__envoy_read`. |
 | Long article, report, PDF, or image post | `mcp__envoy__envoy_read`. |
 | Platform page needing scroll, cookies, or login: douyin.com, xiaohongshu.com, xhslink.com, bilibili.com, mp.weixin.qq.com, weibo.com | `mcp__envoy__envoy_read`; a plain fetch is known to fail there. |
-| GitHub repo, tree, blob, commit, pull, or issue: `github.com/{owner}/{repo}`, `/tree/{ref}/{path}`, `/blob/{ref}/{path}#L10-L20`, `/commit/{sha}` | `mcp__envoy__envoy_read` takes the GitHub API path, no browser: repo tree, a file's bytes for a line range with its path, commit SHA, and content hash, the commit diff and stats, the PR or issue body and comments. Use `gh` or `git` instead when they are at hand. A truncated tree or an unfetched file or review is named in `coverage.unresolved`; a 403 is `github_rate_limited` with the reset time. |
-| GitLab, Bitbucket, or a GitHub page the API path declines (wiki, gist raw, org listing) | `gh api`, `git show`, or plain fetch. A rendered page gives the title and body, never the diff or the tree. |
+| GitHub repo, tree, blob, commit, pull, or issue: `github.com/{owner}/{repo}`, `/tree/{ref}/{path}`, `/blob/{ref}/{path}#L10-L20`, `/commit/{sha}` | `mcp__envoy__envoy_read` takes the GitHub API path, no browser: repo tree, a file's bytes for a line range with its path, commit SHA, and content hash, the commit diff and stats, the PR or issue body and comments. A truncated tree or an unfetched file or review is named in `coverage.unresolved`; a permission 403 asks for access, a quota 403 gives the reset time. |
+| GitLab, Bitbucket, or a GitHub page the API path declines (wiki, gist raw, org listing) | Plain fetch. A rendered page gives the title and body, never the diff or the tree. |
 | Short static page, nothing pasted | Plain fetch first; escalate only on the evidence listed below. |
 
-A plain fetch that returns **800 characters or more of article text**
-already answered the question: use it and stop. Escalate to `mcp__envoy__envoy_read` only
-on evidence, never on suspicion:
+On GitHub, GitLab, and Bitbucket, `gh` or `git` comes first when either is at
+hand; without them, a GitHub link takes the API path above.
 
-- fewer than 200 characters came back, or the text is a challenge or error
-  page: "enable JavaScript", "Access denied", "verify you are human",
-  "please log in";
+A plain fetch is complete when its body carries the passage or values the task
+needs and ends where the requested section ends, not mid-sentence and not on an
+ellipsis or "read more". Length is not a completion signal.
+
+Escalate to `mcp__envoy__envoy_read` only on evidence, never on suspicion:
+
+- the body is truncated, or the requested section never starts;
+- the table, figure, attachment, or code block the answer needs is absent;
+- the page is a login, JavaScript, or challenge shell: "enable JavaScript",
+  "Access denied", "verify you are human", "please log in";
+- what came back is navigation, boilerplate, or off-topic and does not answer
+  the goal;
 - the link is a document (`application/pdf`, `.docx`, `.pptx`, `.xlsx`, `.epub`)
   or media (`.mp4`, `.m4a`, `.mp3`, `.webm`);
-- the body needs scrolling, cookies, a login, or a rendered shell to appear;
+- the body needs scrolling, cookies, or a rendered shell to appear;
 - the answer must outlive this turn: `mcp__envoy__envoy_expand`, `mcp__envoy__envoy_search`,
   `mcp__envoy__envoy_replay`, video frames, or an audio transcript.
+
+A body under ~200 characters is almost always a shell: a supporting signal,
+never proof that a longer body is complete. When completeness cannot be judged,
+say what may be missing instead of escalating on suspicion.
 
 A static article is the common case: it fetches in one plain request, and a
 second call to read what the first call already returned is pure cost.
@@ -756,6 +768,14 @@ Direct public image links are a conditional visual handoff: when the request
 declares URI image input, Envoy returns `needs_host` with an `inspect_visual`
 action and a source-linked resource instead of inlining image bytes. Otherwise,
 report the returned `missing_capability`; do not claim the image was inspected.
+
+An install is a download, not a formality: when a read returns
+`missing_capability`, its `details.needs_user_action` carries `command`,
+`download`, and `ask_first`. Say what the capability unblocks and what it costs
+(for example about 683 MB for Chromium, about 140 MB for Whisper base), ask
+whether that is wanted, and only then run the command. The read itself still
+returns the page text or an explicit gap without it, so never install silently
+and never present the install as required to answer at all.
 
 Check installation or runtime capabilities when needed:
 

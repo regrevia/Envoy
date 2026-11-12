@@ -1,7 +1,7 @@
 {
   "name": "envoy",
-  "version": "0.1.56",
-  "description": "Read public links, media, and documents with Envoy before built-in web fetching.",
+  "version": "0.1.57",
+  "description": "蒸馏一切链接：把长视频、长 PDF、网页变成带来源定位的 Markdown，Wiki 和知识库交给宿主 AI 组装。/ Distill links into located Markdown; the host AI assembles the wiki.",
   "author": {
     "name": "regrevia",
     "url": "https://github.com/regrevia"

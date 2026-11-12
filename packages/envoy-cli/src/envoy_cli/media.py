@@ -145,7 +145,157 @@ def _load_yt_dlp():
     return YoutubeDL
 
 
+_WORKER_START_LOCK = threading.Lock()
+_WORKER_STDERR_TAIL_BYTES = 4096
+
+
+def _cwd_shadowing_entries(entries) -> list[str]:
+    """Path entries that would let a file in the caller's directory shadow stdlib.
+
+    ``multiprocessing`` copies the parent's ``sys.path`` into a spawn child, so a
+    script left in the current directory (a stray ``struct.py`` in ``/tmp``, say)
+    is imported by the worker before Envoy's own code runs.  Those entries are
+    removed for the duration of ``process.start()`` only.
+    """
+
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        return []
+    shadowing: list[str] = []
+    for entry in entries:
+        raw = str(entry)
+        if not raw:
+            shadowing.append(raw)
+            continue
+        candidate = raw if os.path.isabs(raw) else os.path.join(cwd, raw)
+        try:
+            resolved = os.path.realpath(candidate)
+        except OSError:
+            continue
+        if resolved == cwd:
+            shadowing.append(raw)
+    return shadowing
+
+
+def _worker_stderr_tail(handle) -> str:
+    """Last few lines the worker wrote to stderr, or an empty string."""
+
+    if handle is None:
+        return ""
+    try:
+        handle.flush()
+        handle.seek(0)
+        raw = handle.read()
+    except (OSError, ValueError):
+        return ""
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    text = text.strip()
+    if not text:
+        return ""
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines[-12:])[-_WORKER_STDERR_TAIL_BYTES:]
+
+
+def _open_worker_stderr():
+    if os.name == "nt":
+        return None
+    try:
+        return tempfile.TemporaryFile(prefix="envoy-media-worker-")
+    except OSError:
+        return None
+
+
+@contextmanager
+def _isolated_worker_start(stderr_handle=None):
+    """Start a spawn child without the caller's CWD, PYTHONPATH or stderr.
+
+    The child inherits fds, the environment and ``sys.path`` at ``start()``.  The
+    guard is held across ``start()`` so two threads cannot interleave the swap.
+    A worker that dies during its own imports now leaves its traceback in
+    ``stderr_handle`` instead of vanishing behind "exited without a result".
+    """
+
+    saved_fd = None
+    clean_cwd = None
+    with _WORKER_START_LOCK:
+        saved_path = list(sys.path)
+        saved_pythonpath = os.environ.get("PYTHONPATH")
+        saved_cwd = None
+        shadowing = _cwd_shadowing_entries(sys.path)
+        try:
+            # The child is spawned by `python -c`, whose sys.path[0] is '' -- that
+            # is the cwd, so even a filtered sys.path is re-poisoned during the
+            # child's own bootstrap imports. Starting it from a private directory
+            # closes that hole; the original cwd is handed back to the worker
+            # entry so relative paths keep resolving where the caller expects.
+            try:
+                clean_cwd = tempfile.mkdtemp(prefix="envoy-worker-cwd-")
+                saved_cwd = os.getcwd()
+                os.environ["ENVOY_WORKER_ORIGINAL_CWD"] = saved_cwd
+                os.chdir(clean_cwd)
+            except OSError:
+                clean_cwd = None
+                saved_cwd = None
+            if shadowing:
+                sys.path[:] = [entry for entry in sys.path if entry not in shadowing]
+            if saved_pythonpath:
+                parts = saved_pythonpath.split(os.pathsep)
+                kept = [part for part in parts if part and part not in shadowing]
+                if not kept:
+                    os.environ.pop("PYTHONPATH", None)
+                elif kept != parts:
+                    os.environ["PYTHONPATH"] = os.pathsep.join(kept)
+            if stderr_handle is not None and os.name != "nt":
+                try:
+                    saved_fd = os.dup(2)
+                    os.dup2(stderr_handle.fileno(), 2)
+                except OSError:
+                    if saved_fd is not None:
+                        os.close(saved_fd)
+                    saved_fd = None
+            yield clean_cwd
+        finally:
+            if saved_fd is not None:
+                try:
+                    sys.stderr.flush()
+                except (OSError, ValueError):
+                    pass
+                try:
+                    os.dup2(saved_fd, 2)
+                finally:
+                    os.close(saved_fd)
+            sys.path[:] = saved_path
+            if saved_pythonpath is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved_pythonpath
+            os.environ.pop("ENVOY_WORKER_ORIGINAL_CWD", None)
+            if saved_cwd is not None:
+                try:
+                    os.chdir(saved_cwd)
+                except OSError:
+                    pass
+
+
 def _bounded_worker_entry(target, args: tuple, connection) -> None:
+    # Spawned from a private directory so bootstrap imports cannot see the
+    # caller's files; run the task back in the directory the caller was in.
+    original_cwd = os.environ.pop("ENVOY_WORKER_ORIGINAL_CWD", "")
+    if original_cwd and os.path.isdir(original_cwd):
+        try:
+            os.chdir(original_cwd)
+        except OSError:
+            pass
+    # Defense in depth: a spawn child may still receive a CWD entry from a caller
+    # that patched sys.path after start(); late imports (torch, whisper) must not
+    # pick up a stray module from the directory Envoy happened to be launched in.
+    try:
+        for entry in _cwd_shadowing_entries(sys.path):
+            while entry in sys.path:
+                sys.path.remove(entry)
+    except (OSError, ValueError):
+        pass
     try:
         connection.send({"ok": True, "value": target(*args)})
     except Exception as exc:
@@ -165,6 +315,7 @@ def run_bounded_worker(target, *args, max_work_seconds: int):
     timeout = max(int(max_work_seconds), 1)
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
+    stderr_log = _open_worker_stderr()
     process = context.Process(
         target=_bounded_worker_entry,
         args=(target, args, send_connection),
@@ -172,9 +323,11 @@ def run_bounded_worker(target, *args, max_work_seconds: int):
     )
     started = time.monotonic()
     process_started = False
+    clean_cwd = None
     payload = None
     try:
-        process.start()
+        with _isolated_worker_start(stderr_log) as clean_cwd:
+            process.start()
         process_started = True
         send_connection.close()
         deadline = started + timeout
@@ -200,7 +353,15 @@ def run_bounded_worker(target, *args, max_work_seconds: int):
                 raise MediaBudgetExceeded(
                     f"Media worker exceeded max_work_seconds ({timeout})"
                 )
-            raise MediaProcessingError("Media worker exited without a result")
+            # Let the dead child finish flushing the traceback we are about to
+            # quote, so the tail is not a sentence cut in half.
+            if process_started:
+                process.join(1)
+            tail = _worker_stderr_tail(stderr_log)
+            message = "Media worker exited without a result"
+            if tail:
+                message = f"{message}; worker stderr:\n{tail}"
+            raise MediaProcessingError(message)
         remaining = max(deadline - time.monotonic(), 0)
         if remaining:
             process.join(min(1, remaining))
@@ -225,6 +386,8 @@ def run_bounded_worker(target, *args, max_work_seconds: int):
                 process.join(5)
         receive_connection.close()
         send_connection.close()
+        if clean_cwd:
+            shutil.rmtree(clean_cwd, ignore_errors=True)
 
 
 @contextmanager
@@ -2223,6 +2386,7 @@ def _transcribe_with_worker(
 ) -> dict[str, Any]:
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
+    stderr_log = _open_worker_stderr()
     process = context.Process(
         target=_whisper_worker,
         args=(
@@ -2272,14 +2436,18 @@ def _transcribe_with_worker(
             payload["identity"] = checkpoint_identity
         _write_asr_checkpoint(checkpoint_path, payload)
 
+    timed_out = False
+    clean_cwd = None
     try:
-        process.start()
+        with _isolated_worker_start(stderr_log) as clean_cwd:
+            process.start()
         process_started = True
         send_connection.close()
         deadline = started + timeout
         while not completed and failure is None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                timed_out = True
                 break
             ready = wait_for_connections(
                 [receive_connection, process.sentinel],
@@ -2316,8 +2484,21 @@ def _transcribe_with_worker(
         everything = _merge_asr_segments(carried, segments)
         progressed = next_seconds > start_from
         if failure and not everything and not progressed:
-            raise MediaProcessingError(failure)
+            tail = _worker_stderr_tail(stderr_log)
+            message = f"ASR failed: {failure}" if failure else "ASR failed"
+            if tail:
+                message = f"{message}; worker stderr:\n{tail}"
+            raise MediaProcessingError(message)
         if not everything and not completed and not progressed:
+            if not timed_out:
+                # The worker exited by itself before the deadline: usually a
+                # crash during its imports. Reporting that as "no cues within
+                # max_work_seconds" blamed the time budget for a dead process.
+                tail = _worker_stderr_tail(stderr_log)
+                message = "ASR worker exited without a result"
+                if tail:
+                    message = f"{message}; worker stderr:\n{tail}"
+                raise MediaProcessingError(message)
             raise MediaBudgetExceeded(f"ASR produced no cues within max_work_seconds ({timeout})")
         if not completed:
             persist("partial")
@@ -2334,6 +2515,7 @@ def _transcribe_with_worker(
             "next_seconds": next_seconds,
             "duration_seconds": duration,
             "model": str(model_name),
+            "backend": asr_backend() or "",
             "elapsed_ms": int((time.monotonic() - started) * 1000),
         }
     finally:
@@ -2345,6 +2527,78 @@ def _transcribe_with_worker(
                 process.join(5)
         receive_connection.close()
         send_connection.close()
+        if clean_cwd:
+            shutil.rmtree(clean_cwd, ignore_errors=True)
+
+
+# A run that stops this far short of the media duration still has audio left to
+# listen to; anything closer is the tail of the last chunk, not a resumable gap.
+_ASR_RESUME_TOLERANCE_SECONDS = 0.5
+
+# One shape for every local ASR backend, so callers never branch on the engine.
+ASR_ENVELOPE_KEYS = (
+    "segments",
+    "language",
+    "duration",
+    "model",
+    "backend",
+    "processed_until",
+    "resume_available",
+    "status",
+    "elapsed_ms",
+    "cached",
+    "checkpoint",
+)
+
+# Deprecated aliases kept for one release: on-disk checkpoints and older callers
+# still read these names.
+ASR_LEGACY_KEYS = ("next_seconds", "duration_seconds")
+
+
+def asr_envelope(
+    *,
+    segments: list[dict[str, Any]] | None = None,
+    language: str | None = "",
+    duration: float | None = 0.0,
+    model: str | None = "",
+    backend: str | None = None,
+    processed_until: float | None = None,
+    status: str | None = "unknown",
+    elapsed_ms: int | None = 0,
+    cached: bool = False,
+    checkpoint: str | None = None,
+) -> dict[str, Any]:
+    """Normalize one local ASR result into the canonical envelope.
+
+    ``backend`` is the engine that actually ran (``whisper.cpp`` or
+    ``openai-whisper``); when a checkpoint is reused and it did not record one,
+    the engine this interpreter would run now is reported instead.
+    ``processed_until`` is the confirmed cursor in seconds of the requested
+    range: the audio before it was listened to (even a silent stretch counts).
+    ``resume_available`` is True only when that cursor still leaves audio
+    unlistened, which is what a partial run or an exhausted work budget means.
+    """
+    total = max(float(duration or 0.0), 0.0)
+    cursor = total if processed_until is None else max(float(processed_until), 0.0)
+    if total > 0:
+        cursor = min(cursor, total)
+    pending = total > 0 and (total - cursor) > _ASR_RESUME_TOLERANCE_SECONDS
+    return {
+        "segments": list(segments or []),
+        "language": str(language or ""),
+        "duration": total,
+        "model": str(model or ""),
+        "backend": str(backend or asr_backend() or ""),
+        "processed_until": cursor,
+        "resume_available": bool(pending),
+        "status": str(status or "unknown"),
+        "elapsed_ms": int(elapsed_ms or 0),
+        "cached": bool(cached),
+        "checkpoint": checkpoint,
+        # Deprecated aliases, kept for one release.
+        "next_seconds": cursor,
+        "duration_seconds": total,
+    }
 
 
 def transcribe_audio_file(
@@ -2399,17 +2653,18 @@ def transcribe_audio_file(
         same_work = not stored_identity or stored_identity == identity
         if same_work and stored.get("status") == "complete" and stored_end >= end - 0.01:
             merged = _merge_asr_segments(stored_segments)
-            return {
-                "status": "success" if merged else "no_speech",
-                "language": str(stored.get("language") or ""),
-                "segments": merged,
-                "next_seconds": stored_end,
-                "duration_seconds": duration,
-                "model": str(model_name),
-                "elapsed_ms": int((time.monotonic() - started) * 1000),
-                "cached": True,
-                "checkpoint": str(checkpoint_path),
-            }
+            return asr_envelope(
+                segments=merged,
+                language=stored.get("language"),
+                duration=duration,
+                model=stored.get("model") or model_name,
+                backend=stored.get("backend"),
+                processed_until=stored_end,
+                status="success" if merged else "no_speech",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                cached=True,
+                checkpoint=str(checkpoint_path),
+            )
         if same_work and stored_segments and start <= stored_end <= end:
             carried = _merge_asr_segments(stored_segments)
             prior_language = str(stored.get("language") or "")
@@ -2433,6 +2688,15 @@ def transcribe_audio_file(
             prior_language=prior_language,
             checkpoint_identity=identity,
         )
-        result["cached"] = False
-        result["checkpoint"] = str(checkpoint_path)
-        return result
+        return asr_envelope(
+            segments=result.get("segments"),
+            language=result.get("language"),
+            duration=result.get("duration", result.get("duration_seconds", duration)),
+            model=result.get("model") or model_name,
+            backend=result.get("backend"),
+            processed_until=result.get("processed_until", result.get("next_seconds")),
+            status=result.get("status"),
+            elapsed_ms=result.get("elapsed_ms"),
+            cached=bool(result.get("cached", False)),
+            checkpoint=result.get("checkpoint") or str(checkpoint_path),
+        )

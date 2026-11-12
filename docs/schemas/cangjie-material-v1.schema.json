@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://envoy.dev/schemas/envoy.cangjie-material/1",
+  "title": "Envoy Cangjie Material v1",
+  "description": "Output of the Cangjie adapter (`envoy evidence cangjie`): verbatim segments in reading order, original locators, honest origin labels. No claims are distilled and no model is called.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pack_id",
+    "source",
+    "segments",
+    "coverage",
+    "adapter"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "envoy.cangjie-material/1"
+    },
+    "pack_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "material_id",
+        "type",
+        "title",
+        "url",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "material_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "segment_id",
+          "text",
+          "locator",
+          "origin",
+          "evidence_id",
+          "sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "segment_id": {
+            "type": "string",
+            "pattern": "^ev-[a-f0-9]{16}$"
+          },
+          "section_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "locator": {
+            "title": "Locator",
+            "description": "A place in the source medium, kept in that medium's own coordinates.",
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "web",
+                  "pdf_page",
+                  "video_time",
+                  "audio_time",
+                  "image_region",
+                  "office_location"
+                ]
+              }
+            },
+            "additionalProperties": true
+          },
+          "locator_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "enum": [
+              "source",
+              "inferred"
+            ]
+          },
+          "evidence_id": {
+            "type": "string",
+            "pattern": "^ev-[a-f0-9]{16}$"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "unresolved",
+        "truncated_evidence_ids"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "truncated_evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "adapter": {
+      "type": "object",
+      "required": [
+        "name",
+        "distilled",
+        "note"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "cangjie"
+        },
+        "distilled": {
+          "const": false
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

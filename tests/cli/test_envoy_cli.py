@@ -83,7 +83,7 @@ def test_goal_ranks_relevant_images_without_changing_source_coordinates(monkeypa
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         "<html><body><p>Deployment guide text remains in source order.</p>"
         '<img src="https://cdn.example.org/diagram.png" alt="Architecture diagram">'
@@ -112,7 +112,7 @@ def test_goal_image_budget_skips_obvious_ui_backgrounds_without_goal_match(monke
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/video",
         "<html><body><p>Video page.</p>"
         '<img src="https://cdn.example.org/jxWeakBtnBgV1.png" alt="">'
@@ -143,7 +143,7 @@ def test_goal_reports_later_text_evidence_candidates_for_targeted_expansion(monk
         "Final notes."
     )
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         f"<html><body><p>{source.replace(chr(10), '</p><p>')}</p></body></html>",
     ))
@@ -167,7 +167,7 @@ def test_goal_candidate_can_be_expanded_without_reading_intervening_text(tmp_pat
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/video-guide",
         "<html><body>"
         f"<p>{'Historical overview and surrounding context. ' * 14}</p>"
@@ -204,7 +204,7 @@ def test_same_material_source_gets_independent_material_ids_per_session(tmp_path
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/shared",
         "<html><body><p>Shared public information about the deployment process.</p></body></html>",
     ))
@@ -477,7 +477,7 @@ def test_html_reread_keeps_full_image_catalog_and_prior_observations(tmp_path, m
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/note",
         '<html><head><title>Images</title></head><body><p>Shared note content.</p>'
         '<img src="https://cdn.example.org/alpha.png" alt="Alpha chart">'
@@ -529,7 +529,10 @@ def test_html_reread_keeps_full_image_catalog_and_prior_observations(tmp_path, m
         "blk-image-0002",
     }
     assert "Alpha chart has three bars." in history.blocks[0].content.text
-    assert "Some source images were not included in this response" in history.coverage.unresolved
+    assert any(
+        "1 of 2 source images were inlined" in item
+        for item in history.coverage.unresolved
+    )
 
 
 def test_short_image_article_creates_material_snapshot_for_visual_followup(tmp_path, monkeypatch):
@@ -538,7 +541,7 @@ def test_short_image_article_creates_material_snapshot_for_visual_followup(tmp_p
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/note",
         '<html><head><title>Chart note</title></head><body>'
         "<p>A short note that explains the chart.</p>"
@@ -719,7 +722,7 @@ def test_read_respects_response_character_budget_and_reports_partial_coverage(mo
         "<p>Detailed operational step and supporting explanation.</p>" * 30
     ) + "</main></body></html>"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, max_bytes, _cache=None: ("https://example.org/guide", html_text))
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, max_bytes, _cache=None, **_kwargs: ("https://example.org/guide", html_text))
     request = ReadRequest.model_validate({
         "protocol_version": "envoy.read/1",
         "request_id": "req-budget-1",
@@ -806,7 +809,7 @@ def test_read_creates_local_material_and_expand_returns_next_non_overlapping_sli
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
     calls = []
 
-    def fetch(_url, _max_bytes, _dns_cache=None):
+    def fetch(_url, _max_bytes, _dns_cache=None, **_kwargs):
         calls.append(1)
         return "https://example.org/guide", html_text
 
@@ -877,7 +880,7 @@ def test_expand_ledger_rejects_repeated_ranges_and_round_limit(tmp_path, monkeyp
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/",
         "<html><body><p>" + ("Useful sentence. " * 120) + "</p></body></html>",
     ))
@@ -930,7 +933,7 @@ def test_zero_expansion_round_budget_is_enforced(tmp_path, monkeypatch):
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/",
         "<html><body><p>" + ("Useful sentence. " * 120) + "</p></body></html>",
     ))
@@ -956,7 +959,7 @@ def test_image_only_page_is_partial_and_exposes_visual_coverage(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/post",
         '<html><head><title>Screenshot guide</title></head><body>'
         '<img src="https://cdn.example.org/guide.png" alt="Guide screenshot">'
@@ -981,7 +984,7 @@ def test_video_page_reports_unread_video_coverage(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/watch",
         '<html><body><p>Watch the following demonstration.</p>'
         '<video src="https://cdn.example.org/demo.mp4"></video></body></html>',
@@ -1004,7 +1007,7 @@ def test_direct_video_is_handed_to_native_video_host_without_local_model(monkeyp
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": "https://cdn.example.org/lesson.mp4",
             "mime_type": "video/mp4",
@@ -1117,7 +1120,7 @@ def test_direct_video_without_native_host_capability_is_reported_as_unsupported(
     runtime["asr_installed"] = False
     runtime["asr_model_available"] = False
     monkeypatch.setattr(reader, "media_runtime_status", lambda: runtime)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": "https://cdn.example.org/lesson.mp4",
             "mime_type": "video/mp4",
@@ -1139,7 +1142,7 @@ def test_signed_direct_video_url_is_never_forwarded_to_host(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": "https://cdn.example.org/lesson.mp4?token=%5BREDACTED%5D",
             "mime_type": "video/mp4",
@@ -1163,7 +1166,7 @@ def test_unknown_signed_parameter_direct_video_url_is_not_forwarded(monkeypatch)
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": "https://cdn.example.org/lesson.mp4?edge_credential=private",
             "mime_type": "video/mp4",
@@ -1186,7 +1189,7 @@ def test_challenge_page_is_not_reported_as_ready(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/check",
         "<html><head><title>Security check</title></head><body>"
         "<p>Checking your browser before accessing the site.</p>"
@@ -1276,7 +1279,7 @@ def test_read_redacts_sensitive_query_values_and_omits_signed_image_resources(mo
     monkeypatch.setattr(
         reader,
         "_fetch_html",
-        lambda _url, _max_bytes, _dns_cache=None: (
+        lambda _url, _max_bytes, _dns_cache=None, **_kwargs: (
             "https://example.org/article?access_token=hidden-token&amp;page=1",
             html_text,
         ),
@@ -1305,7 +1308,7 @@ def test_network_error_does_not_echo_secret_query_value(monkeypatch):
     secret_url = "https://example.org/article?api_key=do-not-leak"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
 
-    def fail_fetch(_url, _max_bytes, _dns_cache=None):
+    def fail_fetch(_url, _max_bytes, _dns_cache=None, **_kwargs):
         raise httpx.ConnectError(f"failed to connect to {secret_url}")
 
     monkeypatch.setattr(reader, "_fetch_html", fail_fetch)
@@ -1328,7 +1331,7 @@ def test_source_text_hard_limit_is_reported_as_partial_not_silent_success(monkey
     monkeypatch.setattr(
         reader,
         "_fetch_html",
-        lambda _url, _max_bytes, _dns_cache=None: (
+        lambda _url, _max_bytes, _dns_cache=None, **_kwargs: (
             "https://example.org/long",
             "<html><body><p>" + ("substantial source text " * 20) + "</p></body></html>",
         ),
@@ -1561,7 +1564,7 @@ def test_text_coverage_reports_token_estimate(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         "<html><body><p>Useful deployment steps for the worker.</p></body></html>",
     ))
@@ -1582,7 +1585,7 @@ def test_response_token_budget_hard_limits_first_read(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         "<html><body><p>" + ("Useful deployment sentence. " * 80) + "</p></body></html>",
     ))
@@ -1608,7 +1611,7 @@ def test_total_response_token_budget_is_shared_by_expansions(tmp_path, monkeypat
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         "<html><body><p>" + ("Useful deployment sentence. " * 100) + "</p></body></html>",
     ))
@@ -1652,7 +1655,7 @@ def test_response_token_budget_limits_cjk_text_by_estimated_tokens(monkeypatch):
 
     source_text = "部署命令和配置说明。" * 40
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         f"<html><body><p>{source_text}</p></body></html>",
     ))
@@ -1673,7 +1676,7 @@ def test_total_token_budget_alone_limits_initial_read_and_stops_expansion(tmp_pa
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         "<html><body><p>" + ("Deployment instructions with enough details. " * 100) + "</p></body></html>",
     ))
@@ -1727,7 +1730,7 @@ def test_short_material_is_cached_for_goal_directed_followup_search(tmp_path, mo
 
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (
         "https://example.org/guide",
         "<html><body><p>Overview and background.</p>"
         "<p>Deployment command: envoy start --worker.</p>"
@@ -2804,7 +2807,7 @@ def test_text_link_is_auto_routed_by_response_content_type(monkeypatch):
     from envoy_core.schemas.read_v1 import ReadRequest
 
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedText({
             "url": "https://example.org/download?id=readme",
             "data": b"# Setup\n\nInstall the worker first.\n",
@@ -2871,7 +2874,7 @@ def test_long_plain_text_uses_incremental_material_cache(tmp_path, monkeypatch):
     source_text = "\n".join(f"Section {index}: retain this source sentence." for index in range(400))
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedText({
             "url": "https://example.org/archive.txt",
             "data": source_text.encode(),
@@ -2990,7 +2993,7 @@ def test_public_dns_validation_reuses_resolution_only_within_one_read(monkeypatc
     monkeypatch.setattr(
         reader,
         "_fetch_html",
-        lambda _url, _max_bytes, _dns_cache=None: (
+        lambda _url, _max_bytes, _dns_cache=None, **_kwargs: (
             "https://example.org/page",
             (
                 "<html><body><p>Article content with enough text to read.</p>"
@@ -3017,7 +3020,7 @@ def test_zero_retention_does_not_advertise_expandable_content(tmp_path, monkeypa
     html_text = "<html><head><title>Guide</title></head><body><p>" + ("Useful sentence. " * 80) + "</p></body></html>"
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _dns_cache=None: ("https://example.org/", html_text))
+    monkeypatch.setattr(reader, "_fetch_html", lambda _url, _max_bytes, _dns_cache=None, **_kwargs: ("https://example.org/", html_text))
     request = {
         "protocol_version": "envoy.read/1",
         "request_id": "req-no-retain",

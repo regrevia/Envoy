@@ -69,7 +69,9 @@
         "delivered": null,
         "observed": null,
         "extraction": "complete",
-        "unresolved": [],
+        "unresolved": [
+          "The site's subtitle track ends at 30:00.000 of 01:00:00.000; audio after that has no published captions, and auto-generated captions were not used"
+        ],
         "details": {
           "source": "video_subtitles",
           "language": "en",
@@ -152,7 +154,8 @@
       }
     },
     "unresolved": [
-      "Video frames were not inspected; this material contains transcript evidence only"
+      "Video frames were not inspected; this material contains transcript evidence only",
+      "The site's subtitle track ends at 30:00.000 of 01:00:00.000; audio after that has no published captions, and auto-generated captions were not used"
     ],
     "sampled_ranges": []
   },
@@ -176,9 +179,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "419969f",
+    "commit": "f858a79",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_subtitles",
-    "generated_at": "2026-10-31",
+    "generated_at": "2026-11-11",
     "replaced_call": "reader.extract_public_subtitles",
     "fake_output": "3600 s caption track, automatic=False, rendered as manual_subtitles",
     "proof_scope": "proves that a subtitle-only video receipt carries no processed_seconds and therefore no transcript-owned progress; does not prove subtitle track selection against a live site or subtitle coverage of the whole duration",

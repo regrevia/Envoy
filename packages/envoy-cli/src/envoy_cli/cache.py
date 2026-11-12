@@ -31,6 +31,14 @@ FRAMES_PREFIX = "frames-"
 OCR_CACHE_DIRS = ("ocr-cache", "ocr-inputs")
 MEDIA_PREFIX = "video-"
 BROWSER_PROFILE_ENV = "ENVOY_BROWSER_PROFILE_DIR"
+# Shared derivation caches that live beside the material root. They are not
+# retained reads: a commit-pinned GitHub index stays useful for days, while an
+# HTTP body entry is only a shortcut until its freshness window turns it into a
+# revalidation. Past these ages they are pure disk, so ``prune`` reclaims them.
+GITHUB_INDEX_DIR = "github-index"
+HTTP_CACHE_DIR = "http-cache"
+GITHUB_INDEX_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+HTTP_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
 # Chromium's regenerable caches. Everything else in the profile — Cookies,
 # Login Data, Local Storage, IndexedDB — is a session and is never deleted here.
 BROWSER_CACHE_DIRS = (
@@ -151,6 +159,39 @@ def _remove(path: Path, root: Path, dry_run: bool) -> dict:
 
 def _summary(paths: list[Path]) -> dict:
     return {"count": len(paths), "bytes": sum(_size(path) for path in paths)}
+
+
+def _cached_files(directory: Path) -> list[Path]:
+    """Regular files in a flat cache directory, ignoring nested directories."""
+
+    if not directory.is_dir():
+        return []
+    try:
+        return sorted(
+            item
+            for item in directory.iterdir()
+            if not (item.is_dir() and not item.is_symlink())
+        )
+    except OSError:
+        return []
+
+
+def _last_write(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _expired_cached_files(
+    directory: Path,
+    current: float,
+    max_age: float,
+) -> list[Path]:
+    return [
+        path for path in _cached_files(directory)
+        if current - _last_write(path) >= max_age
+    ]
 
 
 def browser_profile_root(home: Path | None = None) -> Path:
@@ -315,6 +356,18 @@ def cache_status(
             "expired_count": len(expired_operations),
             "expired_bytes": sum(_size(path) for path in expired_operations),
         },
+        "github_index": {
+            **_summary(_cached_files(root / GITHUB_INDEX_DIR)),
+            "expired_count": len(_expired_cached_files(
+                root / GITHUB_INDEX_DIR, current, GITHUB_INDEX_MAX_AGE_SECONDS
+            )),
+        },
+        "http_cache": {
+            **_summary(_cached_files(root / HTTP_CACHE_DIR)),
+            "expired_count": len(_expired_cached_files(
+                root / HTTP_CACHE_DIR, current, HTTP_CACHE_MAX_AGE_SECONDS
+            )),
+        },
         "browser_cache": browser_cache_state(home=home),
     }
     others = _other_entries(home, root)
@@ -408,6 +461,15 @@ def prune_cache(
         if 0 < _operation_expiry(operation) <= current:
             removed.append(_remove(operation, root, dry_run))
             removed.append(_remove(operation.with_suffix(".lock"), root, dry_run))
+
+    # Shared derivation caches are rebuilt on the next read, so their only
+    # lifetime question is age. Their lock files go with the entry they guard.
+    for name, max_age in (
+        (GITHUB_INDEX_DIR, GITHUB_INDEX_MAX_AGE_SECONDS),
+        (HTTP_CACHE_DIR, HTTP_CACHE_MAX_AGE_SECONDS),
+    ):
+        for path in _expired_cached_files(root / name, current, max_age):
+            removed.append(_remove(path, root, dry_run))
 
     return {
         "materials_root": str(root),

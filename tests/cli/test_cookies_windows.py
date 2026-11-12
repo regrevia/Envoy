@@ -12,10 +12,16 @@ from __future__ import annotations
 import base64
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from envoy_cli import aesgcm, cookies
+
+
+def _chrome_expiry(moment: datetime) -> int:
+    """Chromium keeps cookie expiry as microseconds since 1601-01-01 UTC."""
+    return int((moment.timestamp() + 11_644_473_600) * 1_000_000)
 
 
 def test_aes256_encrypts_the_fips_197_vector():
@@ -131,7 +137,7 @@ def test_windows_import_reads_a_gcm_cookie_store(monkeypatch, tmp_path):
             ".douyin.com",
             "sessionid",
             b"v10" + aesgcm.encrypt(key, b"real-session", bytes(range(12))),
-            13_435_000_000_000_000,
+            _chrome_expiry(datetime.now(timezone.utc) + timedelta(days=7)),
         ),
     )
     connection.commit()

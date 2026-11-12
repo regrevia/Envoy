@@ -1072,3 +1072,155 @@ def test_a_search_hit_names_its_own_lines(tmp_path, monkeypatch):
     hit = result.blocks[0]
     assert hit.locator.source_url.endswith("#L12")
     assert "#L1-L5" not in hit.locator.source_url
+
+
+# ---------------------------------------------------------------------------
+# 403: permission refusal vs quota exhaustion (they need opposite advice)
+# ---------------------------------------------------------------------------
+
+
+def test_http_error_separates_quota_exhaustion_from_a_permission_refusal():
+    exhausted = github_source._http_error(
+        403,
+        "https://api.github.com/repos/acme/widget",
+        b'{"message": "API rate limit exceeded"}',
+        {
+            "x-ratelimit-limit": "60",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1704075000",
+            "retry-after": "30",
+        },
+    )
+    assert isinstance(exhausted, github_source.GithubRateLimited)
+    assert exhausted.limit == 60
+    assert exhausted.remaining == 0
+    assert exhausted.retry_after_seconds == 30
+
+    refused = github_source._http_error(
+        403,
+        "https://api.github.com/repos/acme/private",
+        b'{"message": "Must have admin rights to Repository."}',
+        {"x-ratelimit-limit": "5000", "x-ratelimit-remaining": "4999"},
+    )
+    assert isinstance(refused, github_source.GithubForbidden)
+    assert refused.reason == "permission"
+
+
+def test_a_blocked_403_is_not_retryable(api):
+    blocked = github_source._http_error(
+        403,
+        "https://api.github.com/repos/acme/gone",
+        b'{"message": "Repository access blocked"}',
+        {},
+    )
+    assert isinstance(blocked, github_source.GithubForbidden)
+    assert blocked.reason == "blocked"
+
+    api({"/repos/acme/widget": blocked})
+    response = _read("https://github.com/acme/widget")
+
+    error = response.errors[0]
+    assert error.code is ErrorCode.SOURCE_UNAVAILABLE
+    assert error.retryable is False
+    assert error.details["github_error_code"] == "github_blocked"
+
+
+def test_a_permission_403_asks_for_access_instead_of_a_retry(api):
+    api({"/repos/acme/widget": github_source.GithubForbidden(
+        "Resource not accessible by personal access token", status=403, reason="permission",
+    )})
+
+    response = _read("https://github.com/acme/widget")
+
+    assert response.result is ReadResult.BLOCKED
+    error = response.errors[0]
+    assert error.code is ErrorCode.AUTH_REQUIRED
+    assert error.action_required is True
+    assert error.retryable is False
+    assert error.details["github_error_code"] == "github_forbidden"
+    assert "GITHUB_TOKEN" in error.details["hint"]
+    # The whole bug this pins: a permission 403 must never read as a quota wait.
+    assert error.details.get("reset_at") is None
+
+
+def test_rate_limit_details_carry_the_measured_quota(api):
+    api({"/repos/acme/widget": github_source.GithubRateLimited(
+        "API rate limit exceeded", status=403, reset_at="2024-01-01T00:10:00Z",
+        reset_epoch=1704075000, limit=60, remaining=0, retry_after_seconds=30,
+    )})
+
+    response = _read("https://github.com/acme/widget")
+
+    details = response.errors[0].details
+    assert details["github_quota"] == {
+        "limit": 60,
+        "remaining": 0,
+        "reset_at": "2024-01-01T00:10:00Z",
+        "reset_epoch": 1704075000,
+        "retry_after_seconds": 30,
+    }
+    assert details["retry_after_seconds"] == 30
+    assert "30 seconds" in response.errors[0].message
+
+
+# ---------------------------------------------------------------------------
+# Repository snapshot: what this commit has covered, and what it has not
+# ---------------------------------------------------------------------------
+
+
+def test_a_listing_records_the_directories_it_left_unexpanded(api):
+    api({
+        "/repos/acme/widget": {"default_branch": "main", "size": 4},
+        "/repos/acme/widget/commits/main": {"sha": COMMIT_SHA},
+        f"/repos/acme/widget/git/trees/{COMMIT_SHA}": {
+            "truncated": False,
+            "tree": [
+                {"path": "src", "type": "tree"},
+                {"path": "README.md", "type": "blob", "size": 5},
+            ],
+        },
+    })
+
+    first = _read("https://github.com/acme/widget")
+    snapshot = first.coverage.modalities["code"].details["repository_snapshot"]
+    assert snapshot["repository"] == "acme/widget"
+    assert snapshot["commit_sha"] == COMMIT_SHA
+    assert snapshot["directories"]["expanded"] == [""]
+    assert snapshot["directories"]["listed_not_expanded"] == ["src"]
+    assert snapshot["files"]["listed_not_read"] == ["README.md"]
+    assert snapshot["persisted"] is True
+    # The caller must not mistake "not expanded yet" for "does not exist".
+    assert "not missing" in _text(first)
+
+    # Reading the named directory is what clears it, and the index survives
+    # the call because it is keyed by commit, not held in the reader.
+    api({
+        "/repos/acme/widget/commits/main": {"sha": COMMIT_SHA},
+        f"/repos/acme/widget/contents/src?ref={COMMIT_SHA}": [
+            {"name": "core.py", "type": "file", "size": 10, "sha": "a" * 40},
+        ],
+    })
+    second = _read("https://github.com/acme/widget/tree/main/src")
+    after = second.coverage.modalities["code"].details["repository_snapshot"]
+    assert after["directories"]["expanded_total"] == 2
+    assert after["directories"]["listed_not_expanded_total"] == 0
+    assert after["files"]["listed_not_read"] == ["README.md", "src/core.py"]
+
+
+def test_a_file_read_records_partial_then_complete(api):
+    text = "\n".join(f"line{i}" for i in range(1, 11)) + "\n"
+    api({
+        f"/repos/acme/widget/contents/src/app.py?ref={COMMIT_SHA}": _file_payload(text),
+    })
+
+    partial = _read(f"https://github.com/acme/widget/blob/{COMMIT_SHA}/src/app.py#L1-L3")
+    snapshot = partial.coverage.modalities["code"].details["repository_snapshot"]
+    assert snapshot["files"]["read_partial"] == [{"path": "src/app.py", "percent": 30}]
+
+    api({
+        f"/repos/acme/widget/contents/src/app.py?ref={COMMIT_SHA}": _file_payload(text),
+    })
+    complete = _read(f"https://github.com/acme/widget/blob/{COMMIT_SHA}/src/app.py")
+    after = complete.coverage.modalities["code"].details["repository_snapshot"]
+    assert after["files"]["read_complete"] == ["src/app.py"]
+    assert after["files"]["read_partial_total"] == 0

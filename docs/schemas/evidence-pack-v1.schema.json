@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://envoy.dev/schemas/envoy.evidence-pack/1",
+  "title": "Envoy Evidence Pack v1",
+  "description": "manifest.json of a pack directory. The pack is derived from a retained material; deleting it does not change what a read returned. See docs/architecture/evidence-pack-v1.md.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "material_id",
+    "source_revision",
+    "source_type",
+    "source_title",
+    "source_url",
+    "counts",
+    "files",
+    "coverage_unresolved",
+    "pack_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "envoy.evidence-pack/1"
+    },
+    "material_id": {
+      "type": "string",
+      "pattern": "^mat-[a-f0-9]{24}$"
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_type": {
+      "type": "string"
+    },
+    "source_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "sections",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "required": [
+        "document",
+        "metadata",
+        "sections",
+        "outline",
+        "evidence_index",
+        "coverage"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "const": "source/document.json"
+        },
+        "metadata": {
+          "const": "source/metadata.json"
+        },
+        "sections": {
+          "const": "structure/sections.json"
+        },
+        "outline": {
+          "const": "structure/outline.md"
+        },
+        "evidence_index": {
+          "const": "references/evidence-index.json"
+        },
+        "coverage": {
+          "const": "coverage.json"
+        }
+      }
+    },
+    "coverage_unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

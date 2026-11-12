@@ -768,13 +768,28 @@ def test_asr_origin_and_partial_audio_gap_survive_search_and_expansion(tmp_path,
         "max_chars": 300,
     }))
 
-    expected_audio_gap = "Local ASR stopped at 03:20.000; later audio remains untranscribed"
+    def audio_gap(unresolved):
+        # The gap must name the covered range, the cap that stopped it and how to
+        # resume; "partial" alone reads like the video only had that much speech.
+        return next(
+            (
+                item
+                for item in unresolved
+                if item.startswith("Local ASR transcribed 00:00.000-03:20.000")
+            ),
+            None,
+        )
+
+    initial_gap = audio_gap(initial.coverage.unresolved)
+    assert initial_gap is not None, initial.coverage.unresolved
+    assert "budget.max_work_seconds" in initial_gap
+    assert "scope.start_seconds=200" in initial_gap
+    assert "untranscribed" in initial_gap
     assert initial.blocks[1].origin.value == "asr"
     assert searched.blocks[0].origin.value == "asr"
     assert expanded.blocks[0].origin.value == "asr"
-    assert expected_audio_gap in initial.coverage.unresolved
-    assert expected_audio_gap in searched.coverage.unresolved
-    assert expected_audio_gap in expanded.coverage.unresolved
+    assert audio_gap(searched.coverage.unresolved) == initial_gap
+    assert audio_gap(expanded.coverage.unresolved) == initial_gap
 
 
 def test_platform_video_without_subtitles_falls_back_to_local_asr(tmp_path, monkeypatch):
@@ -955,7 +970,7 @@ def test_direct_video_no_speech_still_hands_off_requested_frames(tmp_path, monke
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
     source_url = "https://cdn.example.org/quiet-demo.mp4"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": source_url,
             "mime_type": "video/mp4",
@@ -1039,7 +1054,7 @@ def test_direct_video_private_redirect_is_blocked_without_frame_retry(monkeypatc
 
     source_url = "https://cdn.example.org/redirecting.mp4"
     monkeypatch.setattr(reader, "_is_public_http_url", lambda _url, _cache=None: True)
-    monkeypatch.setattr(reader, "_fetch_html", lambda *_args: (_ for _ in ()).throw(
+    monkeypatch.setattr(reader, "_fetch_html", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         reader.DetectedMedia({
             "url": source_url,
             "mime_type": "video/mp4",
