@@ -1408,7 +1408,7 @@ def _read_cached_image_ocr(
     )
     result_backend = str(result.get("backend") or selected_backend)
     result_language = str(result.get("language") or cache_language)
-    cache_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    cache_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8", newline="")
     try:
         cache_path.chmod(0o600)
     except OSError:
@@ -10774,7 +10774,7 @@ def _write_media_deadline(directory: Path, ttl_seconds: int) -> None:
     try:
         directory.mkdir(mode=0o700, exist_ok=True)
         pending = directory / ".expires.tmp"
-        pending.write_text(f"{time.time() + ttl_seconds:.3f}", encoding="ascii")
+        pending.write_text(f"{time.time() + ttl_seconds:.3f}", encoding="ascii", newline="")
         os.replace(pending, directory / ".expires")
     except OSError:
         pass

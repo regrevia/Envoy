@@ -108,7 +108,7 @@ def _iso(value: float | None = None) -> str:
 
 def _write(path: Path, payload: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8", newline="")
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 

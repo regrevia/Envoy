@@ -138,14 +138,14 @@ def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
-    tmp.write_text(data, encoding="utf-8")
+    tmp.write_text(data, encoding="utf-8", newline="")
     os.replace(tmp, path)
 
 
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}-{threading.get_ident()}")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8", newline="")
     os.replace(tmp, path)
 
 

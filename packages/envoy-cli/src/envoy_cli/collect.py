@@ -93,14 +93,14 @@ def _load_sources(path: Path) -> dict:
 
 def _save_sources(path: Path, value: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8", newline="")
     os.replace(tmp, path)
 
 
 def _write_markdown(out: Path, text: str) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8", newline="")
     os.replace(tmp, out)
 
 

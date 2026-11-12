@@ -571,7 +571,7 @@ def install_codex_hooks(*, home=None, uninstall: bool = False) -> dict:
     previous = hooks_path.read_text(encoding="utf-8") if hooks_path.exists() else None
     if previous != rendered:
         hooks_path.parent.mkdir(parents=True, exist_ok=True)
-        hooks_path.write_text(rendered, encoding="utf-8")
+        hooks_path.write_text(rendered, encoding="utf-8", newline="")
         result["changed"] = True
     return result
 

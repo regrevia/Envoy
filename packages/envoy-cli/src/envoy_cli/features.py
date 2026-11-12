@@ -74,7 +74,7 @@ def write_config(patch: dict) -> dict:
     restrict_to_owner(path.parent, directory=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".config-", dir=str(path.parent))
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             json.dump(current, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
         restrict_to_owner(Path(temporary))

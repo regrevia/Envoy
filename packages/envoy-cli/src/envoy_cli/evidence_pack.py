@@ -78,6 +78,18 @@ def _file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _write_text(path: Path, text: str) -> None:
+    """Write UTF-8 exactly as built, without newline translation.
+
+    The manifest stores the digest of the text as it existed in memory, so the
+    file has to hold those same bytes everywhere. Windows text mode rewrites
+    ``\n`` to ``\r\n``, which makes a freshly exported pack fail its own
+    manifest on that platform.
+    """
+
+    path.write_text(text, encoding="utf-8", newline="")
+
+
 def load_material(material_id: str, *, root: Path | None = None) -> dict:
     """Return a material only while its lease is still live."""
 
@@ -470,16 +482,15 @@ def _emit(root: Path, built: dict) -> None:
     for kind_dir in sorted(set(KIND_DIRS.values())):
         (root / "evidence" / kind_dir).mkdir(parents=True)
     for entry in built["evidence"]:
-        path = root / entry["file"]
-        path.write_text(built["evidence_text"][entry["evidence_id"]], encoding="utf-8")
-    (root / "source" / "document.json").write_text(_canonical(built["document"]), encoding="utf-8")
-    (root / "source" / "metadata.json").write_text(_canonical(built["metadata"]), encoding="utf-8")
-    (root / "structure" / "sections.json").write_text(_canonical(built["sections"]), encoding="utf-8")
-    (root / "structure" / "outline.md").write_text(built["outline"], encoding="utf-8")
-    (root / "references" / "evidence-index.json").write_text(_canonical(built["evidence"]), encoding="utf-8")
-    (root / "coverage.json").write_text(_canonical(built["coverage"]), encoding="utf-8")
-    (root / "manifest.json").write_text(_canonical(built["manifest"]), encoding="utf-8")
-    (root / "README.md").write_text(_readme(built), encoding="utf-8")
+        _write_text(root / entry["file"], built["evidence_text"][entry["evidence_id"]])
+    _write_text(root / "source" / "document.json", _canonical(built["document"]))
+    _write_text(root / "source" / "metadata.json", _canonical(built["metadata"]))
+    _write_text(root / "structure" / "sections.json", _canonical(built["sections"]))
+    _write_text(root / "structure" / "outline.md", built["outline"])
+    _write_text(root / "references" / "evidence-index.json", _canonical(built["evidence"]))
+    _write_text(root / "coverage.json", _canonical(built["coverage"]))
+    _write_text(root / "manifest.json", _canonical(built["manifest"]))
+    _write_text(root / "README.md", _readme(built))
 
 
 def _readme(built: dict) -> str:

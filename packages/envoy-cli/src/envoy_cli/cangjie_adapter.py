@@ -174,7 +174,7 @@ def write(result: dict, out_path: str | Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix=f".{target.name}.tmp-", dir=str(target.parent))
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
             stream.write(_canonical(result))
             stream.flush()
             os.fsync(stream.fileno())

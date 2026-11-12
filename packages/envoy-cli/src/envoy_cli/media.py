@@ -178,6 +178,9 @@ def _cwd_shadowing_entries(entries) -> list[str]:
     return shadowing
 
 
+_WORKER_STDERR_ENV = "ENVOY_WORKER_STDERR_PATH"
+
+
 def _worker_stderr_tail(handle) -> str:
     """Last few lines the worker wrote to stderr, or an empty string."""
 
@@ -198,12 +201,51 @@ def _worker_stderr_tail(handle) -> str:
 
 
 def _open_worker_stderr():
-    if os.name == "nt":
-        return None
+    """A file the worker can be told to write its own stderr into.
+
+    A named temporary file, not a pipe: the worker may die before it reports
+    anything, and the parent has to be able to read what it left behind.  The
+    path travels in ``_WORKER_STDERR_ENV`` because a spawn child cannot always
+    inherit fd 2 -- on Windows a file opened by ``open`` is not inheritable, so
+    the child reopens this path itself instead.
+    """
+
     try:
-        return tempfile.TemporaryFile(prefix="envoy-media-worker-")
+        return tempfile.NamedTemporaryFile(
+            prefix="envoy-media-worker-", suffix=".log", delete=False
+        )
     except OSError:
         return None
+
+
+def _discard_worker_stderr(handle) -> None:
+    if handle is None:
+        return
+    name = getattr(handle, "name", None)
+    try:
+        handle.close()
+    except (OSError, ValueError):
+        pass
+    if name:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+
+
+def _redirect_worker_stderr(path: str) -> None:
+    """Send this process's stderr to ``path``; used inside the spawn child."""
+
+    if not path:
+        return
+    try:
+        stream = open(path, "a", encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    try:
+        sys.stderr = stream
+    except (AttributeError, TypeError):
+        stream.close()
 
 
 @contextmanager
@@ -221,6 +263,7 @@ def _isolated_worker_start(stderr_handle=None):
     with _WORKER_START_LOCK:
         saved_path = list(sys.path)
         saved_pythonpath = os.environ.get("PYTHONPATH")
+        saved_stderr_env = os.environ.get(_WORKER_STDERR_ENV)
         saved_cwd = None
         shadowing = _cwd_shadowing_entries(sys.path)
         try:
@@ -246,6 +289,10 @@ def _isolated_worker_start(stderr_handle=None):
                     os.environ.pop("PYTHONPATH", None)
                 elif kept != parts:
                     os.environ["PYTHONPATH"] = os.pathsep.join(kept)
+            if stderr_handle is not None:
+                # The child gets the path, not the descriptor: on Windows a file
+                # opened by ``open`` is not inheritable by the spawn child.
+                os.environ[_WORKER_STDERR_ENV] = str(getattr(stderr_handle, "name", "") or "")
             if stderr_handle is not None and os.name != "nt":
                 try:
                     saved_fd = os.dup(2)
@@ -271,6 +318,9 @@ def _isolated_worker_start(stderr_handle=None):
             else:
                 os.environ["PYTHONPATH"] = saved_pythonpath
             os.environ.pop("ENVOY_WORKER_ORIGINAL_CWD", None)
+            os.environ.pop(_WORKER_STDERR_ENV, None)
+            if saved_stderr_env is not None:
+                os.environ[_WORKER_STDERR_ENV] = saved_stderr_env
             if saved_cwd is not None:
                 try:
                     os.chdir(saved_cwd)
@@ -279,6 +329,12 @@ def _isolated_worker_start(stderr_handle=None):
 
 
 def _bounded_worker_entry(target, args: tuple, connection) -> None:
+    # Popped on every platform so the worker cannot hand the path to a
+    # grandchild; only Windows needs the redirect, because only there does the
+    # child miss the descriptor the parent already pointed at the same file.
+    stderr_path = os.environ.pop(_WORKER_STDERR_ENV, "")
+    if os.name == "nt":
+        _redirect_worker_stderr(stderr_path)
     # Spawned from a private directory so bootstrap imports cannot see the
     # caller's files; run the task back in the directory the caller was in.
     original_cwd = os.environ.pop("ENVOY_WORKER_ORIGINAL_CWD", "")
@@ -386,6 +442,7 @@ def run_bounded_worker(target, *args, max_work_seconds: int):
                 process.join(5)
         receive_connection.close()
         send_connection.close()
+        _discard_worker_stderr(stderr_log)
         if clean_cwd:
             shutil.rmtree(clean_cwd, ignore_errors=True)
 
@@ -2362,7 +2419,7 @@ def _write_asr_checkpoint(path: Path, payload: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8", newline="")
         os.replace(tmp, path)
     except OSError:
         return
@@ -2527,6 +2584,7 @@ def _transcribe_with_worker(
                 process.join(5)
         receive_connection.close()
         send_connection.close()
+        _discard_worker_stderr(stderr_log)
         if clean_cwd:
             shutil.rmtree(clean_cwd, ignore_errors=True)
 

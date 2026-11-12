@@ -143,7 +143,7 @@ def _write_state(action_id: str, payload: dict) -> None:
     path = _state_path(action_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8", newline="")
     os.replace(tmp, path)
 
 

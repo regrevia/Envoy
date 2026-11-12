@@ -811,7 +811,7 @@ def yt_dlp_cookie_file(url: str) -> str | None:
     try:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = directory / f"{host}.txt"
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="")
         restrict_to_owner(path)
     except OSError:
         return None

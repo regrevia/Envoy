@@ -70,7 +70,7 @@ def _write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
