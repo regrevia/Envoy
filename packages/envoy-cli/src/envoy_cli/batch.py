@@ -22,7 +22,6 @@ The guarantees this module keeps:
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -38,6 +37,7 @@ from envoy_core.schemas.read_v1 import Budget, ReadRequest
 
 from . import auth_session, authflow, storage
 from .reader import read_public_page
+
 
 SCHEMA_VERSION = "envoy.batch/1"
 BATCH_DIR = "batches"
@@ -98,14 +98,38 @@ def _safe_batch_id(batch_id: str) -> str:
 
 @contextmanager
 def _locked(path: Path) -> Iterator[None]:
+    """Serialise batch state writes across processes.
+
+    POSIX takes the lock with flock; Windows has no fcntl, so it locks the first
+    byte with msvcrt the same way media processing already does.
+    """
+
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(str(path) + ".lock", "a+b")
+    windows = os.name == "nt"
+    if windows:  # pragma: no cover - Windows only
+        import msvcrt
+
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+    else:
+        import fcntl
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if windows:  # pragma: no cover - Windows only
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         yield
     finally:
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            if windows:  # pragma: no cover - Windows only
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
 
