@@ -561,8 +561,9 @@ These are hard rules, not preferences:
 
 When the user provides a local video file, call `mcp__envoy__envoy_read` with
 `source.url` set to the absolute path or a `file://` URL; the `full` toolset
-also exposes `mcp__envoy__envoy_read_local_video`, and CLI-only flows can send the same
-`envoy.read/1` request to `envoy read-local-video --request-json -`. Supply the
+also exposes `mcp__envoy__envoy_read_local_video`, and CLI-only flows can send an `envoy.read/1` request to
+`envoy read-local-video --request-json -` with the local file in the top-level
+`path` field (not `source.url`). Supply the
 user-selected path, goal, and a stable `idempotency_key`. Set
 `scope.include_visual: true` only when frame inspection is relevant and the
 host can inspect local image resources. Envoy probes the local file, runs
