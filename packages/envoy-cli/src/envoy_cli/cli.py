@@ -186,20 +186,35 @@ def _parser() -> argparse.ArgumentParser:
     knowledge_verify.add_argument("--json", action="store_true")
     knowledge_promote = knowledge_commands.add_parser("promote", help="mark a verified unit usable")
     knowledge_promote.add_argument("unit_id")
+    knowledge_promote.add_argument(
+        "--if-version", type=int, help="write only if the unit is still at this version"
+    )
     knowledge_archive = knowledge_commands.add_parser("archive", help="stop using a unit without deleting it")
     knowledge_archive.add_argument("unit_id")
     knowledge_archive.add_argument("--reason")
+    knowledge_archive.add_argument(
+        "--if-version", type=int, help="write only if the unit is still at this version"
+    )
     knowledge_update = knowledge_commands.add_parser("update", help="edit a unit into a new version")
     knowledge_update.add_argument("unit_id")
     knowledge_update.add_argument("--file", help="read the patch from this path instead of stdin")
+    knowledge_update.add_argument(
+        "--if-version", type=int, help="write only if the unit is still at this version"
+    )
     knowledge_rollback = knowledge_commands.add_parser("rollback", help="restore an older body as a new version")
     knowledge_rollback.add_argument("unit_id")
     knowledge_rollback.add_argument("--version", type=int, required=True)
+    knowledge_rollback.add_argument(
+        "--if-version", type=int, help="write only if the unit is still at this version"
+    )
     knowledge_relate = knowledge_commands.add_parser("relate", help="record how two units bear on each other")
     knowledge_relate.add_argument("unit_id")
     knowledge_relate.add_argument("--type", required=True, choices=list(knowledge_units.RELATION_TYPES))
     knowledge_relate.add_argument("--to", required=True)
     knowledge_relate.add_argument("--evidence", help="read the evidence refs (JSON array) from this path instead of stdin")
+    knowledge_relate.add_argument(
+        "--if-version", type=int, help="write only if the source unit is still at this version"
+    )
 
     discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
@@ -930,7 +945,7 @@ def _knowledge_error(exc) -> int:
 
 def _run_knowledge(args) -> int:
     command = args.knowledge_command
-    writing = command in {"create", "update", "verify", "promote", "archive", "relate"}
+    writing = command in {"create", "update", "verify", "promote", "archive", "relate", "rollback"}
     if writing and not extension_flags.enabled(extension_flags.KNOWLEDGE_UNITS):
         return _extension_off(extension_flags.KNOWLEDGE_UNITS)
     try:
@@ -948,16 +963,26 @@ def _run_knowledge(args) -> int:
         elif command == "verify":
             unit = knowledge_units.verify_unit(args.unit_id)
         elif command == "promote":
-            unit = knowledge_units.promote_unit(args.unit_id)
+            unit = knowledge_units.promote_unit(args.unit_id, expected_version=args.if_version)
         elif command == "archive":
-            unit = knowledge_units.archive_unit(args.unit_id, reason=args.reason or "")
+            unit = knowledge_units.archive_unit(
+                args.unit_id, reason=args.reason or "", expected_version=args.if_version
+            )
         elif command == "update":
-            unit = knowledge_units.update_unit(args.unit_id, _read_json_argument(args.file))
+            unit = knowledge_units.update_unit(
+                args.unit_id, _read_json_argument(args.file), expected_version=args.if_version
+            )
         elif command == "rollback":
-            unit = knowledge_units.rollback_unit(args.unit_id, args.version)
+            unit = knowledge_units.rollback_unit(
+                args.unit_id, args.version, expected_version=args.if_version
+            )
         elif command == "relate":
             unit = knowledge_units.relate_units(
-                args.unit_id, args.type, args.to, _read_json_argument(args.evidence)
+                args.unit_id,
+                args.type,
+                args.to,
+                _read_json_argument(args.evidence),
+                expected_version=args.if_version,
             )
         else:
             print(
@@ -979,6 +1004,8 @@ def _run_knowledge(args) -> int:
         _print_json(unit)
     else:
         print(knowledge_units.render_unit(unit))
+        for warning in (unit.get("warnings") if isinstance(unit, dict) else None) or []:
+            print(f"warning: {warning}")
     return 0
 
 

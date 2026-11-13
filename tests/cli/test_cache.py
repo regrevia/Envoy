@@ -192,3 +192,150 @@ def test_prune_reclaims_only_aged_derivation_cache_entries(tmp_path):
     assert fresh_index.is_file()
     assert fresh_body.is_file()
     assert report["freed_bytes"] > 0
+
+
+def _populated_root(root: Path, *, home: Path) -> None:
+    """A cache root with one live and one dead entry per category.
+
+    ``cache status`` and ``cache prune`` must describe this identically, so the
+    fixture has to exercise every category both of them know about.
+    """
+
+    _material(root, LIVE, expires_in=3600)
+    _material(root, EXPIRED, expires_in=-60)
+    (root / f"{ORPHAN}.json").write_text("{}", encoding="utf-8")
+    (root / "ocr-inputs").mkdir()
+    (root / "ocr-inputs" / "image.jpg").write_bytes(b"x" * 32)
+    (root / "ocr-cache").mkdir()
+    (root / "ocr-cache" / "result.json").write_text("{}", encoding="utf-8")
+    _operation(root, "a" * 64, expires_in=-60)
+    _operation(root, "b" * 64, expires_in=3600)
+    live_frames = root / f"frames-{LIVE}"
+    live_frames.mkdir()
+    (live_frames / "frame.jpg").write_bytes(b"y" * 16)
+    orphan_frames = root / f"frames-{ORPHAN}"
+    orphan_frames.mkdir()
+    (orphan_frames / "frame.jpg").write_bytes(b"y" * 8)
+    live_media = root / f"video-{LIVE}"
+    live_media.mkdir()
+    (live_media / "clip.mp4").write_bytes(b"v" * 40)
+    orphan_media = root / f"video-{ORPHAN}"
+    orphan_media.mkdir()
+    (orphan_media / "clip.mp4").write_bytes(b"v" * 24)
+    index = root / cache.GITHUB_INDEX_DIR
+    index.mkdir()
+    (index / "recent.json").write_text("{}", encoding="utf-8")
+    (index / "stale.json").write_text("{}", encoding="utf-8")
+    _aged(index / "stale.json", seconds_ago=cache.GITHUB_INDEX_MAX_AGE_SECONDS + 60)
+    http = root / cache.HTTP_CACHE_DIR
+    http.mkdir()
+    (http / "recent.bin").write_bytes(b"h" * 8)
+    (http / "stale.bin").write_bytes(b"h" * 12)
+    _aged(http / "stale.bin", seconds_ago=cache.HTTP_CACHE_MAX_AGE_SECONDS + 60)
+    profile = home / "browser-profile"
+    profile.mkdir(parents=True)
+    (profile / "chromium").write_bytes(b"z" * 4)
+
+
+def test_status_and_prune_agree_on_what_is_reclaimable(tmp_path):
+    home = tmp_path / "home"
+    _populated_root(tmp_path, home=home)
+
+    status = cache.cache_status(tmp_path, home=home)
+    dry = cache.prune_cache(tmp_path, dry_run=True, home=home)
+
+    # The status must be able to predict the prune, category by category.
+    assert status["reclaimable_files"] == len(dry["removed"])
+    assert status["reclaimable_bytes"] == dry["freed_bytes"]
+    for key, planned in status["reclaimable"].items():
+        if key == "browser_cache":
+            continue
+        assert planned["files"] == dry["categories"][key]["removed_files"], key
+        assert planned["bytes"] == dry["categories"][key]["removed_bytes"], key
+    assert status["unreadable"] == dry["unreadable"]
+
+
+def test_a_dry_run_counts_exactly_what_the_real_prune_removes(tmp_path):
+    home = tmp_path / "home"
+    _populated_root(tmp_path, home=home)
+
+    dry = cache.prune_cache(tmp_path, dry_run=True, home=home)
+    expected = {
+        key: (row["removed_files"], row["removed_bytes"])
+        for key, row in dry["categories"].items()
+    }
+    assert any(files for files, _ in expected.values())
+
+    real = cache.prune_cache(tmp_path, home=home)
+
+    assert real["dry_run"] is False
+    assert real["freed_bytes"] == dry["freed_bytes"]
+    assert len(real["removed"]) == len(dry["removed"])
+    for key, (files, size) in expected.items():
+        assert real["categories"][key]["removed_files"] == files, key
+        assert real["categories"][key]["removed_bytes"] == size, key
+        assert real["categories"][key]["kept_files"] >= 0
+        assert real["categories"][key]["kept_bytes"] >= 0
+    # What the dry run promised is gone; what it promised to keep survives.
+    for entry in dry["removed"]:
+        assert not Path(entry["path"]).exists(), entry["path"]
+    assert (tmp_path / f"{LIVE}.json").is_file()
+    assert (tmp_path / f"frames-{LIVE}").is_dir()
+    assert (tmp_path / f"video-{LIVE}").is_dir()
+
+
+def test_a_prune_names_the_reason_it_kept_an_entry(tmp_path):
+    home = tmp_path / "home"
+    _populated_root(tmp_path, home=home)
+
+    report = cache.prune_cache(tmp_path, home=home)
+
+    # Every kept entry is accounted for with one of the three documented words.
+    known = {cache.KEPT_UNEXPIRED, cache.KEPT_LOCKED, cache.KEPT_UNREADABLE}
+    for key, row in report["categories"].items():
+        assert set(row["skipped"]) <= known, key
+        assert row["kept_files"] == sum(
+            bucket["files"] for bucket in row["skipped"].values()
+        )
+    assert report["categories"]["materials"]["skipped"][cache.KEPT_UNEXPIRED][
+        "files"
+    ] == 2
+
+
+def test_a_prune_that_frees_nothing_still_reports_every_category(tmp_path):
+    home = tmp_path / "home"
+    _material(tmp_path, LIVE, expires_in=3600)
+
+    report = cache.prune_cache(tmp_path, home=home)
+
+    assert report["freed_bytes"] == 0
+    assert report["removed"] == []
+    assert set(report["categories"]) >= {
+        "materials",
+        "frames",
+        "ocr_inputs",
+        "ocr_cache",
+        "video_media",
+        "operations",
+        "github_index",
+        "http_cache",
+    }
+
+
+def test_status_walks_the_cache_exactly_once(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _material(tmp_path, EXPIRED, expires_in=-60)
+    real_scandir = cache._scandir
+    walked: list[Path] = []
+
+    def counting(directory):
+        walked.append(directory)
+        return real_scandir(directory)
+
+    monkeypatch.setattr(cache, "_scandir", counting)
+    cache._enumerate_cache(tmp_path, time.time(), home)
+    one_walk = len(walked)
+    walked.clear()
+
+    cache.cache_status(tmp_path, home=home)
+    assert len(walked) == one_walk

@@ -233,18 +233,106 @@ def test_two_units_relate_only_through_evidence_one_already_cites():
     unit = knowledge_units.create_unit(_payload(blocks))
     other = knowledge_units.create_unit(_payload([blocks[1]], title="A related claim"))
 
-    related = knowledge_units.relate_units(
-        unit["unit_id"],
-        "supports",
-        other["unit_id"],
-        [{"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}],
-    )
-    assert related["relations"][0]["to"] == other["unit_id"]
-    assert related["relations"][0]["type"] == "supports"
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+    related = knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], evidence)
+
+    entry = related["relations"][0]
+    assert entry["from_unit_id"] == unit["unit_id"]
+    assert entry["to_unit_id"] == other["unit_id"]
+    assert entry["type"] == "supports"
+    assert entry["from_version"] == unit["version"]
+    assert entry["inverse_of"] is None
+    assert knowledge_units.RELATION_ID.fullmatch(entry["relation_id"])
+    assert entry["content_hash"] == knowledge_units._relation_fingerprint(entry)
 
     with pytest.raises(knowledge_units.UnitError) as duplicate:
-        knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], related["relations"][0]["evidence"])
+        knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], entry["evidence"])
     assert duplicate.value.code == "relation_exists"
+
+
+def test_a_relation_is_readable_from_both_ends_with_its_own_fingerprint():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(
+        _payload([blocks[1]], title="A related claim", summary="A second claim.")
+    )
+
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+    related = knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], evidence)
+    asserted = related["relations"][0]
+
+    mirrored = knowledge_units.list_relations(other["unit_id"])[0]
+    assert mirrored["to_unit_id"] == unit["unit_id"]
+    assert mirrored["from_unit_id"] == other["unit_id"]
+    assert mirrored["inverse_of"] == asserted["relation_id"]
+    assert mirrored["relation_id"] != asserted["relation_id"]
+    assert mirrored["content_hash"] != asserted["content_hash"]
+    assert mirrored["content_hash"] == knowledge_units._relation_fingerprint(mirrored)
+
+    # A relation is an annotation: it does not edit the body, so the mirror keeps
+    # the target's body version and body fingerprint.
+    target = knowledge_units.load_unit(other["unit_id"])
+    assert target["version"] == 1
+    assert target["content_hash"] == other["content_hash"]
+    assert mirrored["from_version"] == target["version"]
+
+
+def test_a_unit_still_carries_its_own_identity_after_a_relation_is_recorded():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(
+        _payload([blocks[1]], title="A related claim", summary="A second claim.")
+    )
+
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+    related = knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], evidence)
+
+    assert related["unit_id"] == unit["unit_id"]
+    assert related["content_hash"] == unit["content_hash"]
+
+
+def test_a_relation_written_before_v2_is_still_readable_and_never_refused():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(
+        _payload([blocks[1]], title="A related claim", summary="A second claim.")
+    )
+
+    path = knowledge_units._unit_path(unit["unit_id"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["relations"] = [
+        {
+            "type": "supports",
+            "to": other["unit_id"],
+            "evidence": [
+                {
+                    "material_id": MATERIAL,
+                    "evidence_id": blocks[0]["evidence_id"],
+                    "locator": blocks[0]["locator"],
+                }
+            ],
+            "at": "2026-01-01T00:00:00Z",
+        }
+    ]
+    path.write_text(json.dumps(stored), encoding="utf-8")
+
+    loaded = knowledge_units.load_unit(unit["unit_id"])
+    view = knowledge_units.relation_view(loaded)
+    assert len(view) == 1
+    assert view[0]["legacy"] is True
+    assert view[0]["to_unit_id"] == other["unit_id"]
+    assert view[0]["from_unit_id"] == unit["unit_id"]
+    assert view[0]["content_hash"] is None
+
+    verified = knowledge_units.verify_unit(unit["unit_id"])
+    assert verified["status"] == "verified"
+    assert "relation supports ->" in knowledge_units.render_unit(loaded)
 
 
 def test_cli_writes_nothing_until_the_extension_is_on(tmp_path, capsys, monkeypatch):
@@ -262,3 +350,213 @@ def test_cli_writes_nothing_until_the_extension_is_on(tmp_path, capsys, monkeypa
     assert "candidate" in capsys.readouterr().out
     assert cli.main(["knowledge", "list", "--json"]) == 0
     assert len(json.loads(capsys.readouterr().out)) == 1
+
+
+def test_a_write_aimed_at_a_version_that_has_moved_is_refused():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    stale = unit["version"]
+
+    knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+
+    with pytest.raises(knowledge_units.UnitError) as refusal:
+        knowledge_units.update_unit(
+            unit["unit_id"], {"summary": "Written from the stale copy."}, expected_version=stale
+        )
+    assert refusal.value.code == "version_conflict"
+    assert refusal.value.details == {"expected": 1, "actual": 2}
+    assert knowledge_units.load_unit(unit["unit_id"])["summary"] == "A sharper summary."
+
+
+def test_every_writing_command_honours_the_expected_version():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(
+        _payload([blocks[1]], title="A related claim", summary="A second claim.")
+    )
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+    knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+
+    writers = {
+        "update": lambda: knowledge_units.update_unit(
+            unit["unit_id"], {"summary": "again"}, expected_version=1
+        ),
+        "archive": lambda: knowledge_units.archive_unit(unit["unit_id"], expected_version=1),
+        "rollback": lambda: knowledge_units.rollback_unit(unit["unit_id"], 1, expected_version=1),
+        "relate": lambda: knowledge_units.relate_units(
+            unit["unit_id"], "supports", other["unit_id"], evidence, expected_version=1
+        ),
+        "verify": lambda: knowledge_units.verify_unit(unit["unit_id"], expected_version=1),
+    }
+    for name, writer in writers.items():
+        with pytest.raises(knowledge_units.UnitError) as refusal:
+            writer()
+        assert refusal.value.code == "version_conflict", name
+
+    promoted = knowledge_units.verify_unit(unit["unit_id"])
+    with pytest.raises(knowledge_units.UnitError) as stale_promote:
+        knowledge_units.promote_unit(unit["unit_id"], expected_version=promoted["version"] - 1)
+    assert stale_promote.value.code == "version_conflict"
+
+
+def test_two_writers_that_read_the_same_version_cannot_both_win(tmp_path):
+    """A deterministic compare-and-set: the loser of every pair is refused."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    version = unit["version"]
+
+    def write_summary(index: int) -> str:
+        try:
+            knowledge_units.update_unit(
+                unit["unit_id"],
+                {"summary": f"Writer {index} saw version {version}."},
+                expected_version=version,
+            )
+        except knowledge_units.UnitError as exc:
+            return exc.code
+        return "written"
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        outcomes = list(pool.map(write_summary, range(4)))
+
+    assert outcomes.count("written") == 1
+    assert outcomes.count("version_conflict") == 3
+    final = knowledge_units.load_unit(unit["unit_id"])
+    assert final["version"] == version + 1
+    assert final["summary"].startswith("Writer ")
+
+
+def test_verify_reports_refs_that_carry_no_revision_without_refusing_them():
+    blocks = _seed_material(storage.resolve_material_root())
+    revisionless = dict(_payload(blocks)["source_refs"][0])
+    revisionless.pop("source_revision")
+    unit = knowledge_units.create_unit(_payload(blocks, source_refs=[revisionless]))
+    assert "source_revision" not in knowledge_units.load_unit(unit["unit_id"])["source_refs"][0]
+
+    verified = knowledge_units.verify_unit(unit["unit_id"])
+    assert verified["status"] == "verified"
+    assert verified["unpinned_refs"] == 1
+    assert "no source_revision recorded" in verified["warnings"][0]
+
+
+def test_pinned_refs_report_no_unpinned_warning():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    verified = knowledge_units.verify_unit(unit["unit_id"])
+    assert verified["unpinned_refs"] == 0
+    assert verified["warnings"] == []
+
+
+def test_promote_refuses_a_unit_whose_evidence_moved_after_it_was_verified(tmp_path):
+    root = storage.resolve_material_root()
+    blocks = _seed_material(root)
+    unit = knowledge_units.create_unit(_payload(blocks))
+    verified = knowledge_units.verify_unit(unit["unit_id"])
+    assert verified["status"] == "verified"
+
+    # The material is re-fetched at a new revision: the refs still resolve, but
+    # not against the revision the verification fingerprint names.
+    record = json.loads((root / f"{MATERIAL}.json").read_text(encoding="utf-8"))
+    record["source_revision"] = "rev-2"
+    (root / f"{MATERIAL}.json").write_text(json.dumps(record), encoding="utf-8")
+    ref = dict(verified["source_refs"][0])
+    ref["source_revision"] = "rev-2"
+    path = knowledge_units._unit_path(unit["unit_id"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["source_refs"] = [ref]
+    path.write_text(json.dumps(stored), encoding="utf-8")
+
+    with pytest.raises(knowledge_units.UnitError) as refusal:
+        knowledge_units.promote_unit(unit["unit_id"])
+    assert refusal.value.code == "verification_stale"
+    assert refusal.value.details["expected"] == verified["verified_against"]
+    assert refusal.value.details["actual"] != verified["verified_against"]
+    assert "verify it again" in str(refusal.value)
+    assert knowledge_units.load_unit(unit["unit_id"])["status"] == "verified"
+
+
+def test_promote_refuses_a_unit_whose_evidence_no_longer_resolves(tmp_path):
+    root = storage.resolve_material_root()
+    blocks = _seed_material(root)
+    unit = knowledge_units.create_unit(_payload(blocks))
+    knowledge_units.verify_unit(unit["unit_id"])
+
+    (root / f"{MATERIAL}.json").unlink()
+    with pytest.raises(knowledge_units.UnitError) as refusal:
+        knowledge_units.promote_unit(unit["unit_id"])
+    assert refusal.value.code == "evidence_unresolved"
+
+
+def test_a_unit_without_a_content_hash_loads_and_verifies_without_being_rewritten(tmp_path):
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    path = knowledge_units._unit_path(unit["unit_id"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored.pop("content_hash")
+    stored["schema_version"] = "envoy.knowledge-unit/1"
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    before = path.read_bytes()
+    mtime = path.stat().st_mtime_ns
+
+    loaded = knowledge_units.load_unit(unit["unit_id"])
+    assert "content_hash" not in loaded
+    listed = knowledge_units.list_units()
+    assert [row["unit_id"] for row in listed] == [unit["unit_id"]]
+    print(knowledge_units.render_unit(loaded))
+    assert knowledge_units.unit_content_hash(loaded) == unit["content_hash"]
+
+    # Reading is not writing: the file is byte-identical and untouched.
+    assert path.read_bytes() == before
+    assert path.stat().st_mtime_ns == mtime
+
+
+def test_the_content_hash_moves_only_when_the_body_moves():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    assert unit["content_hash"] == knowledge_units.content_hash_of(unit)
+    assert unit["unit_id"] == knowledge_units._unit_identity(unit)
+
+    annotated = knowledge_units.relate_units(
+        unit["unit_id"],
+        "supports",
+        knowledge_units.create_unit(
+            _payload([blocks[1]], title="A related claim", summary="A second claim.")
+        )["unit_id"],
+        [dict(unit["source_refs"][0])],
+    )
+    assert annotated["content_hash"] == unit["content_hash"]
+
+    edited = knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+    assert edited["content_hash"] != unit["content_hash"]
+    assert edited["version"] == unit["version"] + 1
+    assert edited["unit_id"] == unit["unit_id"]
+
+
+def test_the_cli_refuses_a_write_when_if_version_is_stale(tmp_path, capsys, monkeypatch):
+    blocks = _seed_material(storage.resolve_material_root())
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units")
+    body = tmp_path / "unit.json"
+    body.write_text(json.dumps(_payload(blocks)), encoding="utf-8")
+
+    assert cli.main(["knowledge", "create", "--file", str(body), "--json"]) == 0
+    unit_id = json.loads(capsys.readouterr().out)["unit_id"]
+    patch = tmp_path / "patch.json"
+    patch.write_text(json.dumps({"summary": "A sharper summary."}), encoding="utf-8")
+
+    assert cli.main(["knowledge", "update", unit_id, "--file", str(patch), "--if-version", "1"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["knowledge", "update", unit_id, "--file", str(patch), "--if-version", "1"]) == 1
+    failure = json.loads(capsys.readouterr().out)
+    assert failure["error"] == "version_conflict"
+    assert failure["expected"] == 1
+    assert failure["actual"] == 2
+
+    assert cli.main(["knowledge", "archive", unit_id, "--if-version", "2"]) == 0
+    assert "[archived]" in capsys.readouterr().out

@@ -14,20 +14,26 @@ only stores it, checks it against evidence and tracks its versions.
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 import os
 import re
 import tempfile
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from . import evidence_pack, storage
 
-SCHEMA = "envoy.knowledge-unit/1"
+SCHEMA = "envoy.knowledge-unit/2"
+SCHEMAS = ("envoy.knowledge-unit/1", SCHEMA)
 UNIT_DIR = "knowledge-units"
 
 UNIT_ID = re.compile(r"^ku-[a-f0-9]{16}$")
+RELATION_ID = re.compile(r"^kr-[a-f0-9]{16}$")
 EVIDENCE_ID = re.compile(r"^ev-[a-f0-9]{16}$")
 MATERIAL_ID = evidence_pack.MATERIAL_ID
 
@@ -62,6 +68,74 @@ def units_dir(*, root: Path | None = None) -> Path:
     return base / UNIT_DIR
 
 
+_LOCK_STATE = threading.local()
+
+
+@contextmanager
+def _units_lock(*, root: Path | None = None) -> Iterator[None]:
+    """Serialise writers so a compare-and-set cannot be raced.
+
+    Reads never take the lock: every write replaces a whole file atomically, so an
+    unlocked reader always sees a complete unit, just possibly a stale one. Writers
+    do need it, because checking ``expected_version`` and then writing is two steps
+    and two writers can otherwise both see the version they expected to find.
+    """
+
+    if getattr(_LOCK_STATE, "depth", 0):
+        # Re-entering from the same thread would deadlock: flock is per open file
+        # description, so a second acquire on a fresh handle waits on ourselves.
+        _LOCK_STATE.depth += 1
+        try:
+            yield
+        finally:
+            _LOCK_STATE.depth -= 1
+        return
+    directory = units_dir(root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    handle = open(str(directory / ".units.lock"), "a+b")
+    windows = os.name == "nt"
+    if windows:  # pragma: no cover - Windows only
+        import msvcrt
+
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+    else:
+        import fcntl
+    try:
+        if windows:  # pragma: no cover - Windows only
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        _LOCK_STATE.depth = 1
+        try:
+            yield
+        finally:
+            _LOCK_STATE.depth = 0
+    finally:
+        try:
+            if windows:  # pragma: no cover - Windows only
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _serialised(writer):
+    """Run a writing command under the store lock; ``root`` stays keyword-only."""
+
+    @functools.wraps(writer)
+    def wrapped(*args, **kwargs):
+        with _units_lock(root=kwargs.get("root")):
+            return writer(*args, **kwargs)
+
+    return wrapped
+
+
 def _canonical(payload) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
@@ -83,12 +157,44 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
+CONTENT_FIELDS = (
+    "type",
+    "title",
+    "summary",
+    "conditions",
+    "steps",
+    "limitations",
+    "source_refs",
+)
+
+
+def _content_fields(body: dict) -> dict:
+    return {key: body.get(key) for key in CONTENT_FIELDS}
+
+
+def content_hash_of(body: dict) -> str:
+    """Fingerprint of what a unit currently says; moves only when the body moves."""
+
+    return hashlib.sha256(_canonical(_content_fields(body)).encode("utf-8")).hexdigest()[:16]
+
+
+def unit_content_hash(unit: dict) -> str:
+    """The stored content hash, or the computed one for records written before it existed."""
+
+    stored = unit.get("content_hash")
+    if isinstance(stored, str) and stored.strip():
+        return stored.strip()
+    return content_hash_of(unit)
+
+
+def _stamp_content_hash(unit: dict) -> dict:
+    unit["content_hash"] = content_hash_of(unit)
+    return unit
+
+
 def _unit_identity(body: dict) -> str:
-    fields = {
-        key: body.get(key)
-        for key in ("type", "title", "summary", "conditions", "steps", "limitations", "source_refs")
-    }
-    return "ku-" + hashlib.sha256(_canonical(fields).encode("utf-8")).hexdigest()[:16]
+    # The identity is frozen at creation: later versions of the same claim keep it.
+    return "ku-" + content_hash_of(body)
 
 
 def _require_text(value, field: str, *, limit: int = SHORT_LIMIT) -> str:
@@ -205,6 +311,7 @@ def _snapshot(unit: dict, *, root: Path | None = None) -> Path:
     return path
 
 
+@_serialised
 def create_unit(payload: dict, *, root: Path | None = None) -> dict:
     """Store a new candidate; an identical body returns the existing unit."""
 
@@ -217,6 +324,7 @@ def create_unit(payload: dict, *, root: Path | None = None) -> dict:
         "schema_version": SCHEMA,
         "unit_id": unit_id,
         "version": 1,
+        "content_hash": content_hash_of(body),
         "status": CANDIDATE,
         "relations": [],
         "verified_at": None,
@@ -231,10 +339,37 @@ def create_unit(payload: dict, *, root: Path | None = None) -> dict:
     return unit
 
 
-def _check_refs(unit: dict, *, root: Path | None = None) -> list[str]:
-    """Check every source ref against the material it claims to come from."""
+def _material_revision(built: dict) -> str:
+    try:
+        return str(built["document"]["source"]["revision"])
+    except (KeyError, TypeError):
+        return ""
+
+
+def _verification_fingerprint(unit: dict, revisions: dict[str, str]) -> str:
+    """What the unit was checked against: its refs plus the revisions seen at check time."""
+
+    return hashlib.sha256(
+        _canonical(
+            {
+                "refs": unit.get("source_refs") or [],
+                "material_revisions": sorted({revisions.get(ref["material_id"], "") for ref in unit.get("source_refs") or []}),
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _check_refs(unit: dict, *, root: Path | None = None) -> tuple[list[str], list[str], dict[str, str]]:
+    """Check every source ref against the material it claims to come from.
+
+    Returns the problems that block verification, the refs that carry no
+    ``source_revision`` (visible, never fatal: a ref written before revisions were
+    recorded is still a ref), and the revisions observed while checking.
+    """
 
     problems: list[str] = []
+    unpinned: list[str] = []
+    revisions: dict[str, str] = {}
     material_cache: dict[str, dict] = {}
     for index, ref in enumerate(unit.get("source_refs") or []):
         material_id = ref["material_id"]
@@ -250,6 +385,7 @@ def _check_refs(unit: dict, *, root: Path | None = None) -> list[str]:
         built = material_cache[material_id]
         if not built:
             continue
+        revisions[material_id] = _material_revision(built)
         index_map = built["index"]
         evidence = index_map.get(ref["evidence_id"])
         if evidence is None:
@@ -257,50 +393,81 @@ def _check_refs(unit: dict, *, root: Path | None = None) -> list[str]:
                 f"source_refs[{index}]: {ref['evidence_id']} is not in {material_id}"
             )
             continue
-        revision = built["document"]["source"]["revision"]
+        revision = _material_revision(built)
         claimed = ref.get("source_revision")
-        if claimed and claimed != revision:
+        if not claimed:
+            unpinned.append(
+                f"source_refs[{index}]: no source_revision recorded; the check is not pinned to a revision"
+            )
+        elif claimed != revision:
             problems.append(
                 f"source_refs[{index}]: material revision moved ({claimed} -> {revision})"
             )
         stored_locator = evidence.get("locator")
         if stored_locator is not None and ref.get("locator") != stored_locator:
             problems.append(f"source_refs[{index}]: locator does not match the material")
-    return problems
+    return problems, unpinned, revisions
 
 
-def verify_unit(unit_id: str, *, root: Path | None = None) -> dict:
-    """Move a unit to ``verified`` only when every ref still resolves."""
+def _check_expected_version(unit: dict, expected_version: int | None) -> None:
+    """Refuse a write aimed at a version that has since moved (compare-and-set)."""
+
+    if expected_version is None:
+        return
+    if not isinstance(expected_version, int) or isinstance(expected_version, bool):
+        raise UnitError(
+            "invalid_version",
+            f"expected version must be an integer, got {expected_version!r}",
+        )
+    actual = int(unit["version"])
+    if actual != expected_version:
+        raise UnitError(
+            "version_conflict",
+            f"{unit['unit_id']} is at version {actual}, not {expected_version}; reload and retry",
+            expected=expected_version,
+            actual=actual,
+        )
+
+
+@_serialised
+def verify_unit(unit_id: str, *, expected_version: int | None = None, root: Path | None = None) -> dict:
+    """Move a unit to ``verified`` only when every ref still resolves.
+
+    ``unpinned_refs`` counts the refs that carry no ``source_revision``; those are
+    reported back rather than refused, so units written before revisions were
+    recorded stay verifiable.
+    """
 
     unit = load_unit(unit_id, root=root)
+    _check_expected_version(unit, expected_version)
     if unit["status"] == ARCHIVED:
         raise UnitError("unit_archived", f"{unit_id} is archived; reopen it before verifying")
-    problems = _check_refs(unit, root=root)
+    problems, unpinned, revisions = _check_refs(unit, root=root)
+    problems = problems + _check_relations(unit)
     if problems:
         raise UnitError("evidence_unresolved", "evidence does not resolve", problems=problems)
-    fingerprint = hashlib.sha256(
-        _canonical(
-            {
-                "refs": unit["source_refs"],
-                "material_revisions": sorted(
-                    {str(ref.get("source_revision") or "") for ref in unit["source_refs"]}
-                ),
-            }
-        ).encode("utf-8")
-    ).hexdigest()
     unit["status"] = VERIFIED
     unit["verified_at"] = _now()
-    unit["verified_against"] = fingerprint
+    unit["verified_against"] = _verification_fingerprint(unit, revisions)
     unit["history"].append(
         {"version": unit["version"], "at": unit["verified_at"], "change": "verified", "status": VERIFIED}
     )
-    return _save_unit(unit, root=root)
+    _stamp_content_hash(unit)
+    _save_unit(unit, root=root)
+    return {**unit, "unpinned_refs": len(unpinned), "warnings": list(unpinned)}
 
 
-def promote_unit(unit_id: str, *, root: Path | None = None) -> dict:
-    """Move a verified unit to ``promoted`` once it is usable, not merely true."""
+@_serialised
+def promote_unit(unit_id: str, *, expected_version: int | None = None, root: Path | None = None) -> dict:
+    """Move a verified unit to ``promoted`` once it is usable, not merely true.
+
+    Promotion re-checks the evidence instead of trusting the stored status: a unit
+    whose material moved on since ``verify`` is refused with ``verification_stale``
+    rather than promoted on a fingerprint that no longer describes anything.
+    """
 
     unit = load_unit(unit_id, root=root)
+    _check_expected_version(unit, expected_version)
     if unit["status"] != VERIFIED:
         raise UnitError("needs_verification", f"{unit_id} is {unit['status']}; verify its evidence first")
     missing = [
@@ -316,27 +483,54 @@ def promote_unit(unit_id: str, *, root: Path | None = None) -> dict:
             "a promoted unit needs conditions, steps, limitations and at least one test",
             missing=missing,
         )
+    problems, unpinned, revisions = _check_refs(unit, root=root)
+    problems = problems + _check_relations(unit)
+    if problems:
+        raise UnitError(
+            "evidence_unresolved",
+            "evidence no longer resolves; verify the unit again",
+            problems=problems,
+        )
+    current = _verification_fingerprint(unit, revisions)
+    if unit.get("verified_against") != current:
+        raise UnitError(
+            "verification_stale",
+            f"{unit_id} was verified against evidence that has since changed; verify it again",
+            expected=unit.get("verified_against"),
+            actual=current,
+        )
     unit["status"] = PROMOTED
     unit["history"].append(
         {"version": unit["version"], "at": _now(), "change": "promoted", "status": PROMOTED}
     )
-    return _save_unit(unit, root=root)
+    _stamp_content_hash(unit)
+    _save_unit(unit, root=root)
+    return {**unit, "unpinned_refs": len(unpinned), "warnings": list(unpinned)}
 
 
-def archive_unit(unit_id: str, *, reason: str = "", root: Path | None = None) -> dict:
+@_serialised
+def archive_unit(
+    unit_id: str, *, reason: str = "", expected_version: int | None = None, root: Path | None = None
+) -> dict:
     unit = load_unit(unit_id, root=root)
+    _check_expected_version(unit, expected_version)
     unit["status"] = ARCHIVED
     entry = {"version": unit["version"], "at": _now(), "change": "archived", "status": ARCHIVED}
     if reason.strip():
         entry["reason"] = reason.strip()
     unit["history"].append(entry)
+    _stamp_content_hash(unit)
     return _save_unit(unit, root=root)
 
 
-def update_unit(unit_id: str, patch: dict, *, root: Path | None = None) -> dict:
+@_serialised
+def update_unit(
+    unit_id: str, patch: dict, *, expected_version: int | None = None, root: Path | None = None
+) -> dict:
     """Edit a unit into a new version; any earlier verification is now void."""
 
     unit = load_unit(unit_id, root=root)
+    _check_expected_version(unit, expected_version)
     if not isinstance(patch, dict):
         raise UnitError("invalid_unit", "update needs an object")
     merged = copy.deepcopy(unit)
@@ -353,6 +547,7 @@ def update_unit(unit_id: str, patch: dict, *, root: Path | None = None) -> dict:
     revised["status"] = CANDIDATE
     revised["verified_at"] = None
     revised["verified_against"] = None
+    _stamp_content_hash(revised)
     revised["history"] = list(unit["history"]) + [
         {
             "version": revised["version"],
@@ -367,10 +562,14 @@ def update_unit(unit_id: str, patch: dict, *, root: Path | None = None) -> dict:
     return revised
 
 
-def rollback_unit(unit_id: str, version: int, *, root: Path | None = None) -> dict:
+@_serialised
+def rollback_unit(
+    unit_id: str, version: int, *, expected_version: int | None = None, root: Path | None = None
+) -> dict:
     """Restore an older body as a new version, so history is never rewritten."""
 
     unit = load_unit(unit_id, root=root)
+    _check_expected_version(unit, expected_version)
     if not isinstance(version, int) or version < 1 or version >= int(unit["version"]):
         raise UnitError("invalid_version", f"version must be between 1 and {int(unit['version']) - 1}")
     snapshot = _snapshot_path(unit_id, version, root=root)
@@ -390,6 +589,7 @@ def rollback_unit(unit_id: str, version: int, *, root: Path | None = None) -> di
     rollback["status"] = CANDIDATE
     rollback["verified_at"] = None
     rollback["verified_against"] = None
+    _stamp_content_hash(rollback)
     rollback["history"] = list(unit["history"]) + [
         {
             "version": rollback["version"],
@@ -404,12 +604,103 @@ def rollback_unit(unit_id: str, version: int, *, root: Path | None = None) -> di
     return rollback
 
 
-def relate_units(from_id: str, relation: str, to_id: str, evidence, *, root: Path | None = None) -> dict:
-    """Record how two units bear on each other; the relation must cite evidence."""
+def _relation_fingerprint(entry: dict) -> str:
+    """Fingerprint of what a relation asserts: its type, its ends and its evidence."""
+
+    payload = {
+        key: entry.get(key)
+        for key in ("type", "from_unit_id", "to_unit_id", "evidence", "inverse_of")
+    }
+    return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()[:16]
+
+
+def _relation_id(entry: dict) -> str:
+    payload = {
+        key: entry.get(key)
+        for key in ("type", "from_unit_id", "to_unit_id", "evidence", "inverse_of", "at")
+    }
+    return "kr-" + hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()[:16]
+
+
+def relation_view(unit: dict) -> list[dict]:
+    """Normalize stored relations, including the inline entries written before v2.
+
+    Pre-v2 records hold ``{"type", "to", "evidence", "at"}`` on the source only.
+    They stay readable: the view fills in the missing ends and marks them
+    ``legacy`` instead of refusing the unit.
+    """
+
+    rows = []
+    for entry in unit.get("relations") or []:
+        if not isinstance(entry, dict):
+            continue
+        to_unit_id = entry.get("to_unit_id") or entry.get("to")
+        rows.append(
+            {
+                "relation_id": entry.get("relation_id"),
+                "type": entry.get("type"),
+                "from_unit_id": entry.get("from_unit_id") or unit.get("unit_id"),
+                "to_unit_id": to_unit_id,
+                "from_version": entry.get("from_version"),
+                "inverse_of": entry.get("inverse_of"),
+                "evidence": entry.get("evidence") or [],
+                "at": entry.get("at"),
+                "content_hash": entry.get("content_hash"),
+                "legacy": "to_unit_id" not in entry,
+            }
+        )
+    return rows
+
+
+def _check_relations(unit: dict) -> list[str]:
+    """Check that every stored relation entry still says what its fingerprint says.
+
+    Legacy inline entries carry no fingerprint and are skipped: they are readable,
+    they are simply not verifiable.
+    """
+
+    problems: list[str] = []
+    for index, entry in enumerate(unit.get("relations") or []):
+        if not isinstance(entry, dict) or "to_unit_id" not in entry:
+            continue
+        relation_id = entry.get("relation_id")
+        if not isinstance(relation_id, str) or not RELATION_ID.fullmatch(relation_id):
+            problems.append(f"relations[{index}]: relation_id is not a relation id")
+            continue
+        if entry.get("content_hash") != _relation_fingerprint(entry):
+            problems.append(f"relations[{index}]: content hash does not match the entry")
+    return problems
+
+
+def list_relations(unit_id: str, *, root: Path | None = None) -> list[dict]:
+    """Every relation stored on a unit, in both directions."""
+
+    return relation_view(load_unit(unit_id, root=root))
+
+
+@_serialised
+def relate_units(
+    from_id: str,
+    relation: str,
+    to_id: str,
+    evidence,
+    *,
+    expected_version: int | None = None,
+    root: Path | None = None,
+) -> dict:
+    """Record how two units bear on each other; the relation must cite evidence.
+
+    The relation is stored as a standalone record on both units: ``from`` gets the
+    asserted entry, ``to`` gets the reversed mirror carrying ``inverse_of``, so the
+    pair is one fact with two ends rather than two independent claims. Each end has
+    its own ``relation_id``, its own ``content_hash`` and the version it was
+    written against, so either side stays checkable on its own.
+    """
 
     if relation not in RELATION_TYPES:
         raise UnitError("invalid_relation", f"relation must be one of: {', '.join(RELATION_TYPES)}")
     source = load_unit(from_id, root=root)
+    _check_expected_version(source, expected_version)
     target = load_unit(to_id, root=root)
     if from_id == to_id:
         raise UnitError("invalid_relation", "a unit cannot relate to itself")
@@ -427,12 +718,47 @@ def relate_units(from_id: str, relation: str, to_id: str, evidence, *, root: Pat
                 f"evidence[{index}] is not cited by either unit; cite it on a unit first",
             )
         checked.append(ref)
-    updated = copy.deepcopy(source)
-    for existing in updated["relations"]:
-        if existing["type"] == relation and existing["to"] == to_id:
+    for existing in relation_view(source):
+        if existing["inverse_of"]:
+            continue
+        if existing["type"] == relation and existing["to_unit_id"] == to_id:
             raise UnitError("relation_exists", f"{from_id} already {relation} {to_id}")
-    updated["relations"].append({"type": relation, "to": to_id, "evidence": checked, "at": _now()})
-    return _save_unit(updated, root=root)
+    at = _now()
+    entry = {
+        "relation_id": "",
+        "type": relation,
+        "from_unit_id": from_id,
+        "to_unit_id": to_id,
+        "from_version": int(source["version"]),
+        "inverse_of": None,
+        "evidence": checked,
+        "at": at,
+        "content_hash": "",
+    }
+    entry["content_hash"] = _relation_fingerprint(entry)
+    entry["relation_id"] = _relation_id(entry)
+    inverse = {
+        "relation_id": "",
+        "type": relation,
+        "from_unit_id": to_id,
+        "to_unit_id": from_id,
+        "from_version": int(target["version"]),
+        "inverse_of": entry["relation_id"],
+        "evidence": copy.deepcopy(checked),
+        "at": at,
+        "content_hash": "",
+    }
+    inverse["content_hash"] = _relation_fingerprint(inverse)
+    inverse["relation_id"] = _relation_id(inverse)
+    updated = copy.deepcopy(source)
+    updated.setdefault("relations", []).append(entry)
+    _stamp_content_hash(updated)
+    _save_unit(updated, root=root)
+    mirrored = copy.deepcopy(target)
+    mirrored.setdefault("relations", []).append(inverse)
+    _stamp_content_hash(mirrored)
+    _save_unit(mirrored, root=root)
+    return updated
 
 
 def list_units(*, status: str | None = None, root: Path | None = None) -> list[dict]:
@@ -460,14 +786,16 @@ def render_unit(unit: dict) -> str:
         f"{unit['unit_id']}  v{unit['version']}  [{unit['status']}]  {unit['type']}",
         f"  {unit['title']}",
         f"  {unit['summary']}",
+        f"  content {unit_content_hash(unit)}",
     ]
     for field in ("conditions", "steps", "limitations"):
         for item in unit.get(field) or []:
             lines.append(f"  {field[:-1]}: {item}")
     for ref in unit.get("source_refs") or []:
         lines.append(f"  evidence {ref['material_id']} {ref['evidence_id']}")
-    for relation in unit.get("relations") or []:
-        lines.append(f"  relation {relation['type']} -> {relation['to']}")
+    for relation in relation_view(unit):
+        mirror = f" (inverse of {relation['inverse_of']})" if relation["inverse_of"] else ""
+        lines.append(f"  relation {relation['type']} -> {relation['to_unit_id']}{mirror}")
     return "\n".join(lines)
 
 

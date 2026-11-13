@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 
 import pytest
 
@@ -315,3 +316,142 @@ def test_cli_batch_resume_of_an_unknown_batch_is_an_error(roots, capsys):
     assert cli.main(["batch", "--resume", "batch-000000000000", "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert "batch-000000000000" in payload["message"]
+
+
+# The audit contract: every item carries these fields, and they must survive a
+# round trip through state.json, not just live in the returned dict.
+AUDIT_FIELDS = (
+    "batch_id",
+    "item_id",
+    "attempt_id",
+    "material_id",
+    "status",
+    "started_at",
+    "finished_at",
+    "work_seconds",
+    "error_code",
+)
+
+
+def _raw_state(batch_id: str) -> dict:
+    """Read state.json as it is on disk, bypassing the load-time normalisation."""
+
+    return json.loads(batch.state_path(batch_id).read_text(encoding="utf-8"))
+
+
+def test_a_new_batch_writes_every_audit_field_into_the_state_file(roots):
+    state = batch.create_batch(["https://example.com/a", "https://example.com/b"])
+
+    raw = _raw_state(state["batch_id"])
+
+    assert len(raw["items"]) == 2
+    for item in raw["items"]:
+        for field in AUDIT_FIELDS:
+            assert field in item, field
+        assert item["batch_id"] == raw["batch_id"]
+        assert item["item_id"] == batch.item_id_for(raw["batch_id"], item["index"])
+        assert item["attempt_id"] is None
+        assert item["status"] == "pending"
+        assert item["material_id"] is None
+        assert item["error_code"] is None
+        assert item["started_at"] is None
+        assert item["finished_at"] is None
+        assert item["work_seconds"] == 0.0
+        assert item["attempts_log"] == []
+        # The attempt counter stays a plain int; other tooling reads it directly.
+        assert isinstance(item["attempts"], int) and item["attempts"] == 0
+
+
+def test_item_and_attempt_ids_are_derived_from_position_not_generated(roots):
+    urls = ["https://example.com/a", "https://example.com/b"]
+
+    first = batch.create_batch(urls, fresh=True)
+    second = batch.create_batch(urls, fresh=True)
+
+    assert [item["item_id"] for item in first["items"]] == [
+        item["item_id"] for item in second["items"]
+    ]
+    assert first["items"][0]["item_id"] == batch.item_id_for(first["batch_id"], 0)
+    assert first["items"][1]["item_id"] == batch.item_id_for(first["batch_id"], 1)
+    assert batch.attempt_id_for(first["batch_id"], 1, 3) == (
+        f"{batch.item_id_for(first['batch_id'], 1)}:3"
+    )
+
+
+def test_every_attempt_is_logged_in_the_state_file(roots):
+    calls = []
+
+    def flaky(request):
+        calls.append(request.request_id)
+        if len(calls) == 1:
+            raise RuntimeError("first try exploded")
+        return _Response(material_id="mat-9", text="ok")
+
+    state = batch.create_batch(["https://example.com/a"], max_attempts=2)
+    first = batch.run_batch(state["batch_id"], reader=flaky)
+    assert first["status"] == "paused"
+
+    second = batch.run_batch(state["batch_id"], reader=flaky)
+    assert second["status"] == "completed"
+
+    item = _raw_state(state["batch_id"])["items"][0]
+    assert item["attempts"] == 2
+    assert item["attempt_id"] == batch.attempt_id_for(state["batch_id"], 0, 2)
+    log = item["attempts_log"]
+    assert [entry["attempt"] for entry in log] == [1, 2]
+    assert [entry["attempt_id"] for entry in log] == [
+        batch.attempt_id_for(state["batch_id"], 0, 1),
+        batch.attempt_id_for(state["batch_id"], 0, 2),
+    ]
+    assert log[0]["status"] == "pending"
+    assert log[0]["error_code"] == "reader_error"
+    assert log[1]["status"] == "completed"
+    assert log[1]["material_id"] == "mat-9"
+    for entry in log:
+        assert entry["started_at"] and entry["finished_at"]
+        assert entry["work_seconds"] >= 0.0
+    # Timestamps are ISO-8601 with a timezone, so two machines agree on them.
+    assert datetime.fromisoformat(log[0]["started_at"]).tzinfo is not None
+    assert datetime.fromisoformat(item["finished_at"]).tzinfo is not None
+    # The flattened fields describe the latest attempt.
+    assert item["status"] == "completed"
+    assert item["finished_at"] == log[1]["finished_at"]
+
+
+def test_an_oversized_attempt_log_is_trimmed_when_the_batch_is_loaded(roots):
+    state = batch.create_batch(["https://example.com/a"])
+    raw = _raw_state(state["batch_id"])
+    raw["items"][0]["attempts_log"] = [
+        {"attempt_id": f"a{n}", "attempt": n}
+        for n in range(batch.MAX_ATTEMPT_LOG_ENTRIES + 5)
+    ]
+    batch.state_path(state["batch_id"]).write_text(json.dumps(raw), encoding="utf-8")
+
+    loaded = batch.load_batch(state["batch_id"])
+
+    log = loaded["items"][0]["attempts_log"]
+    assert len(log) == batch.MAX_ATTEMPT_LOG_ENTRIES
+    # The newest attempts are the ones kept.
+    assert log[-1]["attempt"] == batch.MAX_ATTEMPT_LOG_ENTRIES + 4
+
+
+def test_a_state_file_from_an_older_build_loads_and_gains_the_audit_fields(roots):
+    state = batch.create_batch(["https://example.com/a"])
+    raw = _raw_state(state["batch_id"])
+    for field in AUDIT_FIELDS + ("attempts_log",):
+        raw["items"][0].pop(field, None)
+    raw["items"][0]["status"] = "completed"
+    raw["items"][0]["message"] = "kept as written"
+    batch.state_path(state["batch_id"]).write_text(json.dumps(raw), encoding="utf-8")
+
+    loaded = batch.load_batch(state["batch_id"])
+
+    item = loaded["items"][0]
+    # Missing fields are filled; the values the file does carry are untouched.
+    assert item["status"] == "completed"
+    assert item["message"] == "kept as written"
+    assert item["item_id"] == batch.item_id_for(loaded["batch_id"], 0)
+    assert item["batch_id"] == loaded["batch_id"]
+    assert item["attempt_id"] is None
+    assert item["attempts_log"] == []
+    assert item["work_seconds"] == 0.0

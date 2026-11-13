@@ -49,6 +49,12 @@ DEFAULT_PER_ITEM_SECONDS = 120
 DEFAULT_CONCURRENCY = 1
 MAX_CONCURRENCY = 4
 DEFAULT_MAX_ATTEMPTS = 2
+#: The item detail keeps the last N attempts only. ``state.json`` is rewritten
+#: in full on every attempt, so an unbounded log costs O(attempts^2) bytes and
+#: a batch that is resumed for hours would turn into a slow, fat file. Ten
+#: entries is well above ``DEFAULT_MAX_ATTEMPTS`` (2), so a normal batch never
+#: loses a record; only pathological retry loops drop their oldest attempts.
+MAX_ATTEMPT_LOG_ENTRIES = 10
 
 #: An item in one of these states needs no further work from a plain resume.
 DONE_STATES = {"completed"}
@@ -94,6 +100,23 @@ def _safe_batch_id(batch_id: str) -> str:
     if not value or "/" in value or "\\" in value or value.startswith("."):
         raise BatchError("A batch id like batch-0123456789ab is required")
     return value
+
+
+def item_id_for(batch_id: str, index: int) -> str:
+    """A stable id for one link of a batch.
+
+    Derived from the batch id and the position, never from a counter or a
+    random value, so the same queue item keeps the same id across resumes on
+    any machine.
+    """
+
+    return f"{batch_id}:{int(index)}"
+
+
+def attempt_id_for(batch_id: str, index: int, attempt: int) -> str:
+    """A stable id for the n-th attempt at one item; 1 is the first attempt."""
+
+    return f"{item_id_for(batch_id, index)}:{int(attempt)}"
 
 
 @contextmanager
@@ -231,6 +254,9 @@ def create_batch(
                     "index": index,
                     "url": url,
                     "host": (urlparse(url).hostname or "").lower(),
+                    "batch_id": identity,
+                    "item_id": item_id_for(identity, index),
+                    "attempt_id": None,
                     "status": "pending",
                     "attempts": 0,
                     "result": None,
@@ -238,7 +264,10 @@ def create_batch(
                     "error_code": None,
                     "message": "",
                     "excerpt": "",
+                    "started_at": None,
+                    "finished_at": None,
                     "work_seconds": 0.0,
+                    "attempts_log": [],
                     "idempotency_key": f"batch:{identity}:{index}",
                     "updated_at": None,
                 }
@@ -249,6 +278,50 @@ def create_batch(
         _write_json(path, state)
         _write_text(report_path(identity), render_report(state))
         return state
+
+
+def _fill_item_audit(state: dict, item: dict) -> None:
+    """Give an item the audit fields a state file written by an older build lacks.
+
+    This only fills what is missing; a value the file does carry is never
+    overwritten, so loading and saving an old batch is not a rewrite of its
+    history.
+    """
+
+    batch_id = str(state.get("batch_id") or "")
+    index = int(item.get("index") or 0)
+    item.setdefault("batch_id", batch_id)
+    item.setdefault("item_id", item_id_for(batch_id, index))
+    item.setdefault("attempt_id", None)
+    item.setdefault("status", "pending")
+    item.setdefault("attempts", 0)
+    item.setdefault("material_id", None)
+    item.setdefault("error_code", None)
+    item.setdefault("started_at", None)
+    item.setdefault("finished_at", None)
+    item.setdefault("work_seconds", 0.0)
+    log = item.get("attempts_log")
+    if not isinstance(log, list):
+        item["attempts_log"] = []
+    elif len(log) > MAX_ATTEMPT_LOG_ENTRIES:
+        del log[: len(log) - MAX_ATTEMPT_LOG_ENTRIES]
+
+
+def _append_attempt(item: dict, entry: dict) -> None:
+    """Record one finished attempt, keeping only the most recent ones.
+
+    The bounded window is what keeps ``state.json`` small on a long resume: the
+    newest attempt is still in the flattened fields next to the log, so the
+    dropped oldest entries are duplicates of information already summarised.
+    """
+
+    log = item.get("attempts_log")
+    if not isinstance(log, list):
+        log = []
+        item["attempts_log"] = log
+    log.append(entry)
+    if len(log) > MAX_ATTEMPT_LOG_ENTRIES:
+        del log[: len(log) - MAX_ATTEMPT_LOG_ENTRIES]
 
 
 def _load(batch_id: str) -> dict | None:
@@ -263,6 +336,12 @@ def _load(batch_id: str) -> dict | None:
         raise BatchError(
             f"Batch {batch_id} was written by another version of Envoy"
         )
+    payload.setdefault("batch_id", batch_id)
+    items = payload.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                _fill_item_audit(payload, item)
     return payload
 
 
@@ -455,8 +534,15 @@ def _update_item(
     index: int,
     *,
     lock: threading.Lock,
+    attempt_entry: dict | None = None,
     **fields: Any,
 ) -> dict:
+    """Write one item's fields, and optionally log the attempt, under the lock.
+
+    Every mutation of an item goes through here so the state file is never
+    written with half an attempt recorded.
+    """
+
     with lock:
         item = None
         for candidate in state.get("items") or []:
@@ -466,6 +552,8 @@ def _update_item(
         if item is None:
             raise BatchError(f"Batch has no item {index}")
         item.update(fields)
+        if attempt_entry is not None:
+            _append_attempt(item, attempt_entry)
         item["updated_at"] = _now()
         state["updated_at"] = item["updated_at"]
         _write_json(state_path(str(state["batch_id"])), state)
@@ -569,12 +657,18 @@ def run_batch(
                 stop.set()
                 return
             attempt_budget = max(1, min(int(round(available)) or 1, per_item))
+            attempt_number = int(item.get("attempts") or 0) + 1
+            started_at = _now()
+            attempt_id = attempt_id_for(str(state["batch_id"]), index, attempt_number)
             _update_item(
                 state,
                 index,
                 lock=lock,
                 status="in_progress",
-                attempts=int(item.get("attempts") or 0) + 1,
+                attempts=attempt_number,
+                attempt_id=attempt_id,
+                started_at=started_at,
+                finished_at=None,
             )
             started = _clock()
             response = None
@@ -620,7 +714,23 @@ def run_batch(
                     pause["resume_token"] = pause.get("resume_token") or (state.get("login") or {}).get(
                         "resume_token"
                     )
-            item_row = _update_item(state, index, lock=lock, **fields)
+            finished_at = _now()
+            fields["finished_at"] = finished_at
+            fields["attempt_id"] = attempt_id
+            attempt_entry = {
+                "attempt_id": attempt_id,
+                "attempt": attempt_number,
+                "status": fields.get("status"),
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "work_seconds": round(elapsed, 3),
+                "material_id": fields.get("material_id"),
+                "error_code": fields.get("error_code"),
+                "message": str(fields.get("message") or "")[:200],
+            }
+            item_row = _update_item(
+                state, index, lock=lock, attempt_entry=attempt_entry, **fields
+            )
             with lock:
                 state["usage"]["work_seconds"] = round(
                     float((state.get("usage") or {}).get("work_seconds") or 0) + elapsed, 3
