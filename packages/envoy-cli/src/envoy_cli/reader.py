@@ -3597,6 +3597,11 @@ def _serialize_read_request(function):
         )
         identity = f"{request.source.url}\0{request_scope}"
         lock_id = hashlib.sha256(identity.encode()).hexdigest()
+        # Wall-clock instant at which this caller started waiting for whatever
+        # read of this source is in flight. The ledger only hands over a
+        # completed result that finished after this instant, so a shared read is
+        # always work this caller was waiting for, never an older result.
+        wait_started = time.time()
 
         def execute():
             token = _READ_WORK_DEADLINE.set(
@@ -3607,8 +3612,21 @@ def _serialize_read_request(function):
             finally:
                 _READ_WORK_DEADLINE.reset(token)
 
-        def run_locked():
-            if not request.idempotency_key:
+        def run_locked(lock_held: bool):
+            # Every read that holds its cross-process lock goes through the
+            # operation ledger, so a caller that had to wait for another read of
+            # the same source in the same scope picks up that finished work
+            # instead of fetching the source a second time. The caller's
+            # idempotency_key stays authoritative when it is set; otherwise the
+            # share key is derived from the request shape plus its scope, which
+            # keeps envoy.read/1 unchanged. A read that could not take the lock
+            # (an unwritable state directory) skips the ledger: writing to that
+            # directory is exactly what failed.
+            share_enabled = lock_held and (
+                bool(request.idempotency_key)
+                or request.retention.derived_ttl_seconds > 0
+            )
+            if not share_enabled:
                 return execute()
             from .operations import OperationConflict, run_idempotent
 
@@ -3622,8 +3640,16 @@ def _serialize_read_request(function):
                 separators=(",", ":"),
             ).encode()).hexdigest()
 
+            executed_here: list = []
+
             def execute_payload():
                 response = execute()
+                executed_here.append(response)
+                if not isinstance(response, ReadResponse):
+                    # A source-specific reader may answer with its own object.
+                    # It is not a ledger payload, so it is handed back untouched
+                    # and never persisted.
+                    return response
                 payload = response.model_dump(mode="json")
                 persist_operation_response(
                     response.material_id,
@@ -3636,12 +3662,18 @@ def _serialize_read_request(function):
                 )
                 return payload
 
+            operation_id = request.idempotency_key or (
+                "envoy-share:"
+                + hashlib.sha256(f"{request_scope}\0{fingerprint}".encode()).hexdigest()
+            )
+
             try:
                 payload = run_idempotent(
-                    request.idempotency_key,
+                    operation_id,
                     fingerprint=fingerprint,
                     execute=execute_payload,
-                    should_cache=_read_operation_result_is_cacheable,
+                    should_cache=lambda result: isinstance(result, dict)
+                    and _read_operation_result_is_cacheable(result),
                     recover=lambda record: recover_operation_response(
                         request,
                         request.source.url,
@@ -3658,8 +3690,24 @@ def _serialize_read_request(function):
                         request.retention.derived_ttl_seconds,
                         MATERIAL_TTL_SECONDS,
                     ),
+                    # A caller-supplied operation id keeps plain idempotency
+                    # semantics: its completed record is replayed whenever it has
+                    # not expired. A derived share key is only ever redeemed by a
+                    # caller that was already waiting, so it needs the window.
+                    share_window_start=(
+                        None if request.idempotency_key else wait_started
+                    ),
                 )
+                if not isinstance(payload, dict):
+                    return payload
                 response = ReadResponse.model_validate(payload)
+                if executed_here:
+                    # This caller executed the read itself, so it already holds
+                    # the evidence and must not be handed anything back through
+                    # the record: the rebind below is for a caller that only read
+                    # a finished record, and re-executing here would read the
+                    # source twice for one request.
+                    return response
                 if response.material_id and response.source_revision:
                     cached_material = _load_matching_material(
                         response.material_id,
@@ -3700,7 +3748,7 @@ def _serialize_read_request(function):
                 busy_message="This source is already being read in the current session",
             ) as locked:
                 lock_held = locked
-                response = run_locked()
+                response = run_locked(locked)
         except TimeoutError:
             return _blocked(
                 request,

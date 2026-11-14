@@ -41,6 +41,17 @@ def _write(path: Path, record: dict) -> None:
             pass
 
 
+def _completed_at(record: dict) -> float:
+    """Epoch seconds of a completed record, or 0.0 when it records no usable time."""
+    value = record.get("completed_at")
+    if not isinstance(value, str):
+        return 0.0
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def run_idempotent(
     operation_id: str,
     *,
@@ -50,7 +61,17 @@ def run_idempotent(
     recover: Callable[[dict], T | None] | None = None,
     recovery_metadata: dict | None = None,
     ttl_seconds: int = 86_400,
+    share_window_start: float | None = None,
 ) -> T:
+    """Run ``execute`` at most once per distinct input under ``operation_id``.
+
+    ``share_window_start`` makes the ledger usable as a single-flight hand-off for
+    callers that bring no operation id of their own: a completed record is
+    returned only when it completed after that wall-clock instant, which means the
+    caller was already waiting for this work when it finished. An older completed
+    record is re-executed rather than replayed, so a later read of the same source
+    still observes the source as it is now.
+    """
     operation_id = str(operation_id or "").strip()
     if not operation_id or len(operation_id) > 256:
         raise ValueError("operation_id must contain 1 to 256 characters")
@@ -74,11 +95,17 @@ def run_idempotent(
             if record.get("state") == "completed" and (
                 should_cache is None or should_cache(record["result"])
             ):
-                if float(record.get("expires_at") or 0) <= time.time():
-                    raise OperationConflict(
-                        "The completed operation has expired; choose a new operation_id"
-                    )
-                return record["result"]
+                if share_window_start is None:
+                    if float(record.get("expires_at") or 0) <= time.time():
+                        raise OperationConflict(
+                            "The completed operation has expired; choose a new operation_id"
+                        )
+                    return record["result"]
+                if (
+                    _completed_at(record) >= share_window_start
+                    and float(record.get("expires_at") or 0) > time.time()
+                ):
+                    return record["result"]
             if record.get("state") in {"running", "retryable"} and recover is not None:
                 try:
                     recovered = recover(record)
