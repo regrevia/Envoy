@@ -159,7 +159,7 @@ def test_export_pins_every_citation_to_a_file_and_locator(tmp_path):
         assert entry["locator"]["source_url"] == "https://example.com/a"
 
     document = json.loads((tmp_path / "pack" / "source" / "document.json").read_text(encoding="utf-8"))
-    assert document["schema_version"] == "envoy.source-document/1"
+    assert document["schema_version"] == "envoy.source-document/2"
     assert document["source"]["material_id"] == LIVE
     assert document["coverage"]["text"] is True
     assert document["coverage"]["transcript"] is False
@@ -234,6 +234,71 @@ def test_a_damaged_pack_is_reported_not_trusted(tmp_path):
     report = evidence_pack.verify_pack(tmp_path / "pack")
     assert report["valid"] is False
     assert report["problems"] == [f"evidence text changed: {index[0]['file']}"]
+
+
+def test_every_file_the_inventory_names_is_checked(tmp_path):
+    root = storage.resolve_material_root()
+    _web_material(root)
+    pack = tmp_path / "pack"
+    evidence_pack.write_pack(LIVE, pack)
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    named = {item["path"] for item in manifest["inventory"]}
+    assert {"README.md", "coverage.json", "source/metadata.json", "structure/outline.md"} <= named
+    assert manifest["files"]["manifest"] == "manifest.json"
+    assert "manifest.json" not in named
+
+    (pack / "coverage.json").write_text("{}\n", encoding="utf-8")
+    report = evidence_pack.verify_pack(pack)
+    assert report["valid"] is False
+    assert report["problems"] == ["file changed: coverage.json"]
+
+
+def test_a_file_that_appeared_or_disappeared_is_damage(tmp_path):
+    root = storage.resolve_material_root()
+    _web_material(root)
+    pack = tmp_path / "pack"
+    evidence_pack.write_pack(LIVE, pack)
+
+    (pack / "notes.txt").write_text("mine", encoding="utf-8")
+    assert evidence_pack.verify_pack(pack)["problems"] == ["unexpected file: notes.txt"]
+    (pack / "notes.txt").unlink()
+
+    (pack / "structure" / "outline.md").unlink()
+    assert evidence_pack.verify_pack(pack)["problems"] == ["missing file: structure/outline.md"]
+
+
+def test_an_inventory_path_that_climbs_out_is_refused(tmp_path):
+    root = storage.resolve_material_root()
+    _web_material(root)
+    pack = tmp_path / "pack"
+    evidence_pack.write_pack(LIVE, pack)
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    manifest["inventory"].append({"path": "../outside.txt", "sha256": "0" * 64, "bytes": 1})
+    (pack / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = evidence_pack.verify_pack(pack)
+    assert report["valid"] is False
+    assert "manifest names an unusable path: ../outside.txt" in report["problems"]
+
+
+def test_a_v1_pack_without_an_inventory_still_verifies(tmp_path):
+    root = storage.resolve_material_root()
+    _web_material(root)
+    pack = tmp_path / "pack"
+    evidence_pack.write_pack(LIVE, pack)
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    manifest["schema_version"] = "envoy.evidence-pack/1"
+    del manifest["inventory"]
+    document = json.loads((pack / "source" / "document.json").read_text(encoding="utf-8"))
+    evidence = json.loads((pack / "references" / "evidence-index.json").read_text(encoding="utf-8"))
+    manifest["pack_id"] = evidence_pack._digest(evidence_pack._pack_id_input(manifest, document, evidence))
+    (pack / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert evidence_pack.verify_pack(pack)["problems"] == []
+
+    # v1 never pinned the whole tree, so a file it does not name is not damage.
+    (pack / "notes.txt").write_text("mine", encoding="utf-8")
+    assert evidence_pack.verify_pack(pack)["valid"] is True
 
 
 def test_missing_expired_and_malformed_materials_are_named(tmp_path):

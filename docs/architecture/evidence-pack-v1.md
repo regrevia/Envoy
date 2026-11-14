@@ -1,7 +1,9 @@
 # Evidence Pack v1
 
 Status: implemented (`envoy evidence export|verify`), behind the
-`evidence_pack_export` flag.
+`evidence_pack_export` flag. Exports now write
+[v2](evidence-pack-v2.md); this page documents the layout a v1 pack already on
+disk has, which stays readable, verifiable and convertible.
 
 An Evidence Pack is a directory written *from* a retained material record. It is
 derived, never authoritative: the material record keeps that role, and deleting a
@@ -201,4 +203,5 @@ removing them leaves the pack untouched.
 
 Schemas: [manifest](../schemas/evidence-pack-v1.schema.json), [evidence index](../schemas/evidence-index-v1.schema.json), [source document](../schemas/source-document-v1.schema.json).
 
-See also: [Knowledge Units v1](knowledge-units-v1.md), [Cangjie adapter](cangjie-adapter.md).
+See also: [Evidence Pack v2](evidence-pack-v2.md) (current exports),
+[Knowledge Units v1](knowledge-units-v1.md), [Cangjie adapter](cangjie-adapter.md).

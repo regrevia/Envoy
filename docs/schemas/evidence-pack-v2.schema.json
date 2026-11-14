@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://envoy.dev/schemas/envoy.evidence-pack/2",
+  "title": "Envoy Evidence Pack v2",
+  "description": "manifest.json of a pack directory. The pack is derived from a retained material; deleting it does not change what a read returned. Unlike v1, `inventory` pins every emitted file except manifest.json itself, so a file that appears, disappears or changes is damage. See docs/architecture/evidence-pack-v2.md.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "material_id",
+    "source_revision",
+    "source_type",
+    "source_title",
+    "source_url",
+    "counts",
+    "files",
+    "coverage_unresolved",
+    "pack_id",
+    "inventory"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "envoy.evidence-pack/2"
+    },
+    "material_id": {
+      "type": "string",
+      "pattern": "^mat-[a-f0-9]{24}$"
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_type": {
+      "type": "string"
+    },
+    "source_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "sections",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "required": [
+        "manifest",
+        "readme",
+        "document",
+        "metadata",
+        "sections",
+        "outline",
+        "evidence_index",
+        "coverage"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "const": "manifest.json"
+        },
+        "readme": {
+          "const": "README.md"
+        },
+        "document": {
+          "const": "source/document.json"
+        },
+        "metadata": {
+          "const": "source/metadata.json"
+        },
+        "sections": {
+          "const": "structure/sections.json"
+        },
+        "outline": {
+          "const": "structure/outline.md"
+        },
+        "evidence_index": {
+          "const": "references/evidence-index.json"
+        },
+        "coverage": {
+          "const": "coverage.json"
+        }
+      }
+    },
+    "coverage_unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "inventory": {
+      "description": "Every emitted file except manifest.json. manifest.json is not listed because it cannot hold its own digest; the pack id covers the manifest header, the document and the index instead. Equal trust level to the manifest: both detect accidental damage, neither survives a deliberate rewrite of every file.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256",
+          "bytes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^(README\\.md|coverage\\.json|evidence/(text|transcript|visual)/ev-[a-f0-9]{16}\\.txt|references/evidence-index\\.json|source/(document|metadata)\\.json|structure/(sections\\.json|outline\\.md))$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

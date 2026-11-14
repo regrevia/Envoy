@@ -116,18 +116,46 @@ def test_asr_transcript_is_labelled_inferred_not_source(roots):
 
 
 def test_conversion_records_the_coverage_gap(roots):
-    _pdf_material(roots)
+    _write_material(
+        roots,
+        {
+            "source_kind": "pdf",
+            "source_url": "https://example.com/paper.pdf",
+            "source_revision": "rev-7",
+            "title_text": "A paper",
+            "text": "one\ntwo",
+            "page_count": 1,
+            "source_coverage_unresolved": ["page 2 was not returned"],
+            "blocks": [
+                _block(
+                    "blk-pdf-page-0001",
+                    "one\ntwo",
+                    {"type": "pdf_page", "page_number": 1, "locator_valid": True},
+                    1,
+                )
+            ],
+        },
+    )
     pack_dir = _export(roots)
-    coverage_path = f"{pack_dir}/coverage.json"
-    coverage = json.loads(open(coverage_path, encoding="utf-8").read())
-    coverage["unresolved"] = ["page 2 was not returned"]
-    with open(coverage_path, "w", encoding="utf-8") as stream:
-        json.dump(coverage, stream)
 
-    # coverage.json is not pinned by the pack id, so editing it is caught only
-    # where it matters: the conversion must state the gap, not hide it.
+    # The gap travels with the material; the pack states it rather than hiding it.
     converted = cangjie_adapter.to_cangjie_material(pack_dir)
     assert converted["coverage"]["unresolved"] == ["page 2 was not returned"]
+
+
+def test_a_hand_edited_coverage_file_is_refused_not_converted(roots):
+    _pdf_material(roots)
+    pack_dir = _export(roots)
+    coverage_path = Path(pack_dir) / "coverage.json"
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    coverage["unresolved"] = ["page 2 was not returned"]
+    coverage_path.write_text(json.dumps(coverage), encoding="utf-8")
+
+    # Every file is pinned by the manifest in v2, so an edited coverage file is
+    # damage: the converter refuses instead of reporting a gap it was handed.
+    with pytest.raises(cangjie_adapter.AdapterError) as error:
+        cangjie_adapter.to_cangjie_material(pack_dir)
+    assert error.value.code == "pack_invalid"
 
 
 def test_a_damaged_pack_is_refused_and_nothing_is_written(roots, tmp_path):

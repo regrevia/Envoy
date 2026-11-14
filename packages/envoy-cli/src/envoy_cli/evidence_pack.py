@@ -11,9 +11,18 @@ revision produce the same pack id and the same bytes, which is what lets a
 caller tell "I exported twice" from "the source changed under me". No wall
 clock, pid or absolute path goes into the manifest.
 
-JSON schemas written here (see ``docs/architecture/evidence-pack-v1.md``):
-``envoy.evidence-pack/1`` for ``manifest.json`` and
-``envoy.source-document/1`` for ``source/document.json``.
+JSON schemas written here (see ``docs/architecture/evidence-pack-v2.md``):
+``envoy.evidence-pack/2`` for ``manifest.json``,
+``envoy.source-document/2`` for ``source/document.json``,
+``envoy.source-metadata/2`` for ``source/metadata.json`` and
+``envoy.evidence-index/2`` for ``references/evidence-index.json``.
+
+Version 2 adds what version 1 left implicit: ``manifest.json`` names every file
+in the pack and carries a digest for each file that cannot contain the pack id
+itself, so ``verify`` can report an added or removed file instead of only a
+changed one; and every evidence block says where its text came from
+(``origin``, ``extractor``, ``extractor_version``) instead of leaving a
+converter to infer it. Version 1 packs are still read and verified.
 """
 
 from __future__ import annotations
@@ -29,9 +38,15 @@ from pathlib import Path
 
 from . import storage
 
-PACK_SCHEMA = "envoy.evidence-pack/1"
-DOCUMENT_SCHEMA = "envoy.source-document/1"
-COVERAGE_SCHEMA = "envoy.evidence-coverage/1"
+PACK_SCHEMA = "envoy.evidence-pack/2"
+DOCUMENT_SCHEMA = "envoy.source-document/2"
+COVERAGE_SCHEMA = "envoy.evidence-coverage/2"
+METADATA_SCHEMA = "envoy.source-metadata/2"
+INDEX_SCHEMA = "envoy.evidence-index/2"
+V1_PACK_SCHEMA = "envoy.evidence-pack/1"
+# Where the text of a block came from. `source` is text the source carried;
+# the rest is model-produced and must never be shown as original wording.
+ORIGINS = ("source", "asr", "ocr", "vision", "derived")
 
 MATERIAL_ID = re.compile(r"^mat-[a-f0-9]{24}$")
 KIND_DIRS = {
@@ -173,6 +188,94 @@ def _seconds(locator: dict | None) -> tuple[float, float] | None:
     return None
 
 
+def _pdf_page_records(stored: dict) -> dict[int, dict]:
+    """The per-page record the reader kept, keyed by page number."""
+
+    evidence = stored.get("page_evidence")
+    if not isinstance(evidence, dict):
+        return {}
+    pages = evidence.get("pages")
+    if not isinstance(pages, list):
+        return {}
+    records: dict[int, dict] = {}
+    for page in pages:
+        if isinstance(page, dict) and isinstance(page.get("page_number"), int):
+            records[page["page_number"]] = page
+    return records
+
+
+SOURCE_PROVENANCE = {"origin": "source", "extractor": None, "extractor_version": None}
+
+
+def _ocr_provenance(record: dict) -> dict | None:
+    ocr = record.get("ocr")
+    if not isinstance(ocr, dict):
+        return None
+    version = ocr.get("engine_version")
+    return {
+        "origin": "ocr",
+        "extractor": str(ocr.get("backend") or "ocr"),
+        "extractor_version": str(version) if version else None,
+    }
+
+
+def _is_ocr_page(record: dict) -> bool:
+    if str(record.get("extraction_mode") or "") == "ocr":
+        return True
+    return str(record.get("status") or "") in {"ocr", "ocr_failed"}
+
+
+def _image_ocr_provenance(stored: dict) -> dict | None:
+    spans = stored.get("ocr_spans")
+    if not isinstance(spans, list) or not spans:
+        return None
+    for span in spans:
+        if isinstance(span, dict) and str(span.get("engine") or "").strip():
+            return {"origin": "ocr", "extractor": str(span["engine"]).strip(), "extractor_version": None}
+    return {"origin": "ocr", "extractor": "ocr", "extractor_version": None}
+
+
+def _provenance(
+    block_id: str,
+    locator: dict,
+    stored: dict,
+    pages: dict[int, dict],
+) -> dict:
+    """Say which text a model produced, without guessing from the locator.
+
+    A locator records where text was found, not who wrote it: a scanned page and
+    a page with a text layer cite the same page number. A converter that has to
+    mark model output as inferred needs the answer here, not a heuristic.
+    """
+
+    if block_id == "blk-title":
+        return dict(SOURCE_PROVENANCE)
+    source_kind = str(stored.get("source_kind") or "")
+    if source_kind == "pdf":
+        page = _page_of(locator)
+        record = pages.get(page) if isinstance(page, int) else None
+        if isinstance(record, dict) and _is_ocr_page(record):
+            return _ocr_provenance(record) or {
+                "origin": "ocr",
+                "extractor": "ocr",
+                "extractor_version": None,
+            }
+        return dict(SOURCE_PROVENANCE)
+    if source_kind == "video":
+        if str(stored.get("transcript_source") or "") == "asr":
+            return {"origin": "asr", "extractor": "asr", "extractor_version": None}
+        return dict(SOURCE_PROVENANCE)
+    if source_kind == "image":
+        ocr = _image_ocr_provenance(stored)
+        if ocr is not None:
+            return ocr
+        if stored.get("visual_resources"):
+            # The store keeps the observation but not the model that made it.
+            return {"origin": "vision", "extractor": None, "extractor_version": None}
+        return dict(SOURCE_PROVENANCE)
+    return dict(SOURCE_PROVENANCE)
+
+
 def _sections(material_id: str, stored: dict, blocks: list[dict]) -> list[dict]:
     """Sections come only from spans the material stored; otherwise one section."""
 
@@ -267,6 +370,7 @@ def build_source_document(stored: dict, material_id: str) -> dict:
     """
 
     records = _evidence_blocks(stored)
+    pages = _pdf_page_records(stored)
     fine_grained = any(block_id not in WHOLE_BLOCK_IDS for block_id in records)
     blocks: list[dict] = []
     seen: set[str] = set()
@@ -287,6 +391,7 @@ def build_source_document(stored: dict, material_id: str) -> dict:
         if evidence_id in seen:
             continue
         seen.add(evidence_id)
+        provenance = _provenance(block_id, locator, stored, pages)
         blocks.append(
             {
                 "evidence_id": evidence_id,
@@ -296,6 +401,9 @@ def build_source_document(stored: dict, material_id: str) -> dict:
                 "locator": locator,
                 "kind": _modality(locator),
                 "locator_kind": _locator_kind(locator),
+                "origin": provenance["origin"],
+                "extractor": provenance["extractor"],
+                "extractor_version": provenance["extractor_version"],
             }
         )
 
@@ -314,7 +422,7 @@ def build_source_document(stored: dict, material_id: str) -> dict:
         "coverage": {
             "text": bool(str(stored.get("text") or "").strip()),
             "transcript": any(block["kind"] == "transcript" for block in blocks),
-            "ocr": bool(stored.get("ocr")),
+            "ocr": any(block["origin"] == "ocr" for block in blocks),
             "visual": bool(stored.get("visual_resources")),
             "page_count": coverage.get("page_count"),
             "indexed_page_count": coverage.get("indexed_page_count"),
@@ -323,6 +431,20 @@ def build_source_document(stored: dict, material_id: str) -> dict:
     }
     index = {block["evidence_id"]: block for block in blocks}
     return {"document": document, "blocks": blocks, "index": index}
+
+
+def _pack_id_input(manifest: dict, document: dict, evidence: list[dict]) -> dict:
+    """What the pack id covers: the manifest header, the document, the index.
+
+    Neither ``pack_id`` nor ``inventory`` is an input. The inventory has to name
+    the digest of ``source/metadata.json``, and that file carries the pack id, so
+    including it would be circular. The inventory is therefore at the same level
+    of trust as ``manifest.json`` itself: both detect damage, neither resists a
+    deliberate rewrite of the pack.
+    """
+
+    header = {key: value for key, value in manifest.items() if key not in {"pack_id", "inventory"}}
+    return {"manifest": header, "document": document, "evidence": evidence}
 
 
 def build_pack(material_id: str, *, root: Path | None = None) -> dict:
@@ -362,6 +484,9 @@ def build_pack(material_id: str, *, root: Path | None = None) -> dict:
             # The quote is the exported text itself; a second copy would let the
             # two disagree. Locator + file digest is the citation contract.
             "chars": len(written[block["evidence_id"]].rstrip("\n")),
+            "origin": block["origin"],
+            "extractor": block["extractor"],
+            "extractor_version": block["extractor_version"],
         }
         evidence_index.append(entry)
 
@@ -383,6 +508,8 @@ def build_pack(material_id: str, *, root: Path | None = None) -> dict:
     }
 
     outline = _outline(document)
+    # The pack id is fixed before the inventory exists, because the inventory
+    # has to name the digest of every file and one of them carries the pack id.
     manifest = {
         "schema_version": PACK_SCHEMA,
         "material_id": material_id,
@@ -395,6 +522,8 @@ def build_pack(material_id: str, *, root: Path | None = None) -> dict:
             "evidence": len(evidence_index),
         },
         "files": {
+            "manifest": "manifest.json",
+            "readme": "README.md",
             "document": "source/document.json",
             "metadata": "source/metadata.json",
             "sections": "structure/sections.json",
@@ -404,7 +533,42 @@ def build_pack(material_id: str, *, root: Path | None = None) -> dict:
         },
         "coverage_unresolved": gaps,
     }
-    manifest["pack_id"] = _digest({"manifest": {k: v for k, v in manifest.items() if k != "pack_id"}, "document": document, "evidence": evidence_index})
+    origins = sorted({block["origin"] for block in blocks})
+    metadata = {
+        "schema_version": METADATA_SCHEMA,
+        "material_id": material_id,
+        "source_revision": document["source"]["revision"],
+        "source_type": document["source"]["type"],
+        "source_title": document["source"]["title"],
+        "source_url": document["source"]["url"],
+        "session_id": stored.get("session_id"),
+        "material_expires_at": stored.get("expires_at"),
+        # Which parts of the text a model produced. A converter must be able
+        # to say "inferred" without guessing from the locator alone.
+        "transcript_source": stored.get("transcript_source"),
+        "ocr_applied": "ocr" in origins,
+        "origins": origins,
+        "pack_id": "",
+    }
+    manifest["pack_id"] = _digest(
+        _pack_id_input(manifest, document, evidence_index)
+    )
+    metadata["pack_id"] = manifest["pack_id"]
+    texts = {
+        "README.md": _readme(manifest, metadata),
+        "coverage.json": _canonical(coverage),
+        "references/evidence-index.json": _canonical(evidence_index),
+        "source/document.json": _canonical(document),
+        "source/metadata.json": _canonical(metadata),
+        "structure/outline.md": outline,
+        "structure/sections.json": _canonical(document["sections"]),
+    }
+    for entry in evidence_index:
+        texts[entry["file"]] = written[entry["evidence_id"]]
+    manifest["inventory"] = [
+        {"path": path, "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(), "bytes": len(body.encode("utf-8"))}
+        for path, body in sorted(texts.items())
+    ]
     return {
         "manifest": manifest,
         "document": document,
@@ -413,21 +577,8 @@ def build_pack(material_id: str, *, root: Path | None = None) -> dict:
         "evidence_text": written,
         "coverage": coverage,
         "outline": outline,
-        "metadata": {
-            "schema_version": "envoy.source-metadata/1",
-            "material_id": material_id,
-            "source_revision": document["source"]["revision"],
-            "source_type": document["source"]["type"],
-            "source_title": document["source"]["title"],
-            "source_url": document["source"]["url"],
-            "session_id": stored.get("session_id"),
-            "material_expires_at": stored.get("expires_at"),
-            # Which parts of the text a model produced. A converter must be able
-            # to say "inferred" without guessing from the locator alone.
-            "transcript_source": stored.get("transcript_source"),
-            "ocr_applied": bool(stored.get("ocr")),
-            "pack_id": manifest["pack_id"],
-        },
+        "metadata": metadata,
+        "files": texts,
     }
 
 
@@ -483,18 +634,15 @@ def _emit(root: Path, built: dict) -> None:
         (root / "evidence" / kind_dir).mkdir(parents=True)
     for entry in built["evidence"]:
         _write_text(root / entry["file"], built["evidence_text"][entry["evidence_id"]])
-    _write_text(root / "source" / "document.json", _canonical(built["document"]))
-    _write_text(root / "source" / "metadata.json", _canonical(built["metadata"]))
-    _write_text(root / "structure" / "sections.json", _canonical(built["sections"]))
-    _write_text(root / "structure" / "outline.md", built["outline"])
-    _write_text(root / "references" / "evidence-index.json", _canonical(built["evidence"]))
-    _write_text(root / "coverage.json", _canonical(built["coverage"]))
+    for path, body in built["files"].items():
+        if path == "manifest.json":
+            continue
+        _write_text(root / path, body)
+    # The manifest names every other file with a digest, so it is written last.
     _write_text(root / "manifest.json", _canonical(built["manifest"]))
-    _write_text(root / "README.md", _readme(built))
 
 
-def _readme(built: dict) -> str:
-    manifest = built["manifest"]
+def _readme(manifest: dict, metadata: dict) -> str:
     return "\n".join(
         [
             f"# Evidence Pack: {manifest['source_title']}",
@@ -502,6 +650,7 @@ def _readme(built: dict) -> str:
             f"- material: {manifest['material_id']}",
             f"- revision: {manifest['source_revision']}",
             f"- pack id: {manifest['pack_id']}",
+            f"- origins: {', '.join(metadata['origins']) or 'source'}",
             "",
             "This directory is derived from a retained material. It is not the",
             "source of truth: the material record keeps that role, and deleting",
@@ -509,22 +658,42 @@ def _readme(built: dict) -> str:
             "",
             "Entries:",
             "",
-            "- `manifest.json` describes the pack and pins every other file by digest.",
+            "- `manifest.json` lists every other file with its digest.",
             "- `source/document.json` is the Source Document contract.",
+            "- `source/metadata.json` records the session, the expiry and the pack id.",
             "- `structure/` holds sections and a human-readable outline.",
             "- `evidence/` holds the exact text of every citation, one file each.",
             "- `references/evidence-index.json` maps evidence ids to locators and files.",
             "- `coverage.json` says what the material does not cover.",
             "",
-            "Text that a model produced (OCR, ASR) is labelled by its locator kind",
-            "and never presented as original source text.",
+            "Every evidence entry names the origin of its text (source, asr, ocr,",
+            "vision or derived) so that text a model produced is never presented",
+            "as original source text.",
             "",
         ]
     )
 
 
+def _inventory_of(root: Path, inventory: list, files: dict) -> list[str]:
+    """Every file the pack holds that the manifest does not name."""
+
+    named = {str(value) for value in files.values() if isinstance(value, str)}
+    named |= {"manifest.json"}
+    for item in inventory:
+        if isinstance(item, dict) and isinstance(item.get("path"), str):
+            named.add(item["path"])
+    extra: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative not in named:
+            extra.append(relative)
+    return extra
+
+
 def verify_pack(pack_dir: str | Path) -> dict:
-    """Recompute the pack id and every evidence digest; report what does not match."""
+    """Recompute the pack id and every digest; report what does not match."""
 
     root = Path(pack_dir).expanduser()
     manifest_path = root / "manifest.json"
@@ -537,7 +706,7 @@ def verify_pack(pack_dir: str | Path) -> dict:
     except (OSError, ValueError) as exc:
         raise PackError("pack_unreadable", f"{root} is not a readable pack: {exc}") from exc
     problems: list[str] = []
-    recomputed = _digest({"manifest": {k: v for k, v in manifest.items() if k != "pack_id"}, "document": document, "evidence": evidence})
+    recomputed = _digest(_pack_id_input(manifest, document, evidence))
     if recomputed != manifest.get("pack_id"):
         problems.append("pack id does not match the files it names")
     for entry in evidence:
@@ -547,6 +716,31 @@ def verify_pack(pack_dir: str | Path) -> dict:
             continue
         if _file_digest(path) != entry.get("sha256"):
             problems.append(f"evidence text changed: {entry.get('file')}")
+    inventory = manifest.get("inventory")
+    files = manifest.get("files")
+    if isinstance(inventory, list):
+        # v2 names every file, so a file that appeared or disappeared is
+        # damage too, not just a file whose bytes changed. Evidence files are
+        # skipped here because the loop above names them more precisely.
+        cited = {str(entry.get("file") or "") for entry in evidence}
+        for item in inventory:
+            if not isinstance(item, dict):
+                continue
+            relative = str(item.get("path") or "")
+            if not relative or relative.startswith("/") or ".." in Path(relative).parts:
+                problems.append(f"manifest names an unusable path: {relative or '(empty)'}")
+                continue
+            if relative in cited:
+                continue
+            path = root / relative
+            if not path.is_file():
+                problems.append(f"missing file: {relative}")
+                continue
+            if _file_digest(path) != item.get("sha256"):
+                problems.append(f"file changed: {relative}")
+        if isinstance(files, dict):
+            for relative in _inventory_of(root, inventory, files):
+                problems.append(f"unexpected file: {relative}")
     return {"pack_dir": str(root), "pack_id": manifest.get("pack_id"), "valid": not problems, "problems": problems}
 
 

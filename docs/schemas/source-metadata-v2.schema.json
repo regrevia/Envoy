@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://envoy.dev/schemas/envoy.source-metadata/2",
+  "title": "Envoy Source Metadata v2",
+  "description": "source/metadata.json: what the export knew about the material that is not part of the read answer. New in v2 — v1 packs have no such file. It carries the pack id and is therefore hashed by the manifest inventory; it is not an input to the pack id itself.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pack_id",
+    "material_id",
+    "source_type",
+    "source_title",
+    "source_url",
+    "source_revision",
+    "session_id",
+    "material_expires_at",
+    "transcript_source",
+    "ocr_applied",
+    "origins"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "envoy.source-metadata/2"
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "material_id": {
+      "type": "string",
+      "pattern": "^mat-[a-f0-9]{24}$"
+    },
+    "source_type": {
+      "type": "string"
+    },
+    "source_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "material_expires_at": {
+      "description": "The expiry the material carried at export time, in seconds since the epoch. Null when the material did not record one. A pack outlives its material by design; this field says when the original would have gone.",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "transcript_source": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ocr_applied": {
+      "type": "boolean"
+    },
+    "origins": {
+      "description": "The distinct `origin` values present in the evidence index, sorted.",
+      "type": "array",
+      "items": {
+        "enum": [
+          "source",
+          "asr",
+          "ocr",
+          "vision",
+          "derived"
+        ]
+      }
+    }
+  }
+}

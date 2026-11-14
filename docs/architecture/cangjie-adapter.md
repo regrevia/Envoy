@@ -60,4 +60,6 @@ that belongs to whatever distillation pipeline the user installs, running outsid
 Envoy's core, with its own credentials. Envoy's job is to make the evidence
 portable and to keep the exit honest.
 
-See also: [Evidence Pack v1](evidence-pack-v1.md), [Knowledge Units v1](knowledge-units-v1.md).
+See also: [Evidence Pack v2](evidence-pack-v2.md) (current exports),
+[Evidence Pack v1](evidence-pack-v1.md) (packs already on disk),
+[Knowledge Units v1](knowledge-units-v1.md).
