@@ -2,8 +2,8 @@
   "protocol_version": "envoy.read/1",
   "request_id": "capture-asr-complete",
   "session_id": null,
-  "material_id": "mat-299012fd1256017b25ba4177",
-  "source_revision": "7278b28027ccc2064effe0d7f664bb9454ced41e85d39cb79e83a53003201909",
+  "material_id": "mat-93c1dd1e4ff8aef78ec04dbd",
+  "source_revision": "ffb92b30790170ed8417ea9e7f3a428a62df4ef6159fd13eb2206e8a6a9a05bc",
   "execution_state": "completed",
   "result": "ready",
   "blocks": [
@@ -184,9 +184,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "f858a79",
+    "commit": "41f0536",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_asr_complete",
-    "generated_at": "2026-11-11",
+    "generated_at": "2026-11-14",
     "replaced_call": "reader.transcribe_audio_file",
     "fake_output": "{\"status\": \"success\", \"language\": \"en\", \"model\": \"base\", \"elapsed_ms\": 200, \"next_seconds\": 600.0, \"segments\": 300 cues covering 0-600 s}",
     "proof_scope": "proves the finished shape of a video material whose transcript covers the whole duration; does not prove that real ASR ever reaches this state",

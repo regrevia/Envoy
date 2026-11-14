@@ -27,16 +27,16 @@ interruption. Those need the acceptance run in
 
 ## Files as committed
 
-Bytes and SHA-256 are of the files on disk at commit `419969f` (working tree,
-2026-11-01). Recompute before trusting this table; it is a snapshot, not a
+Bytes and SHA-256 are of the files on disk at commit `41f0536` (working tree,
+2026-11-14). Recompute before trusting this table; it is a snapshot, not a
 contract.
 
 | file | bytes | sha256 |
 |---|---|---|
-| `video_asr_partial.json` | 10458 | `1c69c798525f7e05c52f8563d70a6f35cacef6dad96b447960147d8bd2f98bb0` |
-| `video_asr_complete.json` | 10254 | `824111a48d35554c22cacdbf0e639fa49eef5996989fa72d8678139b0b4b8944` |
-| `page_video_asr_partial.json` | 43549 | `39b42c9cd43aab77fcf167b027e474c2e2719f93aa88b28bdf0d360a6ec9f044` |
-| `video_subtitles.json` | 9117 | `3c35c212cdd381595a5dd043a51e5d952c04cfab8272e1c5a5adb0575ab08354` |
+| `video_asr_partial.json` | 10762 | `b71dd6df95eab64b12ab2cc0ab4b681b8ff6672cf1e69dff30ab92b6bd97f63b` |
+| `video_asr_complete.json` | 10254 | `85360f866e41ae5c22865f994b0c19c8a78f97825b61ab8b1efc910a8712eb75` |
+| `page_video_asr_partial.json` | 43549 | `988452fb1195fce52b532700092502b8880a68ab0da0af983b12cca3b7ce0a04` |
+| `video_subtitles.json` | 9441 | `c7fc2e60c7bb19bc0892ad294ee970332308925ffe7b074d5f21db2ac9c6829c` |
 
 This table is the output of the guard test, not a hand-maintained list:
 `packages/envoy-cli/.venv/bin/python -m pytest tests/cli/test_capture_long_task_fixtures.py -q -s`

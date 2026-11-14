@@ -3259,6 +3259,39 @@ def _material_root() -> Path:
     return root
 
 
+def _content_revision(tag: str, *parts: str) -> str:
+    """Digest the material a revision describes, never the address it came from.
+
+    A revision answers "is this the same material". A URL does not answer that:
+    the same page, video or transcript served through a re-signed or
+    tracking-parameter address is the same material, and the same address can
+    serve different material tomorrow. `tag` keeps two kinds of content that
+    happen to share text from colliding and records what the digest covers.
+
+    Callers pass the material itself (bytes, text, or a digest of them). Do not
+    mix `source_url` into `parts`; that belongs in `_material_id`, which already
+    scopes identity by address and session.
+    """
+    digest = hashlib.sha256()
+    digest.update(tag.encode("utf-8"))
+    for part in parts:
+        digest.update(b"\0")
+        digest.update(part.encode("utf-8", errors="replace"))
+    return digest.hexdigest()
+
+
+def _url_basis_revision(tag: str, url: str) -> str:
+    """Revision for a path that never holds the material's own content.
+
+    A NEEDS_HOST handoff passes the address to the host and keeps no bytes, so
+    the address is the only thing left to derive a revision from. The `url-basis:`
+    tag keeps the result from ever being mistaken for a content digest, and
+    `_evidence_revision_kind` reports it as `url_digest` rather than claiming the
+    revision covers the material's bytes.
+    """
+    return _content_revision(f"url-basis:{tag}", url)
+
+
 def _material_id(
     source_url: str,
     source_revision: str,
@@ -4187,7 +4220,13 @@ def _evidence_revision_kind(stored: dict, source_revision: str | None) -> str:
     source_url = stored.get("source_url")
     if isinstance(source_url, str) and source_url:
         if source_revision == hashlib.sha256(source_url.encode("utf-8")).hexdigest():
+            # Materials leased before revisions were tagged hashed the bare URL.
+            # They are still inside their TTL, so keep naming them honestly.
             return "url_digest"
+        for candidate in (source_url, _redact_url(source_url)):
+            for tag in ("video", "image"):
+                if source_revision == _url_basis_revision(tag, candidate):
+                    return "url_digest"
     return "unknown"
 
 
@@ -9095,7 +9134,7 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
             httpx.HTTPError,
         ) as exc:
             ocr_unresolved.append(f"OCR skipped for {resource_id} ({type(exc).__name__})")
-    source_revision = image_sha256 or hashlib.sha256(source["url"].encode()).hexdigest()
+    source_revision = image_sha256 or _url_basis_revision("image", source["url"])
     material_id = _material_id(
         source["url"], source_revision, request.session_id, request.request_id
     )
@@ -9461,9 +9500,7 @@ def _video_subtitle_response(
     full_text = lines["full_text"]
     source_truncated = lines["source_truncated"]
     no_cues_in_requested_range = lines["no_cues_in_requested_range"]
-    source_revision = hashlib.sha256(
-        f"{source_url}\n{language}\n{full_text}".encode("utf-8", errors="replace")
-    ).hexdigest()
+    source_revision = _content_revision("video-transcript", language, full_text)
     material_id = _material_id(
         source_url, source_revision, request.session_id, request.request_id
     )
@@ -9854,7 +9891,7 @@ def _video_frame_base_response(
 ) -> ReadResponse:
     safe_url = _redact_url(source_url)
     safe_title = title or request.source.label or "Video"
-    source_revision = hashlib.sha256(f"video-url\n{safe_url}".encode()).hexdigest()
+    source_revision = _url_basis_revision("video", safe_url)
     return ReadResponse(
         request_id=request.request_id,
         session_id=request.session_id,
@@ -9988,7 +10025,7 @@ def _attach_video_frames(
     root = _material_root()
     material_id = response.material_id or _material_id(
         _redact_url(source_url),
-        hashlib.sha256(f"{source_url}\nvideo-frames".encode()).hexdigest(),
+        _url_basis_revision("video", _redact_url(source_url)),
         request.session_id,
         request.request_id,
     )
@@ -10010,7 +10047,9 @@ def _attach_video_frames(
         _store_material(material_id, {
             "source_kind": "video",
             "source_url": _redact_url(source_url),
-            "source_revision": response.source_revision or hashlib.sha256(source_url.encode()).hexdigest(),
+            "source_revision": response.source_revision or _url_basis_revision(
+                "video", _redact_url(source_url)
+            ),
             "session_id": request.session_id,
             "text": "",
             "title_text": request.source.label or "Video",
@@ -10265,7 +10304,9 @@ def _attach_video_frames(
             stored = {
                 "source_kind": "video",
                 "source_url": _redact_url(source_url),
-                "source_revision": response.source_revision or hashlib.sha256(source_url.encode()).hexdigest(),
+                "source_revision": response.source_revision or _url_basis_revision(
+                    "video", _redact_url(source_url)
+                ),
                 "session_id": request.session_id,
                 "text": "",
                 "title_text": request.source.label or "Video",
@@ -10398,7 +10439,7 @@ def _read_video_source(request: ReadRequest, source: dict) -> ReadResponse:
             "This media URL has signed or unknown query parameters and cannot be sent to the host model",
         )
     resource_id = f"resource-{hashlib.sha256(source_url.encode()).hexdigest()[:16]}"
-    source_revision = hashlib.sha256(source_url.encode()).hexdigest()
+    source_revision = _url_basis_revision("video", source_url)
     material_id = _material_id(
         source_url, source_revision, request.session_id, request.request_id
     )
@@ -10642,9 +10683,7 @@ def _public_api_fallback_response(
     truncated = len(text) > char_budget
     if truncated:
         text = text[:char_budget]
-    source_revision = hashlib.sha256(
-        f"{source_url}\n{backend}\n{text}".encode("utf-8", errors="replace")
-    ).hexdigest()
+    source_revision = _content_revision(f"public-api:{backend}", text)
     material_id = _material_id(
         source_url, source_revision, request.session_id, request.request_id
     )

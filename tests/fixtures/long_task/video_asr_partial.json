@@ -2,8 +2,8 @@
   "protocol_version": "envoy.read/1",
   "request_id": "capture-asr-partial",
   "session_id": null,
-  "material_id": "mat-0d0f26b3a8f306acc2392cba",
-  "source_revision": "7f9e4a9f1eb806a45d8aa5d06ced5e207d1722dcd4e395ddba161a0e33402c1a",
+  "material_id": "mat-0df08c0d15aacb7aa071573f",
+  "source_revision": "fc76160631b523dee7121a84b68656dc3f139dbadf509a5df10de789774cd1fa",
   "execution_state": "completed",
   "result": "partial",
   "blocks": [
@@ -187,9 +187,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "f858a79",
+    "commit": "41f0536",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_asr_partial",
-    "generated_at": "2026-11-11",
+    "generated_at": "2026-11-14",
     "replaced_call": "reader.transcribe_audio_file",
     "fake_output": "{\"status\": \"partial\", \"language\": \"en\", \"model\": \"base\", \"elapsed_ms\": 200, \"next_seconds\": 120.0, \"segments\": 60 cues covering 0-120 s}",
     "proof_scope": "proves that a reader-shaped partial-ASR receipt folds into a media-pending checkpoint that is not finished and whose resume routing is a range read; does not prove transcription quality, cue timing, duplicate avoidance, or resume after a real process interruption",

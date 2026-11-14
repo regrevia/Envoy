@@ -2,8 +2,8 @@
   "protocol_version": "envoy.read/1",
   "request_id": "capture-page-asr-partial",
   "session_id": null,
-  "material_id": "mat-8e62382452eceeec59172921",
-  "source_revision": "7ad15156eaebcd144359eb1d1c6e2d1601eb3d6d360aed475cf37f2a90bcb910",
+  "material_id": "mat-14f2875e58401fc472fa596c",
+  "source_revision": "b310d9bcbde6b14f0bfcc98c4c6f63220b6cac3a82f2350dd6310d2ecc266ecf",
   "execution_state": "completed",
   "result": "partial",
   "blocks": [
@@ -1594,9 +1594,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "f858a79",
+    "commit": "41f0536",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_page_video_asr_partial",
-    "generated_at": "2026-11-11",
+    "generated_at": "2026-11-14",
     "replaced_call": "reader.transcribe_audio_file (inside the page-video evidence path) plus the page media probe and duration probe",
     "fake_output": "{\"status\": \"partial\", ...} part of the same fake as video_asr_partial, fed through the page evidence builder instead of the direct-video path",
     "proof_scope": "proves the checkpoint fold of the only reader dialect that carries transcript_processed_until_seconds / transcript_delivered_until_seconds / transcript_unprocessed_seconds; does not prove page-level video extraction against a live site, transcription quality, or that the delivered-text cutoff equals the transcription cursor",

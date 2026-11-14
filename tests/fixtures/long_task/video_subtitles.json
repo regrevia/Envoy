@@ -2,8 +2,8 @@
   "protocol_version": "envoy.read/1",
   "request_id": "capture-subtitles",
   "session_id": null,
-  "material_id": "mat-0a99fb0ec86864288fe00d66",
-  "source_revision": "ce70c4243079eeef43281b4de7adf17c01d86e3a0aadeaa5a6ade94e6d7a026f",
+  "material_id": "mat-e4a08184906fa657fa7b992c",
+  "source_revision": "409c6c4288e81d73c5cb65ad356341978dd19ec7fd28ff92043f73e6db76aa4c",
   "execution_state": "completed",
   "result": "ready",
   "blocks": [
@@ -179,9 +179,9 @@
   "_provenance": {
     "kind": "captured_shape",
     "signal": "synthetic",
-    "commit": "f858a79",
+    "commit": "41f0536",
     "source": "tests/fixtures/long_task/capture_receipts.py::test_capture_video_subtitles",
-    "generated_at": "2026-11-11",
+    "generated_at": "2026-11-14",
     "replaced_call": "reader.extract_public_subtitles",
     "fake_output": "3600 s caption track, automatic=False, rendered as manual_subtitles",
     "proof_scope": "proves that a subtitle-only video receipt carries no processed_seconds and therefore no transcript-owned progress; does not prove subtitle track selection against a live site or subtitle coverage of the whole duration",
