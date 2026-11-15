@@ -133,6 +133,16 @@
 - 文档：新增 `docs/acceptance/site-reader-page-structure-2026-11-01.md`（原误落在 `packages/envoy-core/docs/`）；`docs/acceptance/github-reader-acceptance-2026-11-01.md` 增 S6.1 实测；`docs/architecture/link-routing-policy.md` 依赖表更新。
 - 仍未做：P0 长 PDF 扫描件/复杂版式与 Page Evidence Index、统一恢复协议、统一 Video 树、真实 ≥60 分钟视频验收（本机无 whisper）、`route_eval --live`。支持表述仍只是“部分材料能续读”。
 
+## 2026-11-15 状态更新：知识单元快照与记录对齐
+
+- 工作区：本轮两个提交 `b386923`（快照与记录对齐）、`4d738ac`（内容未变就不落盘），工作区干净；上一状态行记录的基线是 `ca4669b`。分支 `main`。
+- D/M 进度未变：D01–D06 已完成验收记录，D07–D10（媒体分层、时间定位、视觉宿主桥、累计预算）部分实现，D11–D17 未开始。本轮只修知识单元存储，不触碰 D 编号范围与 M0–M6 里程碑。
+- 修复的缺陷：`verify`/`promote`/`archive`/`relate` 只改状态、关系与指纹，不动 body 版本，却从不写快照，于是 `v<n>.json` 停在旧状态——一个单元在 v1 上被 verify 或 archive 后，`v1.json` 里仍是 `candidate`、无 `relations`。版本升走后的快照反而正确冻结旧 body，只有同版本内的注解一直不落地。
+- 改动：七条变更路径（create、verify、promote、archive、update、rollback、relate 两端）统一走 `_commit`，写记录的同时写当前版本快照；版本升走前的收尾快照保留（否则被离开版本的快照会带着新 body 而 `version` 已前进），顺带修复旧数据里已不同步的快照。`rollback` 只拷 body 字段、不读快照里的 `status`/`relations`/`verified_against`，所以刷新快照不改变回溯结果，v1 时代的内联关系记录仍可读、不拒绝。
+- 再优化：新增 `_write_if_changed`，内容与盘上一致就跳过 `fsync` + `os.replace`；`_commit` 只序列化一次，记录与快照共用同一份文本。收尾快照绝大多数情况下是刚写过的同一份字节，现在等于免费。符号链接不进比对，仍按替换处理。
+- 测试命令与结果：`PYTHONPATH=packages/envoy-core/src:packages/envoy-cli/src /tmp/envoy-311/bin/python -m pytest tests/cli tests/test_repo_consistency.py --ignore=tests/cli/test_browser_runtime.py -q` → `1380 passed, 1 skipped in 28.37s`。知识单元专项 `32 passed`（本轮 +4：快照状态与记录一致、关系两端快照都带关系且断言端版本不变、rollback 只还 body、无变更写入不落盘）。`tests/core_protocol` 23 项通过。
+- 未验证能力与限制：`tests/cli/test_browser_runtime.py` 的 10 项在此环境失败，原因是本机未安装 Envoy 浏览器（`envoy browser setup` 需一次性下载约 683 MB），为既有环境失败、与本轮无关，已排除在回归命令外。本机无 `ruff` 可执行文件（`ruff.toml` 在仓库根但未安装），lint 未能运行；格式化与检查仅覆盖 pytest 与 `test_repo_consistency.py`。真实来源读取本轮未改，仍沿用上一条记录的实测数字（IANA 表页、example.com、IETF RFC 9110 503K 字符、GitHub `cpython/tree/main/Lib` 191 条）；本轮未新增真实站点验收、图片/媒体产物或校验和，`route_eval --live` 仍为 stub。
+
 ## 下一次状态更新必须包括
 
 - 当前 `dev` commit 和工作区是否干净。
