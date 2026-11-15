@@ -195,7 +195,9 @@ A relation that already exists is `relation_exists`, not a duplicate row.
 
 Writes are atomic (`tmp` file + `os.replace`). A snapshot is written with every
 mutation and rewritten only while its version is still the current one; from the
-moment a later version exists it is never touched again. Unit records are plain
+moment a later version exists it is never touched again. A write whose text
+matches what the file already holds is skipped, so closing a version that was
+already stored in step costs nothing. Unit records are plain
 JSON so they can be read with `cat`, diffed, and copied out — no database, no
 server. That is a deliberate non-goal: Knowledge Units are not a knowledge graph
 product.

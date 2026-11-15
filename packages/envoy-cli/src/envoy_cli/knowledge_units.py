@@ -157,6 +157,26 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
+def _write_if_changed(path: Path, text: str) -> bool:
+    """Write only when the file does not already hold exactly this text.
+
+    Every mutation rewrites the snapshot of its own version, and a version bump
+    first closes the version it leaves behind. Those two writes often carry the
+    same bytes the file already has, so comparing first keeps the fsync and the
+    ``os.replace`` for the writes that actually change something. A symlink is
+    always replaced rather than followed, so it is never read back here.
+    """
+
+    if not path.is_symlink() and path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == text:
+                return False
+        except (OSError, UnicodeDecodeError):
+            pass
+    _write_atomic(path, text)
+    return True
+
+
 CONTENT_FIELDS = (
     "type",
     "title",
@@ -301,13 +321,13 @@ def load_unit(unit_id: str, *, root: Path | None = None) -> dict:
 
 
 def _save_unit(unit: dict, *, root: Path | None = None) -> dict:
-    _write_atomic(_unit_path(unit["unit_id"], root=root), _canonical(unit))
+    _write_if_changed(_unit_path(unit["unit_id"], root=root), _canonical(unit))
     return unit
 
 
 def _snapshot(unit: dict, *, root: Path | None = None) -> Path:
     path = _snapshot_path(unit["unit_id"], int(unit["version"]), root=root)
-    _write_atomic(path, _canonical(unit))
+    _write_if_changed(path, _canonical(unit))
     return path
 
 
@@ -320,8 +340,9 @@ def _commit(unit: dict, *, root: Path | None = None) -> dict:
     body fields, so rewriting it here cannot change what a rollback brings back.
     """
 
-    _save_unit(unit, root=root)
-    _snapshot(unit, root=root)
+    text = _canonical(unit)
+    _write_if_changed(_unit_path(unit["unit_id"], root=root), text)
+    _write_if_changed(_snapshot_path(unit["unit_id"], int(unit["version"]), root=root), text)
     return unit
 
 

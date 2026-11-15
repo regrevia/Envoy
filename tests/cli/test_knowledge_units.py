@@ -199,6 +199,28 @@ def test_a_snapshot_shows_the_record_as_it_stood_at_that_version():
     assert snapshot["content_hash"] == verified["content_hash"]
 
 
+def test_a_rewrite_that_changes_nothing_leaves_the_file_alone(tmp_path):
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    closed = knowledge_units._snapshot_path(unit["unit_id"], 1)
+    before = closed.read_bytes()
+    mtime = closed.stat().st_mtime_ns
+
+    # An edit closes version 1 before starting version 2. Version 1's snapshot was
+    # already written in step by the mutation that produced it, so the closing
+    # write would store the same bytes: it must not touch the file to say so.
+    knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+    assert closed.read_bytes() == before
+    assert closed.stat().st_mtime_ns == mtime
+
+    # A write that does change the snapshot still lands.
+    knowledge_units.verify_unit(unit["unit_id"])
+    edited = knowledge_units._snapshot_path(unit["unit_id"], 2)
+    assert json.loads(edited.read_text(encoding="utf-8"))["status"] == "verified"
+    assert knowledge_units._write_if_changed(edited, "{}") is True
+    assert knowledge_units._write_if_changed(edited, "{}") is False
+
+
 def test_a_relation_appears_in_both_snapshots_at_the_version_it_annotates():
     blocks = _seed_material(storage.resolve_material_root())
     unit = knowledge_units.create_unit(_payload(blocks))
