@@ -184,6 +184,55 @@ def test_edits_version_forward_and_never_rewrite_the_file_away():
     assert json.loads(snapshot.read_text(encoding="utf-8"))["summary"] == unit["summary"]
 
 
+def test_a_snapshot_shows_the_record_as_it_stood_at_that_version():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    verified = knowledge_units.verify_unit(unit["unit_id"])
+
+    # Verification is an annotation on version 1: the stored version 1 has to say
+    # so, or the snapshot and the record disagree about the same version.
+    snapshot = json.loads(knowledge_units._snapshot_path(unit["unit_id"], 1).read_text(encoding="utf-8"))
+    assert snapshot["version"] == 1
+    assert snapshot["status"] == verified["status"] == "verified"
+    assert snapshot["verified_against"] == verified["verified_against"]
+    assert snapshot["history"] == verified["history"]
+    assert snapshot["content_hash"] == verified["content_hash"]
+
+
+def test_a_relation_appears_in_both_snapshots_at_the_version_it_annotates():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(
+        _payload([blocks[1]], title="A related claim", summary="A second claim.")
+    )
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+    related = knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], evidence)
+
+    for record in (related, knowledge_units.load_unit(other["unit_id"])):
+        stored = json.loads(
+            knowledge_units._snapshot_path(record["unit_id"], record["version"]).read_text(encoding="utf-8")
+        )
+        assert stored["relations"] == record["relations"]
+        assert stored["content_hash"] == record["content_hash"]
+    assert knowledge_units.load_unit(unit["unit_id"])["version"] == 1
+
+
+def test_a_rollback_still_restores_only_the_body():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    knowledge_units.verify_unit(unit["unit_id"])
+    knowledge_units.archive_unit(unit["unit_id"])
+    knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+
+    rolled = knowledge_units.rollback_unit(unit["unit_id"], 1)
+    assert rolled["summary"] == unit["summary"]
+    assert rolled["status"] == "candidate"
+    assert rolled["verified_at"] is None
+    assert rolled["relations"] == []
+
+
 def test_verified_edits_lose_their_verification():
     blocks = _seed_material(storage.resolve_material_root())
     unit = knowledge_units.create_unit(_payload(blocks))

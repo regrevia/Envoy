@@ -311,6 +311,20 @@ def _snapshot(unit: dict, *, root: Path | None = None) -> Path:
     return path
 
 
+def _commit(unit: dict, *, root: Path | None = None) -> dict:
+    """Store the record and keep the snapshot for its version in step with it.
+
+    A snapshot is the whole record as it stood at one body version, so a mutation
+    that does not edit the body rewrites the same ``v<version>.json`` instead of
+    leaving an older state of that version behind. ``rollback`` restores only the
+    body fields, so rewriting it here cannot change what a rollback brings back.
+    """
+
+    _save_unit(unit, root=root)
+    _snapshot(unit, root=root)
+    return unit
+
+
 @_serialised
 def create_unit(payload: dict, *, root: Path | None = None) -> dict:
     """Store a new candidate; an identical body returns the existing unit."""
@@ -334,9 +348,7 @@ def create_unit(payload: dict, *, root: Path | None = None) -> dict:
         ],
         **body,
     }
-    _save_unit(unit, root=root)
-    _snapshot(unit, root=root)
-    return unit
+    return _commit(unit, root=root)
 
 
 def _material_revision(built: dict) -> str:
@@ -453,7 +465,7 @@ def verify_unit(unit_id: str, *, expected_version: int | None = None, root: Path
         {"version": unit["version"], "at": unit["verified_at"], "change": "verified", "status": VERIFIED}
     )
     _stamp_content_hash(unit)
-    _save_unit(unit, root=root)
+    _commit(unit, root=root)
     return {**unit, "unpinned_refs": len(unpinned), "warnings": list(unpinned)}
 
 
@@ -504,7 +516,7 @@ def promote_unit(unit_id: str, *, expected_version: int | None = None, root: Pat
         {"version": unit["version"], "at": _now(), "change": "promoted", "status": PROMOTED}
     )
     _stamp_content_hash(unit)
-    _save_unit(unit, root=root)
+    _commit(unit, root=root)
     return {**unit, "unpinned_refs": len(unpinned), "warnings": list(unpinned)}
 
 
@@ -520,7 +532,7 @@ def archive_unit(
         entry["reason"] = reason.strip()
     unit["history"].append(entry)
     _stamp_content_hash(unit)
-    return _save_unit(unit, root=root)
+    return _commit(unit, root=root)
 
 
 @_serialised
@@ -541,7 +553,7 @@ def update_unit(
     revised = {**copy.deepcopy(unit), **body}
     if _canonical(body) == _canonical({key: unit.get(key) for key in body}):
         return unit
-    _snapshot(unit, root=root)
+    _snapshot(unit, root=root)  # closing state of the version being left behind
     revised["version"] = int(unit["version"]) + 1
     previous = unit["status"]
     revised["status"] = CANDIDATE
@@ -557,9 +569,7 @@ def update_unit(
             "from_status": previous,
         }
     ]
-    _save_unit(revised, root=root)
-    _snapshot(revised, root=root)
-    return revised
+    return _commit(revised, root=root)
 
 
 @_serialised
@@ -583,7 +593,7 @@ def rollback_unit(
     for key in ("type", "title", "summary", "conditions", "steps", "limitations", "source_refs", "tests"):
         rollback[key] = old.get(key)
     body = _validate_body(rollback)
-    _snapshot(unit, root=root)
+    _snapshot(unit, root=root)  # closing state of the version being left behind
     rollback = {**rollback, **body}
     rollback["version"] = int(unit["version"]) + 1
     rollback["status"] = CANDIDATE
@@ -599,9 +609,7 @@ def rollback_unit(
             "restored_version": version,
         }
     ]
-    _save_unit(rollback, root=root)
-    _snapshot(rollback, root=root)
-    return rollback
+    return _commit(rollback, root=root)
 
 
 def _relation_fingerprint(entry: dict) -> str:
@@ -753,11 +761,11 @@ def relate_units(
     updated = copy.deepcopy(source)
     updated.setdefault("relations", []).append(entry)
     _stamp_content_hash(updated)
-    _save_unit(updated, root=root)
+    _commit(updated, root=root)
     mirrored = copy.deepcopy(target)
     mirrored.setdefault("relations", []).append(inverse)
     _stamp_content_hash(mirrored)
-    _save_unit(mirrored, root=root)
+    _commit(mirrored, root=root)
     return updated
 
 

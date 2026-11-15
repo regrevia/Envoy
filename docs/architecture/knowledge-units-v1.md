@@ -100,10 +100,18 @@ verified any more, by construction — there is no path that keeps a stale
 `verified_against` fingerprint.
 
 Every mutation writes a snapshot to `knowledge-units/<unit>/v<version>.json` and
-appends to `history`. `rollback --version N` restores version N's body as a *new*
-version (`{"change": "rolled_back", "restored_version": N}`), so the undo is itself
-auditable. Rolling back to the current version (`N >= version`) or to a version
-that never existed is `invalid_version`.
+appends to `history`. A snapshot is the whole record as it stood at one body
+version, so the snapshot always agrees with the record for the version it names:
+`verify`, `promote`, `archive` and `relate` do not bump `version`, and therefore
+rewrite `v<version>.json` rather than leaving an older state of that version
+behind. Once the body moves to the next version, the earlier snapshot is frozen.
+
+`rollback --version N` restores version N's body as a *new* version
+(`{"change": "rolled_back", "restored_version": N}`), so the undo is itself
+auditable. It copies only the body fields, never `status`, `relations` or
+`verified_against`, so a refreshed snapshot cannot change what a rollback brings
+back. Rolling back to the current version (`N >= version`) or to a version that
+never existed is `invalid_version`.
 
 ### Promotion re-validates; it does not trust the earlier `verify`
 
@@ -180,15 +188,17 @@ A relation that already exists is `relation_exists`, not a duplicate row.
 ```
 <envoy-root>/knowledge-units/
   ku-<hex>.json              # current record
-  ku-<hex>/v1.json           # version snapshots, immutable after write
-  ku-<hex>/v2.json
+  ku-<hex>/v1.json           # version snapshots; only the current version is rewritten
+  ku-<hex>/v2.json           # a snapshot freezes once a later version exists
   .units.lock                # empty; flock target for writers
 ```
 
-Writes are atomic (`tmp` file + `os.replace`), and a snapshot is never rewritten
-after it is written. Unit records are plain JSON so they can be read with `cat`,
-diffed, and copied out — no database, no server. That is a deliberate non-goal:
-Knowledge Units are not a knowledge graph product.
+Writes are atomic (`tmp` file + `os.replace`). A snapshot is written with every
+mutation and rewritten only while its version is still the current one; from the
+moment a later version exists it is never touched again. Unit records are plain
+JSON so they can be read with `cat`, diffed, and copied out — no database, no
+server. That is a deliberate non-goal: Knowledge Units are not a knowledge graph
+product.
 
 ## Compare-and-set: `--if-version`
 
