@@ -10,7 +10,7 @@ description = "Independent Envoy link reader launcher"
 requires-python = ">=3.10"
 dependencies = [
   "httpx>=0.28,<1",
-  "pypdf>=6.21.4,<7",
+  "pypdf>=6.21.4,<8",
   "pydantic>=2.10,<3",
   "yt-dlp>=2026.8.19,<2027",
   "playwright>=1.52,<2",
