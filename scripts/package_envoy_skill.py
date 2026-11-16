@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 
-SKILL_VERSION = "0.1.57"
+SKILL_VERSION = "0.1.58"
 REQUIRED_FILES = (
     "SKILL.md",
     "INSTALL.md",

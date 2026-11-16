@@ -1,5 +1,124 @@
 # 更新日志 / Changelog
 
+## 0.1.58 - 2026-11-16
+
+### 中文
+
+- Windows 上 CLI 起不来（`ModuleNotFoundError: No module named 'fcntl'`）已修复：
+  批处理队列的锁改成按平台选择，POSIX 用 `flock`、Windows 用 `msvcrt`，模块级不再
+  导入平台库。0.1.57 的 wheel 里 `envoy --version` 能打、`envoy --help` 和
+  `envoy mcp` 直接退出，就是这一条；这个版本换了正确的锁，Windows 上整条 CLI 与
+  MCP server 恢复（`serverInfo` 报 `envoy`，5 个工具）。
+- 写入给回读与散列的字节固定为构建时的字节：证据包把内存文本的 sha256 写进
+  manifest 再读回磁盘校验，Windows 文本模式会把 `\n` 改成 `\r\n`，于是刚导出的
+  包通不过自己的 manifest、转换器也随之拒收。所有会被回读或参与散列的写入改为
+  `newline=""`。
+- 媒体 worker 崩溃时的 stderr 改为按路径交接：Windows 上 `open` 打开的文件不能
+  被子进程继承 `fd 2`，父进程改为把临时文件路径经环境变量交给子进程、由子进程
+  自己重开，结束时清理；POSIX 仍走 `fd 2`。
+- Evidence Pack 升到 v2：`manifest.files` 从六项扩到八项并新增 `inventory`（除
+  `manifest.json` 外每个文件记 sha256 与大小，文件凭空出现或消失都算损坏）；
+  `pack_id` 明确排除 `pack_id` 与 `inventory`，避免两条互相定义成环；证据索引与
+  文档块增加 `origin`/`extractor`/`extractor_version`，`source` 表示原文自带、
+  `asr`/`ocr`/`vision` 表示模型产出、`derived` 表示读取器计算得出，材料没记版本
+  时留 null 不猜。`verify` 重写为依次算包、证据文件、清单项，并报出清单之外的多
+  余文件；路径为空、绝对或带 `..` 的清单项直接拒绝。v1 包仍可读、可校验、可转
+  Cangjie。新增 `docs/architecture/evidence-pack-v2.md` 与五份 v2 schema。
+- 同一来源的并发读取只取一次：读路径按「来源 + 会话/请求」加锁，第二个调用者等
+  候后直接拿到已完成的材料，而不是把同一来源再取一遍。等候开始的时刻界定可交接
+  的范围——读取在别人等候之前就已结束，则必须重取，看到的是来源当前的样子。
+  media 已有的跨进程锁复用到读路径，状态目录不可写时退回不串行读；operations 账
+  本新增共享窗口，只对「已在等候」的调用者生效，同一来源的过期记录不再抛冲突而
+  是重新执行；调用者自带的 `idempotency_key` 仍是普通幂等重放。
+- `source_revision` 改为描述材料内容而非地址：同一份材料换一个带签名或追踪参数
+  的地址不再被当成另一份；同一个地址明天配送出不同内容，也不再被当成同一份。新
+  增 `_content_revision` 对材料本身取 sha256，`_url_basis_revision` 只用于
+  `NEEDS_HOST` 这类手里没有材料字节、只剩地址可依据的路径并以 `url-basis:` 前缀
+  保证不会被误读成内容摘要；`_evidence_revision_kind` 报 `url_digest`，旧租约里
+  直接哈希裸 URL 的修订在过期前仍照旧可读。
+- 知识单元写入串行化并加版本闸门：写入命令按 `os.name` 分支加锁（`flock` /
+  `msvcrt`，模块级不导入平台库），新增 `--if-version` 比对，版本不符返回
+  `version_conflict` 而不是静默覆盖；`/2` 记录带 `content_hash`，`/1` 记录仍可读、
+  按需算哈希且不在读路径写盘；关系改成两端各一条带 `relation_id` 与 `content_hash`
+  的记录，旧的 inline 关系标 `legacy` 仍可读；验证增加 `verification_stale`。
+- 知识单元快照与记录对齐：每次变更都写当前版本快照，快照只在它的版本仍是当前版
+  本时重写，一旦有更新的版本就冻结；内容没变的写入不落盘（`_write_if_changed`），
+  读一次不带的单元也不会被顺手改写（字节与修改时间都不变）。
+- 批处理每次尝试都落审计：item 记录 `batch_id` / `item_id` / `attempt_id` /
+  `material_id` / `status` / `started_at` / `finished_at` / `work_seconds` /
+  `error_code`，`attempts_log` 每次尝试一条、上限 10 条；老状态文件按
+  `setdefault` 补齐，不覆盖已有值。
+- 缓存状态与清理共用一次遍历：`cache status` 与 `cache prune` 由同一份 plan 得出
+  数字，dry-run 与真删不再可能各算各的；保留项给出未过期 / 被锁 / 读取失败三个
+  原因；`--json` 只增键不改旧键。
+
+### English
+
+- The CLI no longer dies on Windows (`ModuleNotFoundError: No module named 'fcntl'`):
+  the batch queue lock is chosen per platform, `flock` on POSIX and `msvcrt` on
+  Windows, and no platform module is imported at module scope. In the 0.1.57 wheel
+  `envoy --version` printed but `envoy --help` and `envoy mcp` exited immediately;
+  this release restores the whole CLI and the MCP server on Windows
+  (`serverInfo` reports `envoy`, 5 tools).
+- Bytes that get read back or hashed are now written exactly as built: an evidence
+  pack writes the sha256 of the in-memory text into its manifest and verifies the
+  bytes on disk, and Windows text mode rewrote `\n` to `\r\n`, so a freshly
+  exported pack failed its own manifest and the converter refused it. Every write
+  that is read back or hashed now uses `newline=""`.
+- A crashed media worker hands its stderr over by path: on Windows a file opened by
+  the parent cannot be inherited by the child as `fd 2`, so the parent passes the
+  temporary file path through the environment and the child reopens it, cleaning up
+  when it exits; POSIX still uses `fd 2`.
+- Evidence Pack v2: `manifest.files` grows from six entries to eight and gains an
+  `inventory` (sha256 and size for every file but `manifest.json`, so a file that
+  appears or vanishes also counts as damage); `pack_id` explicitly excludes
+  `pack_id` and `inventory`, which would otherwise define each other in a cycle;
+  evidence index and document blocks gain `origin`/`extractor`/`extractor_version`,
+  where `source` means the material carried it, `asr`/`ocr`/`vision` mean a model
+  produced it and `derived` means the reader computed it, left null when the
+  material records no version rather than guessed. `verify` is rewritten to compute
+  the pack, then each evidence file, then each inventory entry, and to report files
+  outside the inventory; entries with an empty, absolute or `..` path are rejected.
+  v1 packs stay readable, verifiable and convertible to Cangjie.
+  `docs/architecture/evidence-pack-v2.md` and five v2 schemas are new.
+- Concurrent reads of one source are taken once: the read path locks on
+  source plus session/request, and a second caller waits and receives the finished
+  material instead of fetching the source again. The moment the wait began bounds
+  what may be handed over — if the read finished before someone started waiting, it
+  must be re-fetched, because what that caller needs is the source as it is now.
+  media's existing cross-process lock is reused on the read path, and a state
+  directory that cannot be written falls back to unserialised reads; the operations
+  ledger gains a shared window that only applies to callers already waiting, and an
+  expired record for the same source re-runs instead of raising a conflict; a
+  caller-supplied `idempotency_key` is still ordinary idempotent replay.
+- `source_revision` now describes the material rather than the address: the same
+  material behind a signed or tracking-parameter URL is no longer a second material,
+  and one address delivering different content tomorrow is no longer the same one.
+  `_content_revision` hashes the material itself; `_url_basis_revision` is used only
+  where no bytes are in hand and nothing but the address exists (`NEEDS_HOST`) and
+  carries a `url-basis:` prefix so it can never be mistaken for a content digest;
+  `_evidence_revision_kind` reports `url_digest`, and older leases that hashed the
+  bare URL stay readable until they expire.
+- Knowledge-unit writes are serialised behind a version gate: write commands lock by
+  `os.name` (`flock` / `msvcrt`, no platform import at module scope), `--if-version`
+  compares the expected version and returns `version_conflict` instead of silently
+  overwriting, `/2` records carry `content_hash`, `/1` records stay readable and are
+  hashed on demand without writing on the read path, relations become one record on
+  each side carrying `relation_id` and `content_hash` with older inline relations
+  read as `legacy`, and verification gains `verification_stale`.
+- Knowledge-unit snapshots line up with what the record said: every mutation writes
+  the current version's snapshot, a snapshot is rewritten only while its version is
+  still current and freezes once a later version exists, a write that changes
+  nothing leaves the file alone (`_write_if_changed`), and reading a unit that has no
+  content hash does not rewrite it (bytes and modification time unchanged).
+- Every batch attempt is audited: an item records `batch_id` / `item_id` /
+  `attempt_id` / `material_id` / `status` / `started_at` / `finished_at` /
+  `work_seconds` / `error_code`, and `attempts_log` holds one entry per attempt, up
+  to 10; older state files are filled in with `setdefault` rather than overwritten.
+- `cache status` and `cache prune` share one traversal: both derive their numbers
+  from the same plan, so dry-run and a real delete can no longer disagree; a retained
+  entry says why (not expired, locked, or unreadable), and `--json` only adds keys.
+
 ## 0.1.57 - 2026-11-12
 
 ### 中文
