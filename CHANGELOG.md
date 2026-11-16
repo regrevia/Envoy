@@ -1,5 +1,49 @@
 # 更新日志 / Changelog
 
+## 0.1.59 - 2026-11-16
+
+### 中文
+
+- `relate` 的两个端点都要闸门：命令新增 `--if-target-version`，与 `--if-version`
+  一起决定这次写入。任一端在你读过之后动过，整条关系都不写，两端记录的
+  `from_version` 因此不会各说各话。
+- 同一条关系换个方向再写一次，现在认作同一条关系：判重按「无向对」比对两端，
+  返回 `relation_exists`，不再追加第二行；同一对单元换成另一种关系类型仍是另一
+  个事实，允许写入。
+- 归档不是可以顺手绕过的小旗子：`update`、`rollback`、`verify`、`promote` 和再
+  次 `archive` 一律以 `unit_archived` 拒绝对已归档单元动手，而不是在它上面悄悄
+  升一个版本把撤回的说法放回场上。新增 `envoy knowledge reopen` 作为唯一出口，
+  它把单元放回 `candidate` 且不升版本（正文没变），并清空验证结果——被撤回过的
+  说法要重新挣得 `verified`。未归档的单元 `reopen` 返回 `not_archived`。
+- 关系的两半要么都写要么都不写：第二端写入失败时把第一端补回原样；连补回都失
+  败才报 `relation_half_written` 并指明两端都要检查，不再留半条关系。
+- 所有 knowledge 写命令都接受 `--json`（`promote`、`archive`、`reopen`、
+  `update`、`rollback`、`relate` 补齐），脚本不必再从人类可读输出里抠结果。
+
+### English
+
+- Both ends of `relate` are gated: the command gains `--if-target-version`, which
+  together with `--if-version` decides the write. If either unit moved since it was
+  read, the whole relation is refused, so the two ends cannot record different
+  `from_version`s for one fact.
+- The same relation written the other way round is now the same relation: the
+  duplicate check compares the pair without direction and answers
+  `relation_exists` instead of appending a second row. A different relation type
+  between the same pair is still a different fact, and is allowed.
+- Archival is not a flag to write around: `update`, `rollback`, `verify`, `promote`
+  and a second `archive` all refuse an archived unit with `unit_archived`, instead of
+  quietly bumping its version and putting a withdrawn claim back in play. The new
+  `envoy knowledge reopen` is the one way out — it returns the unit to `candidate`
+  without bumping `version` (the body did not change) and clears verification, so a
+  withdrawn claim has to earn `verified` again. Reopening a unit that is not
+  archived answers `not_archived`.
+- A relation is written on both ends or on neither: if the mirror cannot be written,
+  the asserted end is put back; only when that also fails does it report
+  `relation_half_written`, naming both units to check.
+- Every knowledge write command accepts `--json` (`promote`, `archive`, `reopen`,
+  `update`, `rollback` and `relate` now join the rest), so scripts no longer have to
+  scrape the human-readable output.
+
 ## 0.1.58 - 2026-11-16
 
 ### 中文

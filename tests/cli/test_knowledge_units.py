@@ -246,6 +246,7 @@ def test_a_rollback_still_restores_only_the_body():
     unit = knowledge_units.create_unit(_payload(blocks))
     knowledge_units.verify_unit(unit["unit_id"])
     knowledge_units.archive_unit(unit["unit_id"])
+    knowledge_units.reopen_unit(unit["unit_id"])
     knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
 
     rolled = knowledge_units.rollback_unit(unit["unit_id"], 1)
@@ -299,6 +300,90 @@ def test_archive_keeps_the_record_and_stops_verification():
     assert refusal.value.code == "unit_archived"
 
 
+def test_an_archived_unit_is_not_revived_by_a_write_that_bumps_the_version():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+    knowledge_units.archive_unit(unit["unit_id"], reason="wrong claim")
+
+    for label, write in (
+        ("updating", lambda: knowledge_units.update_unit(unit["unit_id"], {"summary": "edited"})),
+        ("rolling back", lambda: knowledge_units.rollback_unit(unit["unit_id"], 1)),
+        ("verifying", lambda: knowledge_units.verify_unit(unit["unit_id"])),
+        ("promoting", lambda: knowledge_units.promote_unit(unit["unit_id"])),
+    ):
+        with pytest.raises(knowledge_units.UnitError) as refusal:
+            write()
+        assert refusal.value.code == "unit_archived"
+        assert f"reopen it before {label}" in str(refusal.value)
+
+    still = knowledge_units.load_unit(unit["unit_id"])
+    assert still["status"] == "archived"
+    assert still["version"] == 2
+    assert still["history"][-1]["change"] == "archived"
+
+
+def test_archiving_twice_is_refused_instead_of_recording_it_twice():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    knowledge_units.archive_unit(unit["unit_id"], reason="wrong claim")
+
+    with pytest.raises(knowledge_units.UnitError) as refusal:
+        knowledge_units.archive_unit(unit["unit_id"], reason="wrong claim")
+    assert refusal.value.code == "unit_archived"
+
+    still = knowledge_units.load_unit(unit["unit_id"])
+    assert [entry["change"] for entry in still["history"]].count("archived") == 1
+
+
+def test_reopen_is_the_one_way_back_and_it_does_not_bump_the_version():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    knowledge_units.archive_unit(unit["unit_id"], reason="source gone")
+
+    reopened = knowledge_units.reopen_unit(unit["unit_id"])
+    assert reopened["status"] == "candidate"
+    assert reopened["version"] == unit["version"]
+    assert reopened["history"][-1]["change"] == "reopened"
+    assert reopened["history"][-1]["from_status"] == "archived"
+
+    with pytest.raises(knowledge_units.UnitError) as refusal:
+        knowledge_units.reopen_unit(unit["unit_id"])
+    assert refusal.value.code == "not_archived"
+
+    edited = knowledge_units.update_unit(unit["unit_id"], {"summary": "A sharper summary."})
+    assert edited["version"] == reopened["version"] + 1
+    assert edited["history"][-1]["from_status"] == "candidate"
+
+
+def test_the_cli_reopens_an_archived_unit_instead_of_letting_a_write_revive_it(
+    tmp_path, capsys, monkeypatch
+):
+    blocks = _seed_material(storage.resolve_material_root())
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units")
+    body = tmp_path / "unit.json"
+    body.write_text(json.dumps(_payload(blocks)), encoding="utf-8")
+    patch = tmp_path / "patch.json"
+    patch.write_text(json.dumps({"summary": "A sharper summary."}), encoding="utf-8")
+
+    assert cli.main(["knowledge", "create", "--file", str(body), "--json"]) == 0
+    unit_id = json.loads(capsys.readouterr().out)["unit_id"]
+    assert cli.main(["knowledge", "archive", unit_id, "--if-version", "1"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["knowledge", "update", unit_id, "--file", str(patch)]) == 1
+    failure = json.loads(capsys.readouterr().out)
+    assert failure["error"] == "unit_archived"
+    assert knowledge_units.load_unit(unit_id)["status"] == "archived"
+    assert knowledge_units.load_unit(unit_id)["version"] == 1
+
+    assert cli.main(["knowledge", "reopen", unit_id, "--if-version", "1", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "candidate"
+    assert cli.main(["knowledge", "update", unit_id, "--file", str(patch)]) == 0
+    assert knowledge_units.load_unit(unit_id)["version"] == 2
+
+
 def test_two_units_relate_only_through_evidence_one_already_cites():
     blocks = _seed_material(storage.resolve_material_root())
     unit = knowledge_units.create_unit(_payload(blocks))
@@ -321,6 +406,51 @@ def test_two_units_relate_only_through_evidence_one_already_cites():
     with pytest.raises(knowledge_units.UnitError) as duplicate:
         knowledge_units.relate_units(unit["unit_id"], "supports", other["unit_id"], entry["evidence"])
     assert duplicate.value.code == "relation_exists"
+
+
+def test_a_relation_is_refused_when_the_target_moved_since_it_was_read():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(_payload([blocks[1]], title="A related claim"))
+
+    knowledge_units.update_unit(other["unit_id"], {"summary": "A sharper summary."})
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+
+    with pytest.raises(knowledge_units.UnitError) as stale_target:
+        knowledge_units.relate_units(
+            unit["unit_id"],
+            "supports",
+            other["unit_id"],
+            evidence,
+            expected_version=unit["version"],
+            expected_target_version=1,
+        )
+    assert stale_target.value.code == "version_conflict"
+    assert stale_target.value.details == {"expected": 1, "actual": 2}
+    assert knowledge_units.list_relations(unit["unit_id"]) == []
+    assert knowledge_units.list_relations(other["unit_id"]) == []
+
+
+def test_a_relation_written_the_other_way_round_is_the_same_relation():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    other = knowledge_units.create_unit(_payload([blocks[1]], title="A related claim"))
+    evidence = [
+        {"material_id": MATERIAL, "evidence_id": blocks[0]["evidence_id"], "locator": blocks[0]["locator"]}
+    ]
+
+    knowledge_units.relate_units(unit["unit_id"], "extends", other["unit_id"], evidence)
+    with pytest.raises(knowledge_units.UnitError) as reversed_duplicate:
+        knowledge_units.relate_units(other["unit_id"], "extends", unit["unit_id"], evidence)
+    assert reversed_duplicate.value.code == "relation_exists"
+    assert len(knowledge_units.list_relations(unit["unit_id"])) == 1
+    assert len(knowledge_units.list_relations(other["unit_id"])) == 1
+
+    # A different relation type between the same pair is a different fact.
+    knowledge_units.relate_units(other["unit_id"], "contradicts", unit["unit_id"], evidence)
+    assert len(knowledge_units.list_relations(unit["unit_id"])) == 2
 
 
 def test_a_relation_is_readable_from_both_ends_with_its_own_fingerprint():
@@ -631,3 +761,60 @@ def test_the_cli_refuses_a_write_when_if_version_is_stale(tmp_path, capsys, monk
 
     assert cli.main(["knowledge", "archive", unit_id, "--if-version", "2"]) == 0
     assert "[archived]" in capsys.readouterr().out
+
+
+def test_the_cli_refuses_a_relation_when_the_target_moved(tmp_path, capsys, monkeypatch):
+    blocks = _seed_material(storage.resolve_material_root())
+    monkeypatch.setenv("ENVOY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units")
+    body = tmp_path / "unit.json"
+    body.write_text(json.dumps(_payload(blocks)), encoding="utf-8")
+    other_body = tmp_path / "other.json"
+    other_body.write_text(json.dumps(_payload([blocks[1]], title="A related claim")), encoding="utf-8")
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(
+        json.dumps(
+            [
+                {
+                    "material_id": MATERIAL,
+                    "evidence_id": blocks[0]["evidence_id"],
+                    "locator": blocks[0]["locator"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert cli.main(["knowledge", "create", "--file", str(body), "--json"]) == 0
+    unit_id = json.loads(capsys.readouterr().out)["unit_id"]
+    assert cli.main(["knowledge", "create", "--file", str(other_body), "--json"]) == 0
+    other_id = json.loads(capsys.readouterr().out)["unit_id"]
+    patch = tmp_path / "patch.json"
+    patch.write_text(json.dumps({"summary": "A sharper summary."}), encoding="utf-8")
+    assert cli.main(["knowledge", "update", other_id, "--file", str(patch)]) == 0
+    capsys.readouterr()
+
+    argv = [
+        "knowledge",
+        "relate",
+        unit_id,
+        "--type",
+        "supports",
+        "--to",
+        other_id,
+        "--evidence",
+        str(evidence),
+        "--if-version",
+        "1",
+        "--if-target-version",
+        "1",
+    ]
+    assert cli.main(argv) == 1
+    failure = json.loads(capsys.readouterr().out)
+    assert failure["error"] == "version_conflict"
+    assert failure["expected"] == 1
+    assert failure["actual"] == 2
+    assert knowledge_units.list_relations(unit_id) == []
+
+    assert cli.main(argv[:-2] + ["--if-target-version", "2"]) == 0
+    assert len(knowledge_units.list_relations(other_id)) == 1

@@ -79,6 +79,10 @@ Consequences worth stating plainly:
 candidate --verify--> verified --promote--> promoted
     ^                   |                     |
     +---- update -------+      archive <------+
+                                    |
+                              reopen|
+                                    v
+                                candidate
 ```
 
 - **candidate** — written from evidence that has not been re-checked.
@@ -92,12 +96,28 @@ candidate --verify--> verified --promote--> promoted
   one condition, one step, one limitation and one test. The difference between
   "true" and "usable" is exactly the cases in which it stops being true.
 - **archived** — kept, out of the way. Archival never deletes: a claim may be
-  wrong in a way that is worth remembering, and a source may reappear.
+  wrong in a way that is worth remembering, and a source may reappear. It is
+  therefore not a dead end, but it is a decision, and nothing else overrides it:
+  `update`, `rollback`, `verify`, `promote` and a second `archive` refuse an
+  archived unit with `unit_archived` rather than quietly reviving a withdrawn claim
+  at a new version or recording the same decision twice. `reopen` is the one path
+  out: it puts the unit back at `candidate` without bumping `version`, because the
+  body did not change, and without restoring any earlier verification, because a
+  claim that was withdrawn has to earn `verified` again.
 
 `update` bumps `version`, resets the status to `candidate`, and appends
 `{"change": "updated", "from_status": …}`. A verified unit that is edited is not
 verified any more, by construction — there is no path that keeps a stale
 `verified_against` fingerprint.
+
+`reopen` is the only way out of `archived`, and it is deliberately a command rather
+than a side effect of some other write. It moves the unit back to `candidate` without
+bumping `version` (the body did not change) and appends
+`{"change": "reopened", "from_status": "archived"}`. Verification is cleared, so a
+reopened unit has to be verified again. Reopening a unit that is not archived is
+`not_archived`; `archive` on an already archived unit is `unit_archived`; and
+`update`/`rollback`/`verify`/`promote` refuse an archived unit with `unit_archived`
+instead of reviving it.
 
 Every mutation writes a snapshot to `knowledge-units/<unit>/v<version>.json` and
 appends to `history`. A snapshot is the whole record as it stood at one body
@@ -181,7 +201,17 @@ refused and never block verification, because there is no fingerprint to check a
 no `from_version` was ever recorded. New rows use only the `/2` shape; nothing
 rewrites a legacy row in place.
 
-A relation that already exists is `relation_exists`, not a duplicate row.
+A relation that already exists is `relation_exists`, not a duplicate row. The two
+ends are one fact, so the check is unordered: `a supports b` and `b supports a`
+are the same relation written the other way round, and the second one is refused
+rather than appended as a second row on each unit. A different relation type
+between the same pair is a different fact and is allowed.
+
+Because the mirror is a second write, the two ends are written as one fact: if the
+target cannot be committed, the asserted end is put back, and only if that also
+fails does `relate` raise `relation_half_written`, naming both units to check. A
+relation that survives on one end only would read as two disagreeing records, which
+is worse than a refused write.
 
 ## Storage
 
@@ -210,15 +240,25 @@ is refused with `version_conflict` (details `expected`, `actual`) instead of
 applying on top of a state the caller never saw. When it is omitted the behaviour is
 exactly what it was before: last writer wins.
 
-On the CLI that is `--if-version N`, available on `update`, `archive`, `rollback`,
-`relate` and `promote`:
+On the CLI that is `--if-version N`, available on `update`, `archive`, `reopen`,
+`rollback`, `relate` and `promote`:
 
 ```console
 $ envoy knowledge show ku-…            # v3
 $ envoy knowledge update ku-… --if-version 3 --file patch.json
 $ envoy knowledge update ku-… --if-version 3 --file patch.json
 {"error": "version_conflict", "message": "ku-… is at version 4, not 3; reload and retry", "expected": 3, "actual": 4}
+$ envoy knowledge reopen ku-… --if-version 4   # archived -> candidate, still v4
 ```
+
+`relate` writes to two units, so it takes two gates: `--if-version` for the unit
+named on the command line and `--if-target-version` for the one behind `--to`.
+Either one being stale refuses the whole write, which is what keeps the two ends
+from recording different `from_version`s for one relation.
+
+Every `envoy knowledge` subcommand takes `--json` and prints one object (or a list,
+for `list`) on success, and `{"error": <code>, …}` with exit status 1 on a refusal,
+so a caller never has to read the human-readable lines to learn what happened.
 
 Because the check and the write are two steps, they run under an exclusive lock on
 `knowledge-units/.units.lock` (`fcntl.flock`, `msvcrt.locking` on Windows — the same

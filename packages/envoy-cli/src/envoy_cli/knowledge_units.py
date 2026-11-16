@@ -462,6 +462,51 @@ def _check_expected_version(unit: dict, expected_version: int | None) -> None:
         )
 
 
+def _refuse_archived(unit: dict, action: str) -> None:
+    """Refuse to advance a unit that is archived.
+
+    Archival is a decision about the claim, not a hidden flag: reviving an archived
+    unit behind ``update`` or ``rollback`` would silently put a withdrawn claim back
+    in play at a new version. ``reopen`` is the one path out, so the refusal names it.
+    """
+
+    if unit["status"] == ARCHIVED:
+        raise UnitError(
+            "unit_archived",
+            f"{unit['unit_id']} is archived; reopen it before {action}",
+        )
+
+
+@_serialised
+def reopen_unit(unit_id: str, *, expected_version: int | None = None, root: Path | None = None) -> dict:
+    """Take an archived unit back into use, as a candidate again.
+
+    Archival never deletes, and a claim archived because its source was gone may be
+    worth re-checking when the source reappears. Reopening does not bump ``version``
+    (the body did not change) and does not restore any earlier verification: the unit
+    comes back as ``candidate`` and has to earn ``verified`` again.
+    """
+
+    unit = load_unit(unit_id, root=root)
+    _check_expected_version(unit, expected_version)
+    if unit["status"] != ARCHIVED:
+        raise UnitError("not_archived", f"{unit_id} is not archived; there is nothing to reopen")
+    unit["status"] = CANDIDATE
+    unit["verified_at"] = None
+    unit["verified_against"] = None
+    unit["history"].append(
+        {
+            "version": unit["version"],
+            "at": _now(),
+            "change": "reopened",
+            "status": CANDIDATE,
+            "from_status": ARCHIVED,
+        }
+    )
+    _stamp_content_hash(unit)
+    return _commit(unit, root=root)
+
+
 @_serialised
 def verify_unit(unit_id: str, *, expected_version: int | None = None, root: Path | None = None) -> dict:
     """Move a unit to ``verified`` only when every ref still resolves.
@@ -473,8 +518,7 @@ def verify_unit(unit_id: str, *, expected_version: int | None = None, root: Path
 
     unit = load_unit(unit_id, root=root)
     _check_expected_version(unit, expected_version)
-    if unit["status"] == ARCHIVED:
-        raise UnitError("unit_archived", f"{unit_id} is archived; reopen it before verifying")
+    _refuse_archived(unit, "verifying")
     problems, unpinned, revisions = _check_refs(unit, root=root)
     problems = problems + _check_relations(unit)
     if problems:
@@ -501,6 +545,7 @@ def promote_unit(unit_id: str, *, expected_version: int | None = None, root: Pat
 
     unit = load_unit(unit_id, root=root)
     _check_expected_version(unit, expected_version)
+    _refuse_archived(unit, "promoting")
     if unit["status"] != VERIFIED:
         raise UnitError("needs_verification", f"{unit_id} is {unit['status']}; verify its evidence first")
     missing = [
@@ -547,6 +592,8 @@ def archive_unit(
 ) -> dict:
     unit = load_unit(unit_id, root=root)
     _check_expected_version(unit, expected_version)
+    if unit["status"] == ARCHIVED:
+        raise UnitError("unit_archived", f"{unit_id} is already archived")
     unit["status"] = ARCHIVED
     entry = {"version": unit["version"], "at": _now(), "change": "archived", "status": ARCHIVED}
     if reason.strip():
@@ -564,6 +611,7 @@ def update_unit(
 
     unit = load_unit(unit_id, root=root)
     _check_expected_version(unit, expected_version)
+    _refuse_archived(unit, "updating")
     if not isinstance(patch, dict):
         raise UnitError("invalid_unit", "update needs an object")
     merged = copy.deepcopy(unit)
@@ -601,6 +649,7 @@ def rollback_unit(
 
     unit = load_unit(unit_id, root=root)
     _check_expected_version(unit, expected_version)
+    _refuse_archived(unit, "rolling back")
     if not isinstance(version, int) or version < 1 or version >= int(unit["version"]):
         raise UnitError("invalid_version", f"version must be between 1 and {int(unit['version']) - 1}")
     snapshot = _snapshot_path(unit_id, version, root=root)
@@ -707,6 +756,28 @@ def list_relations(unit_id: str, *, root: Path | None = None) -> list[dict]:
     return relation_view(load_unit(unit_id, root=root))
 
 
+def _refuse_existing_relation(source: dict, target: dict, relation: str, from_id: str, to_id: str) -> None:
+    """Refuse a relation that is already recorded between these two units.
+
+    The two ends of a relation are one fact: the asserted entry on one unit and the
+    mirror carrying ``inverse_of`` on the other. So the pair is unordered here — a
+    relation already stored ``to_id <relation> from_id`` is the same fact written
+    the other way round, and asserting it again would append a second row for one
+    relation instead of reporting ``relation_exists``.
+    """
+
+    for unit in (source, target):
+        for existing in relation_view(unit):
+            if existing["inverse_of"] or existing["type"] != relation:
+                continue
+            ends = {existing["from_unit_id"], existing["to_unit_id"]}
+            if ends == {from_id, to_id}:
+                raise UnitError(
+                    "relation_exists",
+                    f"{from_id} and {to_id} already relate through {relation}",
+                )
+
+
 @_serialised
 def relate_units(
     from_id: str,
@@ -715,6 +786,7 @@ def relate_units(
     evidence,
     *,
     expected_version: int | None = None,
+    expected_target_version: int | None = None,
     root: Path | None = None,
 ) -> dict:
     """Record how two units bear on each other; the relation must cite evidence.
@@ -724,6 +796,11 @@ def relate_units(
     pair is one fact with two ends rather than two independent claims. Each end has
     its own ``relation_id``, its own ``content_hash`` and the version it was
     written against, so either side stays checkable on its own.
+
+    Because the write lands on two records, it takes two compare-and-set gates:
+    ``expected_version`` for the source and ``expected_target_version`` for the
+    target. A caller that saw both sides can then refuse the write if either moved,
+    instead of annotating a version it never read.
     """
 
     if relation not in RELATION_TYPES:
@@ -731,6 +808,7 @@ def relate_units(
     source = load_unit(from_id, root=root)
     _check_expected_version(source, expected_version)
     target = load_unit(to_id, root=root)
+    _check_expected_version(target, expected_target_version)
     if from_id == to_id:
         raise UnitError("invalid_relation", "a unit cannot relate to itself")
     refs = source.get("source_refs") or []
@@ -747,11 +825,7 @@ def relate_units(
                 f"evidence[{index}] is not cited by either unit; cite it on a unit first",
             )
         checked.append(ref)
-    for existing in relation_view(source):
-        if existing["inverse_of"]:
-            continue
-        if existing["type"] == relation and existing["to_unit_id"] == to_id:
-            raise UnitError("relation_exists", f"{from_id} already {relation} {to_id}")
+    _refuse_existing_relation(source, target, relation, from_id, to_id)
     at = _now()
     entry = {
         "relation_id": "",
@@ -786,7 +860,20 @@ def relate_units(
     mirrored = copy.deepcopy(target)
     mirrored.setdefault("relations", []).append(inverse)
     _stamp_content_hash(mirrored)
-    _commit(mirrored, root=root)
+    try:
+        _commit(mirrored, root=root)
+    except Exception as exc:
+        # The two ends are one fact, so a relation must never survive on only one
+        # of them: if the mirror cannot be written, put the asserted end back.
+        try:
+            _commit(source, root=root)
+        except Exception:
+            raise UnitError(
+                "relation_half_written",
+                f"{from_id} was annotated but {to_id} could not be updated, and the "
+                f"first write could not be undone; check both units",
+            ) from exc
+        raise
     return updated
 
 

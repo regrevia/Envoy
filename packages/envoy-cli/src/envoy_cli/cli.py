@@ -189,24 +189,34 @@ def _parser() -> argparse.ArgumentParser:
     knowledge_promote.add_argument(
         "--if-version", type=int, help="write only if the unit is still at this version"
     )
+    knowledge_promote.add_argument("--json", action="store_true")
     knowledge_archive = knowledge_commands.add_parser("archive", help="stop using a unit without deleting it")
     knowledge_archive.add_argument("unit_id")
     knowledge_archive.add_argument("--reason")
     knowledge_archive.add_argument(
         "--if-version", type=int, help="write only if the unit is still at this version"
     )
+    knowledge_archive.add_argument("--json", action="store_true")
+    knowledge_reopen = knowledge_commands.add_parser("reopen", help="take an archived unit back into use")
+    knowledge_reopen.add_argument("unit_id")
+    knowledge_reopen.add_argument(
+        "--if-version", type=int, help="write only if the unit is still at this version"
+    )
+    knowledge_reopen.add_argument("--json", action="store_true")
     knowledge_update = knowledge_commands.add_parser("update", help="edit a unit into a new version")
     knowledge_update.add_argument("unit_id")
     knowledge_update.add_argument("--file", help="read the patch from this path instead of stdin")
     knowledge_update.add_argument(
         "--if-version", type=int, help="write only if the unit is still at this version"
     )
+    knowledge_update.add_argument("--json", action="store_true")
     knowledge_rollback = knowledge_commands.add_parser("rollback", help="restore an older body as a new version")
     knowledge_rollback.add_argument("unit_id")
     knowledge_rollback.add_argument("--version", type=int, required=True)
     knowledge_rollback.add_argument(
         "--if-version", type=int, help="write only if the unit is still at this version"
     )
+    knowledge_rollback.add_argument("--json", action="store_true")
     knowledge_relate = knowledge_commands.add_parser("relate", help="record how two units bear on each other")
     knowledge_relate.add_argument("unit_id")
     knowledge_relate.add_argument("--type", required=True, choices=list(knowledge_units.RELATION_TYPES))
@@ -215,6 +225,10 @@ def _parser() -> argparse.ArgumentParser:
     knowledge_relate.add_argument(
         "--if-version", type=int, help="write only if the source unit is still at this version"
     )
+    knowledge_relate.add_argument(
+        "--if-target-version", type=int, help="write only if the target unit is still at this version"
+    )
+    knowledge_relate.add_argument("--json", action="store_true")
 
     discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
@@ -945,7 +959,7 @@ def _knowledge_error(exc) -> int:
 
 def _run_knowledge(args) -> int:
     command = args.knowledge_command
-    writing = command in {"create", "update", "verify", "promote", "archive", "relate", "rollback"}
+    writing = command in {"create", "update", "verify", "promote", "archive", "reopen", "relate", "rollback"}
     if writing and not extension_flags.enabled(extension_flags.KNOWLEDGE_UNITS):
         return _extension_off(extension_flags.KNOWLEDGE_UNITS)
     try:
@@ -968,6 +982,8 @@ def _run_knowledge(args) -> int:
             unit = knowledge_units.archive_unit(
                 args.unit_id, reason=args.reason or "", expected_version=args.if_version
             )
+        elif command == "reopen":
+            unit = knowledge_units.reopen_unit(args.unit_id, expected_version=args.if_version)
         elif command == "update":
             unit = knowledge_units.update_unit(
                 args.unit_id, _read_json_argument(args.file), expected_version=args.if_version
@@ -983,13 +999,14 @@ def _run_knowledge(args) -> int:
                 args.to,
                 _read_json_argument(args.evidence),
                 expected_version=args.if_version,
+                expected_target_version=args.if_target_version,
             )
         else:
             print(
                 json.dumps(
                     {
                         "error": "invalid_request",
-                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|update|rollback|relate",
+                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|reopen|update|rollback|relate",
                     },
                     ensure_ascii=False,
                 )
