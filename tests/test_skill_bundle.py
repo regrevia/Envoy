@@ -33,7 +33,18 @@ def test_skill_bundle_contains_only_public_skill_material(tmp_path):
             "NOTICE",
             "references/protocol.md",
             "SKILL.md",
+            "test-prompts.json",
         ]
+        # The trigger cases ship with the skill, because a host that installs
+        # the skill is the place a routing regression would otherwise hide.
+        prompts = json.loads(archive.read("test-prompts.json"))
+        assert prompts["schema"] == "envoy.test-prompts/1"
+        assert prompts["skill"] == "envoy"
+        assert {case["kind"] for case in prompts["cases"]} == {
+            "should_call",
+            "decoy",
+            "ambiguous",
+        }
         manifest = json.loads(archive.read("envoy-skill.json"))
         assert manifest["protocol"] == "envoy.read/1"
         assert manifest["installation"] == "INSTALL.md"
