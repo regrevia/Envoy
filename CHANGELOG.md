@@ -1,5 +1,60 @@
 # 更新日志 / Changelog
 
+## 0.1.60 - 2026-11-17
+
+### 中文
+
+- Skill 现在先讲清「该不该叫」，再讲「叫哪个工具」：`## Decide before you call`
+  里补了一段 ✅/❌ 边界。✅ 是值得发的六种情况（视频音频的转写、时间轴与画面帧；
+  PDF、DOCX、PPTX、XLSX、EPUB 这类文档；要滚动、要 cookie、要登录，或者拿回来
+  是个空壳的页面；普通抓取被截断、跑题、或缺了正文里的表格图表附件代码块；
+  手上没有 `gh`、`git` 时的 GitHub 仓库 / 目录 / 文件 / commit / PR / issue；
+  这一轮之后还要能展开、搜索、回放的读取）；❌ 是不该发的六种情况（材料已经在本
+  轮上下文里、链接只用来改一下、一句普通抓取就能读完的短静态页、正文已经完整且
+  结束在你要的那一节、手上有 `gh` 或 `git` 的代码托管页、localhost 与私有地址）。
+- 新增 `test-prompts.json`：19 个用例分「应调用 / 诱饵 / 边界模糊」三类，诱饵里有
+  四个必须交给兄弟能力的（`envoy_expand`、`envoy_search`、宿主的 `git`、普通抓
+  取），并且每个用例的 `routing` 字段都对 `inspect_prompt` 断言过，文件不会和
+  代码走散若干版本后才发现对不上。
+- GitHub 页面不再被当成代码托管的 diff 页丢掉。GitHub API 路径能直接读文件按行
+  范围、目录树、commit 的 diff 与统计，以及 PR 和 issue 的正文加评论，本来就不
+  需要浏览器；旧的无条件过滤与 Skill 自己写的表格互相矛盾。GitLab、Bitbucket、
+  Codeberg 的 diff 页仍然交给 `git`，因为拿回来的还是渲染后的标题。判断不看
+  `shutil.which("gh")`——路由不能取决于某台机器上装了什么。
+- `test-prompts.json` 跟着两个生成器一起分发：宿主 skill 包里三份副本（Claude
+  Code、Codex、canonical）保持逐字节一致，DSH bundle 里的那份会被加上
+  `mcp__envoy__` 前缀并重新解析一遍 JSON，确认前缀没把文件写坏。
+
+### English
+
+- The skill now settles whether to call at all before it says which tool: a ✅/❌
+  boundary in `## Decide before you call`. ✅ is the six cases that earn a call
+  (a video or audio transcript, timeline, or frame; a PDF, DOCX, PPTX, XLSX or
+  EPUB; a page that needs scrolling, cookies or a login, or comes back as an
+  empty shell; a plain fetch that was truncated, went off topic, or is missing
+  the table, figure, attachment or code block the request points at; a GitHub
+  repo, tree, blob, commit, pull or issue with no `gh` or `git` at hand; a read
+  that must be expandable, searchable or replayable after this turn). ❌ is the
+  six that do not (material already in this turn's context, a link only edited,
+  a short static page one plain fetch answers, a body already complete and
+  ending where the requested section ends, a code-host page with `gh` or `git`
+  at hand, and localhost or a private address).
+- New `test-prompts.json`: 19 cases in should-call, decoy and ambiguous classes.
+  Four decoys must reach a sibling instead — `envoy_expand`, `envoy_search`, the
+  host's `git`, and a plain fetch — and every case's `routing` field is asserted
+  against `inspect_prompt`, so the file cannot drift from the code unnoticed.
+- GitHub pages are no longer dropped as code-host diff pages. The GitHub API path
+  reads a file by line range, a tree, a commit's diff and stats, and a PR or
+  issue body with its comments, with no browser at all, so the old unconditional
+  filter contradicted the skill's own table. GitLab, Bitbucket and Codeberg diff
+  pages still go to `git`, because what comes back is still a rendered title.
+  The decision is not gated on `shutil.which("gh")`: routing must not depend on
+  what happens to be installed on one machine.
+- `test-prompts.json` ships through both generators: the three host skill copies
+  (Claude Code, Codex, canonical) stay byte-identical, and the copy inside the
+  DSH bundle gets the `mcp__envoy__` prefix and is re-parsed as JSON to prove the
+  prefixing did not corrupt it.
+
 ## 0.1.59 - 2026-11-16
 
 ### 中文
