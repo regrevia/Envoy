@@ -381,20 +381,23 @@ def test_codex_user_hook_install_refuses_malformed_hook_shape(tmp_path):
 
 
 def test_inspect_prompt_skips_code_host_diff_pages():
-    """Code-host commit/blob pages go to git/gh, so they are not routed."""
+    """A code-host diff page goes to git/gh, except on GitHub's API path."""
 
     for url in (
-        "https://github.com/regrevia/Envoy/commit/8e6d17ae56e8e6f73385783bde39d8190ff68f85",
-        "https://github.com/regrevia/Envoy/blob/main/README.md",
         "https://gitlab.com/a/b/-/blob/main/x.py",
+        "https://gitlab.com/a/b/-/commit/8e6d17a",
         "https://bitbucket.org/a/b/pull-requests/3",
-        "https://www.github.com/a/b/issues/12",
         "https://codeberg.org/a/b/compare/main...dev",
     ):
         assert inspect_prompt(url).urls == (), url
 
+    # GitHub pages reach envoy_read's API path, which does return the file, the
+    # tree, the commit diff, and the PR or issue body, so they stay routed.
     for url in (
         "https://github.com/regrevia/Envoy",
+        "https://github.com/regrevia/Envoy/commit/8e6d17ae56e8e6f73385783bde39d8190ff68f85",
+        "https://github.com/regrevia/Envoy/blob/main/README.md",
+        "https://www.github.com/a/b/issues/12",
         "https://gist.github.com/regrevia/abc123",
         "https://github.com/orgs/regrevia/repositories",
         "https://example.com/commit/abc",
@@ -402,13 +405,23 @@ def test_inspect_prompt_skips_code_host_diff_pages():
         assert inspect_prompt(url).urls == (url,), url
 
 
-def test_inspect_prompt_keeps_article_link_beside_a_commit_link():
+def test_inspect_prompt_keeps_every_public_link_beside_a_commit_link():
+    text = (
+        "看 https://gitlab.com/a/b/-/commit/deadbeef 和 "
+        "https://example.com/post 有什么区别"
+    )
+
+    assert inspect_prompt(text).urls == ("https://example.com/post",)
+
     text = (
         "看 https://github.com/a/b/commit/deadbeef 和 "
         "https://example.com/post 有什么区别"
     )
 
-    assert inspect_prompt(text).urls == ("https://example.com/post",)
+    assert inspect_prompt(text).urls == (
+        "https://github.com/a/b/commit/deadbeef",
+        "https://example.com/post",
+    )
 
 
 def test_context_groups_supported_links_to_envoy_read():

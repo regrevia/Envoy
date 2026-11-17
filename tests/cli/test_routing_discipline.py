@@ -240,20 +240,136 @@ def test_a_static_page_does_not_import_or_start_a_browser():
     )
 
 
-def test_repo_root_link_is_still_routed_and_why_hooks_leave_it_alone():
-    """hooks.py blocks /tree, /blob and the other diff-ish paths (hooks.py:125).
+def test_github_pages_stay_routed_because_the_api_path_answers_them():
+    """The hook must not filter what the GitHub API path can read.
 
-    A bare repo root stays routed on purpose: `gh`/`git` availability is a
-    property of the shell running the hook, not of the URL, so gating on it
-    would make routing machine-dependent. With the GitHub API path in place,
-    routing a repo root now reaches a real reader instead of a rendered page,
-    so leaving the rule alone is also the correct outcome.
+    `gh`/`git` availability is a property of the shell running the hook, not of
+    the URL, so gating on it would make routing machine-dependent. The API path
+    returns the tree, a file's bytes, the commit diff, and the PR or issue body
+    with comments, so every GitHub page stays routed. Other code hosts keep the
+    old rule: their diff still comes back as a rendered title.
     """
 
     from envoy_cli.hooks import inspect_prompt
 
-    assert inspect_prompt("https://github.com/regrevia/Envoy/tree/main/src").urls == ()
-    assert inspect_prompt("https://github.com/regrevia/Envoy/blob/main/README.md").urls == ()
-    assert inspect_prompt("https://github.com/regrevia/Envoy").urls == (
+    for url in (
         "https://github.com/regrevia/Envoy",
+        "https://github.com/regrevia/Envoy/tree/main/src",
+        "https://github.com/regrevia/Envoy/blob/main/README.md",
+        "https://github.com/regrevia/Envoy/commit/8e6d17ae56e8e6f73385783bde39d8190ff68f85",
+        "https://github.com/regrevia/Envoy/pull/42",
+        "https://github.com/regrevia/Envoy/issues/12",
+    ):
+        assert inspect_prompt(url).urls == (url,), url
+
+    assert inspect_prompt("https://gitlab.com/a/b/-/blob/main/x.py").urls == ()
+    assert inspect_prompt("https://bitbucket.org/a/b/pull-requests/3").urls == ()
+
+
+def test_boundary_section_names_both_sides_before_the_table():
+    """The skill must state the ✅/❌ boundary, not only the middle table.
+
+    The table answers "which tool"; the boundary answers "whether to call at
+    all", which is the decision that costs a wasted fetch when it is wrong.
+    """
+
+    text = SKILL_FILES[0].read_text(encoding="utf-8")
+    call_at = text.index("\n✅ Call Envoy when")
+    skip_at = text.index("\n❌ Do not call Envoy when")
+    table_at = text.index("\n| Situation | Do |")
+    assert call_at < table_at and skip_at < table_at
+    section = text[call_at:table_at]
+    for phrase in (
+        "transcript, timeline, or\n  frame",
+        "PDF, DOCX, PPTX, XLSX, EPUB",
+        "empty\n  JavaScript shell",
+        "GitHub API path reads it with no browser",
+        "must outlive this turn",
+        "in this turn's context",
+        "shortened, cited, or saved",
+        "length is not a completion signal",
+        "localhost",
+        "test-prompts.json",
+    ):
+        assert phrase in section, phrase
+
+
+def test_test_prompts_cover_should_call_decoy_and_sibling_cases():
+    """The trigger file is the machine-checkable half of the boundary.
+
+    Each case must name a class, and the file must carry a bait case whose
+    answer is a sibling tool rather than Envoy itself — the case a
+    "a skill about links" description cannot separate.
+    """
+
+    import json
+
+    payload = json.loads(
+        (REPO / "integrations" / "skills" / "envoy" / "test-prompts.json").read_text(
+            encoding="utf-8"
+        )
     )
+    assert payload["schema"] == "envoy.test-prompts/1"
+    assert payload["skill"] == "envoy"
+    cases = payload["cases"]
+    assert len(cases) >= 12
+    ids = [case["id"] for case in cases]
+    assert len(ids) == len(set(ids)), "duplicate case id"
+
+    kinds = {case["kind"] for case in cases}
+    assert kinds == {"should_call", "decoy", "ambiguous"}, kinds
+    for kind in kinds:
+        assert sum(case["kind"] == kind for case in cases) >= 3, kind
+
+    # A bait case must route to a sibling, never to envoy_read.
+    siblings = {
+        case.get("sibling")
+        for case in cases
+        if case["kind"] == "decoy" and case.get("sibling")
+    }
+    assert {"envoy_expand", "envoy_search", "host-native-git", "plain-fetch"} <= siblings
+    for case in cases:
+        if case.get("sibling"):
+            assert case["expect"] != "envoy_read", case["id"]
+        assert case["prompt"].strip(), case["id"]
+        assert case["reason"].strip(), case["id"]
+
+    for case in cases:
+        if case["kind"] != "should_call":
+            continue
+        assert case["expect"] == "envoy_read", case["id"]
+        assert case["routing"] == "route", case["id"]
+
+
+def test_test_prompts_routing_field_matches_the_hook():
+    """Every declared `routing` value must be what `inspect_prompt` returns.
+
+    Without this the file drifts into prose that no longer describes the code,
+    which is exactly how the GitHub links stayed silently filtered while the
+    skill table promised the API path.
+    """
+
+    import json
+
+    from envoy_cli.hooks import extract_public_urls, inspect_prompt
+
+    payload = json.loads(
+        (REPO / "integrations" / "skills" / "envoy" / "test-prompts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    checked = 0
+    for case in payload["cases"]:
+        expected = case.get("routing")
+        if expected is None:
+            continue
+        urls = extract_public_urls(case["prompt"])
+        decision = inspect_prompt(case["prompt"])
+        actual = "route" if decision.should_route else "skip"
+        # A prompt with no public URL cannot route, whatever the task needs.
+        if not urls:
+            assert actual == "skip", case["id"]
+            continue
+        assert actual == expected, (case["id"], urls, decision.opted_out)
+        checked += 1
+    assert checked >= 10

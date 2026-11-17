@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = ROOT / "integrations" / "skills" / "envoy"
-MEMBERS = ("SKILL.md", "references/protocol.md")
+MEMBERS = ("SKILL.md", "references/protocol.md", "test-prompts.json")
 TARGETS = (
     ROOT / "integrations" / "claude-code" / "envoy" / "skills" / "envoy",
     ROOT / "integrations" / "codex" / "envoy" / "skills" / "envoy",

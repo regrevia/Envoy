@@ -134,7 +134,8 @@ def is_code_host_diff_url(url: str) -> bool:
     Envoy reads the rendered page, so a commit, file, tree, pull-request, or
     issue page yields the title and at most the commit message, never the diff.
     Those links belong to `git`/`gh`, and routing them to Envoy costs a fetch
-    that cannot answer the question.
+    that cannot answer the question. GitHub is exempt: `is_github_page` routes
+    it to the API path work instead, which does return the diff and the tree.
     """
 
     try:
@@ -151,8 +152,31 @@ def is_code_host_diff_url(url: str) -> bool:
     return bool(_CODE_PATH_RE.match(parts.path or ""))
 
 
+def is_github_page(url: str) -> bool:
+    """Whether ``url`` is a github.com page `envoy_read` answers through its API path.
+
+    GitHub's API path returns a file's bytes for a line range, a tree, a commit
+    diff, and a PR or issue body with comments, so these pages are readable by
+    Envoy and are not left to `git`/`gh` the way the other code hosts are.
+    """
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host == "github.com"
+
+
 def _routable(urls: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(url for url in urls if not is_code_host_diff_url(url))
+    # The GitHub API path made those pages answerable, so only the code hosts
+    # whose diff still comes back as a rendered title stay filtered. Gating on
+    # whether `gh`/`git` is installed would make routing machine-dependent.
+    return tuple(
+        url for url in urls if is_github_page(url) or not is_code_host_diff_url(url)
+    )
 
 
 def extract_public_urls(text: str) -> tuple[str, ...]:

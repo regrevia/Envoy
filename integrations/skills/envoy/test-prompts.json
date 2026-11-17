@@ -1,0 +1,173 @@
+{
+  "schema": "envoy.test-prompts/1",
+  "skill": "envoy",
+  "purpose": "Trigger discipline for one skill: when Envoy must be called, when it must not be, and which sibling path answers instead. `routing` is machine-checked by envoy_cli.hooks.inspect_prompt when present; a case without it is judged on the policy text in SKILL.md.",
+  "siblings": {
+    "envoy_read": "the one read call",
+    "envoy_expand": "continue a read whose material_id is already in this turn",
+    "envoy_search": "query material already read",
+    "envoy_replay": "replay a retained read",
+    "plain-fetch": "the host's own web fetch or curl",
+    "host-native-git": "gh api / git show against a code host"
+  },
+  "cases": [
+    {
+      "id": "route-video-transcript",
+      "kind": "should_call",
+      "prompt": "Summarize this talk and give me the timestamps for the demo: https://www.youtube.com/watch?v=abc123",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "A plain fetch returns a player shell, not a transcript; the answer needs the transcript with timeline."
+    },
+    {
+      "id": "route-document",
+      "kind": "should_call",
+      "prompt": "What are the payment terms on page 4 of https://example.com/contract.pdf",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "A PDF is a document the host fetch cannot paginate."
+    },
+    {
+      "id": "route-login-wall",
+      "kind": "should_call",
+      "prompt": "Read this article and list its three main claims: https://mp.weixin.qq.com/s/AbCdEf",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "This platform page is a known login or JavaScript shell for a plain fetch."
+    },
+    {
+      "id": "route-github-without-git",
+      "kind": "should_call",
+      "prompt": "There is no gh or git on this machine. Show me what changed in https://github.com/regrevia/Envoy/commit/8e6d17ae56e8e6f73385783bde39d8190ff68f85",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "The GitHub API path returns the diff and stats, which is the only way to answer without gh or git. The hook must not filter this link, because whether git is installed is not knowable from the URL."
+    },
+    {
+      "id": "route-image-post",
+      "kind": "should_call",
+      "prompt": "List every product shown in this note: https://www.xiaohongshu.com/explore/abc123",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "An image post carries its content in frames, not in fetched text."
+    },
+    {
+      "id": "route-truncated-article",
+      "kind": "should_call",
+      "prompt": "The fetch I already ran stopped at 'read more' in the middle of the section on pricing. Get me the rest of https://example.com/report",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "Escalation is on evidence: the body was truncated mid-section."
+    },
+    {
+      "id": "route-must-outlive-turn",
+      "kind": "should_call",
+      "prompt": "Read https://example.com/long-report now, and I will ask you follow-up questions about it in the next few turns.",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "The answer must outlive the turn, so the read has to be retained under a material_id."
+    },
+    {
+      "id": "decoy-code-host-diff",
+      "kind": "decoy",
+      "prompt": "Show the diff of https://gitlab.com/a/b/-/blob/main/x.py",
+      "expect": "no_envoy_call",
+      "routing": "skip",
+      "sibling": "host-native-git",
+      "reason": "GitLab diff pages come back to Envoy as a rendered title, never the diff, so git or gh is the only path that answers."
+    },
+    {
+      "id": "decoy-private-address",
+      "kind": "decoy",
+      "prompt": "Check my dev server at https://localhost:3000/dashboard",
+      "expect": "no_envoy_call",
+      "routing": "skip",
+      "sibling": "plain-fetch",
+      "reason": "A private address is not public material, and the reader has no route to it."
+    },
+    {
+      "id": "decoy-already-in-context",
+      "kind": "decoy",
+      "prompt": "I already pasted the whole transcript above. Quote the line where they describe the pricing change.",
+      "expect": "no_envoy_call",
+      "routing": "skip",
+      "reason": "The material is already in this turn's context; a read call would re-fetch what is in hand."
+    },
+    {
+      "id": "decoy-link-edited-only",
+      "kind": "decoy",
+      "prompt": "Just shorten this link for me: https://example.com/a/very/long/path?with=query",
+      "expect": "no_envoy_call",
+      "routing": "route",
+      "reason": "The URL is routable by shape, but the task never needs the contents: editing a link is not reading it."
+    },
+    {
+      "id": "decoy-short-static-page",
+      "kind": "decoy",
+      "prompt": "What does this page say about the office address: https://example.com/contact",
+      "expect": "no_envoy_call",
+      "routing": "route",
+      "sibling": "plain-fetch",
+      "reason": "A short static page answers in one plain fetch; the routing hook cannot judge task shape, so this decoy is enforced by the skill text and by the values of a first plain fetch."
+    },
+    {
+      "id": "sibling-expand-instead-of-read",
+      "kind": "decoy",
+      "prompt": "Go back to the video you read a moment ago and pull the section on caching, material_id 7f3c…",
+      "expect": "envoy_expand",
+      "routing": "skip",
+      "sibling": "envoy_expand",
+      "reason": "The read is retained; calling envoy_read again pays for the same fetch and loses the locators."
+    },
+    {
+      "id": "sibling-search-instead-of-read",
+      "kind": "decoy",
+      "prompt": "In that same PDF, find every mention of arbitration. I already have the material_id.",
+      "expect": "envoy_search",
+      "routing": "skip",
+      "sibling": "envoy_search",
+      "reason": "Search runs over retained material; a fresh read would re-fetch the document to answer a query."
+    },
+    {
+      "id": "sibling-plain-fetch-beside-envoy",
+      "kind": "decoy",
+      "prompt": "Read https://github.com/regrevia/Envoy/tree/main/src with gh api or git show, gh is installed.",
+      "expect": "no_envoy_call",
+      "routing": "route",
+      "sibling": "host-native-git",
+      "reason": "A GitHub page is routed so that a machine without git can still read it; when git or gh is at hand, the skill's table sends the call there first."
+    },
+    {
+      "id": "ambiguous-unknown-host",
+      "kind": "ambiguous",
+      "prompt": "Here is a link a colleague sent, I have not opened it: https://some-blog.example.org/post/42",
+      "expect": "envoy_read_then_fallback",
+      "routing": "route",
+      "reason": "Nothing is known about the host; try the read, then fall back to a plain fetch instead of asserting the page is unavailable."
+    },
+    {
+      "id": "ambiguous-completeness-unknown",
+      "kind": "ambiguous",
+      "prompt": "Summarize https://example.com/news/story — the fetch returned eight paragraphs and stops on a full stop.",
+      "expect": "either_plain_fetch_result_or_evidence_of_escalation",
+      "routing": "route",
+      "reason": "A complete-looking body is not a truncation. Escalate only on evidence, and say what may be missing when completeness cannot be judged."
+    },
+    {
+      "id": "ambiguous-blocked-result",
+      "kind": "ambiguous",
+      "prompt": "Read https://example.com/tiny and tell me what it says. The read came back blocked.",
+      "expect": "report_and_stop",
+      "routing": "route",
+      "reason": "A blocked short source is a normal outcome: report it, and do not loop, and do not claim a source was read."
+    },
+    {
+      "id": "ambiguous-github-without-gh",
+      "kind": "ambiguous",
+      "prompt": "Show me the README at https://github.com/regrevia/Envoy/blob/main/README.md",
+      "expect": "envoy_read",
+      "routing": "route",
+      "reason": "Whether gh or git exists is a property of the host, not of the URL, so the hook routes the link and the skill decides the order: gh or git first if at hand, the API path otherwise."
+    }
+  ]
+}

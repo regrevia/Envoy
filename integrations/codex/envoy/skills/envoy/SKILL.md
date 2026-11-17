@@ -31,6 +31,40 @@ Answer from what you were given; open the source with Envoy only when the
 content is not already in hand. The deciding signal is available before any
 call:
 
+✅ Call Envoy when the task needs the contents of a source that is not in hand
+and the host cannot get them itself:
+
+- the source is video or audio and the answer needs a transcript, timeline, or
+  frame;
+- the source is a document: PDF, DOCX, PPTX, XLSX, EPUB;
+- the page needs scrolling, cookies, or a login, or arrived as an empty
+  JavaScript shell;
+- a plain fetch already ran and its body was truncated, off-topic, or missing
+  the table, figure, attachment, or code block the answer needs;
+- the link is a GitHub repo, tree, blob, commit, pull, or issue and gh or git is
+  not at hand — the GitHub API path reads it with no browser;
+- the read must outlive this turn: a later turn needs `envoy_expand`,
+  `envoy_search`, `envoy_replay`, or this video's frames.
+
+❌ Do not call Envoy when the material or the answer is already in hand:
+
+- the text, passage, or fact is in this turn's context — quote it, or use
+  `envoy_search` and `envoy_expand` on its `material_id` instead of reading it
+  a second time;
+- the link is only being edited, shortened, cited, or saved for a human to open
+  later;
+- it is a short static page that a plain fetch answers in one call;
+- a plain fetch already returned the body in full and it ends where the
+  requested section ends — length is not a completion signal;
+- gh or git is at hand for GitHub, GitLab, or Bitbucket navigation, or the host
+  can read the file itself;
+- the address is private: localhost, a single-label host, or a private IP.
+
+The two failures that cost most are reading a link the user only wanted quoted
+and answering from a shell as if it were the page. Both are outcomes to report,
+not errors to retry. `test-prompts.json` beside this file lists the cases that
+separate them, including the ones that must reach a sibling instead.
+
 | Situation | Do |
 | --- | --- |
 | Text pasted, passage quoted, or one fact the quote already answers | Answer directly, no tool. |

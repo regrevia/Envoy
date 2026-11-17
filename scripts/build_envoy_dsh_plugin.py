@@ -29,6 +29,9 @@ CANONICAL_SKILL = ROOT / "integrations" / "skills" / "envoy" / "SKILL.md"
 CANONICAL_PROTOCOL = (
     ROOT / "integrations" / "skills" / "envoy" / "references" / "protocol.md"
 )
+CANONICAL_TEST_PROMPTS = (
+    ROOT / "integrations" / "skills" / "envoy" / "test-prompts.json"
+)
 PACKAGE_DIR = ROOT / "integrations" / "dsh" / "envoy-dsh"
 CLI_PYPROJECT = ROOT / "packages" / "envoy-cli" / "pyproject.toml"
 
@@ -186,6 +189,19 @@ def render_protocol(canonical: str) -> str:
     return "\n".join([lines[0], "", DSH_PROTOCOL_NOTE, *lines[1:]]) + "\n"
 
 
+def render_test_prompts(canonical: str) -> str:
+    """Carry the trigger cases over with the DeepSeek Harness tool names.
+
+    The cases name tools in the same bare form as the skill body, so they take
+    the same ``mcp__envoy__`` prefix; the file stays valid JSON because only
+    quoted tool identifiers change.
+    """
+
+    text = prefix_tools(canonical.replace("\r\n", "\n"))
+    json.loads(text)
+    return text if text.endswith("\n") else text + "\n"
+
+
 def render_manifest(description: str, version: str) -> str:
     payload = {
         "name": "envoy",
@@ -205,6 +221,9 @@ def build(version: str) -> dict[str, str]:
         "skill/envoy.md": skill_text,
         "skill/references/protocol.md": render_protocol(
             CANONICAL_PROTOCOL.read_text(encoding="utf-8")
+        ),
+        "skill/test-prompts.json": render_test_prompts(
+            CANONICAL_TEST_PROMPTS.read_text(encoding="utf-8")
         ),
         "skill/manifest.json": render_manifest(description, version),
     }
