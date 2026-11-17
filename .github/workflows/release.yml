@@ -97,7 +97,16 @@ jobs:
             exit 0
           fi
           printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > ~/.npmrc
-          npm publish dist/envoy-dsh-*.tgz --access public
+          # npm only reads a bare `path/to.tgz` as a file when the argument is
+          # unambiguously a path; `dist/x.tgz` fell through to the git resolver
+          # and asked git for `ssh://git@github.com/dist/x.tgz.git`. Keep the
+          # `./` prefix the glob preserves, and fail loudly if the pack is gone.
+          set -- ./dist/envoy-dsh-*.tgz
+          if [ ! -f "$1" ]; then
+            echo "no envoy-dsh tarball in dist/ to publish" >&2
+            exit 1
+          fi
+          npm publish "$@" --access public
       # The changelog is now well past GitHub's 125,000-character release body
       # limit, so the release carries this version's section instead of the file.
       - name: 提取本次版本的更新说明 / Extract the notes for this release
