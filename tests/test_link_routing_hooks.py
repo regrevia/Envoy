@@ -52,6 +52,31 @@ def test_strips_ascii_trailing_punctuation_and_balanced_brackets():
     assert extract_public_urls("https://example.com/x).") == ("https://example.com/x",)
 
 
+def test_strips_markdown_emphasis_so_a_pasted_link_routes_to_the_real_url():
+    """A link copied out of formatted text arrives wrapped, not clean.
+
+    `**https://x/a**` is what a user gets when they copy a bold link or paste a
+    markdown table cell. Routing `https://x/a**` fetches a URL that cannot be
+    answered, and the reader failure then looks like the source being
+    unavailable. Emphasis and table bars wrap the link; they are not part of it.
+    Underscores and parentheses inside a path stay, because those are real.
+    """
+
+    assert extract_public_urls("**https://example.com/a**") == ("https://example.com/a",)
+    assert extract_public_urls("**https://example.com/a** and **https://example.org/b**") == (
+        "https://example.com/a",
+        "https://example.org/b",
+    )
+    assert extract_public_urls("| https://example.com/a | ok |") == ("https://example.com/a",)
+    assert extract_public_urls("** https://example.com/a **") == ("https://example.com/a",)
+    assert extract_public_urls(
+        "**https://github.com/regrevia/Envoy/blob/main/README.md#L1-L2**"
+    ) == ("https://github.com/regrevia/Envoy/blob/main/README.md#L1-L2",)
+
+    assert extract_public_urls("https://example.com/a_") == ("https://example.com/a_",)
+    assert extract_public_urls("https://example.com/a(1)") == ("https://example.com/a(1)",)
+
+
 def test_rejects_local_and_private_destinations():
     text = (
         "https://localhost:3000/a https://127.0.0.1/a https://0.0.0.0/a "

@@ -33,6 +33,10 @@ _URL_RE = re.compile(
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 _TRAILING_PUNCTUATION = ".,;:!?，。；：！？、"
 _TRAILING_BRACKETS = ")]}）】」》"
+# Markdown emphasis and table delimiters wrap a link rather than belong to it:
+# `**https://x/a**` reaches the hook verbatim when a user pastes formatted text,
+# and routing `https://x/a**` fetches a URL the reader cannot answer.
+_TRAILING_MARKUP = "*|"
 _OPT_OUT_MARKERS = (
     "不要用 envoy",
     "不要使用 envoy",
@@ -74,12 +78,12 @@ def normalize_host(value: Optional[str]) -> Optional[str]:
 
 
 def _strip_url(url: str) -> str:
-    url = url.rstrip(_TRAILING_PUNCTUATION)
+    url = url.rstrip(_TRAILING_PUNCTUATION).rstrip(_TRAILING_MARKUP)
     while url and url[-1] in _TRAILING_BRACKETS:
         opener = {")": "(", "]": "[", "}": "{", "）": "（", "】": "【", "」": "「", "》": "《"}[url[-1]]
         if url.count(opener) >= url.count(url[-1]):
             break
-        url = url[:-1].rstrip(_TRAILING_PUNCTUATION)
+        url = url[:-1].rstrip(_TRAILING_PUNCTUATION).rstrip(_TRAILING_MARKUP)
     return url
 
 
