@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -1447,3 +1448,100 @@ def test_data_layer_accepts_recorded_empty_citations_for_failed_attempt(tmp_path
     missing = write_case("missing.jsonl", missing_citation_field, allow_incomplete=True)
     assert missing["data_complete"] is False
     assert "artifacts_missing:envoy:source-00-task-0" in missing["claim_blockers"]
+
+
+def _write_prompts(path: Path) -> None:
+    rows = [
+        {"prompt_id": "long-article", "prompt": "读一下 https://example.com/article 然后总结", "expect": "route"},
+        {"prompt_id": "opt-out", "prompt": "不要用 Envoy，直接读 https://example.com/article", "expect": "skip"},
+        {"prompt_id": "glued-cjk", "prompt": "帮我读这个https://example.com/a的内容", "expect": "route"},
+        {"prompt_id": "no-link", "prompt": "怎么用 pytest 跑测试", "expect": "skip"},
+    ]
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _routing_env() -> dict:
+    env = dict(os.environ)
+    srcs = [str(ROOT / "packages" / "envoy-cli" / "src"), str(ROOT / "packages" / "envoy-core" / "src")]
+    env["PYTHONPATH"] = os.pathsep.join(srcs + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+    return env
+
+
+def _run_routing(script: Path, *args: str):
+    return subprocess.run(
+        [sys.executable, str(script), "--routing-only", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_routing_env(),
+    )
+
+
+def test_routing_only_scores_the_hook_against_the_corpus(tmp_path):
+    prompts = tmp_path / "prompts.jsonl"
+    _write_prompts(prompts)
+    result = _run_routing(SCRIPT, "--prompts", str(prompts))
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["schema_version"] == "envoy.routing-only/1"
+    assert report["mode"] == "routing-only"
+    assert report["prompt_count"] == 4
+    assert report["checked"] == 4
+    assert report["matched"] == 4
+    assert report["mismatches"] == []
+    rows = {row["prompt_id"]: row for row in report["results"]}
+    assert rows["long-article"]["actual"] == "route"
+    assert rows["long-article"]["urls"] == ["https://example.com/article"]
+    assert rows["opt-out"]["actual"] == "skip"
+    assert rows["opt-out"]["opted_out"] is True
+    # Prose after a link is not part of the link, so this stays routable.
+    assert rows["glued-cjk"]["urls"] == ["https://example.com/a"]
+    assert rows["no-link"]["urls"] == []
+
+
+def test_routing_only_fails_on_a_disagreeing_expectation(tmp_path):
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(
+        json.dumps({"prompt_id": "wrong", "prompt": "读 https://example.com/a", "expect": "skip"}) + "\n",
+        encoding="utf-8",
+    )
+    result = _run_routing(SCRIPT, "--prompts", str(prompts))
+    assert result.returncode == 2
+    report = json.loads(result.stdout)
+    assert report["mismatches"] == ["wrong"]
+    assert report["results"][0]["actual"] == "route"
+    assert report["results"][0]["agrees"] is False
+
+
+def test_routing_only_measures_a_prompt_without_an_expectation(tmp_path):
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(
+        json.dumps({"prompt": "读 https://example.com/a"}) + "\n",
+        encoding="utf-8",
+    )
+    result = _run_routing(SCRIPT, "--prompts", str(prompts))
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["prompt_count"] == 1
+    assert report["checked"] == 0
+    assert report["results"][0]["actual"] == "route"
+    assert report["results"][0]["agrees"] is None
+
+
+def test_routing_only_requires_a_prompt_corpus(tmp_path):
+    result = _run_routing(SCRIPT)
+    assert result.returncode == 2
+    assert "--prompts" in result.stderr
+
+
+def test_routing_only_rejects_a_malformed_prompt_line(tmp_path):
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text('{"prompt": ""}\n', encoding="utf-8")
+    result = _run_routing(SCRIPT, "--prompts", str(prompts))
+    assert result.returncode == 2
+    report = json.loads(result.stderr)
+    assert report["schema_version"] == "envoy.routing-only/1"
+    assert "missing prompt" in report["validation_errors"][0]

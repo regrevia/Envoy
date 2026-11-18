@@ -213,6 +213,27 @@ The command exits nonzero for incomplete or placeholder records. Use
 used as a release or token-savings claim. See
 `agent-product-eval-records.example.jsonl` for the record shape. The evaluator
 does not call an answer model and does not infer correctness.
+
+### Routing decisions
+
+Routing is the one decision this evaluator can score without a measured
+baseline, because the hook derives it from the prompt alone. Give it a JSONL
+corpus of prompts, each with the route the corpus expects (`route` or `skip`):
+
+```bash
+PYTHONPATH=packages/envoy-cli/src:packages/envoy-core/src \
+python3 benchmarks/agent_product_eval.py \
+  --routing-only --prompts /path/to/prompts.jsonl
+```
+
+One JSON object per line: `prompt` is required, `prompt_id` and `expect` are
+optional. A prompt without `expect` is measured and reported but cannot pass or
+fail. Output is `envoy.routing-only/1`: per prompt the `urls` the hook
+extracted, `opted_out`, the resulting `actual` route, and `agrees` against the
+expectation, plus `checked`/`matched`/`mismatches` totals. The command exits
+nonzero when any expectation disagrees, so it can gate a routing change. This
+mode never reads a source and never writes a task ledger; a routing mismatch
+means the hook routed a prompt against the corpus, not that a source failed.
 Historical links awaiting repeat validation are tracked in
 `docs/acceptance/agent-product-eval-candidates-2026-10-23.md`; blocked sources
 remain candidates but do not count as completed evaluations.

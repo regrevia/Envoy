@@ -24,7 +24,11 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 
+ROOT = Path(__file__).resolve().parents[1]
+CLI_SRC = ROOT / "packages" / "envoy-cli" / "src"
+CORE_SRC = ROOT / "packages" / "envoy-core" / "src"
 SCHEMA_VERSION = "envoy.agent-product-eval/1"
+ROUTING_SCHEMA_VERSION = "envoy.routing-only/1"
 MIN_SOURCES = 20
 MIN_TASKS = 40
 PLACEHOLDER_HOSTS = {"example.org", "example.com", "example.invalid", "localhost"}
@@ -1809,12 +1813,118 @@ def gate_layers(
     }
 
 
+def _load_routing_prompts(path: Path) -> list[dict]:
+    """Read the prompt corpus for ``--routing-only``.
+
+    One JSON object per line with ``prompt`` and, optionally, the route the
+    corpus expects (``route`` or ``skip``). A prompt without an expectation is
+    still measured; it just cannot pass or fail anything.
+    """
+
+    prompts: list[dict] = []
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}:{line_number}: invalid JSON ({exc.msg})") from exc
+        if not isinstance(item, dict):
+            raise ValueError(f"{path}:{line_number}: record must be a JSON object")
+        prompt = item.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(f"{path}:{line_number}: missing prompt")
+        expect = item.get("expect")
+        if expect is not None and expect not in {"route", "skip"}:
+            raise ValueError(f"{path}:{line_number}: expect must be 'route' or 'skip'")
+        prompts.append(
+            {
+                "prompt_id": str(item.get("prompt_id") or f"prompt-{line_number:04d}"),
+                "prompt": prompt,
+                "expect": expect,
+            }
+        )
+    if not prompts:
+        raise ValueError(f"{path}: no prompt records")
+    return prompts
+
+
+def _routing_module():
+    """Import the hook that decides routing, or say why it is missing."""
+
+    for src in (CLI_SRC, CORE_SRC):
+        if str(src) not in sys.path:
+            sys.path.insert(0, str(src))
+    try:
+        from envoy_cli import hooks
+    except ModuleNotFoundError as exc:  # pragma: no cover - environment failure
+        raise ValueError(
+            f"cannot import envoy_cli.hooks ({exc.name}); "
+            f"run with PYTHONPATH={CLI_SRC}:{CORE_SRC}"
+        ) from exc
+    return hooks
+
+
+def evaluate_routing(prompts: list[dict], hooks: Any) -> dict:
+    """Measure what the hook decides for each prompt, and whether it matches.
+
+    Routing is the one part of this experiment that does not need a measured
+    baseline: the decision is produced by the hook from the prompt alone, so it
+    can be compared against an expectation without running a task.
+    """
+
+    rows: list[dict] = []
+    checked = matched = 0
+    for item in prompts:
+        decision = hooks.inspect_prompt(item["prompt"])
+        actual = "route" if decision.should_route else "skip"
+        expect = item["expect"]
+        agrees = None if expect is None else actual == expect
+        if expect is not None:
+            checked += 1
+            matched += int(bool(agrees))
+        rows.append(
+            {
+                "prompt_id": item["prompt_id"],
+                "expect": expect,
+                "actual": actual,
+                "agrees": agrees,
+                "urls": list(decision.urls),
+                "opted_out": decision.opted_out,
+            }
+        )
+    mismatches = [row["prompt_id"] for row in rows if row["agrees"] is False]
+    return {
+        "schema_version": ROUTING_SCHEMA_VERSION,
+        "mode": "routing-only",
+        "prompt_count": len(rows),
+        "checked": checked,
+        "matched": matched,
+        "mismatches": mismatches,
+        "results": rows,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--records", type=Path, required=True)
+    parser.add_argument("--records", type=Path, help="JSONL source and task ledger")
+    parser.add_argument("--routing-only", action="store_true", help="measure routing decisions only")
+    parser.add_argument("--prompts", type=Path, help="JSONL prompt corpus for --routing-only")
     parser.add_argument("--allow-incomplete", action="store_true")
     parser.add_argument("--markdown", action="store_true", help="render a concise comparison table")
     args = parser.parse_args(argv)
+    if args.routing_only:
+        if args.prompts is None:
+            parser.error("--routing-only needs --prompts")
+        try:
+            report = evaluate_routing(_load_routing_prompts(args.prompts), _routing_module())
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"schema_version": ROUTING_SCHEMA_VERSION, "mode": "routing-only", "validation_status": "failed", "validation_errors": [str(exc)]}, ensure_ascii=False), file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if not report["mismatches"] else 2
+    if args.records is None:
+        parser.error("--records is required")
     try:
         run, sources, tasks = _load_records(args.records)
         errors = validate_records(
