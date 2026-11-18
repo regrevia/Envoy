@@ -1,5 +1,50 @@
 # 更新日志 / Changelog
 
+## 未发布 / Unreleased
+
+### 中文
+
+- 中文里链接后面没有空格，`参考https://x/a的内容` 到 hook 手里是一整个 token，
+  以前 `的内容` 会被当成路径读走。真正的 URL 从浏览器复制出来是百分号编码的，
+  所以第一个中日韩字符就是链接的结尾，现在在 `_strip_url` 里据此截断。这不是
+  排版问题：带着中文尾巴的 URL 指向不存在的主机和路径，路由会认错主机别名、
+  认不出代码托管路径，或者去读一个 404，再把「读不到」报给用户。全角引号
+  （`”`、`’`）也加进了要去掉的尾部字符。
+- Skill 补齐了四节：`## Mission`、`## When to call it`、`## Input requirements`、
+  `## Output structure`。原来只有「怎么调」和「不该调」，缺了「为什么存在」和
+  「需要什么输入、交什么交付物」，宿主模型判断要不要发这一次调用时没有依据。
+- `benchmarks/agent_product_eval.py` 新增 `--routing-only`：路由决策是这个实验
+  里唯一不需要基线就能打分的一层，因为 hook 只看 prompt 就能得出决定。给一份
+  JSONL prompt 语料（每行 `prompt`，可选 `prompt_id` 与 `expect`），输出
+  `envoy.routing-only/1`：每条 prompt 抽到的 `urls`、`opted_out`、实际路由，以及
+  与期望是否一致，另加 `checked` / `matched` / `mismatches` 汇总。有任一期望对
+  不上就返回非零，可以直接当路由改动的闸门。没有 `expect` 的 prompt 照样测量和
+  上报，只是不参与判定。
+
+### English
+
+- A Chinese sentence runs straight into a link, so `参考https://x/a的内容` reaches the
+  hook as a single token and the trailing `的内容` was read as part of the path. A
+  link copied out of a browser is percent-encoded, so the first CJK character ends
+  it; `_strip_url` now truncates there. This was a real routing defect, not
+  cosmetics: a URL carrying CJK points at a host and path that do not exist, so the
+  hook misrecognises the host alias, misses a code-host path, or reads a 404 and
+  reports a source it never read. Closing full-width quotes (`”`, `’`) joined the
+  stripped tail characters.
+- The skill gained four sections: `## Mission`, `## When to call it`,
+  `## Input requirements` and `## Output structure`. It described how to call and
+  when not to, but not why the capability exists, what input earns a good call, or
+  what a call is supposed to hand back.
+- `benchmarks/agent_product_eval.py` gained `--routing-only`. Routing is the one
+  layer of the experiment that needs no measured baseline, because the hook derives
+  the decision from the prompt alone. Point it at a JSONL prompt corpus (one
+  `prompt` per line, optional `prompt_id` and `expect`) and it emits
+  `envoy.routing-only/1`: the `urls` extracted for each prompt, `opted_out`, the
+  resulting route, whether that matches the expectation, and `checked` /
+  `matched` / `mismatches` totals. Any disagreeing expectation exits nonzero, so it
+  can gate a routing change. A prompt with no `expect` is measured and reported but
+  cannot pass or fail.
+
 ## 0.1.60 - 2026-11-17
 
 ### 中文
