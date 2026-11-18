@@ -20,6 +20,12 @@
   与期望是否一致，另加 `checked` / `matched` / `mismatches` 汇总。有任一期望对
   不上就返回非零，可以直接当路由改动的闸门。没有 `expect` 的 prompt 照样测量和
   上报，只是不参与判定。
+- `scripts/acceptance/route_eval.py` 之前没有任何测试在跑。它现在是唯一一处拿
+  产品真实规则去核对路由语料的地方，两件事会悄悄坏掉而没人发现：语料和规则
+  走散，文档里的语料不再描述 hook 的实际行为；`## Decide before you call` 被
+  改名或改形，脚本解析的那张表连同它的路由提示一起消失。现在两者都断言了，
+  另外还钉住「规则必须来自产品代码而不是本地兜底」和「`--live` 仍然只是个
+  返回 2 的空壳」。
 
 ### English
 
@@ -44,6 +50,14 @@
   `matched` / `mismatches` totals. Any disagreeing expectation exits nonzero, so it
   can gate a routing change. A prompt with no `expect` is measured and reported but
   cannot pass or fail.
+- `scripts/acceptance/route_eval.py` had no test driving it. It is the only place
+  that checks the routing corpus against the rules the product actually ships, and
+  two failures would go unnoticed: the corpus drifting from the rules, so the
+  documented links stop describing what the hook does; and `## Decide before you
+  call` being renamed or reshaped, so the table the script parses disappears along
+  with its route hints. Both are now asserted, together with "the rules come from
+  the product code, not the labelled fallback" and "`--live` is still a stub that
+  returns 2".
 
 ## 0.1.60 - 2026-11-17
 
