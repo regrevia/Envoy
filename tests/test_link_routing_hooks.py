@@ -77,6 +77,38 @@ def test_strips_markdown_emphasis_so_a_pasted_link_routes_to_the_real_url():
     assert extract_public_urls("https://example.com/a(1)") == ("https://example.com/a(1)",)
 
 
+def test_a_cjk_character_ends_the_url_so_the_real_link_is_routed():
+    """Chinese prose runs into a link with no space, and the run is not path.
+
+    `参考https://x/a的内容` reaches the hook as one token. Keeping `的内容` fetches a
+    host and path that do not exist, so the read fails on a link that is fine and
+    the agent reports the source as unavailable. A link copied out of a browser
+    is percent-encoded, so the first CJK character marks the end of the link.
+    """
+
+    assert extract_public_urls("参考https://example.com/a的内容") == ("https://example.com/a",)
+    assert extract_public_urls("看这个https://example.com/page说明下") == (
+        "https://example.com/page",
+    )
+    assert extract_public_urls("读 https://example.com/a的数据并总结") == ("https://example.com/a",)
+    assert extract_public_urls("https://example.com/a的") == ("https://example.com/a",)
+    assert extract_public_urls("https://example.com/a#L1-L2的代码") == (
+        "https://example.com/a#L1-L2",
+    )
+
+    routing = inspect_prompt("帮我读一下这个https://example.com/a的内容然后总结")
+    assert routing.urls == ("https://example.com/a",)
+    assert routing.should_route is True
+
+
+def test_strips_closing_curly_quotes_around_a_pasted_link():
+    """A link quoted in Chinese arrives inside full-width quotation marks."""
+
+    assert extract_public_urls("“https://example.com/a”") == ("https://example.com/a",)
+    assert extract_public_urls("「https://example.com/a」中文") == ("https://example.com/a",)
+    assert extract_public_urls("他说“https://example.com/a”。") == ("https://example.com/a",)
+
+
 def test_rejects_local_and_private_destinations():
     text = (
         "https://localhost:3000/a https://127.0.0.1/a https://0.0.0.0/a "

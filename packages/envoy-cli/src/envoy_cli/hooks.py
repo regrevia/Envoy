@@ -31,7 +31,7 @@ _URL_RE = re.compile(
     re.IGNORECASE,
 )
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
-_TRAILING_PUNCTUATION = ".,;:!?，。；：！？、"
+_TRAILING_PUNCTUATION = ".,;:!?，。；：！？、”’"
 _TRAILING_BRACKETS = ")]}）】」》"
 # Markdown emphasis and table delimiters wrap a link rather than belong to it:
 # `**https://x/a**` reaches the hook verbatim when a user pastes formatted text,
@@ -78,6 +78,14 @@ def normalize_host(value: Optional[str]) -> Optional[str]:
 
 
 def _strip_url(url: str) -> str:
+    # Chinese, Japanese, and Korean prose has no space that ends a link, so
+    # `参考https://x/a的内容` reaches the hook as one token and the trailing CJK run
+    # would be read as part of the path. A link copied out of a browser is
+    # percent-encoded, so the first CJK character ends it. Without this the hook
+    # routes a host and path that do not exist and reports a source it never read.
+    cjk = _CJK_RE.search(url)
+    if cjk is not None:
+        url = url[: cjk.start()]
     url = url.rstrip(_TRAILING_PUNCTUATION).rstrip(_TRAILING_MARKUP)
     while url and url[-1] in _TRAILING_BRACKETS:
         opener = {")": "(", "]": "[", "}": "{", "）": "（", "】": "【", "」": "「", "》": "《"}[url[-1]]
