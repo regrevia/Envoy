@@ -10,11 +10,8 @@ payload) say the same thing.
 
 from __future__ import annotations
 
-import io
 import json
 import types
-
-import pytest
 
 from envoy_cli import diagnosis, mcp, reader
 from envoy_core.schemas.read_v1 import ErrorCode, ReadRequest
