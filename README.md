@@ -1,6 +1,9 @@
 <a id="top"></a>
 <p align="center">
-  <img src="frontend/public/brand/envoy-bird.png" alt="Envoy" width="104">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/envoy-bird-paper.png">
+    <img src="frontend/public/brand/envoy-bird-ink.png" alt="Envoy" width="104">
+  </picture>
 </p>
 
 <h1 align="center">蒸馏一切链接</h1>

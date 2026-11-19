@@ -247,5 +247,5 @@ DeepSeek Harness host description, and synchronizes the package version with
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The icon is the Envoy
-bird artwork from `frontend/public/brand/envoy-bird.png`, redistributed under
-the same license.
+bird artwork from `frontend/public/brand/envoy-bird-ink.png` (and the dark-mode
+`envoy-bird-paper.png`), redistributed under the same license.
