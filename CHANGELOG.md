@@ -70,6 +70,11 @@
   code 隐含的登录交接，所以边缘限流页面不再被推去登录，而是「换出口或晚点再来」。
   请求层抛异常时 `-32603` 的 `error.data` 也带上 `transport_closed` 与
   `retry_with_same_id`，宿主不必从错误码猜这次是谁的问题。
+- 浏览器接管的动作（走哪条登录路、打开命令、回来验证的 action id、恢复读取的
+  resume token）只挂在 `errors[0].details` 下面，而同一份拒绝从工具里抛出来时
+  却提升到了 payload 顶层。同一个失败，宿主能不能找到唯一可做的那一步，取决
+  于它是哪条代码路径产生的。现在两条路径同一处、同一个 key，读结构化结果的
+  宿主不必知道 `details` 这个内部位置。
 
 ### English
 
@@ -159,6 +164,13 @@
   later instead of being sent to log in. When the request layer itself raises,
   `-32603` now carries `transport_closed` and `retry_with_same_id` in `error.data`,
   so the host no longer has to guess whose problem it was.
+- The browser takeover -- which sign-in route applies, the command that opens it,
+  the action id that verifies it, the resume token that continues the read -- sat
+  under `errors[0].details`, while the same refusal raised out of a tool hoisted
+  it onto the payload. Whether the host could find the one actionable thing in
+  the result depended on which code path produced it. Both paths now put it in
+  the same place, so a host reading `structuredContent` no longer needs to know
+  that internal path.
 
 ## 0.1.60 - 2026-11-17
 

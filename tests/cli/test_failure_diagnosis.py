@@ -103,6 +103,35 @@ def test_a_missing_capability_names_the_command_that_installs_it():
     assert "envoy browser setup" in failure.next_step
 
 
+def test_a_blocked_payload_offers_the_takeover_without_digging(monkeypatch):
+    """The one actionable thing must not be reachable only through `errors[0]`."""
+    url = "https://www.xiaohongshu.com/explore/0123456789abcdef"
+    _offline(
+        monkeypatch,
+        '<html><head><title>小红书</title></head><body><div id="app"></div></body></html>',
+    )
+
+    response = reader._read_public_page_once(_request(url))
+    payload = mcp._read_payload(response)
+    action = payload["needs_user_action"]
+
+    assert action["action_id"] == payload["needs"][0]["action_id"]
+    assert action["resume_token"]
+    assert action["requires_human"] is True
+    assert action["open_command"].endswith(action["action_id"])
+    assert action["verify_command"].endswith(action["action_id"])
+    # Every route offered is something a human does, not a command the model
+    # should run behind their back.
+    assert [option["action"] for option in action["options"]] == [
+        "in_chat_sign_in",
+        "human_sign_in",
+    ]
+    assert all(option["requires_human"] is True for option in action["options"])
+
+    text = mcp._material_content_text(payload, "envoy_read", types.SimpleNamespace(max_chars=4000))
+    assert f"next: {payload['diagnosis']['next_step']}" in text
+
+
 def test_a_platform_shell_reaches_the_host_with_a_diagnosis(monkeypatch):
     """The XHS empty shell: blocked, attributed, and with a next step in the text."""
     url = "https://www.xiaohongshu.com/explore/0123456789abcdef"

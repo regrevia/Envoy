@@ -1758,6 +1758,14 @@ def _read_payload(response, compact: bool = True) -> dict:
     # One failure, one description: the text lines below and the structured
     # payload a modern host reads must say the same thing about the same error.
     diagnosis.attach(payload)
+    # A blocked read that offers a browser takeover used to keep it inside
+    # `errors[0].details`, while the same refusal raised out of a tool hoisted it
+    # onto the payload -- so whether the host could find the one actionable thing
+    # in the result depended on which path produced it. Same key, either path.
+    if not isinstance(payload.get("needs_user_action"), dict):
+        action = _payload_needs_user_action(payload)
+        if action:
+            payload["needs_user_action"] = action
     return payload
 
 
