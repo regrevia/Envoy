@@ -137,7 +137,7 @@ pin_file (no ENVOY_HOME): C:\Users\...\.envoy\runtime-path
 pin_file (ENVOY_HOME=xyz): C:\Users\...\AppData\Local\Temp\xyz\runtime-path
 ```
 
-而 `install.sh`（[integrations/install.sh:40](integrations/install.sh#L40)）写死 `$HOME/.envoy/runtime-path`，
+而 `install.sh`（[integrations/install.sh:40](../integrations/install.sh#L40)）写死 `$HOME/.envoy/runtime-path`，
 **不随 `ENVOY_HOME`**。结果：任何设了 `ENVOY_HOME` 的用户装完后，`envoy doctor` 报 `unpinned`
 （pin 写到了 A，doctor 去 B 找）。
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -114,3 +115,55 @@ def test_generated_host_artifacts_are_current(script: str):
     result = _run(script, "--check")
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _markdown_link_targets(text: str) -> list[str]:
+    """Link targets outside fenced code blocks.
+
+    A shell snippet can contain ``]((Get-Date) ...)`` by accident; only prose
+    links are documentation.
+    """
+
+    prose: list[str] = []
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            prose.append(line)
+    return re.findall(r"\]\(([^)\s]+)\)", "\n".join(prose))
+
+
+def test_markdown_links_are_relative_and_land_inside_the_repository():
+    """A link that points at one machine's disk is a dead link for everyone else.
+
+    Several docs were written on a checkout at a fixed absolute path, so their
+    links only resolved for the author. Nothing else validates Markdown links,
+    which is why they survived; this keeps them relative and real.
+    """
+
+    markdown = [
+        path
+        for path in ROOT.rglob("*.md")
+        if ".git" not in path.parts
+        and "node_modules" not in path.parts
+        and "build" not in path.parts
+    ]
+    assert markdown
+
+    absolute: list[str] = []
+    missing: list[str] = []
+    for path in markdown:
+        for target in _markdown_link_targets(path.read_text(encoding="utf-8", errors="replace")):
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            if target.startswith(("/", "$", "~", "file:")):
+                absolute.append(f"{path.relative_to(ROOT)}: {target}")
+                continue
+            resolved = (path.parent / target.split("#")[0]).resolve()
+            if not resolved.exists():
+                missing.append(f"{path.relative_to(ROOT)}: {target}")
+
+    assert absolute == [], "Markdown links must be repository-relative:\n" + "\n".join(absolute)
+    assert missing == [], "Markdown links point at files that do not exist:\n" + "\n".join(missing)

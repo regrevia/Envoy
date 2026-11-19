@@ -27,6 +27,11 @@
   才会用它。命令现在会明说这一点并指向 `envoy auth handoff on`，免得用户以为
   导入完成了却发现读还是进不去。
 
+- 有八处文档链接写的是某个人机器上的绝对路径（`$HOME/Desktop/2026/Envoy/...`），
+  只有在那个 checkout 上才点得开，GitHub 上全是死链。现在改用仓库相对路径，并
+  加了一条守则：所有 `*.md` 里的正文链接必须是相对的、而且真的存在（代码块里的
+  方括号不算，网络链接与锚点跳过）。
+
 - 中文里链接后面没有空格，`参考https://x/a的内容` 到 hook 手里是一整个 token，
   以前 `的内容` 会被当成路径读走。真正的 URL 从浏览器复制出来是百分号编码的，
   所以第一个中日韩字符就是链接的结尾，现在在 `_strip_url` 里据此截断。这不是
@@ -83,6 +88,12 @@
   when credential handoff is on. The command now says so and points at
   `envoy auth handoff on`, instead of leaving an import that appears to do
   nothing.
+
+- Eight documentation links carried an absolute path from one machine's
+  checkout (`$HOME/Desktop/2026/Envoy/...`), so they only opened for the author
+  and were dead on GitHub. They are repository-relative now, and a guard keeps
+  it that way: every prose link in a `*.md` must be relative and must resolve
+  (fenced code blocks, URLs and anchors excluded).
 
 - A Chinese sentence runs straight into a link, so `参考https://x/a的内容` reaches the
   hook as a single token and the trailing `的内容` was read as part of the path. A
