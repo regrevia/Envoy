@@ -32,6 +32,11 @@
   加了一条守则：所有 `*.md` 里的正文链接必须是相对的、而且真的存在（代码块里的
   方括号不算，网络链接与锚点跳过）。
 
+- `scripts/acceptance/route_eval.py` 终于进了 CI（`ci.yml` 里
+  `export_link_verdicts.py --check` 之后）。它退出码就是判据，不包 `|| true`、
+  也不接管道，语料和规则走散直接红。测试钉住这一行存在，免得步骤被删掉后仍然
+  全绿。
+
 - 中文里链接后面没有空格，`参考https://x/a的内容` 到 hook 手里是一整个 token，
   以前 `的内容` 会被当成路径读走。真正的 URL 从浏览器复制出来是百分号编码的，
   所以第一个中日韩字符就是链接的结尾，现在在 `_strip_url` 里据此截断。这不是
@@ -94,6 +99,11 @@
   and were dead on GitHub. They are repository-relative now, and a guard keeps
   it that way: every prose link in a `*.md` must be relative and must resolve
   (fenced code blocks, URLs and anchors excluded).
+
+- `scripts/acceptance/route_eval.py` now runs in CI, right after
+  `export_link_verdicts.py --check`. Its exit code is the verdict: no `|| true`
+  and no pipe, so corpus drift turns the build red. A test pins the step, so
+  deleting it cannot leave the suite green.
 
 - A Chinese sentence runs straight into a link, so `参考https://x/a的内容` reaches the
   hook as a single token and the trailing `的内容` was read as part of the path. A

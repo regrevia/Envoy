@@ -196,6 +196,11 @@ jobs:
       # link-verdicts.json 是 platforms.py 的生成物，漂移即失败。
       - name: 校验链接判定 JSON 未过期 / Check exported link verdicts
         run: python3 scripts/export_link_verdicts.py --check
+      # 路由语料对产品规则的核对脚本，之前没有任何 workflow 跑过它：语料和规则
+      # 走散、或 Skill 里那张路由表被改名，都不会有人发现。它是 stdlib 单文件，
+      # 退出码才是判据（0 才通过，别包 `|| true`）。
+      - name: 核对路由语料与规则 / Check route evaluator corpus
+        run: python3 scripts/acceptance/route_eval.py
 
   frontend:
     name: 前端构建 / Frontend build

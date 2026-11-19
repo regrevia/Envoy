@@ -84,3 +84,19 @@ def test_live_mode_stays_a_stub_that_spends_nothing():
     plan = json.loads(result.stdout)
     assert plan["mode"] == "live"
     assert plan["status"] == "not_implemented"
+
+
+def test_continuous_integration_runs_the_evaluator():
+    """A check nobody runs is not a check.
+
+    The evaluator is the only thing comparing the corpus to the shipped rules,
+    so CI has to invoke it, and has to let its exit code decide: a `|| true`
+    would turn every mismatch into a green build.
+    """
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    line = "python3 scripts/acceptance/route_eval.py"
+
+    assert line in workflow
+    assert f"{line} ||" not in workflow
+    assert f"{line} |" not in workflow
