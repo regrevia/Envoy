@@ -8,6 +8,20 @@ Envoy 由三部分组成：Skill 指令、本地 CLI runtime、宿主 MCP 连接
 `envoy browser setup`：runtime 在首次使用时自己补齐，浏览器在第一次要渲染
 页面时自己装。
 
+## 先认宿主 / Pick the host
+
+三个宿主装的是三种不同的东西，先确认当前跑在哪个宿主里，再选对应的那条：
+
+| 宿主 | 怎么认 | 装的产物 | 安装目标 |
+| --- | --- | --- | --- |
+| Claude Code | `command -v claude` | `claude plugin`（marketplace `envoy@envoy`，含 skill + MCP） | `claude-code` |
+| Codex | `command -v codex` | `codex plugin`（MCP）+ 一条用户级 hook | `codex` |
+| DeepSeek Harness | `command -v dsh`，桌面版在应用包内（`DSH_CLI` 指过去） | npm 包 `envoy-dsh`（bundle：MCP + skill + 路由） | `dsh` |
+
+一句话判据：**宿主是 DeepSeek Harness 就装 `envoy-dsh`，是 Claude Code 就装
+`envoy@envoy` 插件，是 Codex 就装 Codex 插件再补一次 `envoy hook install --host codex`。**
+认不出来、或机器上装了好几个，把目标换成 `auto`，脚本按检测到的 CLI 各装一份。
+
 ## 一条命令 / One command
 
 ```bash
