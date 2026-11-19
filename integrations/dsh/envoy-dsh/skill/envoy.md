@@ -306,6 +306,16 @@ and keep working on the rest of the request. When they say they are done, call
 now reads with `mcp__envoy__envoy_read`, and a still-`waiting` status means show the picture
 again instead of re-reading. The browser stays alive between calls, so one scan
 covers every pause for the same site in the batch; `action: "cancel"` closes it.
+
+A page read with `scope.include_visual: true` also returns one picture of the page
+as it rendered (`transform.derived: "page_screenshot"`, `image/png`), and the text
+carries the markdown image line for it, so a host that renders text can show it.
+That picture is evidence of what the page showed, not an extracted image of the
+source: it is how a human tells a sign-in wall from an in-app notice from a page
+that is simply broken. A refused read carries the same picture, so show it
+alongside the sign-in step instead of describing the page from memory. It counts
+as its own `screenshot` coverage item and never as an `images` one, so it cannot
+pass for the images a read failed to deliver.
 The session stays in Envoy's separate local browser profile on the machine.
 Turning the switch off stops Envoy from using that session; it does not delete
 it — `envoy auth clear` (optionally `--host <site>`) removes the stored state.

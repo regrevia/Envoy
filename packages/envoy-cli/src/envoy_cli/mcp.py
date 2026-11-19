@@ -1514,6 +1514,12 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
             and failure.get("next_step")
         ):
             lines.append(f"next: {failure['next_step']}")
+        # The handoff branch returns before the refusal body is rendered, and
+        # this is the branch an empty platform shell takes: the picture has to
+        # be attached here or the one piece of evidence never reaches the host.
+        need_picture = _page_screenshot_markdown(payload)
+        if need_picture:
+            lines.append(need_picture)
         return "\n".join(_fit_content(lines, budget))
 
     if result == "blocked":
@@ -1537,6 +1543,12 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
         if resources and not _payload_needs_user_action(payload):
             ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
             lines.append(f"resources: {ids}")
+        # Independent of the action line above: the picture is what the human
+        # looks at while deciding whether to sign in, so it is shown even when
+        # the same payload asks for that sign-in.
+        refusal_picture = _page_screenshot_markdown(payload)
+        if refusal_picture:
+            lines.append(refusal_picture)
         if tool == "envoy_read":
             lines.append(_READER_REFUSAL_FALLBACK)
         return "\n".join(_fit_content(lines, budget))
@@ -1570,6 +1582,9 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
     if resources:
         ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
         tail.append(f"resources: {ids}")
+    picture = _page_screenshot_markdown(payload)
+    if picture:
+        tail.append(picture)
     retained = _material_retained(payload) if material_id else False
     next_offset = _next_offset(payload) if material_id else None
     if material_id:
@@ -2173,6 +2188,33 @@ def _picture_markdown(screen_path: Any, label: str = "扫码登录或验证") ->
     if not path or not Path(path).is_absolute():
         return ""
     return f"![{label}](<{path}>)"
+
+
+def _page_screenshot_markdown(payload: dict) -> str:
+    """The picture of the page this read rendered, as a line a host can show.
+
+    A page that fills its body only inside a browser hands the model text that
+    is not the page. The picture is what the human can check, and it reaches a
+    text-only host the same way a sign-in screenshot does.
+    """
+
+    resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
+    for item in resources:
+        if not isinstance(item, dict):
+            continue
+        transform = item.get("transform")
+        if not isinstance(transform, dict) or transform.get("derived") != "page_screenshot":
+            continue
+        delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
+        if delivery.get("type") != "local_file":
+            continue
+        picture = _picture_markdown(delivery.get("path"), "页面截图")
+        if picture:
+            return (
+                f"{picture} this is what the rendered page showed, not an "
+                "extracted image of the source"
+            )
+    return ""
 
 
 def _egress_blocked_instruction(result: dict) -> str:

@@ -75,6 +75,17 @@
   却提升到了 payload 顶层。同一个失败，宿主能不能找到唯一可做的那一步，取决
   于它是哪条代码路径产生的。现在两条路径同一处、同一个 key，读结构化结果的
   宿主不必知道 `details` 这个内部位置。
+- 读一个只对已登录会话出正文的平台页时，人拿到的是一句「只有登录才看得到」，却
+  没有那张页面长什么样的图。遇到验证码、App 内打开、页面真的坏了，光看文字分不
+  出来。现在 `include_visual` 的读取会顺带截一张渲染后的页面，作为 resource 交
+  回（`transform.derived = page_screenshot`、`image/png`、带 sha256 与过期时间），
+  MCP 文本里也带着一行指向这张图的图片语法（alt 文案是「页面截图」），纯文本
+  宿主也能让人看到。截图只算
+  `screenshot` 这一种覆盖，不计入 `images`，免得用一张页面图把真正缺的图片说成
+  已经交付。被拒绝的结果同样带这张图 —— 那正是人要看着决定要不要登录的时刻。
+  普通文本读取不截图：那会让一个可能已登录的页面在磁盘上留下照片。
+- 截图存在本地材料根下（`browser-screenshots/`），文件名带站点名，七天过期并
+  在下次写入时清理。截不到图不是失败：拍照抛异常只写一条空路径，读取照常返回。
 
 ### English
 
@@ -171,6 +182,23 @@
   the result depended on which code path produced it. Both paths now put it in
   the same place, so a host reading `structuredContent` no longer needs to know
   that internal path.
+- Reading a platform page that only renders its body for a signed-in session used
+  to hand the human one line saying a sign-in is needed, and no picture of what
+  the page actually shows. A captcha, an "open in the app" notice and a page that
+  is simply broken read the same as text. A read made with `include_visual` now
+  also captures the rendered page and returns it as a resource
+  (`transform.derived = page_screenshot`, `image/png`, with sha256 and an expiry),
+  and the MCP text carries a markdown image line pointing at it (alt text 页面截图),
+  so a text-only host can show it too. The capture counts as its own `screenshot` coverage item and never as an
+  `images` one, so a picture of the page cannot pass for the images that were
+  missing. A refusal carries the picture as well -- that is exactly the moment a
+  human has to look at the page before deciding whether to sign in. A plain text
+  read takes no picture: that would leave a photograph of a possibly signed-in
+  page on disk.
+- Captures live under the local material root (`browser-screenshots/`), are named
+  after the site, expire after seven days and are swept on the next write. A
+  capture that fails is not a failed read: an exception from the screenshot call
+  only leaves an empty path.
 
 ## 0.1.60 - 2026-11-17
 

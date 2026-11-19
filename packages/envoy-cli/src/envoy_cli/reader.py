@@ -1698,6 +1698,10 @@ def _read_with_isolated_browser(
             max_work_seconds=_remaining_work_seconds(request),
             on_user_action=user_action,
             only_proxy=only_proxy,
+            # A picture of the rendered page is itself visual material, so the
+            # request that asks for visual material is the one that gets it: a
+            # plain text read never leaves a picture of a signed-in page behind.
+            capture_screenshot=_wants_page_screenshot(request),
         )
     except MediaBudgetExceeded as exc:
         raise PublicPageError(str(exc), ErrorCode.BUDGET_EXCEEDED) from exc
@@ -1715,6 +1719,64 @@ def _read_with_isolated_browser(
             ErrorCode.SOURCE_UNAVAILABLE,
         )
     return page, None
+
+
+def _wants_page_screenshot(request: ReadRequest) -> bool:
+    """A picture is visual material, so only a visual read may take one.
+
+    The flag is the consent: `include_visual` is an explicit request for what
+    the page shows, and it is the same flag that already asks the reader for
+    frames and images. A plain text read never photographs a page that may be
+    signed in.
+    """
+
+    return bool(getattr(getattr(request, "scope", None), "include_visual", False))
+
+
+def _screenshot_resource(
+    page,
+    request: ReadRequest,
+) -> tuple[ResourceRef | None, str]:
+    """The rendered page as a picture, with the reason when there is none.
+
+    A host that renders only the text block still shows the picture through the
+    same markdown image line Envoy already uses for sign-in screens, so the file
+    has to exist locally and be named by an absolute path. The delivery stays
+    `unverified` like every other derived resource: nothing confirmed the host
+    read it.
+    """
+
+    path = str(getattr(page, "screenshot_path", "") or "")
+    if not path:
+        return None, "No picture of the rendered page could be taken"
+    target = Path(path)
+    try:
+        if not target.is_file() or target.stat().st_size == 0:
+            return None, "The rendered page produced an empty picture"
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return None, "The picture of the rendered page could not be read back"
+    seed = f"{request.source.url or ''}:screenshot"
+    return (
+        ResourceRef(
+            resource_id=f"resource-{hashlib.sha256(seed.encode()).hexdigest()[:16]}",
+            mime_type="image/png",
+            delivery=HostDelivery(type="local_file", path=str(target)),
+            sha256=digest,
+            delivery_evidence="unverified",
+            # Marked so a host can name it as the page picture rather than as
+            # one of the page's own images.
+            transform={"derived": "page_screenshot"},
+            expires_at=datetime.fromtimestamp(
+                time.time() + min(
+                    request.retention.derived_ttl_seconds,
+                    MATERIAL_TTL_SECONDS,
+                ),
+                tz=timezone.utc,
+            ),
+        ),
+        "",
+    )
 
 
 def _browser_read_failure_code(error) -> ErrorCode:
@@ -11586,6 +11648,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     f"{browser_error or 'Retrying later or from a different network exit usually works.'}",
                     action_required=True,
                     details={"failure_kind": diagnosis.SOURCE_BLOCKED},
+                    page=browser_snapshot,
                 )
             return _blocked(
                 request,
@@ -11594,6 +11657,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                 action_required=True,
                 details={"failure_kind": diagnosis.LOGIN_REQUIRED},
+                page=browser_snapshot,
             )
         if not request.scope.include_visual and len(text.strip()) < _FEED_ALTERNATE_PAGE_CHARS:
             feed_page = _read_feed_alternate(request, source_url, final_url, html)
@@ -11627,6 +11691,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     "The page still requires login or security verification. "
                     f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                     action_required=True,
+                    page=browser_snapshot,
                 )
             if isinstance(browser_error, Exception):
                 failure_code = _browser_read_failure_code(browser_error)
@@ -11656,6 +11721,7 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                         f"page: it renders its body only for a signed-in session.{detail}",
                         action_required=True,
                         details={"needs_user_action": _login_user_action(final_url)},
+                        page=browser_snapshot,
                     )
                 return _blocked(
                     request,
@@ -12189,6 +12255,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             if thin_platform_action.get("action_id")
             else []
         )
+        screenshot_resource, screenshot_unresolved = (
+            _screenshot_resource(browser_snapshot, request)
+            if browser_snapshot is not None and _wants_page_screenshot(request)
+            else (None, "")
+        )
         image_partial = (
             len(resources) < len(parser.images)
             or (image_note_total is not None and len(resources) < image_note_total)
@@ -12202,7 +12273,11 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
             execution_state=ExecutionState.COMPLETED,
             result=ReadResult.PARTIAL if text_is_partial or source_text_truncated or image_partial or image_only or video_urls or browser_snapshot_for_video or unbound_note_video or ocr_unresolved or thin_platform_page else ReadResult.READY,
             blocks=blocks,
-            resources=resources,
+            resources=(
+                [*resources, screenshot_resource]
+                if screenshot_resource is not None
+                else list(resources)
+            ),
             needs=[*ocr_visual_need, *thin_platform_need],
             coverage=Coverage(
                 modalities={
@@ -12406,6 +12481,19 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                             else 0,
                         },
                     )} if video_urls or browser_snapshot_for_video else {}),
+                    **({"screenshot": CoverageItem(
+                        discovered=1,
+                        extracted=1 if screenshot_resource is not None else 0,
+                        returned=1 if screenshot_resource is not None else 0,
+                        delivered=1 if screenshot_resource is not None else 0,
+                        extraction=(
+                            "complete" if screenshot_resource is not None else "failed"
+                        ),
+                        unresolved=[screenshot_unresolved] if screenshot_unresolved else [],
+                        details={
+                            "purpose": "evidence for what the rendered page showed",
+                        },
+                    )} if _wants_page_screenshot(request) else {}),
                     },
                     unresolved=source_coverage_unresolved,
                 ),
@@ -12851,8 +12939,17 @@ def _blocked(
     message: str,
     action_required: bool = False,
     details: dict | None = None,
+    page=None,
 ) -> ReadResponse:
     payload = dict(details or {})
+    # A refusal is the one answer where a picture matters most: the page that
+    # rendered nothing is exactly the page a human has to look at before
+    # deciding whether it is a sign-in gate, an app-only notice, or broken.
+    screenshot_resource, _ = (
+        _screenshot_resource(page, request)
+        if page is not None and _wants_page_screenshot(request)
+        else (None, "")
+    )
     needs: list[Need] = []
     if (
         action_required
@@ -12896,4 +12993,5 @@ def _blocked(
             )
         ],
         needs=needs,
+        resources=[screenshot_resource] if screenshot_resource is not None else [],
     )

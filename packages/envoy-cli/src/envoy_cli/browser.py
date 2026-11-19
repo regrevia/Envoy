@@ -332,6 +332,7 @@ class BrowserPage:
     html: str
     media_urls: tuple[str, ...] = ()
     page_video_urls: tuple[str, ...] = ()
+    screenshot_path: str = ""
 
 
 def browser_profile_dir(*, create: bool = True) -> Path:
@@ -349,6 +350,68 @@ def browser_profile_dir(*, create: bool = True) -> Path:
             except OSError:
                 pass
     return profile
+
+
+# A picture of a rendered page is evidence for one read, not an archive: it
+# expires on the same clock as the rest of the material.
+SCREENSHOT_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+def screenshot_dir(*, create: bool = True) -> Path:
+    """Where a read keeps the picture of the page it rendered.
+
+    Beside the other material rather than inside the browser profile: this is
+    evidence for a single read, it carries whatever the page showed, and it
+    must be pruned on a clock the way the material is.
+    """
+
+    from . import storage
+
+    root = storage.resolve_material_root() / "browser-screenshots"
+    if create:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _prune_screenshots(root)
+    return root
+
+
+def _prune_screenshots(root: Path) -> None:
+    cutoff = time.time() - SCREENSHOT_TTL_SECONDS
+    try:
+        entries = list(root.glob("page-*.png"))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            continue
+
+
+def _page_screenshot(page, source_url: str) -> str:
+    """A picture of the page Envoy actually rendered, for a human to look at.
+
+    A platform that fills its body only inside a signed-in browser leaves the
+    reader with an empty shell and the host with nothing to describe from. The
+    picture is the evidence: it shows whether the page is a sign-in gate, an
+    app-only notice, or a layout the HTML never carried. Never fatal -- the
+    text and the diagnosis remain the answer when no picture can be taken.
+    """
+
+    try:
+        root = screenshot_dir()
+    except OSError:
+        return ""
+    host = re.sub(r"[^a-z0-9.-]+", "", (urlparse(source_url).hostname or "page").lower())
+    target = root / f"page-{host or 'page'}-{time.time_ns()}.png"
+    try:
+        page.screenshot(path=str(target))
+    except Exception:  # noqa: BLE001 - a missing picture must not fail the read
+        return ""
+    try:
+        return str(target) if target.is_file() and target.stat().st_size > 0 else ""
+    except OSError:
+        return ""
 
 
 def _browser_proxy_server() -> str | None:
@@ -978,7 +1041,7 @@ def _await_page_video_url(page, timeout_seconds: float = 12.0) -> list[str]:
         page.wait_for_timeout(300)
 
 
-def _capture(page, source_url: str) -> BrowserPage:
+def _capture(page, source_url: str, *, capture_screenshot: bool = False) -> BrowserPage:
     title, text = _load_visible_content(page)
     try:
         html = str(page.content())
@@ -997,6 +1060,7 @@ def _capture(page, source_url: str) -> BrowserPage:
         html=html,
         media_urls=media_urls,
         page_video_urls=page_video_urls,
+        screenshot_path=_page_screenshot(page, source_url) if capture_screenshot else "",
     )
 
 
@@ -1066,6 +1130,7 @@ def read_page(
     on_user_action: Callable[[str], None] | None = None,
     only_proxy: bool = False,
     allow_visible: bool | None = None,
+    capture_screenshot: bool = False,
 ) -> BrowserPage:
     try:
         if playwright_factory is None:
@@ -1171,7 +1236,7 @@ def read_page(
                         # `proxy_plan()` is a different network and may pass.
                         egress_title = title or text[:60]
                         continue
-                    return _capture(page, source_url)
+                    return _capture(page, source_url, capture_screenshot=capture_screenshot)
                 challenge_proxy = proxy_server
                 break
             except (BrowserReadError, TimeoutError) as exc:
@@ -1232,7 +1297,7 @@ def read_page(
                 _load_visible_content(page)
                 _title, text, challenge = _page_state(page)
                 if not challenge and len(text) >= 20:
-                    return _capture(page, source_url)
+                    return _capture(page, source_url, capture_screenshot=capture_screenshot)
             raise BrowserChallengeRequired(
                 "The visible page still requires login or security verification; "
                 "complete it in Envoy's browser and retry the link"
