@@ -206,6 +206,51 @@ def test_apply_imported_cookies_is_a_noop_without_a_store(store, monkeypatch):
     assert browser._apply_imported_cookies(context, "https://example.com/") == 0
 
 
+def test_import_says_when_the_cookies_will_not_be_used(monkeypatch, capsys):
+    """An import that reads as success but never takes effect is a trap.
+
+    The store is written either way; only the handoff flag decides whether a
+    read loads it. So the command that wrote it has to say which of the two
+    happened, or the user is left with a session that silently does nothing.
+    """
+    from envoy_cli import cli, features
+
+    monkeypatch.delenv("ENVOY_CREDENTIAL_HANDOFF", raising=False)
+    monkeypatch.setattr(features, "credential_handoff_enabled", lambda: False)
+    monkeypatch.setattr(
+        cookies,
+        "import_cookies",
+        lambda *_args, **_kwargs: {
+            "imported": 2,
+            "domains": ["www.xiaohongshu.com"],
+            "source": "chrome",
+        },
+    )
+
+    assert cli.main(["auth", "import", "--from", "chrome", "--domain", "xiaohongshu.com"]) == 0
+    out, err = capsys.readouterr()
+
+    assert "Imported 2 cookies" in out
+    assert "envoy auth handoff on" in err
+
+
+def test_import_is_quiet_once_the_handoff_is_on(monkeypatch, capsys):
+    from envoy_cli import cli, features
+
+    monkeypatch.setattr(features, "credential_handoff_enabled", lambda: True)
+    monkeypatch.setattr(
+        cookies,
+        "import_cookies",
+        lambda *_args, **_kwargs: {"imported": 1, "domains": ["douyin.com"], "source": "edge"},
+    )
+
+    assert cli.main(["auth", "import", "--from", "edge", "--domain", "douyin.com"]) == 0
+    out, err = capsys.readouterr()
+
+    assert "Imported 1 cookies" in out
+    assert err == ""
+
+
 def test_status_reports_an_empty_store(store):
     assert cookies.cookies_status() == {"imported": 0}
     assert json.dumps(cookies.cookies_status()) == '{"imported": 0}'
