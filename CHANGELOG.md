@@ -1,8 +1,20 @@
 # 更新日志 / Changelog
 
-## 未发布 / Unreleased
+## 0.1.61 - 2026-11-19
 
 ### 中文
+
+- 仓库首页原先要用三行才说完这是什么，读者翻到第四段才知道一个链接能出什么。现在
+  第一屏就说同一件事的三种说法：蒸馏一切链接 / 把链接分享给你的 AI / 一个链接，蒸馏
+  出你要的全部产物，紧跟产物清单（摘要、Markdown、Wiki、知识库，或者干脆不写、直接
+  让 AI 拿材料作答），以及视频为什么这样读（时序 + 关键帧 + ASR 转写，材料定到
+  `[mm:ss]`，不是标题、推荐流和弹幕）。安装命令降到自己的小节，不再占第一屏。
+- 评测结论提到首屏引用块，并当场写明口径：22% → 92% 数的是「正常结束且没有自报读不
+  到」的疑似完成，不是人工判对错，链接指向评测小节的原始记录。这行数字以前只在页面
+  最底部的「评测」小节里，容易被读成准确率。
+- 插件管理器的卡片文案、`package.json` 描述与插件 README 开头换成同一句话：一个链接
+  进来能拿什么出去、视频怎么读，数字只留「正常读完 22% → 92%、跑到超时 68% → 0%」与
+  「123 条真实链接 80% 能当素材」，并注明这组 A/B 是探索性的、未做人工正确性复核。
 
 - MCP 桥只在工具内部把异常收成错误，请求层抛出来的异常从没有答案：宿主拿到
   的是 `-32603`，或者更糟，一个已经关掉的管道。读以调用方自己发来的 request id
@@ -88,6 +100,26 @@
   在下次写入时清理。截不到图不是失败：拍照抛异常只写一条空路径，读取照常返回。
 
 ### English
+
+- The front page took three lines to say what this is, and a reader reached the
+  fourth paragraph before learning what one link produces. The first screen now
+  says it three ways -- distill any link, share a link with your AI, one link and
+  every artifact you wanted out of it -- then lists the artifacts (a summary,
+  Markdown, a wiki, a knowledge base, or nothing written at all with the material
+  handed over to answer from) and says why video is worth reading this way (its own
+  timeline, ordered segments with keyframes and ASR transcripts locatable to
+  `[mm:ss]`, not the title, the recommendation rail and the danmaku). The install
+  commands moved down to their own section instead of occupying the first screen.
+- The evaluation result moved into a quoted line near the top, with its method
+  stated where the number is: 22% -> 92% counts turns that ended normally without
+  reporting an unreadable source, is suspected rather than human-graded, and links
+  to the raw records in the evaluation section. The number used to live only at the
+  bottom of the page, where it read like an accuracy rate.
+- The DSH card in the Plugin Manager, the `package.json` description and the
+  opening of the bundle README now say the same sentence: what comes out of one
+  link, how video is read, and only two numbers -- 22% -> 92% finishing normally and
+  68% -> 0% timing out, plus 80% of 123 live links usable as material -- with the
+  A/B marked exploratory and not human-reviewed.
 
 - The MCP bridge only turned exceptions inside a tool into an error; one raised at
   the request layer produced no answer at all, so the host saw `-32603` or a pipe

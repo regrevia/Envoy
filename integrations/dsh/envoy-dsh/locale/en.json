@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Envoy Link Reader",
-    "description": "Reads public links, PDFs, images, video captions, and local media through Envoy's MCP bridge, and gives the agent the Envoy link-reading skill."
+    "description": "Distill any link: Douyin and Bilibili video, image posts, WeChat articles, Xiaohongshu notes, PDFs and podcasts become citable material with source locators. Video is read on its own timeline with keyframes and ASR transcripts."
   }
 }

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Envoy 链接阅读器",
-    "description": "通过 Envoy 的 MCP 桥读取公开链接、PDF、图片、视频字幕与本地媒体，并为 Agent 注册 Envoy 链接阅读技能。"
+    "description": "蒸馏一切链接：抖音/B 站视频、图文笔记、公众号文章、小红书、PDF、播客，变成带来源定位、可引用的材料交给 Agent。视频按时序抽关键帧并配 ASR 转写。"
   }
 }

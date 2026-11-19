@@ -15,15 +15,17 @@ server.
 
 [中文快速安装](../README.md) · [Envoy 安装指南](../../skills/envoy/INSTALL.md)
 
-## One link in, AI-ready material out
+## Distill any link
 
-Whatever you are looking at, hand it over and get the thing you wanted out:
-Markdown, a wiki page, a knowledge-base entry. Douyin, Bilibili, Xiaohongshu,
-Zhihu, WeChat posts, articles, PDFs and podcasts all take the same path. A read
-returns a source-linked transcript with timestamps, frames, and a `material_id`
-you can quote, so the agent writes from what was actually said, not from the title. For a whole feed,
-`envoy collect` checkpoints every item, so an interrupted run resumes instead
-of restarting.
+Hand the link to the agent and get the thing out: Markdown, a wiki page, a
+knowledge-base entry, a summary -- or nothing written at all, with the material
+itself handed over to answer from. Douyin and Bilibili video, image posts, WeChat
+articles, Xiaohongshu notes, Zhihu, PDFs and podcasts all take the same path.
+Video is read on its own timeline -- ordered segments with keyframes and ASR
+transcripts locatable to `[mm:ss]` -- and comes back with a `material_id` you can
+quote, so the agent writes from what was said and shown rather than from the
+title. For a whole feed, `envoy collect` checkpoints every item, so an
+interrupted run resumes instead of restarting.
 
 Measured on 123 live links across those platforms: **80% usable as source
 material** — that is 93% of the links that answered at all — with **0 failures**

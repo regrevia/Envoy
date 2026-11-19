@@ -1,14 +1,14 @@
-<p align="center"><strong>蒸馏一切链接</strong></p>
-
 <a id="top"></a>
 <p align="center">
   <img src="frontend/public/brand/envoy-bird.png" alt="Envoy" width="104">
 </p>
 
-<h1 align="center">把链接分享给你的 AI</h1>
+<h1 align="center">蒸馏一切链接</h1>
+
+<p align="center"><strong>把链接分享给你的 AI</strong></p>
 
 <p align="center">
-  一个链接，成为你想要的任何东西。
+  抖音、B 站视频、图文笔记、公众号文章、小红书、PDF、播客 —— 一个链接，蒸馏出你要的全部产物。
 </p>
 
 <p align="center">
@@ -18,7 +18,9 @@
   <a href="#english">English</a>
 </p>
 
-给 AI 一个链接，Envoy 把它变成带来源定位的材料，AI 再用它写你要的东西：Wiki、摘要、报告、脚本。网页、公众号、PDF、小红书图文、B 站视频、本地视频都行。
+摘要、Markdown、Wiki、知识库，或者什么都不写：把材料本身交给 AI 参考。视频按「时序 + 关键帧 + ASR 转写」读，AI 拿到的是一段段定到 `[mm:ss]` 的内容和看得见的画面，不是标题、推荐流和弹幕 —— 上下文花在关键内容上，token 才省得下来。
+
+> 同一条链接、同一个模型，只差装不装 Envoy：60 轮里能正常读完、并把没读到的说清楚的，22% → 92%；跑到超时也没结论的，68% → 0%。这是疑似完成的统计，没有人工判定对错，口径与原始记录见[评测](#评测)。
 
 发布出去的产品只有两样：命令行 `envoy`，和 Claude Code / Codex / DeepSeek Harness 的插件与 skills，都装在本机。仓库根目录 `docker-compose.yml` 那套 Web 界面（FastAPI + Next.js + MySQL）是遗留选项，装了 CLI 也不需要它。Python 包目前只随 GitHub Release 发 `envoy_cli-<版本>-py3-none-any.whl`，PyPI 上还没有发布。
 
@@ -169,13 +171,17 @@ docker compose up -d --build
 
 <p align="center"><a href="#top">中文</a></p>
 
-<h3 align="center">Share a link with your AI</h3>
+<h3 align="center">Distill any link</h3>
+
+<p align="center"><strong>Share a link with your AI</strong></p>
 
 <p align="center">
-  One link in. Anything you want out.
+  Douyin and Bilibili video, image posts, WeChat articles, Xiaohongshu notes, PDFs, podcasts — one link, every artifact you wanted out of it.
 </p>
 
-Give your AI a link and Envoy turns it into material with source locators; the AI then writes whatever you asked for: a wiki, a summary, a report, a script. Web pages, WeChat posts, PDFs, Xiaohongshu image posts, Bilibili videos, local video files.
+A summary, Markdown, a wiki, a knowledge base -- or nothing written at all: hand the material itself over and let the AI work from it. Video is read on its own timeline, as ordered segments with keyframes and ASR transcripts locatable to `[mm:ss]`, so the context carries what was said and shown rather than the title, the recommendation rail and the danmaku.
+
+> Same link, same model, with and without Envoy: over 60 turns per arm, ends normally with the gaps named 22% -> 92%, runs out of time with no conclusion 68% -> 0%. Completion is suspected rather than human-graded; method and raw records: [evaluation](#evaluation).
 
 ### Install
 

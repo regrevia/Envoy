@@ -1,7 +1,7 @@
 {
   "name": "envoy-dsh",
-  "version": "0.1.60",
-  "description": "蒸馏一切链接：长视频、长 PDF、网页 → 带来源定位的 Markdown，Wiki 交给宿主 AI 组装。Paste a link; the agent reads it. Xiaohongshu, Douyin, Bilibili, WeChat, articles, PDFs and audio become citable Markdown for a wiki or knowledge base. On 60 turns with vs without: finishes reading 22% -> 92% (+70 points), times out 68% -> 0%, answer quotes a real source fact 23% -> 82% (the A/B is exploratory: different time caps, no human correctness review). On 123 live links 80% came back usable (93% of the pages that answered); an unreachable link reports in 26 s. Codex, Claude Code, DSH.",
+  "version": "0.1.61",
+  "description": "蒸馏一切链接：抖音/B 站视频、图文笔记、公众号文章、小红书、PDF、播客，一个链接蒸馏出摘要、Markdown、Wiki 或知识库交给宿主 AI 组装。视频按时序抽关键帧并配 ASR 转写，材料带来源定位可引用。60 轮对照：正常读完 22% -> 92%，跑到超时 68% -> 0%（探索性 A/B，未做人工正确性复核）。123 条真实链接 80% 能当素材。Codex、Claude Code、DSH。",
   "type": "module",
   "license": "Apache-2.0",
   "main": "./index.js",

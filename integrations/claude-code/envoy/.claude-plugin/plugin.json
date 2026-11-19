@@ -1,7 +1,7 @@
 {
   "name": "envoy",
-  "version": "0.1.60",
-  "description": "蒸馏一切链接：把长视频、长 PDF、网页变成带来源定位的 Markdown，Wiki 和知识库交给宿主 AI 组装。/ Distill links into located Markdown; the host AI assembles the wiki.",
+  "version": "0.1.61",
+  "description": "蒸馏一切链接：抖音/B 站视频、图文笔记、公众号文章、小红书、PDF、播客，一个链接蒸馏出摘要、Markdown、Wiki 或知识库。视频按时序 + 关键帧 + ASR 转写读，材料带来源定位可引用。/ Distill any link: Douyin and Bilibili video, image posts, WeChat articles, Xiaohongshu notes, PDFs and podcasts become located, citable material for a summary, Markdown, wiki or knowledge base; video is read on its own timeline with keyframes and ASR transcripts.",
   "author": {
     "name": "regrevia",
     "url": "https://github.com/regrevia"
