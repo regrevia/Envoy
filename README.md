@@ -11,7 +11,7 @@
 <p align="center"><strong>把链接分享给你的 AI</strong></p>
 
 <p align="center">
-  抖音、B 站视频、图文笔记、公众号文章、小红书、PDF、播客 —— 一个链接，蒸馏出你要的全部产物。
+  抖音、B 站视频、图文、公众号文章、小红书、PDF —— 一个链接，蒸馏出你要的所有产物。
 </p>
 
 <p align="center">
@@ -21,7 +21,9 @@
   <a href="#english">English</a>
 </p>
 
-摘要、Markdown、Wiki、知识库，或者什么都不写：把材料本身交给 AI 参考。视频按「时序 + 关键帧 + ASR 转写」读，AI 拿到的是一段段定到 `[mm:ss]` 的内容和看得见的画面，不是标题、推荐流和弹幕 —— 上下文花在关键内容上，token 才省得下来。
+摘要、Markdown、Wiki、知识库 —— 想要哪样就哪样；也可以什么都不写，把链接丢给 AI，让它直接拿材料当参考。视频按「时序 + 关键帧 + ASR 转写」读，AI 拿到的是一段段定到 `[mm:ss]` 的内容和看得见的画面，不是标题、推荐流和弹幕 —— 上下文只花在关键内容上，token 才省得下来。
+
+已验证适配 **Claude Code**、**Codex**、**DeepSeek Harness**，三个宿主都装了、都跑过。
 
 > 同一条链接、同一个模型，只差装不装 Envoy：60 轮里能正常读完、并把没读到的说清楚的，22% → 92%；跑到超时也没结论的，68% → 0%。这是疑似完成的统计，没有人工判定对错，口径与原始记录见[评测](#评测)。
 
@@ -179,10 +181,12 @@ docker compose up -d --build
 <p align="center"><strong>Share a link with your AI</strong></p>
 
 <p align="center">
-  Douyin and Bilibili video, image posts, WeChat articles, Xiaohongshu notes, PDFs, podcasts — one link, every artifact you wanted out of it.
+  Douyin and Bilibili video, image posts, WeChat articles, Xiaohongshu notes, PDFs — one link, every artifact you wanted out of it.
 </p>
 
-A summary, Markdown, a wiki, a knowledge base -- or nothing written at all: hand the material itself over and let the AI work from it. Video is read on its own timeline, as ordered segments with keyframes and ASR transcripts locatable to `[mm:ss]`, so the context carries what was said and shown rather than the title, the recommendation rail and the danmaku.
+A summary, Markdown, a wiki, a knowledge base -- whatever you wanted out of it; or nothing written at all: hand the link to the AI and let it work from the material itself. Video is read on its own timeline, as ordered segments with keyframes and ASR transcripts locatable to `[mm:ss]`, so the context carries what was said and shown rather than the title, the recommendation rail and the danmaku.
+
+Verified on **Claude Code**, **Codex**, and **DeepSeek Harness** -- installed and run on all three.
 
 > Same link, same model, with and without Envoy: over 60 turns per arm, ends normally with the gaps named 22% -> 92%, runs out of time with no conclusion 68% -> 0%. Completion is suspected rather than human-graded; method and raw records: [evaluation](#evaluation).
 
