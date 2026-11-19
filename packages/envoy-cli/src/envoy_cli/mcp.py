@@ -698,6 +698,11 @@ class MCPProtocolSession:
     def __init__(self):
         self.mode: str | None = None
         self.legacy_protocol_version: str | None = None
+        # Request ids this connection already retried after a dispatch failure.
+        # One retry per id only: a call that fails twice is a defect in this
+        # reader, not a transient pipe, and retrying forever would answer with
+        # the same error while the host keeps waiting for the body.
+        self.retried_request_ids: set[str] = set()
 
 
 def validate_observation_source_url(value: str) -> str:
@@ -1496,7 +1501,26 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
         return "\n".join(_fit_content(lines, budget))
 
     if result == "blocked":
+        # A refusal can still arrive with material the reader did manage to
+        # capture: an image note whose caption is behind a sign-in wall hands
+        # over the images, and dropping them here leaves the host with the
+        # failure notice only. Show what arrived, then why the rest did not.
+        readable = [
+            (index, block)
+            for index, block in enumerate(blocks, 1)
+            if _block_text(block) or block.get("kind") == "image"
+        ]
+        shared_url = _shared_source_url(blocks)
+        for index, block in readable:
+            lines.append("")
+            lines.append(_block_line(index, len(blocks), block, shared_url))
+            text = _block_text(block)
+            if text:
+                lines.append((text, len(text)))
         lines.extend(_blocked_lines(payload, errors, material_id, budget))
+        if resources and not _payload_needs_user_action(payload):
+            ids = ", ".join(str(item.get("resource_id")) for item in resources[:8])
+            lines.append(f"resources: {ids}")
         if tool == "envoy_read":
             lines.append(_READER_REFUSAL_FALLBACK)
         return "\n".join(_fit_content(lines, budget))
@@ -2862,6 +2886,13 @@ def handle_message(
                     **({"details": exc.details} if exc.details else {}),
                 }],
             }
+            # A reader that refuses a page still knows what the host can do
+            # next: which sign-in handoff applies, what it already captured.
+            # Those travel on details, and they only reach the host if they are
+            # hoisted out of the error record they were attached to.
+            for key in ("needs_user_action", "needs", "coverage", "material_id", "source"):
+                if isinstance(exc.details, dict) and exc.details.get(key):
+                    payload[key] = exc.details[key]
     except (state_storage.StateUnavailable, OSError) as exc:
         if isinstance(exc, OSError) and exc.errno not in state_storage.UNUSABLE_ERRNOS:
             _LOGGER.exception("Unexpected Envoy MCP tool failure: %s", name)
@@ -2935,20 +2966,71 @@ def _emit_line(output_stream: TextIO, text: str) -> None:
     output_stream.flush()
 
 
+# A dispatch failure is the one error the host cannot act on by itself: it did
+# not come from the source, and the answer it wanted (the body) is missing. Say
+# the request was run and retried rather than a bare "internal error", name the
+# request id that is safe to send again, and name the sign-in path for the case
+# that produces most of these on a platform page.
+_REQUEST_FAILURE_MESSAGE = (
+    "Internal error while handling MCP request: Envoy ran it, failed inside its "
+    "own reader, and retried it once with the same request id"
+)
+_REQUEST_FAILURE_HINT = (
+    ". Send the same id again for one more attempt; if the source is a page that "
+    "renders only for a signed-in session, envoy_auth with action 'open' signs in "
+    "once and the same link then reads normally"
+)
+
+
+def _dispatch_message(
+    message: dict,
+    session: MCPProtocolSession,
+    toolset: str | None,
+) -> dict | None:
+    """Dispatch one message, retrying once by request id when it raises.
+
+    Every failure inside a tool used to reach the host as a transport-level
+    error with no answer and no retry, which is indistinguishable from a dead
+    pipe. A read is keyed by the request id the caller already sent, so running
+    the same message again cannot duplicate a side effect: one silent retry
+    turns a transient failure into the answer the host was waiting for.
+    """
+
+    request_id = message.get("id") if isinstance(message, dict) else None
+    if request_id is None:
+        try:
+            return handle_message(message, session, toolset)
+        except Exception:
+            _LOGGER.exception("Unexpected Envoy MCP request failure")
+            return _error(None, -32603, _REQUEST_FAILURE_MESSAGE)
+    retry_key = str(request_id)
+    try:
+        return handle_message(message, session, toolset)
+    except Exception:
+        _LOGGER.exception("Unexpected Envoy MCP request failure")
+        if retry_key in session.retried_request_ids:
+            return _error(
+                request_id,
+                -32603,
+                _REQUEST_FAILURE_MESSAGE + _REQUEST_FAILURE_HINT,
+            )
+        session.retried_request_ids.add(retry_key)
+    try:
+        return handle_message(message, session, toolset)
+    except Exception:
+        _LOGGER.exception("Unexpected Envoy MCP request failure on retry")
+        return _error(
+            request_id,
+            -32603,
+            _REQUEST_FAILURE_MESSAGE + _REQUEST_FAILURE_HINT,
+        )
+
+
 def run_lines(lines: Iterable[dict], toolset: str | None = None) -> int:
     session = MCPProtocolSession()
     selected_toolset = normalize_toolset(toolset)
     for message in lines:
-        try:
-            response = handle_message(message, session, selected_toolset)
-        except Exception:
-            request_id = message.get("id") if isinstance(message, dict) else None
-            _LOGGER.exception("Unexpected Envoy MCP request failure")
-            response = _error(
-                request_id,
-                -32603,
-                "Internal error while handling MCP request",
-            )
+        response = _dispatch_message(message, session, selected_toolset)
         if response is not None:
             _emit_line(sys.stdout, json.dumps(response, ensure_ascii=False))
     return 0
@@ -2969,16 +3051,7 @@ def run_stream(
         except json.JSONDecodeError:
             _emit_line(output_stream, json.dumps(_error(None, -32700, "Parse error")))
             continue
-        try:
-            response = handle_message(message, session, selected_toolset)
-        except Exception:
-            request_id = message.get("id") if isinstance(message, dict) else None
-            _LOGGER.exception("Unexpected Envoy MCP request failure")
-            response = _error(
-                request_id,
-                -32603,
-                "Internal error while handling MCP request",
-            )
+        response = _dispatch_message(message, session, selected_toolset)
         if response is not None:
             _emit_line(output_stream, json.dumps(response, ensure_ascii=False))
     return 0

@@ -252,3 +252,58 @@ def test_material_content_text_offers_expand_when_the_material_is_retained(monke
 
     assert "envoy_expand material_id=mat-1" in text
     assert "envoy_read with refresh=true" not in text
+
+
+def test_a_blocked_read_still_renders_the_material_it_captured():
+    """An image note refused for its caption keeps the images it did hand over.
+
+    The refusal has to come first, but dropping the pictures turns a partly
+    successful read into the same dead end as a total failure.
+    """
+    payload = {
+        "result": "blocked",
+        "material_id": "mat-2",
+        "session_id": "session-2",
+        "blocks": [
+            {
+                "id": "blk-image-0001",
+                "kind": "image",
+                "content": {
+                    "type": "image",
+                    "resource_id": "resource-image",
+                    "alt_text": "note cover",
+                    "mime_type": "image/jpeg",
+                },
+                "origin": "source_image",
+                "locator": {"type": "web", "source_url": "https://www.xiaohongshu.com/explore/x"},
+                "order": 0,
+            }
+        ],
+        "resources": [{"resource_id": "resource-image", "mime_type": "image/jpeg"}],
+        "errors": [
+            {
+                "code": "empty_content",
+                "message": "xiaohongshu.com served an empty shell instead of the page",
+                "details": {
+                    "needs_user_action": {
+                        "kind": "login_or_verification",
+                        "question": "Sign the user in once from the chat",
+                    }
+                },
+            }
+        ],
+    }
+
+    text = mcp._material_content_text(
+        payload, "envoy_read", types.SimpleNamespace(max_chars=2000)
+    )
+    lines = text.splitlines()
+
+    image_line = next(index for index, line in enumerate(lines) if "blk-image-0001" in line)
+    refusal_line = next(index for index, line in enumerate(lines) if "empty shell" in line)
+    # The material comes first so the host can use what arrived, then the
+    # reason the rest did not, then the one action that fixes it.
+    assert image_line < refusal_line
+    assert "Requires user action:" in text
+    assert "Sign the user in once from the chat" in text
+    assert "envoy_auth" in text or "sign" in text.lower()

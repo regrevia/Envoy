@@ -2148,3 +2148,109 @@ def test_an_expand_receipt_hands_the_host_a_block_id_it_can_verify(tmp_path, mon
     structured = verify_response["result"]["structuredContent"]
     assert structured["resolution"] == "matched"
     assert structured["reason"] == "quote_found"
+
+
+def test_a_request_that_raises_is_retried_once_with_the_same_id(monkeypatch):
+    """One silent retry turns a hiccup into the answer still being awaited.
+
+    A read is keyed by the request id the caller already sent, so running the
+    same message twice cannot duplicate a side effect; a transient failure used
+    to reach the host as a broken pipe with no answer at all.
+    """
+    from envoy_cli import mcp
+
+    real = mcp.handle_message
+    calls: list[int] = []
+
+    def flaky(message, session=None, toolset=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("reader hiccup")
+        return real(message, session, toolset)
+
+    monkeypatch.setattr(mcp, "handle_message", flaky)
+    incoming = io.StringIO("\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25"}}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        "",
+    ]))
+    outgoing = io.StringIO()
+
+    assert mcp.run_stream(incoming, outgoing) == 0
+    responses = [json.loads(line) for line in outgoing.getvalue().splitlines()]
+
+    assert len(calls) == 3
+    assert responses[1]["id"] == 2
+    assert responses[1]["result"]["tools"]
+    assert "error" not in responses[1]
+
+
+def test_a_request_that_keeps_raising_names_the_one_way_out(monkeypatch):
+    """After the retry fails the host gets a reason and an action, not silence."""
+    from envoy_cli import mcp
+
+    monkeypatch.setattr(
+        mcp,
+        "handle_message",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("private detail")),
+    )
+    incoming = io.StringIO("\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {}}),
+        "",
+    ]))
+    outgoing = io.StringIO()
+
+    assert mcp.run_stream(incoming, outgoing) == 0
+    lines = outgoing.getvalue().splitlines()
+    response = json.loads(lines[0])
+
+    assert len(lines) == 1
+    assert response["id"] == 7
+    assert response["error"]["code"] == -32603
+    assert "retried it once with the same request id" in response["error"]["message"]
+    assert "envoy_auth" in response["error"]["message"]
+    assert "private detail" not in lines[0]
+
+
+def test_a_public_page_error_keeps_its_handoff_on_the_payload(monkeypatch):
+    """A refusal raised out of a tool still carries the sign-in path.
+
+    The reader attaches the handoff to the error details; the payload has to
+    hoist it, or the host receives a bare code and no way to act on it.
+    """
+    from envoy_cli import mcp
+    from envoy_cli.reader import PublicPageError
+    from envoy_core.schemas.read_v1 import ErrorCode
+
+    def refuse(*_args, **_kwargs):
+        raise PublicPageError(
+            "xiaohongshu.com served an empty shell instead of the page",
+            ErrorCode.EMPTY_CONTENT,
+            details={
+                "needs_user_action": {
+                    "kind": "login_or_verification",
+                    "question": "Sign the user in once from the chat",
+                }
+            },
+        )
+
+    monkeypatch.setattr(mcp, "read_public_page", refuse)
+    response = mcp.handle_message({
+        "jsonrpc": "2.0",
+        "id": "page-error",
+        "method": "tools/call",
+        "params": {
+            "name": "envoy_read",
+            "arguments": {"source": {"url": "https://www.xiaohongshu.com/explore/x"}},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    })
+
+    payload = response["result"]["structuredContent"]
+    assert payload["result"] == "blocked"
+    assert payload["needs_user_action"]["kind"] == "login_or_verification"
+    assert response["result"]["isError"] is True

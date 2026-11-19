@@ -9176,6 +9176,10 @@ def _read_image_source(request: ReadRequest, source_url: str, dns_cache: dict[st
         response_errors.append(ReadError(
             code=ErrorCode.EMPTY_CONTENT,
             message="Local OCR did not produce readable text and the host cannot inspect the source image",
+            # Neither side could read it: no OCR text on this machine, and the
+            # host cannot take the image itself. Naming the install is the only
+            # step a person can still take.
+            details={"needs_user_action": _ocr_user_action()},
         ))
     return ReadResponse(
         request_id=request.request_id,
@@ -11624,6 +11628,20 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 if browser_attempted and browser_error is None:
                     browser_error = "The isolated browser returned no readable page content."
                 detail = f" Browser fallback: {browser_error}" if browser_error else ""
+                # A platform page that yields an empty shell anonymously is
+                # usually script-rendered behind a session cookie, not empty.
+                # Reporting only "no text" leaves the host with no next step, so
+                # name the likely cause and carry the sign-in path with it.
+                if is_platform_page(str(request.source.url or "")) or is_platform_page(final_url):
+                    host = (urlparse(final_url).hostname or "").replace("www.", "")
+                    return _blocked(
+                        request,
+                        ErrorCode.EMPTY_CONTENT,
+                        f"{host or 'This platform'} served an empty shell instead of the "
+                        f"page: it renders its body only for a signed-in session.{detail}",
+                        action_required=True,
+                        details={"needs_user_action": _login_user_action(final_url)},
+                    )
                 return _blocked(
                     request,
                     ErrorCode.EMPTY_CONTENT,
@@ -12734,6 +12752,29 @@ _CAPABILITY_FIRST_USE_COMMANDS = (
 )
 
 
+def _ocr_user_action() -> dict:
+    """The install step that turns "no readable text" into text.
+
+    An image source the host cannot look at is only readable through local
+    OCR, so refusing it with a bare "did not produce readable text" describes
+    the dead end without naming the one action that ends it.
+    """
+
+    return {
+        "kind": "install_capability",
+        "capability": "ocr",
+        "command": "pip install 'envoy-cli[ocr]'",
+        "download": "a local OCR backend",
+        "ask_first": True,
+        "question": (
+            "This host cannot look at the image itself, so the text has to come "
+            "from local OCR. One install lets the same read return it: "
+            "`pip install 'envoy-cli[ocr]'` for tesseract, or the ocr-vision / "
+            "ocr-rapid extras. Ask whether that is wanted before running it."
+        ),
+    }
+
+
 def _capability_user_action(message: str) -> dict | None:
     """The fetch command that turns a missing capability into a working one.
 
@@ -12767,6 +12808,20 @@ def _capability_user_action(message: str) -> dict | None:
     return None
 
 
+# Refusal codes a human can actually fix by signing in once. A bare "no text
+# found" is the commonest shape of that refusal on a script-rendered page: the
+# anonymous request gets an empty shell, so the failure report has to carry the
+# same sign-in path as a plain login wall instead of leaving the host to guess.
+_HANDOFF_CODES = frozenset(
+    {
+        ErrorCode.CHALLENGE_REQUIRED,
+        ErrorCode.AUTH_REQUIRED,
+        ErrorCode.EMPTY_CONTENT,
+        ErrorCode.SOURCE_UNAVAILABLE,
+    }
+)
+
+
 def _blocked(
     request: ReadRequest,
     code: ErrorCode,
@@ -12776,8 +12831,10 @@ def _blocked(
 ) -> ReadResponse:
     payload = dict(details or {})
     needs: list[Need] = []
-    if action_required and code in {ErrorCode.CHALLENGE_REQUIRED, ErrorCode.AUTH_REQUIRED}:
-        action = _login_user_action(str(request.source.url))
+    if action_required and code in _HANDOFF_CODES:
+        action = payload.get("needs_user_action")
+        if not isinstance(action, dict):
+            action = _login_user_action(str(request.source.url))
         payload.setdefault("needs_user_action", action)
         if action.get("action_id"):
             needs.append(

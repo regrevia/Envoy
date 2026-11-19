@@ -4,6 +4,29 @@
 
 ### 中文
 
+- MCP 桥只在工具内部把异常收成错误，请求层抛出来的异常从没有答案：宿主拿到
+  的是 `-32603`，或者更糟，一个已经关掉的管道。读以调用方自己发来的 request id
+  为键，同一个 id 重跑不会重复副作用，所以现在先静默重试一次，两次都失败才回
+  `-32603`，并说清「已经用同一个 id 重试过、再发一次可再试一次」，以及登录态
+  页面该交给 `envoy_auth`。这是 Envoy 自己能做的那一半；管道是宿主关的。
+- 平台页对匿名请求只回一个空壳（没有正文、没有图片、没有视频）时，以前只报
+  「没有可读的 HTML 正文」。小红书这类站是脚本渲染、只对已登录会话出正文，所以
+  现在会说明这是空壳并带上 `needs_user_action` 与 `authenticate` 的 need：宿主
+  直接 `envoy_auth action open` 让用户登一次，同一个链接就能正常读。普通空页面
+  的文案不变，不会凭空要求登录。
+- 拒绝类结果在 MCP 的文本里只剩理由。图文笔记的图片、封面即使已经被读取器拿
+  到手，`blocked` 也会把它们全部丢掉，于是「读到了一半」和「彻底失败」长得一
+  样。现在先渲染已经拿到的材料和 resource id，再给拒绝理由与可执行动作。
+  `PublicPageError` 里带的 `needs_user_action`、`needs`、`coverage` 也提升到
+  payload 顶层，不再只藏在 error 记录里。
+- 图片源同时满足「宿主不能看图」和「本地 OCR 没出字」时，错误里带上安装 OCR 的
+  那一条命令（`pip install 'envoy-cli[ocr]'`，或 `[ocr-vision]` / `[ocr-rapid]`
+  扩展）并标注要先问用户，因为那是一次下载。两条路都断的时候，这是人唯一还能
+  做的下一步。
+- `envoy auth import` 一直照旧写入 cookie，但读取只在开启 credential handoff 时
+  才会用它。命令现在会明说这一点并指向 `envoy auth handoff on`，免得用户以为
+  导入完成了却发现读还是进不去。
+
 - 中文里链接后面没有空格，`参考https://x/a的内容` 到 hook 手里是一整个 token，
   以前 `的内容` 会被当成路径读走。真正的 URL 从浏览器复制出来是百分号编码的，
   所以第一个中日韩字符就是链接的结尾，现在在 `_strip_url` 里据此截断。这不是
@@ -28,6 +51,38 @@
   返回 2 的空壳」。
 
 ### English
+
+- The MCP bridge only turned exceptions inside a tool into an error; one raised at
+  the request layer produced no answer at all, so the host saw `-32603` or a pipe
+  that had already closed. A read is keyed by the request id the caller sent, so
+  running it again cannot duplicate a side effect: the first failure is now
+  retried once silently, and only a second failure returns `-32603` -- saying
+  that the same id was already retried, that sending it once more buys another
+  attempt, and that a page behind a sign-in belongs to `envoy_auth`. That is the
+  half Envoy can do; the pipe is closed by the host.
+- When a platform page answers an anonymous request with a bare shell -- no text,
+  no images, no video -- the report used only to say "no readable HTML text".
+  Sites like Xiaohongshu render with a script and serve the body only to a
+  signed-in session, so the error now says it is an empty shell and carries
+  `needs_user_action` plus an `authenticate` need: the host calls
+  `envoy_auth action open`, the user signs in once, and the same link reads.
+  A plain empty page keeps its old wording and is not asked for a login.
+- Refusals reached the host as a reason and nothing else. An image note whose
+  images and cover had already been captured lost all of them because the result
+  was `blocked`, which made a half-successful read indistinguishable from a
+  total failure. The captured material and its resource ids are now rendered
+  first, followed by the reason and the action that resolves it. The
+  `needs_user_action`, `needs` and `coverage` a `PublicPageError` carries are
+  hoisted onto the payload instead of staying buried in the error record.
+- An image source that meets both "the host cannot look at it" and "local OCR
+  found no text" now names the one command that fixes it
+  (`pip install 'envoy-cli[ocr]'`, or the `[ocr-vision]` / `[ocr-rapid]`
+  extras) and marks that the user should be asked first, since it is a download.
+  With both routes closed, that is the only step a person can still take.
+- `envoy auth import` has always stored the cookies, but a read only uses them
+  when credential handoff is on. The command now says so and points at
+  `envoy auth handoff on`, instead of leaving an import that appears to do
+  nothing.
 
 - A Chinese sentence runs straight into a link, so `参考https://x/a的内容` reaches the
   hook as a single token and the trailing `的内容` was read as part of the path. A

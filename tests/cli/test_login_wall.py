@@ -236,3 +236,54 @@ def test_browser_navigation_failure_is_a_network_error_not_a_login_wall():
         'Page.goto: net::ERR_CONNECTION_CLOSED at https://www.reddit.com/r/Python/'
     )
     assert _browser_read_failure_code(failure) is ErrorCode.NETWORK_ERROR
+
+
+def test_platform_empty_shell_hands_over_a_sign_in_path(monkeypatch):
+    """An empty platform shell is a session wall, and must say how to get past it.
+
+    A script-rendered note serves the anonymous request a bare shell: no text,
+    no images, no video. Reporting "no readable text" for that leaves the host
+    with a dead end, when one sign-in makes the same link read normally.
+    """
+    request = _request("https://www.xiaohongshu.com/explore/0123456789abcdef")
+    shell = "<html><head><title>小红书</title></head><body><div id=\"app\"></div></body></html>"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *a, **k: True)
+    monkeypatch.setattr(reader, "_should_read_media_first", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "_url_is_video_page", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "fetch_feed", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "public_api_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "_read_with_isolated_browser", lambda *a, **k: (None, None))
+    monkeypatch.setattr(reader, "_fetch_html", lambda *a, **k: (request.source.url, shell))
+
+    response = reader._read_public_page_once(request)
+
+    assert response.result.value == "blocked"
+    error = response.errors[0]
+    assert error.code.value == "empty_content"
+    assert error.action_required is True
+    assert "signed-in session" in error.message
+    action = error.details["needs_user_action"]
+    assert action["kind"] == "login_or_verification"
+    assert [need.type for need in response.needs] == ["authenticate"]
+    assert response.needs[0].action_id
+
+
+def test_plain_empty_page_does_not_invent_a_login(monkeypatch):
+    """Only a platform page gets the sign-in handoff; a plain page stays plain."""
+    request = _request("https://example.com/blank")
+    shell = "<html><head><title>Blank</title></head><body></body></html>"
+    monkeypatch.setattr(reader, "_is_public_http_url", lambda *a, **k: True)
+    monkeypatch.setattr(reader, "_should_read_media_first", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "_url_is_video_page", lambda *a, **k: False)
+    monkeypatch.setattr(reader, "fetch_feed", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "public_api_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(reader, "_read_with_isolated_browser", lambda *a, **k: (None, None))
+    monkeypatch.setattr(reader, "_fetch_html", lambda *a, **k: (request.source.url, shell))
+
+    response = reader._read_public_page_once(request)
+
+    error = response.errors[0]
+    assert error.code.value == "empty_content"
+    assert error.action_required is False
+    assert "No readable public HTML text was found" in error.message
+    assert response.needs == []

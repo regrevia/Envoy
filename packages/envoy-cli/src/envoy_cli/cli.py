@@ -667,6 +667,17 @@ def _run_auth(args) -> int:
                 f"Imported {report['imported']} cookies for "
                 f"{', '.join(report['domains'])} from {report['source']}"
             )
+        # The import writes the cookies either way, but a read only uses them
+        # when handoff is on. Saying "Imported" alone would leave the user with
+        # a session that never takes effect and no reason why.
+        from . import features
+
+        if not features.credential_handoff_enabled():
+            print(
+                "Stored, but reads will not use these cookies until credential "
+                "handoff is on: run `envoy auth handoff on`.",
+                file=sys.stderr,
+            )
         return 0
     if args.auth_command == "handoff":
         from . import features
