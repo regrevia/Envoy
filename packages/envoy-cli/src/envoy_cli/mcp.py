@@ -1095,6 +1095,19 @@ def _material_header(payload: dict, tool: str) -> str:
     return " · ".join(parts)
 
 
+def _is_page_picture(resource: dict) -> bool:
+    """True for the picture of the page itself: evidence, not delivered material.
+
+    A read that ends in a sign-in wall can now carry one of these. It must not
+    make the failure look like a successful visual read: there is no material to
+    observe, no `material_id` to observe it against, and the caller still has to
+    read the link again once the human has signed in.
+    """
+
+    transform = resource.get("transform")
+    return isinstance(transform, dict) and transform.get("derived") == "page_screenshot"
+
+
 def _needs_lines(
     needs: list[dict],
     resources: list[dict],
@@ -1111,7 +1124,9 @@ def _needs_lines(
     # Frames, image resources and envoy_observe apply only to a visual read. A login
     # wall is a text read with a human step; pointing the caller at resources it
     # never got sends it looking for files that do not exist.
-    visual = bool(resources) or bool(action_types & {"inspect_visual", "inspect_video"})
+    visual = bool(
+        [item for item in resources if not _is_page_picture(item)]
+    ) or bool(action_types & {"inspect_visual", "inspect_video"})
     if visual and "inspect_visual" in action_types:
         lines.append(
             "inspect each listed resource before its lease expires; this is a handoff, "
@@ -2200,10 +2215,7 @@ def _page_screenshot_markdown(payload: dict) -> str:
 
     resources = payload.get("resources") if isinstance(payload.get("resources"), list) else []
     for item in resources:
-        if not isinstance(item, dict):
-            continue
-        transform = item.get("transform")
-        if not isinstance(transform, dict) or transform.get("derived") != "page_screenshot":
+        if not isinstance(item, dict) or not _is_page_picture(item):
             continue
         delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
         if delivery.get("type") != "local_file":

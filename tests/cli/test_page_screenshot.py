@@ -200,3 +200,33 @@ def test_a_page_picture_is_not_counted_as_one_of_the_pages_images(
         images = payload["coverage"]["modalities"]["images"]
         assert images["delivered"] == 0
         assert payload["coverage"]["modalities"]["screenshot"]["delivered"] == 1
+
+
+def test_the_page_picture_does_not_turn_a_refusal_into_a_visual_handoff(
+    tmp_path, monkeypatch
+):
+    """The picture is evidence, not material: it must not fake a visual read.
+
+    Being "visual" unlocks the observe instructions and the "do not repeat
+    envoy_read" line, and both are wrong here -- there is no material to observe
+    and the link has to be read again after the sign-in.
+    """
+
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    shot = tmp_path / "page.png"
+    shot.write_bytes(PNG_BYTES)
+    url = "https://www.xiaohongshu.com/explore/0123456789abcdef"
+    _empty_shell(monkeypatch, url, screenshot=str(shot))
+
+    payload = mcp._read_payload(
+        reader._read_public_page_once(_request(url, include_visual=True))
+    )
+    text = mcp._material_content_text(
+        payload, "envoy_read", types.SimpleNamespace(max_chars=4000)
+    )
+
+    assert "envoy_observe" not in text
+    assert "do not repeat envoy_read" not in text
+    assert "call envoy_read again for the same URL" in text
+    # The picture still reaches the host, and it is still named by its path.
+    assert f"![页面截图](<{shot}>)" in text
