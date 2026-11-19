@@ -59,6 +59,17 @@
   改名或改形，脚本解析的那张表连同它的路由提示一起消失。现在两者都断言了，
   另外还钉住「规则必须来自产品代码而不是本地兜底」和「`--live` 仍然只是个
   返回 2 的空壳」。
+- 一次失败以前只有 `ErrorCode`，而那个枚举回答的是「Envoy 内部哪一步坏了」，
+  不是「接下来该做什么」。限流页和登录墙都落到 `challenge_required`，但只有后
+  者靠登录能解开，于是拿到限流页的宿主会去做一次没用的登录，再拿到同样的拒绝。
+  现在每种失败归一个 kind（`login_required`、`source_blocked`、`dynamic_content`、
+  `capability_missing`、`transport_closed`、`budget_exhausted`、
+  `material_expired`、`source_unavailable`、`network_error`、`empty_document`、
+  `unknown`），带 `summary`、`next_step`、`retryable`、`needs_user_action`，
+  在 MCP 文本、MCP 结构化 payload、CLI 的 stdout 三处是同一份判断。kind 能否决
+  code 隐含的登录交接，所以边缘限流页面不再被推去登录，而是「换出口或晚点再来」。
+  请求层抛异常时 `-32603` 的 `error.data` 也带上 `transport_closed` 与
+  `retry_with_same_id`，宿主不必从错误码猜这次是谁的问题。
 
 ### English
 
@@ -134,6 +145,20 @@
   with its route hints. Both are now asserted, together with "the rules come from
   the product code, not the labelled fallback" and "`--live` is still a stub that
   returns 2".
+- A failure used to arrive as an `ErrorCode` alone, and that enum answers "which
+  step inside Envoy broke", not "what do I do next". A rate-limit page and a
+  sign-in wall both landed on `challenge_required`, but only the second yields to
+  a session, so a host holding a rate limit was sent to sign in once and got the
+  same refusal back. Every failure now resolves to a kind (`login_required`,
+  `source_blocked`, `dynamic_content`, `capability_missing`, `transport_closed`,
+  `budget_exhausted`, `material_expired`, `source_unavailable`, `network_error`,
+  `empty_document`, `unknown`) carrying `summary`, `next_step`, `retryable` and
+  `needs_user_action`, and it is the same judgement in the MCP text, the MCP
+  structured payload and CLI stdout. The kind can veto the sign-in handoff its
+  code implies, so a rate-limited read is told to change network exit or come back
+  later instead of being sent to log in. When the request layer itself raises,
+  `-32603` now carries `transport_closed` and `retry_with_same_id` in `error.data`,
+  so the host no longer has to guess whose problem it was.
 
 ## 0.1.60 - 2026-11-17
 

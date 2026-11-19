@@ -25,6 +25,7 @@ from envoy_core.schemas.read_v1 import (
 
 from . import __version__
 from . import auth_session
+from . import diagnosis
 from .browser import browser_runtime_status
 from . import storage as state_storage
 from .build_info import BUILD_CHANNEL, BUILD_DIRTY, BUILD_REVISION, BUILD_VERSION
@@ -1224,6 +1225,11 @@ def _blocked_lines(payload: dict, errors: list[dict], material_id: str, budget: 
         for note in _payload_unresolved(payload)[:4]:
             lines.append(f"unresolved: {note}")
         return lines
+    failure = payload.get("diagnosis")
+    if isinstance(failure, dict) and failure.get("summary"):
+        lines.append(f"why: {failure['summary']}")
+        if failure.get("next_step"):
+            lines.append(f"next: {failure['next_step']}")
     action = _payload_needs_user_action(payload)
     if action:
         lines.append(f"Requires user action: {_action_text(action)}")
@@ -1498,6 +1504,16 @@ def _material_content_text(payload: dict, tool: str, request=None) -> str:
 
     if needs:
         lines.extend(_needs_lines(needs, resources, material_id, session_id))
+        # A handoff that also failed to read anything is still a failure with a
+        # cause, and the cause decides whether re-reading can help. The need
+        # above names the step; this names what kind of refusal produced it.
+        failure = payload.get("diagnosis")
+        if (
+            result == "blocked"
+            and isinstance(failure, dict)
+            and failure.get("next_step")
+        ):
+            lines.append(f"next: {failure['next_step']}")
         return "\n".join(_fit_content(lines, budget))
 
     if result == "blocked":
@@ -1739,6 +1755,9 @@ def _read_payload(response, compact: bool = True) -> dict:
         exclude_defaults=True,
     )
     payload["protocol_version"] = response.protocol_version
+    # One failure, one description: the text lines below and the structured
+    # payload a modern host reads must say the same thing about the same error.
+    diagnosis.attach(payload)
     return payload
 
 
@@ -2981,6 +3000,11 @@ _REQUEST_FAILURE_HINT = (
     "once and the same link then reads normally"
 )
 
+REQUEST_FAILURE_DATA = {
+    "diagnosis": diagnosis.kind_diagnosis(diagnosis.TRANSPORT_CLOSED).as_dict(),
+    "retry_with_same_id": True,
+}
+
 
 def _dispatch_message(
     message: dict,
@@ -3002,7 +3026,9 @@ def _dispatch_message(
             return handle_message(message, session, toolset)
         except Exception:
             _LOGGER.exception("Unexpected Envoy MCP request failure")
-            return _error(None, -32603, _REQUEST_FAILURE_MESSAGE)
+            return _error(
+                None, -32603, _REQUEST_FAILURE_MESSAGE, data=REQUEST_FAILURE_DATA
+            )
     retry_key = str(request_id)
     try:
         return handle_message(message, session, toolset)
@@ -3013,6 +3039,7 @@ def _dispatch_message(
                 request_id,
                 -32603,
                 _REQUEST_FAILURE_MESSAGE + _REQUEST_FAILURE_HINT,
+                data=REQUEST_FAILURE_DATA,
             )
         session.retried_request_ids.add(retry_key)
     try:
@@ -3023,6 +3050,7 @@ def _dispatch_message(
             request_id,
             -32603,
             _REQUEST_FAILURE_MESSAGE + _REQUEST_FAILURE_HINT,
+            data=REQUEST_FAILURE_DATA,
         )
 
 

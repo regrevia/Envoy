@@ -48,7 +48,7 @@ from .platforms import (
     is_collection_url,
     is_platform_page,
 )
-from . import http_cache, storage
+from . import diagnosis, http_cache, storage
 from .media import (
     MediaBudgetExceeded,
     MediaCapabilityMissing,
@@ -11573,12 +11573,27 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     text = _clean_text(parser.text_parts)
                     browser_error = None
         if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
+            # A rate limit and a sign-in wall both arrive as a page that is not
+            # the source, but only one of them yields to a session: offering a
+            # sign-in after "too many requests" spends the one step the host can
+            # take and the next read reports the same refusal.
+            if _challenge_suggests_egress_issue(title, text):
+                return _blocked(
+                    request,
+                    _blocked_challenge_code(browser_error),
+                    "The source's edge refused this visit instead of serving the page: "
+                    "it was rate limited or flagged as automated traffic. "
+                    f"{browser_error or 'Retrying later or from a different network exit usually works.'}",
+                    action_required=True,
+                    details={"failure_kind": diagnosis.SOURCE_BLOCKED},
+                )
             return _blocked(
                 request,
                 _blocked_challenge_code(browser_error),
                 "The page still requires login or security verification. "
                 f"{browser_error or 'Complete the action in Envoy’s isolated browser and retry.'}",
                 action_required=True,
+                details={"failure_kind": diagnosis.LOGIN_REQUIRED},
             )
         if not request.scope.include_visual and len(text.strip()) < _FEED_ALTERNATE_PAGE_CHARS:
             feed_page = _read_feed_alternate(request, source_url, final_url, html)
@@ -12822,6 +12837,14 @@ _HANDOFF_CODES = frozenset(
 )
 
 
+# A failure kind a session cannot fix. `challenge_required` covers both a
+# captcha that a sign-in clears and an edge rate limit that it does not, so a
+# declared kind has to be able to veto the sign-in handoff the code implies.
+_SESSION_CANNOT_FIX = frozenset(
+    {diagnosis.SOURCE_BLOCKED, diagnosis.NETWORK_ERROR, diagnosis.BUDGET_EXHAUSTED}
+)
+
+
 def _blocked(
     request: ReadRequest,
     code: ErrorCode,
@@ -12831,7 +12854,11 @@ def _blocked(
 ) -> ReadResponse:
     payload = dict(details or {})
     needs: list[Need] = []
-    if action_required and code in _HANDOFF_CODES:
+    if (
+        action_required
+        and code in _HANDOFF_CODES
+        and payload.get("failure_kind") not in _SESSION_CANNOT_FIX
+    ):
         action = payload.get("needs_user_action")
         if not isinstance(action, dict):
             action = _login_user_action(str(request.source.url))

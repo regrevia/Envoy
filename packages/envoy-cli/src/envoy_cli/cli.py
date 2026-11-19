@@ -20,6 +20,7 @@ from envoy_core.schemas.read_v1 import (
 from .capabilities import capability_catalog
 from . import browser as browser_runtime
 from . import cache as cache_storage
+from . import diagnosis
 from . import batch as batch_queue
 from . import extensions as extension_flags
 from . import install_state
@@ -1409,10 +1410,12 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
         payload_out = response.model_dump(mode="json")
         if locals().get("login_handoff"):
             payload_out["login_handoff"] = login_handoff
+        diagnosis.attach(payload_out)
         print(json.dumps(payload_out, ensure_ascii=False))
         return 0 if response.result.value in {"ready", "partial"} else 2
     except PublicPageError as exc:
-        print(json.dumps({
+        details = dict(exc.details or {})
+        blocked_payload = {
             "protocol_version": "envoy.read/1",
             "request_id": operation_request.request_id if "operation_request" in locals() else "read",
             "execution_state": "completed",
@@ -1420,9 +1423,17 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
             "errors": [{
                 "code": exc.code.value,
                 "message": str(exc),
-                **({"details": exc.details} if exc.details else {}),
+                **({"details": details} if details else {}),
             }],
-        }, ensure_ascii=False))
+        }
+        # The MCP bridge already lifts the handoff out of the error details so a
+        # host can act on it; stdout here is the same contract for a caller that
+        # never sees the bridge, so it must not bury the sign-in step either.
+        for key in ("needs_user_action", "needs", "coverage", "material_id", "source"):
+            if details.get(key):
+                blocked_payload[key] = details[key]
+        diagnosis.attach(blocked_payload)
+        print(json.dumps(blocked_payload, ensure_ascii=False))
         return 2
     except state_storage.StateUnavailable as exc:
         print(json.dumps({
