@@ -46,11 +46,13 @@ Utility / Boundary Safety` under four new names. It is the existing gate, and
 the names should not be renamed: `candidate`, `verified`, `promoted` are pinned by
 `tests/cli/test_knowledge_units.py` and by units already on disk.
 
-**What is actually missing is reachability.** `grep -c knowledge` is 0 in both
-`mcp.py` and `capabilities.py`. An agent talking to Envoy over MCP can read a
-material and can never learn that a verified claim exists, let alone which one
-applies. The layer was built and then not connected to anything. That is the gap
-worth closing first, and it is a fraction of the work in the proposal.
+**What was actually missing was reachability,** and that is now closed in the
+same release as this review. Before it, `grep -c knowledge` was 0 in both
+`mcp.py` and `capabilities.py`: an agent talking to Envoy over MCP could read a
+material and never learn that a verified claim existed, let alone which one
+applied. The reachable surface is `envoy_knowledge` over MCP plus the
+`envoy knowledge` CLI verb group, both gated on the `knowledge_units` extension.
+What remains unbuilt is everything in §2 below.
 
 ## 2. What the proposal adds that is genuinely new
 
@@ -118,11 +120,11 @@ mechanical and the model cannot talk its way past it.
 
 ## 5. Phases, revised
 
-1. **Reachable bundle.** Add `trigger` and `inputs` to the unit body (schema
-   `/3`, `/2` still reads — the loader is version-tolerant), and expose the store
-   over MCP as `envoy_knowledge`. Acceptance: an agent creates a unit from a
-   material it read, a unit with a wrong locator is refused, `list` answers with
-   trigger and status.
+1. **Reachable bundle — shipped in 0.1.62.** `trigger` and `inputs` are in the
+   unit body (schema `/3`, `/2` still reads — the loader is version-tolerant),
+   and the store is exposed over MCP as `envoy_knowledge`. Acceptance held: an
+   agent creates a unit from a material it read, a unit with a wrong locator is
+   refused with `evidence_unresolved`, `list` answers with trigger and status.
 2. **Compiler.** `envoy knowledge compile <unit_id> --target codex|claude|dsh`
    emitting `SKILL.md` plus a manifest from the stored body. Deterministic:
    same unit, same bytes. Acceptance: golden-file test per target, and a compiled
