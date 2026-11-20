@@ -544,8 +544,14 @@ def _run_auth_open(args) -> int:
     authflow.update_auth_action(
         action["action_id"], status="verifying", attempts=int(action.get("attempts") or 0) + 1
     )
-    print(f"Opening {action.get('host') or action['source_url']} in a browser window…")
-    print("Sign in there. Envoy checks the original link when the window closes or the wait ends.")
+    # --json promises one JSON document on stdout, so the running commentary
+    # goes to stderr instead of in front of the payload.
+    progress = sys.stderr if bool(getattr(args, "json", False)) else sys.stdout
+    print(f"Opening {action.get('host') or action['source_url']} in a browser window…", file=progress)
+    print(
+        "Sign in there. Envoy checks the original link when the window closes or the wait ends.",
+        file=progress,
+    )
     try:
         window = auth_window.open_login_window(
             str(action["source_url"]), timeout_seconds=int(args.timeout)
@@ -563,9 +569,18 @@ def _run_auth_open(args) -> int:
         "verification": verification,
         "resume_token": updated.get("resume_token"),
     }
-    lines = [
-        f"{action.get('host') or action['source_url']}: {verification.get('reason')}",
-    ]
+    if window.get("closed_after_login"):
+        lines = [
+            f"{action.get('host') or action['source_url']}: sign-in captured, window closed.",
+        ]
+    elif window.get("timed_out"):
+        lines = [
+            f"{action.get('host') or action['source_url']}: no sign-in before the wait ended.",
+        ]
+    else:
+        lines = [
+            f"{action.get('host') or action['source_url']}: {verification.get('reason')}",
+        ]
     if verification.get("headless_reusable"):
         lines.append("The link is readable again. Continue the paused task.")
     elif verification.get("page_access"):

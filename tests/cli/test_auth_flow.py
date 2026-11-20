@@ -194,3 +194,59 @@ def test_session_cookies_are_given_an_expiry_before_the_window_closes():
     assert all(c["expires"] > 0 for c in context.added)
     # Nothing to persist is not an error.
     assert auth_window._persist_session_cookies(_Context(), "vimeo.com") == 0
+
+
+def test_cli_open_says_the_window_closed_once_the_sign_in_landed(auth_home, capsys, monkeypatch):
+    action = authflow.create_auth_action("https://www.douyin.com/user/self?showTab=favorite_collection")
+    monkeypatch.setattr(
+        auth_window,
+        "open_login_window",
+        lambda url, timeout_seconds=300, lease_wait_seconds=15: {
+            "signed_in": True,
+            "closed_after_login": True,
+            "timed_out": False,
+            "waited_seconds": 42.0,
+        },
+    )
+    monkeypatch.setattr(
+        auth_window,
+        "verify_source",
+        lambda url, timeout_ms=45000: {
+            "page_access": False,
+            "media_access": False,
+            "headless_reusable": False,
+            "reason": "still_behind_login",
+        },
+    )
+
+    assert cli.main(["auth", "open", "--action-id", action["action_id"], "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["window"]["closed_after_login"] is True
+
+
+def test_cli_open_says_when_nobody_signed_in(auth_home, capsys, monkeypatch):
+    action = authflow.create_auth_action("https://www.douyin.com/user/self?showTab=favorite_collection")
+    monkeypatch.setattr(
+        auth_window,
+        "open_login_window",
+        lambda url, timeout_seconds=300, lease_wait_seconds=15: {
+            "signed_in": False,
+            "closed_after_login": False,
+            "timed_out": True,
+            "waited_seconds": 601.0,
+        },
+    )
+    monkeypatch.setattr(
+        auth_window,
+        "verify_source",
+        lambda url, timeout_ms=45000: {
+            "page_access": False,
+            "media_access": False,
+            "headless_reusable": False,
+            "reason": "still_behind_login",
+        },
+    )
+
+    assert cli.main(["auth", "open", "--action-id", action["action_id"], "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["window"]["timed_out"] is True
