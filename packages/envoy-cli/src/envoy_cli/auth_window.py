@@ -14,6 +14,16 @@ from urllib.parse import urlparse
 from .browser import _page_state, browser_profile_dir
 from .media import interprocess_file_lock
 
+# A site only sets these once a person is actually signed in; their presence in
+# the window's profile is harder evidence than any wording on the page.
+_SIGNED_IN_COOKIES = {
+    "douyin.com": ("sessionid", "sessionid_ss", "sid_tt"),
+    "xiaohongshu.com": ("web_session",),
+    "bilibili.com": ("SESSDATA",),
+    "zhihu.com": ("z_c0",),
+    "weibo.com": ("SUB",),
+}
+
 _LOGIN_HINTS = (
     "登录",
     "登入",
@@ -30,6 +40,30 @@ _LOGIN_HINTS = (
 
 class AuthWindowError(RuntimeError):
     pass
+
+
+def _signed_in_cookie_names(host: str) -> tuple[str, ...]:
+    lowered = (host or "").strip().lower()
+    if not lowered:
+        return ()
+    for domain, names in _SIGNED_IN_COOKIES.items():
+        if lowered == domain or lowered.endswith("." + domain):
+            return names
+    return ()
+
+
+def _has_sign_in_cookie(context, host: str) -> bool:
+    names = _signed_in_cookie_names(host)
+    if not names:
+        return False
+    try:
+        cookies = context.cookies()
+    except Exception:
+        return False
+    return any(
+        str(cookie.get("name") or "") in names and str(cookie.get("value") or "")
+        for cookie in cookies
+    )
 
 
 def _lease(timeout_seconds: float):
@@ -60,8 +94,10 @@ def open_login_window(
         ) from exc
 
     profile = browser_profile_dir()
+    host = urlparse(str(source_url or "")).hostname or ""
     started = time.monotonic()
     timed_out = True
+    signed_in = False
     pages_seen = 0
     final_url = ""
     with _lease(lease_wait_seconds):
@@ -90,6 +126,12 @@ def open_login_window(
                         final_url = page.url
                     except Exception:
                         final_url = ""
+                    # Close the window the moment the sign-in lands: a window
+                    # left in front of the person is in their way, not help.
+                    if _has_sign_in_cookie(context, host):
+                        signed_in = True
+                        timed_out = False
+                        break
             finally:
                 try:
                     context.close()
@@ -97,6 +139,7 @@ def open_login_window(
                     pass
     return {
         "opened": True,
+        "signed_in": signed_in,
         "timed_out": timed_out,
         "waited_seconds": round(time.monotonic() - started, 1),
         "pages_seen": pages_seen,

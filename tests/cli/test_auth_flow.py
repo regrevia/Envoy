@@ -154,3 +154,20 @@ def test_clearing_a_host_removes_only_that_sites_profile_cookies(auth_home):
     remaining = [row[0] for row in connection.execute("SELECT host_key FROM cookies")]
     connection.close()
     assert remaining == ["example.com"]
+
+def test_the_login_window_closes_as_soon_as_the_sign_in_lands():
+    class _Context:
+        def __init__(self, cookies):
+            self._cookies = cookies
+
+        def cookies(self):
+            return self._cookies
+
+    signed = _Context([{"name": "sessionid", "value": "abc"}, {"name": "ttwid", "value": "x"}])
+    anonymous = _Context([{"name": "ttwid", "value": "x"}, {"name": "sessionid", "value": ""}])
+
+    assert auth_window._has_sign_in_cookie(signed, "www.douyin.com")
+    assert not auth_window._has_sign_in_cookie(anonymous, "www.douyin.com")
+    # A site with no known sign-in cookie never claims to be signed in.
+    assert not auth_window._has_sign_in_cookie(signed, "vimeo.com")
+    assert not auth_window._has_sign_in_cookie(signed, "")
