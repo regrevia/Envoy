@@ -1,5 +1,51 @@
 # 更新日志 / Changelog
 
+## 0.1.62 - 2026-11-21
+
+### 中文
+
+- 知识单元多两个字段：`trigger` 说清这条能力什么时候该用，`inputs` 说清用它之前得先
+  拿到什么，schema 升到 `envoy.knowledge-unit/3`（`/3` 仍读 `/2`，`/2` 仍读 `/1`）。
+  没有这两个字段的旧记录按「没有触发条件、不需要输入」读入，内容哈希不变，下一次写入
+  也不会因此改指纹。`promote` 现在要求 `trigger`：一个没法被路由到任务上的单元，
+  无论多真都不算可用。
+- 新增 MCP 工具 `envoy_knowledge`（`--toolset full` 加 `knowledge_units` 开关）：宿主
+  Agent 提交单元正文与 `source_refs`，Envoy 存成候选，`verify` 时逐个重新解析
+  `material_id`、`evidence_id` 与 locator，解析不了就回 `evidence_unresolved` 并列出
+  第几条出了问题。全程不调模型——模型提议，证据裁决。`list`/`show` 不需要开任何开关。
+- `envoy doctor` 的能力目录开始广告这个工具（12 项能力），新增输出
+  `evidence_checked_knowledge_units`。
+- 两份知识单元 schema 补上 `content_hash`（代码自 v1 就在写，schema 一直没声明），并
+  加了一条测试钉住「schema 必须描述代码真正写下去的那条记录」。同一条测试还拿
+  `unit_id` 和 `content_hash` 的 pattern 去匹配代码刚写出来的值——先前补的 pattern 写
+  成 64 位，而哈希实取 16 位，两份 schema 于是会拒掉每一条合法记录。
+- 新增 `docs/architecture/capability-bundle-review.md`：对 Capability Bundle 方向的
+  审查，说清哪些是仓库里已经有的、哪些是真新增、哪些应当推迟，以及模型该站在哪一层。
+
+### English
+
+- A knowledge unit now carries `trigger` (the sentence a task is matched against) and
+  `inputs` (what must be in hand before it can be used), and the schema moves to
+  `envoy.knowledge-unit/3` (`/3` still reads `/2`, `/2` still reads `/1`). Records
+  written before those fields existed read as "no trigger, no inputs", keep their
+  content hash, and are not re-stamped by the next write. `promote` now requires a
+  `trigger`: a unit that cannot be routed to a task is not usable, however true it is.
+- New MCP tool `envoy_knowledge` (`--toolset full` plus the `knowledge_units` flag):
+  the host agent submits a unit body with its `source_refs`, Envoy stores it as a
+  candidate, and `verify` re-resolves every `material_id`, `evidence_id` and locator,
+  answering `evidence_unresolved` with the index of the ref that failed. No model is
+  called — the model proposes, evidence disposes. `list`/`show` need no flag.
+- `envoy doctor` now advertises that tool in its capability catalog (12 operations) and
+  lists `evidence_checked_knowledge_units` among its outputs.
+- Both knowledge-unit schemas now declare `content_hash` (the code has written it since
+  v1), and a test holds the schemas to the record the code actually writes. That test
+  also matches the `unit_id` and `content_hash` patterns against the bytes the writer
+  just emitted: the pattern added here said 64 hex characters while the digest is cut
+  to 16, so both schemas would have rejected every valid record.
+- New `docs/architecture/capability-bundle-review.md`: a review of the Capability
+  Bundle direction — what already exists in this repository, what is genuinely new,
+  what should be deferred, and where the model belongs.
+
 ## 0.1.61 - 2026-11-19
 
 ### 中文
