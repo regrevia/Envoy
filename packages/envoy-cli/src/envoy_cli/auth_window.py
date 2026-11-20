@@ -24,6 +24,12 @@ _SIGNED_IN_COOKIES = {
     "weibo.com": ("SUB",),
 }
 
+# How long a captured sign-in is kept in the profile. Douyin and Xiaohongshu
+# set their session cookies without an expiry, which Chromium never writes to
+# disk; re-adding them with one keeps the sign-in for the headless runs after
+# the window is gone.
+_SIGNED_IN_COOKIE_DAYS = 30
+
 _LOGIN_HINTS = (
     "登录",
     "登入",
@@ -50,6 +56,56 @@ def _signed_in_cookie_names(host: str) -> tuple[str, ...]:
         if lowered == domain or lowered.endswith("." + domain):
             return names
     return ()
+
+
+def _domain_covers(cookie_domain: str, host: str) -> bool:
+    domain = (cookie_domain or "").strip().lstrip(".").lower()
+    lowered = (host or "").strip().lower()
+    if not domain or not lowered:
+        return False
+    return lowered == domain or lowered.endswith("." + domain)
+
+
+def _persist_session_cookies(context, host: str) -> int:
+    """Give the host's session-only cookies an expiry so they survive the close."""
+
+    try:
+        cookies = context.cookies()
+    except Exception:
+        return 0
+    expires = int(time.time()) + _SIGNED_IN_COOKIE_DAYS * 24 * 60 * 60
+    keep = []
+    for cookie in cookies:
+        if not _domain_covers(str(cookie.get("domain") or ""), host):
+            continue
+        try:
+            already_persistent = float(cookie.get("expires") or -1) > 0
+        except (TypeError, ValueError):
+            already_persistent = False
+        value = str(cookie.get("value") or "")
+        name = str(cookie.get("name") or "")
+        if already_persistent or not value or not name:
+            continue
+        item = {
+            "name": name,
+            "value": value,
+            "domain": str(cookie.get("domain") or ""),
+            "path": str(cookie.get("path") or "/"),
+            "expires": expires,
+            "httpOnly": bool(cookie.get("httpOnly")),
+            "secure": bool(cookie.get("secure")),
+        }
+        same_site = str(cookie.get("sameSite") or "")
+        if same_site in {"Strict", "Lax", "None"}:
+            item["sameSite"] = same_site
+        keep.append(item)
+    if not keep:
+        return 0
+    try:
+        context.add_cookies(keep)
+    except Exception:
+        return 0
+    return len(keep)
 
 
 def _has_sign_in_cookie(context, host: str) -> bool:
@@ -131,6 +187,7 @@ def open_login_window(
                     if _has_sign_in_cookie(context, host):
                         signed_in = True
                         timed_out = False
+                        _persist_session_cookies(context, host)
                         break
             finally:
                 try:
@@ -140,6 +197,7 @@ def open_login_window(
     return {
         "opened": True,
         "signed_in": signed_in,
+        "closed_after_login": signed_in,
         "timed_out": timed_out,
         "waited_seconds": round(time.monotonic() - started, 1),
         "pages_seen": pages_seen,

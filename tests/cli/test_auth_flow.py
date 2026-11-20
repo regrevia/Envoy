@@ -171,3 +171,26 @@ def test_the_login_window_closes_as_soon_as_the_sign_in_lands():
     # A site with no known sign-in cookie never claims to be signed in.
     assert not auth_window._has_sign_in_cookie(signed, "vimeo.com")
     assert not auth_window._has_sign_in_cookie(signed, "")
+
+def test_session_cookies_are_given_an_expiry_before_the_window_closes():
+    class _Context:
+        def __init__(self):
+            self.added = []
+
+        def cookies(self):
+            return [
+                {"name": "sessionid", "value": "abc", "domain": ".douyin.com", "path": "/", "expires": -1},
+                {"name": "ttwid", "value": "keep", "domain": ".douyin.com", "path": "/", "expires": 0},
+                {"name": "other", "value": "x", "domain": ".example.com", "path": "/", "expires": -1},
+                {"name": "empty", "value": "", "domain": ".douyin.com", "path": "/", "expires": -1},
+            ]
+
+        def add_cookies(self, items):
+            self.added.extend(items)
+
+    context = _Context()
+    assert auth_window._persist_session_cookies(context, "www.douyin.com") == 2
+    assert {c["name"] for c in context.added} == {"sessionid", "ttwid"}
+    assert all(c["expires"] > 0 for c in context.added)
+    # Nothing to persist is not an error.
+    assert auth_window._persist_session_cookies(_Context(), "vimeo.com") == 0
