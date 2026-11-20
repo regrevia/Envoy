@@ -148,6 +148,12 @@ def is_collection_url(value: str) -> bool:
         return bool(_BILIBILI_CHANNEL_SET_RE.match(path))
     if host in _BILIBILI_HOSTS:
         return bool(_BILIBILI_COLLECTION_PATH_RE.match(path))
+    if host in _DOUYIN_HOSTS:
+        # `/user/<id>` with a tab query is a profile feed; `/user/self` with
+        # `showTab=favorite_collection` is the user's own favourites.
+        return bool(re.match(r"^/user/[^/]+/?$", path)) and "showTab=" in (parsed.query or "")
+    if host in _XHS_HOSTS:
+        return bool(re.match(r"^/user/profile/[0-9a-zA-Z]{5,40}/?$", path))
     return False
 
 

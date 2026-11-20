@@ -98,3 +98,56 @@ def test_a_plain_space_link_still_canonicalizes_to_its_video_tab():
 
     assert platform == "bilibili"
     assert canonical == "https://space.bilibili.com/2142762/video"
+
+
+def test_a_favourites_tab_survives_canonicalization():
+    from envoy_cli.collections import canonical_profile_url
+
+    canonical, platform = canonical_profile_url(
+        "https://www.douyin.com/user/self?showTab=favorite_collection"
+    )
+    assert canonical == "https://www.douyin.com/user/self?showTab=favorite_collection"
+    assert platform == "douyin"
+
+
+def test_a_profile_without_a_tab_stays_the_works_list():
+    from envoy_cli.collections import canonical_profile_url
+
+    canonical, _platform = canonical_profile_url("https://www.douyin.com/user/abc")
+    assert canonical == "https://www.douyin.com/user/abc"
+
+
+def test_a_xiaohongshu_profile_is_a_collection():
+    from envoy_cli.collections import canonical_profile_url
+
+    canonical, platform = canonical_profile_url(
+        "https://www.xiaohongshu.com/user/profile/5f1a2b3c4d5e6f7a8b9c0d1e"
+    )
+    assert canonical == (
+        "https://www.xiaohongshu.com/user/profile/5f1a2b3c4d5e6f7a8b9c0d1e"
+    )
+    assert platform == "xiaohongshu"
+
+
+def test_a_xiaohongshu_note_keeps_only_its_id():
+    from envoy_cli.collections import canonical_candidate_url
+
+    assert canonical_candidate_url(
+        "https://www.xiaohongshu.com/explore/65f1a2b3c4d5e6f7a8b9c001?xsec_token=abc"
+    ) == "https://www.xiaohongshu.com/explore/65f1a2b3c4d5e6f7a8b9c001"
+
+
+def test_a_xiaohongshu_note_and_a_douyin_post_never_share_a_candidate_id():
+    from envoy_cli.collections import candidate_id
+
+    assert candidate_id(
+        "https://www.xiaohongshu.com/explore/65f1a2b3c4d5e6f7a8b9c001"
+    ).startswith("xhs-")
+
+
+def test_the_favourites_link_is_offered_as_a_collection():
+    from envoy_cli.platforms import is_collection_url
+
+    assert is_collection_url("https://www.douyin.com/user/self?showTab=favorite_collection")
+    assert is_collection_url("https://www.xiaohongshu.com/user/profile/5f1a2b3c4d5e6f7a8b9c0d1e")
+    assert not is_collection_url("https://www.douyin.com/video/7300000000000000000")

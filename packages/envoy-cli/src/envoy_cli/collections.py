@@ -208,6 +208,15 @@ def canonical_candidate_url(value: str) -> str:
         # dropping the part would collapse every part into one candidate.
         part = _bilibili_part(parts.query)
         return f"https://www.bilibili.com/video/{match.group(1)}{part}"
+    if host in {"xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com", "xhslink.cn"}:
+        if host.startswith("xhslink"):
+            # A share link hides the note id behind a redirect, so it has to be
+            # opened before it can name a note.
+            raise CollectionError("A shared Xiaohongshu link must be opened before it names a note")
+        match = re.fullmatch(r"/(?:explore|discovery/item)/([0-9a-zA-Z]{16,32})", path)
+        if not match:
+            raise CollectionError("URL does not identify a canonical Xiaohongshu note")
+        return f"https://www.xiaohongshu.com/explore/{match.group(1)}"
     if host in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
         if path != "/watch":
             raise CollectionError("URL does not identify a canonical YouTube video")
@@ -230,13 +239,20 @@ def canonical_candidate_url(value: str) -> str:
             raise CollectionError("URL does not identify a canonical YouTube video")
         return f"https://www.youtube.com/watch?v={video_id}"
     raise CollectionError(
-        "Only public Douyin, Bilibili or YouTube post URLs can be canonicalized"
+        "Only public Douyin, Xiaohongshu, Bilibili or YouTube post URLs can be canonicalized"
     )
 
 
 def candidate_id(source_url: str) -> str:
     canonical = canonical_candidate_url(source_url)
-    prefix = "bili-" if "bilibili.com" in canonical else "douyin-"
+    if "bilibili.com" in canonical:
+        prefix = "bili-"
+    elif "xiaohongshu.com" in canonical:
+        prefix = "xhs-"
+    elif "youtube.com" in canonical:
+        prefix = "yt-"
+    else:
+        prefix = "douyin-"
     return prefix + hashlib.sha256(canonical.encode()).hexdigest()[:24]
 
 
@@ -259,25 +275,28 @@ def _session_required_hint(platform: str, extractor_error: object, html: str) ->
     the hint cannot echo credentials back into a message.
     """
 
-    if platform != "bilibili":
+    if platform not in {"bilibili", "douyin", "xiaohongshu"}:
         return ""
     text = f"{extractor_error or ''} {(html or '')[:4000]}".lower()
     if not any(marker in text for marker in _SESSION_BLOCKED_MARKERS):
         return ""
     from . import features
 
+    # A favourites list is private by design, so an empty one is normal until
+    # the session is there; a public space may simply be empty.
+    target = "collection" if platform in {"douyin", "xiaohongshu"} else "space"
     if features.sign_in_enabled():
         return (
-            ". This space only answers a signed-in session: open its sign-in page with "
+            f". This {target} only answers a signed-in session: open its sign-in page with "
             "envoy_auth, then retry after the user finishes it."
         )
     if features.credential_handoff_enabled():
         return (
-            ". This space only answers a signed-in session: import the browser that holds "
+            f". This {target} only answers a signed-in session: import the browser that holds "
             "one with envoy_auth import, then retry."
         )
     return (
-        ". This space only answers a signed-in session: the user can turn the in-chat "
+        f". This {target} only answers a signed-in session: the user can turn the in-chat "
         "sign-in back on with `envoy auth handoff on`, then retry."
     )
 
@@ -296,7 +315,19 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
     if host in {"douyin.com", "www.douyin.com"}:
         if not re.fullmatch(r"/user/[^/]+", path):
             raise CollectionError("A public Douyin user profile URL is required")
-        return f"https://www.douyin.com{path}", "douyin"
+        # A profile tab is chosen by query, not by path: `/user/self` alone is
+        # the works list, and the favourites live behind `showTab=`. Keeping the
+        # tab is what makes the link mean "my collection" and not "my posts".
+        tab = next(
+            (
+                value
+                for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                if key == "showTab" and re.fullmatch(r"[A-Za-z_]{1,40}", value or "")
+            ),
+            "",
+        )
+        canonical = f"https://www.douyin.com{path}"
+        return (f"{canonical}?showTab={tab}" if tab else canonical), "douyin"
     if host in {"youtube.com", "www.youtube.com", "m.youtube.com"} and re.fullmatch(
         r"/playlist", path
     ):
@@ -314,6 +345,11 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
                 "/playlist?list=PL..."
             )
         return f"https://www.youtube.com/playlist?list={playlist_id}", "youtube"
+    if host in {"xiaohongshu.com", "www.xiaohongshu.com"}:
+        profile = re.fullmatch(r"/user/profile/([0-9a-zA-Z]{5,40})", path)
+        if not profile:
+            raise CollectionError("A public Xiaohongshu profile URL is required")
+        return f"https://www.xiaohongshu.com/user/profile/{profile.group(1)}", "xiaohongshu"
     if host == "space.bilibili.com":
         collection = re.fullmatch(
             r"/(\d{1,20})/channel/(collectiondetail|seriesdetail)", path
@@ -341,7 +377,7 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
             raise CollectionError("A public Bilibili space URL is required")
         return f"https://space.bilibili.com/{match.group(1)}/video", "bilibili"
     raise CollectionError(
-        "A public Douyin, Bilibili or YouTube playlist URL is required"
+        "A public Douyin, Xiaohongshu, Bilibili or YouTube playlist URL is required"
     )
 
 
@@ -391,6 +427,56 @@ def _bilibili_card_duration(inners: list[str]) -> int | None:
                 return int(hours) * 60 + int(minutes)
             return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
     return None
+
+
+# A feed keeps its cards out of reach until the page advances, and the two
+# supported feeds need different triggers: Douyin asks for a real wheel event
+# and a click on the `收藏` tab, Xiaohongshu paginates on the wheel as well. The
+# budget is rounds, not seconds, so a slow network lengthens the run instead of
+# silently returning the first screen as the whole collection.
+_FEED_SCROLL_ROUNDS = 12
+
+
+def _feed_scroll_settings(platform: str) -> dict:
+    if platform in {"douyin", "xiaohongshu"}:
+        return {
+            "scroll_rounds": _FEED_SCROLL_ROUNDS,
+            "wheel": True,
+            "click_labels": ("收藏", "收藏夹", "Collect") if platform == "douyin" else None,
+        }
+    return {}
+
+
+_XHS_NOTE_LINK = re.compile(
+    r'<a[^>]+href="[^"]*?/(?:explore|discovery/item)/([0-9a-zA-Z]{16,32})[^"]*"[^>]*>(.*?)</a>',
+    re.S,
+)
+_XHS_TITLE_ATTR = re.compile(r"""(?:title|aria-label)\s*=\s*["\']([^"\']{1,200})["\']""", re.IGNORECASE)
+
+
+def _xhs_candidates(html: str, *, limit: int = 100) -> list[dict]:
+    """Read the note links a rendered Xiaohongshu profile actually shows."""
+
+    cards: dict[str, list[str]] = {}
+    for note_id, inner in _XHS_NOTE_LINK.findall(str(html or "")):
+        cards.setdefault(note_id, []).append(inner)
+    rows: list[dict] = []
+    for note_id, inners in cards.items():
+        title = ""
+        for inner in inners:
+            found = _XHS_TITLE_ATTR.search(inner)
+            if found:
+                title = " ".join(_HTML_TAG.sub(" ", found.group(1)).split())
+                break
+            text = " ".join(_HTML_TAG.sub(" ", inner).split())
+            if text:
+                title = text[:200]
+                break
+        rows.append({
+            "url": f"https://www.xiaohongshu.com/explore/{note_id}",
+            "title": title,
+        })
+    return _candidate_records(rows, limit=limit)
 
 
 def _bilibili_candidates(html: str, *, limit: int = 100) -> list[dict]:
@@ -444,9 +530,15 @@ def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100
             "platform": (
                 "bilibili"
                 if "bilibili.com" in canonical
-                else "youtube" if "youtube.com" in canonical else "douyin"
+                else "youtube"
+                if "youtube.com" in canonical
+                else "xiaohongshu"
+                if "xiaohongshu.com" in canonical
+                else "douyin"
             ),
-            "item_type": "image_note" if path_kind == "note" else "video",
+            "item_type": (
+                "image_note" if path_kind == "note" or "xiaohongshu.com" in canonical else "video"
+            ),
             "title": str(entry.get("title") or ""),
             "published_at": entry.get("upload_date"),
             "duration_seconds": entry.get("duration"),
@@ -551,6 +643,7 @@ def discover_profile(
             page = browser.read_page(
                 canonical_profile,
                 max_work_seconds=max(int(max_work_seconds), 1),
+                **_feed_scroll_settings(platform),
             )
         except Exception as exc:
             detail = (
@@ -582,6 +675,7 @@ def discover_profile(
             page = browser.read_page(
                 canonical_profile,
                 max_work_seconds=max(int(max_work_seconds), 1),
+                **_feed_scroll_settings(platform),
             )
         except Exception as exc:
             detail = (
@@ -599,10 +693,13 @@ def discover_profile(
             raise CollectionError(
                 "Douyin profile works list reported a service error; no candidate list is trusted"
             )
-        parser = _DouyinCandidateParser(page.url)
-        parser.feed(page.html)
-        parser.close()
-        candidates = _candidate_records(parser.rows, limit=100)
+        if platform == "xiaohongshu":
+            candidates = _xhs_candidates(str(getattr(page, "html", "") or ""), limit=100)
+        else:
+            parser = _DouyinCandidateParser(page.url)
+            parser.feed(page.html)
+            parser.close()
+            candidates = _candidate_records(parser.rows, limit=100)
         cursor_mode = "isolated_browser_bounded_snapshot"
         if not candidates:
             detail = (
@@ -610,7 +707,12 @@ def discover_profile(
                 if extractor_error
                 else "the isolated browser exposed no canonical video/note links"
             )
-            raise CollectionError(f"No public profile candidates were discovered: {detail}")
+            raise CollectionError(
+                f"No public profile candidates were discovered: {detail}"
+                + _session_required_hint(
+                    platform, extractor_error, str(getattr(page, "html", "") or "")
+                )
+            )
     revision = uuid.uuid4().hex[:20]
     discovered_at = datetime.now(timezone.utc).isoformat()
     snapshot_has_more = None

@@ -919,16 +919,59 @@ def _watch_for_popups(context, keep_page) -> None:
         pass
 
 
-def _load_visible_content(page) -> tuple[str, str]:
+def _scroll_once(page, *, wheel: bool) -> None:
+    """Advance a feed by one screen.
+
+    A virtualised feed (Douyin favourites, Xiaohongshu profile) paginates on the
+    real wheel event and ignores `scrollTo`, so the wheel path is what makes a
+    second page of cards exist at all. `scrollTo` stays the default because it
+    is cheaper and works on ordinary pages.
+    """
+
+    if wheel:
+        try:
+            box = page.viewport_size or {"width": 1280, "height": 900}
+            page.mouse.move(int(box["width"]) / 2, int(box["height"]) / 2)
+            page.mouse.wheel(0, 1400)
+            return
+        except Exception:
+            pass
+    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
+
+def _click_load_more(page, labels) -> bool:
+    """Open a tab that only exists after a click (Douyin's `收藏` tab)."""
+
+    for label in labels or ():
+        try:
+            target = page.get_by_text(str(label), exact=True)
+            if target.count() and target.first.is_visible():
+                target.first.click(timeout=3_000)
+                page.wait_for_timeout(900)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _load_visible_content(
+    page,
+    *,
+    rounds: int = 4,
+    wheel: bool = False,
+    click_labels=None,
+) -> tuple[str, str]:
+    if click_labels:
+        _click_load_more(page, click_labels)
     for _ in range(3):
         dismissed = _dismiss_login_overlays(page)
         if not dismissed:
             break
         page.wait_for_timeout(300)
 
-    for _ in range(4):
+    for _ in range(max(int(rounds), 0)):
         try:
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            _scroll_once(page, wheel=wheel)
             page.wait_for_timeout(350)
             page.evaluate(_EXPAND_SCRIPT)
             page.wait_for_timeout(250)
@@ -1041,8 +1084,18 @@ def _await_page_video_url(page, timeout_seconds: float = 12.0) -> list[str]:
         page.wait_for_timeout(300)
 
 
-def _capture(page, source_url: str, *, capture_screenshot: bool = False) -> BrowserPage:
-    title, text = _load_visible_content(page)
+def _capture(
+    page,
+    source_url: str,
+    *,
+    capture_screenshot: bool = False,
+    scroll_rounds: int = 4,
+    wheel: bool = False,
+    click_labels=None,
+) -> BrowserPage:
+    title, text = _load_visible_content(
+        page, rounds=scroll_rounds, wheel=wheel, click_labels=click_labels
+    )
     try:
         html = str(page.content())
     except Exception as exc:
@@ -1131,6 +1184,9 @@ def read_page(
     only_proxy: bool = False,
     allow_visible: bool | None = None,
     capture_screenshot: bool = False,
+    scroll_rounds: int = 4,
+    wheel: bool = False,
+    click_labels=None,
 ) -> BrowserPage:
     try:
         if playwright_factory is None:
@@ -1223,7 +1279,9 @@ def read_page(
                 _watch_for_popups(context, page)
                 _install_media_capture(page)
                 _navigate(context, page, source_url, dns_cache, timeout_ms)
-                _load_visible_content(page)
+                _load_visible_content(
+                    page, rounds=scroll_rounds, wheel=wheel, click_labels=click_labels
+                )
                 # A login dialog carries text such as `验证码登录`; leaving it in
                 # the DOM made a dismissible overlay look like a security
                 # challenge and escalate to a window the user never asked for.
@@ -1236,7 +1294,14 @@ def read_page(
                         # `proxy_plan()` is a different network and may pass.
                         egress_title = title or text[:60]
                         continue
-                    return _capture(page, source_url, capture_screenshot=capture_screenshot)
+                    return _capture(
+                        page,
+                        source_url,
+                        capture_screenshot=capture_screenshot,
+                        scroll_rounds=scroll_rounds,
+                        wheel=wheel,
+                        click_labels=click_labels,
+                    )
                 challenge_proxy = proxy_server
                 break
             except (BrowserReadError, TimeoutError) as exc:
@@ -1294,10 +1359,19 @@ def read_page(
                 # Close any prompt before deciding the page is still walled; the
                 # user was asked to sign in, not to click the site's cookie
                 # banner or its "open in app" layer.
-                _load_visible_content(page)
+                _load_visible_content(
+                    page, rounds=scroll_rounds, wheel=wheel, click_labels=click_labels
+                )
                 _title, text, challenge = _page_state(page)
                 if not challenge and len(text) >= 20:
-                    return _capture(page, source_url, capture_screenshot=capture_screenshot)
+                    return _capture(
+                        page,
+                        source_url,
+                        capture_screenshot=capture_screenshot,
+                        scroll_rounds=scroll_rounds,
+                        wheel=wheel,
+                        click_labels=click_labels,
+                    )
             raise BrowserChallengeRequired(
                 "The visible page still requires login or security verification; "
                 "complete it in Envoy's browser and retry the link"
