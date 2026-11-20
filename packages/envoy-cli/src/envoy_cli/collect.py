@@ -22,6 +22,7 @@ from pathlib import Path
 from envoy_core.schemas.read_v1 import Budget, ReadRequest
 
 from . import collections as checkpoint
+from . import topic_filter
 from .reader import read_public_page
 
 EXCERPT_LIMIT = 4000
@@ -277,12 +278,37 @@ def _select_candidates(
         action="discovery_snapshot",
         usage={"snapshot": page},
     )
-    ids = [
-        str(item["candidate_id"])
+    discovered = [
+        item
         for item in page.get("candidates") or []
         if isinstance(item, dict) and item.get("candidate_id")
     ]
+    # A goal names the topic to keep. Without one the whole collection is the
+    # request, so nothing is filtered.
+    filtered = topic_filter.select_by_topic(discovered, goal)
+    if filtered["mode"] == "topic_filtered":
+        manifest.setdefault("topic", {})
+        manifest["topic"] = {
+            "goal": filtered["goal"],
+            "tokens": filtered["tokens"],
+            "kept": len(filtered["kept"]),
+            "dropped": len(filtered["dropped"]),
+            "dropped_titles": [
+                str(item.get("title") or item.get("source_url") or "")
+                for item in filtered["dropped"][:50]
+            ],
+        }
+    ids = [
+        str(item["candidate_id"])
+        for item in filtered["kept"]
+    ]
     if not ids:
+        if filtered["mode"] == "topic_filtered":
+            raise checkpoint.CollectionError(
+                "No post in this profile matched the goal "
+                f"({', '.join(filtered['tokens'][:5])}); "
+                f"{len(discovered)} were checked"
+            )
         raise checkpoint.CollectionError("The profile exposed no candidates to collect")
     manifest = checkpoint.update_collection(
         manifest["collection_id"],
@@ -293,6 +319,7 @@ def _select_candidates(
         ).hexdigest()[:16],
         action="select",
         candidate_ids=ids,
+        topic=manifest.get("topic"),
     )
     return manifest
 
@@ -361,6 +388,13 @@ def _render(
         "## 目录",
         "",
     ]
+    topic = manifest.get("topic") or {}
+    if isinstance(topic, dict) and topic.get("goal"):
+        lines.extend([
+            f"> 已按目标筛选：`{topic.get('goal')}` · 保留 {topic.get('kept')} 条，"
+            f"跳过 {topic.get('dropped')} 条与目标无关的内容",
+            "",
+        ])
     if not ordered:
         lines.append("- （尚未选择任何候选）")
     for index, candidate in enumerate(ordered, start=1):

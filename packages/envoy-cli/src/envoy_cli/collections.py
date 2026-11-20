@@ -813,6 +813,7 @@ def update_collection(
     observed_resource_ids: list[str] | None = None,
     usage: dict[str, int] | None = None,
     budget: CollectionBudget | None = None,
+    topic: dict | None = None,
 ) -> dict:
     allowed_actions = {
         "select", "item_state", "record_evidence", "record_usage", "set_cursor",
@@ -840,6 +841,7 @@ def update_collection(
             observed_resource_ids=observed_resource_ids,
             usage=usage,
             budget=(budget.__dict__ if budget is not None else None),
+            topic=topic,
         )
         if applied is not None:
             if applied.get("fingerprint") != fingerprint:
@@ -859,6 +861,10 @@ def update_collection(
                 raise CollectionError("Selection contains an unknown candidate_id")
             previous_candidates = set(manifest.get("selected_candidate_ids", []))
             manifest["selected_candidate_ids"] = ids
+            # The goal that produced this selection is part of the record: a
+            # later run must be able to tell why a post was left out.
+            if topic is not None:
+                manifest["topic"] = dict(topic)
             manifest["selection_plan_revision"] += 1
             newly_selected = len(set(ids) - previous_candidates)
             if not stored_budget.can_add(
