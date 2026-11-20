@@ -448,7 +448,8 @@ def _feed_scroll_settings(platform: str) -> dict:
 
 
 _XHS_NOTE_LINK = re.compile(
-    r'<a[^>]+href="[^"]*?/(?:explore|discovery/item)/([0-9a-zA-Z]{16,32})[^"]*"[^>]*>(.*?)</a>',
+    r"<a([^>]*?href=\"[^\"]*?/(?:explore|discovery/item)/([0-9a-zA-Z]{16,32})[^\"]*\"[^>]*)>"
+    r"(.*?)</a>",
     re.S,
 )
 _XHS_TITLE_ATTR = re.compile(r"""(?:title|aria-label)\s*=\s*["\']([^"\']{1,200})["\']""", re.IGNORECASE)
@@ -458,8 +459,10 @@ def _xhs_candidates(html: str, *, limit: int = 100) -> list[dict]:
     """Read the note links a rendered Xiaohongshu profile actually shows."""
 
     cards: dict[str, list[str]] = {}
-    for note_id, inner in _XHS_NOTE_LINK.findall(str(html or "")):
-        cards.setdefault(note_id, []).append(inner)
+    # The title can live on the anchor itself or in the card it wraps, so both
+    # halves of the match are searched rather than only the inner markup.
+    for attributes, note_id, inner in _XHS_NOTE_LINK.findall(str(html or "")):
+        cards.setdefault(note_id, []).append(f"{attributes}>{inner}")
     rows: list[dict] = []
     for note_id, inners in cards.items():
         title = ""
