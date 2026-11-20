@@ -34,6 +34,7 @@ from .hooks import SUPPORTED_HOSTS, install_codex_hooks, run_prompt_hook, hook_s
 from .cookies import cookies_status
 from .media import (
     MediaCapabilityMissing,
+    asr_backend,
     cached_asr_models,
     media_runtime_status,
     prepare_asr_model,
@@ -1330,7 +1331,16 @@ def main(argv: Optional[list[str]] = None, stdin: Optional[str] = None) -> int:
                     print("\n".join(lines))
                 return 0 if payload["ready"] else 2
             if args.asr_command == "install":
-                install = install_media_dependencies(model=args.model)
+                # A whisper.cpp machine only needs its GGML weights; pulling the
+                # torch stack there would add ~700 MB for an engine Envoy never
+                # drives. Probe first, install the runtime only when nothing
+                # else can transcribe.
+                backend = asr_backend()
+                install = (
+                    {}
+                    if backend == "whisper.cpp"
+                    else install_media_dependencies(model=args.model)
+                )
                 result = {
                     **install,
                     **prepare_asr_model(args.model),

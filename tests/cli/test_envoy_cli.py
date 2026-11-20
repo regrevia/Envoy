@@ -698,6 +698,7 @@ def test_cli_asr_setup_prepares_model_and_reports_only_local_model_status(monkey
     monkeypatch.setattr(cli, "prepare_asr_model", lambda model: {
         "model": model,
         "cache_dir": "/private/model-cache",
+        "backend": "openai-whisper",
         "available": True,
     }, raising=False)
 
@@ -709,6 +710,7 @@ def test_cli_asr_setup_prepares_model_and_reports_only_local_model_status(monkey
         "status": "ready",
         "model": "tiny.en",
         "cache_dir": "/private/model-cache",
+        "backend": "openai-whisper",
         "available": True,
     }
     assert "api_key" not in json.dumps(result).lower()

@@ -134,13 +134,14 @@ def test_install_media_dependencies_retries_next_index(monkeypatch, capsys):
     assert "source 1/2" in capsys.readouterr().err
 
 
-def test_asr_install_command_installs_engine_before_preparing_model(
+def test_asr_install_on_whisper_cpp_machine_only_fetches_weights(
     monkeypatch,
     capsys,
 ):
     from envoy_cli import cli
 
     calls = []
+    monkeypatch.setattr(cli, "asr_backend", lambda: "whisper.cpp")
     monkeypatch.setattr(
         cli,
         "install_media_dependencies",
@@ -149,7 +150,39 @@ def test_asr_install_command_installs_engine_before_preparing_model(
     monkeypatch.setattr(
         cli,
         "prepare_asr_model",
-        lambda model: calls.append(("prepare", model)) or {"available": True},
+        lambda model: calls.append(("prepare", model))
+        or {"available": True, "backend": "whisper.cpp"},
+    )
+
+    result = cli.main(["asr", "install", "--model", "base"])
+    import json
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert calls == [("prepare", "base")]
+    assert payload["backend"] == "whisper.cpp"
+    assert payload["available"] is True
+    assert "index_url" not in payload
+
+
+def test_asr_install_installs_the_torch_stack_when_no_whisper_cpp_exists(
+    monkeypatch,
+    capsys,
+):
+    from envoy_cli import cli
+
+    calls = []
+    monkeypatch.setattr(cli, "asr_backend", lambda: None)
+    monkeypatch.setattr(
+        cli,
+        "install_media_dependencies",
+        lambda *, model: calls.append(("install", model)) or {"index_url": "https://mirror.example/simple/"},
+    )
+    monkeypatch.setattr(
+        cli,
+        "prepare_asr_model",
+        lambda model: calls.append(("prepare", model))
+        or {"available": True, "backend": "openai-whisper"},
     )
 
     result = cli.main(["asr", "install", "--model", "base"])

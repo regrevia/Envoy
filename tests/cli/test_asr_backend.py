@@ -45,6 +45,9 @@ def test_runtime_status_offers_the_cpp_backend_and_its_model(monkeypatch, tmp_pa
     monkeypatch.delenv("ENVOY_ASR_BACKEND", raising=False)
     monkeypatch.setenv("ENVOY_WHISPER_CPP", str(binary))
     monkeypatch.setenv("ENVOY_WHISPER_CPP_MODEL_CACHE", str(tmp_path))
+    # Both caches point into tmp_path so a developer machine with real weights
+    # cannot change what "cached" means for this assertion.
+    monkeypatch.setenv("ENVOY_ASR_MODEL_CACHE", str(tmp_path / "torch-cache"))
     monkeypatch.setenv("ENVOY_ASR_MODEL", "base")
     monkeypatch.setattr(media.importlib.util, "find_spec", lambda _name: None)
     monkeypatch.setattr(

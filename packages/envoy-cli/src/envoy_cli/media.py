@@ -1193,15 +1193,55 @@ def _response_total_bytes(response, offset: int) -> int:
     return offset + length if length > 0 else 0
 
 
-def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[str, Any]:
-    url = str(whisper._MODELS[model_name])
-    parsed = urlsplit(url)
-    expected_sha256 = parsed.path.rstrip("/").split("/")[-2]
-    filename = Path(parsed.path).name
-    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or not filename:
-        raise MediaProcessingError("Whisper model registry has an invalid URL or checksum")
+GGML_MODEL_TABLE: dict[str, tuple[int, str]] = {
+    "tiny": (77691713, "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"),
+    "tiny.en": (77704715, "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"),
+    "base": (147951465, "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
+    "base.en": (147964211, "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"),
+    "small": (487601967, "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
+    "small.en": (487614201, "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"),
+    "medium": (1533763059, "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"),
+    "medium.en": (1533774781, "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356"),
+    "large-v1": (3094623691, "7d99f41a10525d0206bddadd86760181fa920438b6b33237e3118ff6c83bb53d"),
+    "large-v2": (3094623691, "9a423fe4d40c82774b6af34115b8b935f34152246eb19e80e376071d3f999487"),
+    "large-v3": (3095033483, "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2"),
+    "large-v3-turbo": (1624555275, "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"),
+}
 
-    target = cache_dir / filename
+GGML_MIRROR_ENV = "ENVOY_GGML_MIRROR_BASE"
+
+# Hugging Face first, then its domestic mirror; the mirror serves the same repo
+# layout, so a blocked huggingface.co is the only thing that changes.
+GGML_MODEL_SOURCES = (
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}",
+    "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/{filename}",
+)
+
+
+def ggml_model_sources(model_name: str) -> list[str]:
+    filename = f"ggml-{model_name}.bin"
+    sources = [pattern.format(filename=filename) for pattern in GGML_MODEL_SOURCES]
+    extra = os.getenv(GGML_MIRROR_ENV, "").strip()
+    if extra:
+        sources.append(extra.rstrip("/") + "/" + filename)
+    return sources
+
+
+def _download_verified_file(
+    *,
+    target: Path,
+    sources: list[str],
+    expected_sha256: str,
+    stop_label: str,
+    model_name: str,
+    source_label: str,
+) -> dict[str, Any]:
+    """Fetch one immutable artifact from the first source that serves it whole.
+
+    Partial data is kept in ``<name>.part`` so a rerun resumes instead of
+    restarting, and a checksum mismatch moves on to the next source instead of
+    retrying bytes that will never match.
+    """
     if target.is_file() and _sha256_file(target) == expected_sha256:
         return {"downloaded_bytes": 0, "resumed": False, "sha256": expected_sha256}
 
@@ -1210,82 +1250,142 @@ def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[s
     partial = target.with_name(target.name + ".part")
     resumed = partial.is_file() and partial.stat().st_size > 0
     last_error = None
-    for attempt in range(20):
-        offset = partial.stat().st_size if partial.exists() else 0
-        headers = {"Range": f"bytes={offset}-"} if offset else {}
-        request = urllib.request.Request(url, headers=headers)
-        total = 0
-        attempt_started = time.monotonic()
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                status = getattr(response, "status", None)
-                if status is None:
-                    status = response.getcode()
-                status = int(status)
-                append = offset > 0 and status == 206
-                if offset > 0 and not append:
-                    offset = 0
-                content_range = response.headers.get("Content-Range", "")
-                if append and content_range and not content_range.startswith(f"bytes {offset}-"):
-                    raise MediaProcessingError("Whisper model server returned an unexpected range")
-                total = _response_total_bytes(response, offset)
-                mode = "ab" if append else "wb"
-                last_report = time.monotonic()
-                with partial.open(mode) as destination:
-                    while True:
-                        if time.monotonic() >= deadline:
-                            raise _AsrDownloadBudgetExceeded(destination.tell(), total)
-                        chunk = response.read(_ASR_DOWNLOAD_CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        destination.write(chunk)
-                        now = time.monotonic()
-                        if now - last_report >= _ASR_DOWNLOAD_REPORT_SECONDS:
-                            downloaded = destination.tell()
-                            elapsed = max(now - attempt_started, 1e-6)
-                            rate = max(downloaded - offset, 0) / elapsed
-                            message = (
-                                f"Whisper model download: {_format_download_size(downloaded)}"
-                            )
-                            if total > downloaded:
-                                message += f" of {_format_download_size(total)}"
-                            if rate > 0:
-                                message += f" ({_format_download_size(int(rate))}/s"
+    attempts_per_source = 20 if len(sources) == 1 else 4
+    for source in sources:
+        for _attempt in range(attempts_per_source):
+            offset = partial.stat().st_size if partial.exists() else 0
+            headers = {"Range": f"bytes={offset}-"} if offset else {}
+            request = urllib.request.Request(source, headers=headers)
+            total = 0
+            attempt_started = time.monotonic()
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    status = getattr(response, "status", None)
+                    if status is None:
+                        status = response.getcode()
+                    status = int(status)
+                    append = offset > 0 and status == 206
+                    if offset > 0 and not append:
+                        offset = 0
+                    content_range = response.headers.get("Content-Range", "")
+                    if append and content_range and not content_range.startswith(
+                        f"bytes {offset}-"
+                    ):
+                        raise MediaProcessingError(
+                            "Whisper model server returned an unexpected range"
+                        )
+                    total = _response_total_bytes(response, offset)
+                    mode = "ab" if append else "wb"
+                    last_report = time.monotonic()
+                    with partial.open(mode) as destination:
+                        while True:
+                            if time.monotonic() >= deadline:
+                                raise _AsrDownloadBudgetExceeded(destination.tell(), total)
+                            chunk = response.read(_ASR_DOWNLOAD_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            destination.write(chunk)
+                            now = time.monotonic()
+                            if now - last_report >= _ASR_DOWNLOAD_REPORT_SECONDS:
+                                downloaded = destination.tell()
+                                elapsed = max(now - attempt_started, 1e-6)
+                                rate = max(downloaded - offset, 0) / elapsed
+                                message = (
+                                    "Whisper model download: "
+                                    f"{_format_download_size(downloaded)}"
+                                )
                                 if total > downloaded:
-                                    message += ", eta " + _format_download_eta(
-                                        (total - downloaded) / rate
-                                    )
-                                message += ")"
-                            print(message, file=sys.stderr, flush=True)
-                            last_report = now
-                    destination.flush()
-                    os.fsync(destination.fileno())
-            if _sha256_file(partial) == expected_sha256:
-                os.replace(partial, target)
-                return {
-                    "downloaded_bytes": target.stat().st_size,
-                    "resumed": resumed,
-                    "sha256": expected_sha256,
-                }
-            last_error = "downloaded model checksum does not match"
-            resumed = True
-        except _AsrDownloadBudgetExceeded as exc:
-            downloaded = max(exc.downloaded, partial.stat().st_size if partial.exists() else 0)
-            where = f"{_format_download_size(downloaded)} downloaded"
-            if exc.total > 0:
-                where += f" of {_format_download_size(exc.total)}"
-            raise MediaProcessingError(
-                f"Whisper {model_name} model download stopped after "
-                f"{_format_download_eta(budget)} ({where}); the partial file is kept, so "
-                f"rerun `envoy asr install --model {model_name}` to resume, or lower the "
-                "profile with ENVOY_SETUP_MEDIA=0"
-            ) from None
-        except (OSError, urllib.error.URLError, MediaProcessingError) as exc:
-            last_error = _safe_error(exc)
-            resumed = resumed or (partial.is_file() and partial.stat().st_size > 0)
+                                    message += f" of {_format_download_size(total)}"
+                                if rate > 0:
+                                    message += f" ({_format_download_size(int(rate))}/s"
+                                    if total > downloaded:
+                                        message += ", eta " + _format_download_eta(
+                                            (total - downloaded) / rate
+                                        )
+                                    message += ")"
+                                print(message, file=sys.stderr, flush=True)
+                                last_report = now
+                        destination.flush()
+                        os.fsync(destination.fileno())
+                if _sha256_file(partial) == expected_sha256:
+                    os.replace(partial, target)
+                    return {
+                        "downloaded_bytes": target.stat().st_size,
+                        "resumed": resumed,
+                        "sha256": expected_sha256,
+                    }
+                last_error = (
+                    f"{source_label} served a file whose checksum does not match "
+                    f"{expected_sha256}"
+                )
+                resumed = partial.is_file() and partial.stat().st_size > 0
+                break
+            except _AsrDownloadBudgetExceeded as exc:
+                downloaded = max(
+                    exc.downloaded, partial.stat().st_size if partial.exists() else 0
+                )
+                where = f"{_format_download_size(downloaded)} downloaded"
+                if exc.total > 0:
+                    where += f" of {_format_download_size(exc.total)}"
+                raise MediaProcessingError(
+                    f"{stop_label} download stopped after "
+                    f"{_format_download_eta(budget)} ({where}); the partial file is kept, so "
+                    f"rerun `envoy asr install --model {model_name}` to resume, or lower the "
+                    "profile with ENVOY_SETUP_MEDIA=0"
+                ) from None
+            except (OSError, urllib.error.URLError) as exc:
+                last_error = _safe_error(exc)
+                resumed = resumed or (partial.is_file() and partial.stat().st_size > 0)
     raise MediaProcessingError(
-        f"Whisper model download did not complete after resumable retries ({last_error or 'unknown error'})"
+        "Whisper model download did not complete after resumable retries "
+        f"({last_error or 'unknown error'})"
     )
+
+
+def _download_whisper_model(whisper, model_name: str, cache_dir: Path) -> dict[str, Any]:
+    url = str(whisper._MODELS[model_name])
+    parsed = urlsplit(url)
+    expected_sha256 = parsed.path.rstrip("/").split("/")[-2]
+    filename = Path(parsed.path).name
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or not filename:
+        raise MediaProcessingError("Whisper model registry has an invalid URL or checksum")
+    return _download_verified_file(
+        target=cache_dir / filename,
+        sources=[url],
+        expected_sha256=expected_sha256,
+        stop_label=f"Whisper {model_name} model",
+        model_name=model_name,
+        source_label="Whisper model server",
+    )
+
+
+def _download_ggml_model(model_name: str) -> dict[str, Any]:
+    entry = GGML_MODEL_TABLE.get(model_name)
+    if entry is None:
+        raise MediaCapabilityMissing(
+            f"whisper.cpp has no GGML weights for '{model_name}'; "
+            f"expected one of: {', '.join(sorted(GGML_MODEL_TABLE))}"
+        )
+    size, expected_sha256 = entry
+    cache_dir = whisper_cpp_model_cache_dir()
+    target = cache_dir / f"ggml-{model_name}.bin"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with asr_model_slot(cache_dir, max_wait_seconds=3600):
+            return _download_verified_file(
+                target=target,
+                sources=ggml_model_sources(model_name),
+                expected_sha256=expected_sha256,
+                stop_label=f"whisper.cpp {model_name} model ({_format_download_size(size)})",
+                model_name=model_name,
+                source_label="whisper.cpp weight mirror",
+            )
+    except MediaProcessingError:
+        raise
+    except Exception as exc:
+        raise MediaProcessingError(
+            f"whisper.cpp model download failed: {_safe_error(exc)}"
+        ) from exc
 
 
 def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
@@ -1296,18 +1396,34 @@ def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
             raise MediaCapabilityMissing(f"Unsupported Whisper model name: {model_name}")
         model_path = whisper_cpp_model_path(model_name)
         if model_path is None:
-            raise MediaCapabilityMissing(
-                f"whisper.cpp has no GGML model named '{model_name}' under "
-                f"{whisper_cpp_model_cache_dir()}; download ggml-{model_name}.bin "
-                "there, or point ENVOY_WHISPER_CPP_MODEL at it"
-            )
+            if model_name not in GGML_MODEL_TABLE:
+                raise MediaCapabilityMissing(
+                    f"whisper.cpp has no GGML weights for '{model_name}'; expected one of: "
+                    f"{', '.join(sorted(GGML_MODEL_TABLE))}"
+                )
+            download = _download_ggml_model(model_name)
+            model_path = whisper_cpp_model_path(model_name)
+            if model_path is None:
+                raise MediaCapabilityMissing(
+                    "whisper.cpp weights were fetched but "
+                    f"{WHISPER_CPP_MODEL_ENV} does not point at them; unset it to use "
+                    f"{whisper_cpp_model_cache_dir()}"
+                )
+            return {
+                "model": model_name,
+                "cache_dir": str(whisper_cpp_model_cache_dir()),
+                "path": str(model_path),
+                "backend": "whisper.cpp",
+                "available": True,
+                **download,
+            }
         return {
             "model": model_name,
             "cache_dir": str(whisper_cpp_model_cache_dir()),
             "path": str(model_path),
             "backend": "whisper.cpp",
             "available": True,
-            "downloaded_bytes": model_path.stat().st_size,
+            "downloaded_bytes": 0,
         }
     try:
         asr_installed = importlib.util.find_spec("whisper") is not None
@@ -1335,6 +1451,7 @@ def prepare_asr_model(model_name: str = "base") -> dict[str, Any]:
     return {
         "model": model_name,
         "cache_dir": str(cache_dir),
+        "backend": "openai-whisper",
         "available": True,
         **download,
     }
