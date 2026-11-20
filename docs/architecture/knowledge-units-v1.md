@@ -1,7 +1,7 @@
 # Knowledge Units
 
 Status: implemented (`envoy knowledge …`), behind the `knowledge_units` flag.
-Current schema: `envoy.knowledge-unit/2`, which still reads `envoy.knowledge-unit/1`.
+Current schema: `envoy.knowledge-unit/3`, which still reads `/2`, which still reads `/1`.
 
 A Knowledge Unit is a claim that survived contact with its evidence. It is not a
 summary and not a note: it carries its sources, its conditions, its limits, and a
@@ -10,7 +10,7 @@ Evidence Pack stays what it may cite.
 
 ```json
 {
-  "schema_version": "envoy.knowledge-unit/2",
+  "schema_version": "envoy.knowledge-unit/3",
   "unit_id": "ku-<16 hex>",
   "version": 2,
   "content_hash": "<16 hex>",
@@ -18,6 +18,8 @@ Evidence Pack stays what it may cite.
   "type": "procedure",
   "title": "…",
   "summary": "…",
+  "trigger": "…",
+  "inputs": ["…"],
   "conditions": ["…"],
   "steps": ["…"],
   "limitations": ["…"],
@@ -92,9 +94,21 @@ candidate --verify--> verified --promote--> promoted
   anything fails, `verify` refuses with `evidence_unresolved` and names each bad
   reference. An unverified claim cannot become verified by editing the unit; only
   resolving evidence does that.
-- **promoted** — usable, not merely true. Promotion additionally requires at least
-  one condition, one step, one limitation and one test. The difference between
-  "true" and "usable" is exactly the cases in which it stops being true.
+- **promoted** — usable, not merely true. Promotion additionally requires a
+  `trigger`, at least one condition, one step, one limitation and one test. The
+  difference between "true" and "usable" is exactly the cases in which it stops
+  being true — and, for `trigger`, whether anyone can find it. `conditions` says
+  when the claim holds; `trigger` says when to reach for it. Those are different
+  sentences, and only the second one can be routed on, which is why a unit with no
+  trigger stays `verified` and never becomes `promoted` (`unit_incomplete`,
+  `missing: ["trigger"]`).
+
+`/3` added two body fields, both part of the content hash: `trigger` (a string,
+≤ 400 characters) and `inputs` (a list). A `/1` or `/2` record read from disk gets
+`trigger: ""` and `inputs: []` rather than failing to load; its content hash is the
+hash of a record that says it has no trigger. Adding a trigger to such a unit is
+an ordinary `update`, so it bumps `version` and resets the status to `candidate`,
+and the evidence has to resolve again before the unit can be promoted.
 - **archived** — kept, out of the way. Archival never deletes: a claim may be
   wrong in a way that is worth remembering, and a source may reappear. It is
   therefore not a dead end, but it is a decision, and nothing else overrides it:
@@ -271,7 +285,7 @@ local-filesystem oriented), which is enough for the single-host material store.
 
 ## Compatibility: `/1` files in a `/2` world
 
-`SCHEMAS = ("envoy.knowledge-unit/1", "envoy.knowledge-unit/2")`, and the reader
+`SCHEMAS = ("envoy.knowledge-unit/1", "envoy.knowledge-unit/2", "envoy.knowledge-unit/3")`, and the reader
 accepts both. The differences are additive:
 
 - `content_hash` did not exist. A `/1` file without it still loads, lists, verifies

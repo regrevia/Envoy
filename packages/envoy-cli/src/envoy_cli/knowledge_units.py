@@ -28,8 +28,8 @@ from typing import Iterator
 
 from . import evidence_pack, storage
 
-SCHEMA = "envoy.knowledge-unit/2"
-SCHEMAS = ("envoy.knowledge-unit/1", SCHEMA)
+SCHEMA = "envoy.knowledge-unit/3"
+SCHEMAS = ("envoy.knowledge-unit/1", "envoy.knowledge-unit/2", SCHEMA)
 UNIT_DIR = "knowledge-units"
 
 UNIT_ID = re.compile(r"^ku-[a-f0-9]{16}$")
@@ -48,6 +48,7 @@ RELATION_TYPES = ("supports", "contradicts", "extends", "depends_on")
 TEST_KINDS = ("positive", "near_miss", "negative", "boundary")
 TITLE_LIMIT = 120
 SHORT_LIMIT = 2000
+TRIGGER_LIMIT = 400
 
 
 class UnitError(RuntimeError):
@@ -181,6 +182,8 @@ CONTENT_FIELDS = (
     "type",
     "title",
     "summary",
+    "trigger",
+    "inputs",
     "conditions",
     "steps",
     "limitations",
@@ -189,7 +192,16 @@ CONTENT_FIELDS = (
 
 
 def _content_fields(body: dict) -> dict:
-    return {key: body.get(key) for key in CONTENT_FIELDS}
+    # ``trigger`` and ``inputs`` arrived in /3. A /1 or /2 record has neither, so
+    # they are read as empty rather than as missing: the digest of an old record
+    # then stays the digest of a record that says it has no trigger, which is the
+    # truth, and re-stamping on the next write changes nothing else.
+    normalised = {key: body.get(key) for key in CONTENT_FIELDS}
+    if normalised.get("trigger") is None:
+        normalised["trigger"] = ""
+    if normalised.get("inputs") is None:
+        normalised["inputs"] = []
+    return normalised
 
 
 def content_hash_of(body: dict) -> str:
@@ -267,11 +279,16 @@ def _validate_body(payload: dict) -> dict:
     refs = payload.get("source_refs")
     if not isinstance(refs, list) or not refs:
         raise UnitError("invalid_unit", "source_refs must name at least one piece of evidence")
+    trigger = str(payload.get("trigger") or "").strip()
+    if len(trigger) > TRIGGER_LIMIT:
+        raise UnitError("invalid_unit", f"trigger is longer than {TRIGGER_LIMIT} characters")
     return {
         "schema_version": SCHEMA,
         "type": unit_type,
         "title": title,
         "summary": summary,
+        "trigger": trigger,
+        "inputs": _require_list(payload.get("inputs"), "inputs"),
         "conditions": _require_list(payload.get("conditions"), "conditions"),
         "steps": _require_list(payload.get("steps"), "steps"),
         "limitations": _require_list(payload.get("limitations"), "limitations"),
@@ -317,6 +334,8 @@ def load_unit(unit_id: str, *, root: Path | None = None) -> dict:
         raise UnitError("unit_unreadable", f"knowledge unit {unit_id} cannot be read: {exc}") from exc
     if not isinstance(payload, dict) or payload.get("unit_id") != unit_id:
         raise UnitError("unit_unreadable", f"knowledge unit {unit_id} is not a unit record")
+    payload.setdefault("trigger", "")
+    payload.setdefault("inputs", [])
     return payload
 
 
@@ -550,15 +569,18 @@ def promote_unit(unit_id: str, *, expected_version: int | None = None, root: Pat
         raise UnitError("needs_verification", f"{unit_id} is {unit['status']}; verify its evidence first")
     missing = [
         field
-        for field in ("conditions", "steps", "limitations")
+        for field in ("trigger", "conditions", "steps", "limitations")
         if not unit.get(field)
     ]
     if not unit.get("tests"):
         missing.append("tests")
     if missing:
+        # A record nobody can route is not usable, however true it is. ``trigger``
+        # is the sentence an agent matches a task against, so its absence is a
+        # promotion blocker rather than a cosmetic gap.
         raise UnitError(
             "unit_incomplete",
-            "a promoted unit needs conditions, steps, limitations and at least one test",
+            "a promoted unit needs a trigger, conditions, steps, limitations and at least one test",
             missing=missing,
         )
     problems, unpinned, revisions = _check_refs(unit, root=root)
@@ -615,7 +637,18 @@ def update_unit(
     if not isinstance(patch, dict):
         raise UnitError("invalid_unit", "update needs an object")
     merged = copy.deepcopy(unit)
-    for key in ("type", "title", "summary", "conditions", "steps", "limitations", "source_refs", "tests"):
+    for key in (
+        "type",
+        "title",
+        "summary",
+        "trigger",
+        "inputs",
+        "conditions",
+        "steps",
+        "limitations",
+        "source_refs",
+        "tests",
+    ):
         if key in patch:
             merged[key] = patch[key]
     body = _validate_body(merged)
@@ -660,7 +693,18 @@ def rollback_unit(
     except (OSError, ValueError) as exc:
         raise UnitError("version_unreadable", f"{unit_id} v{version} cannot be read: {exc}") from exc
     rollback = copy.deepcopy(unit)
-    for key in ("type", "title", "summary", "conditions", "steps", "limitations", "source_refs", "tests"):
+    for key in (
+        "type",
+        "title",
+        "summary",
+        "trigger",
+        "inputs",
+        "conditions",
+        "steps",
+        "limitations",
+        "source_refs",
+        "tests",
+    ):
         rollback[key] = old.get(key)
     body = _validate_body(rollback)
     _snapshot(unit, root=root)  # closing state of the version being left behind
@@ -902,8 +946,11 @@ def render_unit(unit: dict) -> str:
         f"{unit['unit_id']}  v{unit['version']}  [{unit['status']}]  {unit['type']}",
         f"  {unit['title']}",
         f"  {unit['summary']}",
+        f"  trigger when {unit.get('trigger') or '(none)'}",
         f"  content {unit_content_hash(unit)}",
     ]
+    for item in unit.get("inputs") or []:
+        lines.append(f"  input: {item}")
     for field in ("conditions", "steps", "limitations"):
         for item in unit.get(field) or []:
             lines.append(f"  {field[:-1]}: {item}")

@@ -40,6 +40,8 @@ from .collections import (
     list_collections,
     update_collection,
 )
+from . import extensions as extension_flags
+from . import knowledge_units
 from . import topic_filter
 from .tasks import TaskError, handle as handle_task
 from .local_source import (
@@ -62,6 +64,15 @@ from .reader import (
     read_visual_observations,
     search_material,
 )
+
+class KnowledgeToolError(Exception):
+    """A knowledge call that failed for a reason the host can act on."""
+
+    def __init__(self, code: str, message: str, *, details: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -283,6 +294,48 @@ OBSERVE_VISUAL_SCHEMA = {
                 "Session that holds the material; pass the original session_id when "
                 "answering from a different process or surface."
             ),
+        },
+    },
+}
+
+KNOWLEDGE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["action"],
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": [
+                "create",
+                "update",
+                "verify",
+                "promote",
+                "archive",
+                "show",
+                "list",
+                "relate",
+            ],
+        },
+        "body": {
+            "type": ["object", "null"],
+            "description": (
+                "The unit as you would state it: type, title, summary, trigger, "
+                "inputs, conditions, steps, limitations, source_refs, tests. "
+                "source_refs entries are material_id + evidence_id + locator, "
+                "copied from a read receipt — never invented."
+            ),
+        },
+        "unit_id": {"type": ["string", "null"]},
+        "status": {"type": ["string", "null"]},
+        "expected_version": {"type": ["integer", "null"], "minimum": 1},
+        "relation": {
+            "type": ["object", "null"],
+            "description": "relate only: {type, to_unit_id, evidence}.",
+            "properties": {
+                "type": {"type": "string"},
+                "to_unit_id": {"type": "string"},
+                "evidence": {"type": ["array", "null"], "items": {"type": "object"}},
+            },
         },
     },
 }
@@ -573,6 +626,23 @@ TOOLS = [
             "searches omit passages already returned by search."
         ),
         "inputSchema": SEARCH_SCHEMA,
+    },
+    {
+        "name": "envoy_knowledge",
+        "description": (
+            "Keep what you learned as a unit that carries its own evidence, so "
+            "the next session starts from it instead of re-reading the source. "
+            "You state the unit; every source_ref needs the material_id, "
+            "evidence_id and locator a read receipt gave you — create stores it "
+            "as a candidate, and verify resolves each ref against the material "
+            "this machine still holds, refusing the ones that do not "
+            "(evidence_unresolved). promote additionally requires a trigger, "
+            "conditions, steps, limitations and a test: a unit that is true but "
+            "cannot be found or bounded stays verified. No model is called by "
+            "this tool. Requires the 'full' MCP toolset and the knowledge_units "
+            "extension."
+        ),
+        "inputSchema": KNOWLEDGE_SCHEMA,
     },
     {
         "name": "envoy_verify",
@@ -2255,6 +2325,81 @@ def _egress_blocked_instruction(result: dict) -> str:
     )
 
 
+def _knowledge_payload(arguments: dict) -> dict:
+    """Shape one envoy_knowledge call, refusing to be a place to invent evidence.
+
+    The agent states the unit; Envoy keeps it honest. Nothing here calls a model,
+    a written unit carries the locators it was given, and only ``verify`` decides
+    whether they still resolve against material this machine holds — that is the
+    whole difference between a unit and a note.
+    """
+
+    action = str(arguments.get("action") or "")
+    # Reading what a previous session stored needs no switch; adding to it does.
+    # An agent that hit an empty list while the extension is off gets the same
+    # count either way, and no path can write without the flag.
+    if action not in {"list", "show"} and not extension_flags.enabled(
+        extension_flags.KNOWLEDGE_UNITS
+    ):
+        raise KnowledgeToolError(
+            "extension_disabled",
+            f"{extension_flags.KNOWLEDGE_UNITS} is off; enable it with: "
+            f"envoy extensions enable {extension_flags.KNOWLEDGE_UNITS}",
+        )
+    expected_version = arguments.get("expected_version")
+    try:
+        if action == "create":
+            unit = knowledge_units.create_unit(arguments.get("body") or {})
+        elif action == "update":
+            unit = knowledge_units.update_unit(
+                str(arguments.get("unit_id") or ""),
+                arguments.get("body") or {},
+                expected_version=expected_version,
+            )
+        elif action == "verify":
+            unit = knowledge_units.verify_unit(
+                str(arguments.get("unit_id") or ""), expected_version=expected_version
+            )
+        elif action == "promote":
+            unit = knowledge_units.promote_unit(
+                str(arguments.get("unit_id") or ""), expected_version=expected_version
+            )
+        elif action == "archive":
+            unit = knowledge_units.archive_unit(
+                str(arguments.get("unit_id") or ""),
+                reason=str(arguments.get("reason") or ""),
+                expected_version=expected_version,
+            )
+        elif action == "show":
+            unit = knowledge_units.load_unit(str(arguments.get("unit_id") or ""))
+        elif action == "list":
+            rows = knowledge_units.list_units(status=arguments.get("status") or None)
+            return {
+                "tool": "envoy_knowledge",
+                "action": "list",
+                "units": rows,
+                "total": len(rows),
+                "resultType": "complete",
+            }
+        elif action == "relate":
+            relation = arguments.get("relation") or {}
+            unit = knowledge_units.relate_units(
+                str(arguments.get("unit_id") or ""),
+                str(relation.get("type") or ""),
+                str(relation.get("to_unit_id") or ""),
+                list(relation.get("evidence") or []),
+                expected_version=expected_version,
+            )
+        else:
+            raise KnowledgeToolError(
+                "invalid_request",
+                "choose: create|update|verify|promote|archive|show|list|relate",
+            )
+    except knowledge_units.UnitError as exc:
+        raise KnowledgeToolError(exc.code, str(exc), details=exc.details) from exc
+    return {"tool": "envoy_knowledge", "action": action, "unit": unit}
+
+
 def _auth_payload(arguments: dict) -> dict:
     """Shape one envoy_auth call into a payload every host can render.
 
@@ -2861,6 +3006,8 @@ def handle_message(
             payload = check_evidence(
                 EvidenceCheckRequest.model_validate(arguments)
             ).model_dump(mode="json")
+        elif name == "envoy_knowledge":
+            payload = _knowledge_payload(arguments)
         elif name == "envoy_doctor":
             payload = {
                 "tool": "envoy",
@@ -2975,6 +3122,17 @@ def handle_message(
             payload = _auth_payload(arguments)
         else:
             return _error(request_id, -32602, f"Unknown tool: {name}")
+    except KnowledgeToolError as exc:
+        payload = {
+            "tool": "envoy_knowledge",
+            "action": arguments.get("action"),
+            "result": "blocked",
+            "error": {
+                "code": exc.code,
+                "message": str(exc),
+                **({"details": exc.details} if exc.details else {}),
+            },
+        }
     except PublicPageError as exc:
         # A failed refetch falls back to this session's material even when the
         # caller asked to refresh: the notice marks it and the error is returned.

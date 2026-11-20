@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -57,6 +58,8 @@ def _payload(blocks: list[dict], **overrides) -> dict:
         "type": "principle",
         "title": "Cite the block, not the impression",
         "summary": "A citation names a block and a place in the source.",
+        "trigger": "citing a paragraph that must survive review",
+        "inputs": ["a retained material", "the block id"],
         "conditions": ["the material is retained"],
         "steps": ["open the block", "quote it"],
         "limitations": ["only as good as the stored revision"],
@@ -818,3 +821,97 @@ def test_the_cli_refuses_a_relation_when_the_target_moved(tmp_path, capsys, monk
 
     assert cli.main(argv[:-2] + ["--if-target-version", "2"]) == 0
     assert len(knowledge_units.list_relations(other_id)) == 1
+
+
+def test_a_unit_without_a_trigger_is_true_but_not_routable():
+    """An agent routes by ``trigger``; a claim nobody can find is not usable."""
+
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks, trigger=""))
+
+    knowledge_units.verify_unit(unit["unit_id"])
+    with pytest.raises(knowledge_units.UnitError) as refusal:
+        knowledge_units.promote_unit(unit["unit_id"])
+
+    assert refusal.value.code == "unit_incomplete"
+    assert refusal.value.details["missing"] == ["trigger"]
+
+
+def test_adding_the_trigger_promotes_without_touching_the_claim():
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks, trigger=""))
+    knowledge_units.verify_unit(unit["unit_id"])
+
+    edited = knowledge_units.update_unit(unit["unit_id"], {"trigger": "citing a paragraph"})
+    assert edited["version"] == 2
+    assert edited["status"] == "candidate"
+
+    knowledge_units.verify_unit(unit["unit_id"])
+    promoted = knowledge_units.promote_unit(unit["unit_id"])
+    assert promoted["status"] == "promoted"
+    assert promoted["inputs"] == ["a retained material", "the block id"]
+
+
+def test_a_record_written_before_the_trigger_existed_still_loads():
+    """A /2 unit read from disk must not look corrupt just because it is older."""
+
+    blocks = _seed_material(storage.resolve_material_root())
+    unit = knowledge_units.create_unit(_payload(blocks))
+    path = knowledge_units.units_dir() / f"{unit['unit_id']}.json"
+
+    older = json.loads(path.read_text(encoding="utf-8"))
+    older["schema_version"] = "envoy.knowledge-unit/2"
+    older.pop("trigger")
+    older.pop("inputs")
+    path.write_text(json.dumps(older), encoding="utf-8")
+
+    loaded = knowledge_units.load_unit(unit["unit_id"])
+    assert loaded["trigger"] == ""
+    assert loaded["inputs"] == []
+    assert loaded["unit_id"] == unit["unit_id"]
+
+
+def _schema(name: str) -> dict:
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[2] / "docs" / "schemas" / f"{name}.schema.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("schema_name", ["knowledge-unit-v1", "knowledge-unit-v3"])
+def test_the_shipped_schema_describes_the_record_the_code_writes(
+    material_root, schema_name
+):
+    # A schema that omits a field the writer always emits is a schema nobody can
+    # validate against, so this pins the two together instead of trusting prose.
+    blocks = _seed_material(material_root)
+    unit = knowledge_units.create_unit(_payload(blocks))
+    stored = knowledge_units.load_unit(unit["unit_id"])
+    schema = _schema(schema_name)
+
+    missing = [field for field in schema["required"] if field not in stored]
+    assert missing == []
+    undeclared = [field for field in stored if field not in schema["properties"]]
+    if schema_name.endswith("v3"):
+        # Older schemas legitimately lag the writer; the current one may not.
+        assert undeclared == []
+    for field in ("unit_id", "content_hash", "trigger", "inputs"):
+        if field in schema["properties"]:
+            assert field in stored, field
+    # A pattern that does not accept the bytes the writer emits is worse than no
+    # pattern: it makes every valid record fail validation.
+    patterns = {
+        field: schema["properties"][field]["pattern"]
+        for field in ("unit_id", "content_hash")
+        if "pattern" in schema["properties"].get(field, {})
+    }
+    for field, pattern in patterns.items():
+        assert re.fullmatch(pattern, stored[field]), (field, stored[field], pattern)
+
+
+def test_the_v3_schema_is_the_one_the_current_writer_emits(material_root):
+    blocks = _seed_material(material_root)
+    unit = knowledge_units.create_unit(_payload(blocks))
+    assert knowledge_units.load_unit(unit["unit_id"])["schema_version"] == knowledge_units.SCHEMA
+    assert _schema("knowledge-unit-v3")["properties"]["schema_version"]["const"] == knowledge_units.SCHEMA
+    assert _schema("knowledge-unit-v3")["properties"]["trigger"]["maxLength"] == knowledge_units.TRIGGER_LIMIT

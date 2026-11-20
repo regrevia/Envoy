@@ -129,8 +129,13 @@ def capability_catalog() -> dict:
                 "tool": "envoy_visual_history",
                 "use": "Reuse persisted visual observations on a follow-up for the same material without another image read.",
             },
+            {
+                "tool": "envoy_knowledge",
+                "use": "Keep a claim only if its cited evidence still resolves on this machine: the caller states the unit, Envoy stores it as a candidate, re-checks every locator on verify, and publishes nothing without a trigger, conditions, steps, limits and a test. No model is called.",
+            },
         ],
         "outputs": [
+            "evidence_checked_knowledge_units",
             "source_located_text_blocks",
             "coverage_and_unresolved_items",
             "budgeted_continuation",

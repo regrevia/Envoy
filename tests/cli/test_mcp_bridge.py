@@ -62,6 +62,7 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
         "envoy_observe",
         "envoy_visual_history",
         "envoy_verify",
+        "envoy_knowledge",
     }
     assert "needs_host response is a handoff, not a terminal state" in tools["envoy_read"]["description"]
     assert "inspect every" in tools["envoy_read"]["description"]
@@ -71,6 +72,9 @@ def test_mcp_bridge_initialize_and_list_tools(monkeypatch, capsys):
     # the claim, so the tool must say the semantic half stays unjudged.
     assert "not_evaluated" in tools["envoy_verify"]["description"]
     assert "semantic_support is always not_evaluated" in tools["envoy_verify"]["description"]
+    # A knowledge unit is only worth keeping if the tool says who judges it.
+    assert "no model is called" in tools["envoy_knowledge"]["description"].lower()
+    assert "evidence_unresolved" in tools["envoy_knowledge"]["description"]
 
 
 def test_core_toolset_filters_tools_and_rejects_hidden_tool(capsys):
@@ -2317,3 +2321,192 @@ def test_without_a_goal_the_whole_page_is_handed_on(monkeypatch, capsys):
     payload = response["result"]["structuredContent"]
     assert [item["candidate_id"] for item in payload["candidates"]] == ["v1"]
     assert "topic" not in payload
+
+
+def _knowledge_material(root):
+    """One retained page, so a source_ref can be checked instead of believed."""
+
+    import time
+
+    from envoy_cli import evidence_pack
+
+    material_id = "mat-" + "7" * 24
+    record = {
+        "source_url": "https://example.com/k",
+        "source_revision": "rev-k",
+        "session_id": "session-k",
+        "source_kind": "web",
+        "title_text": "A page worth citing",
+        "text": "First paragraph.",
+        "blocks": [
+            {
+                "id": "blk-0001",
+                "order": 1,
+                "content": {"text": "First paragraph."},
+                "locator": {
+                    "type": "web",
+                    "source_url": "https://example.com/k",
+                    "block_id": "blk-0001",
+                },
+            }
+        ],
+    }
+    (root / f"{material_id}.json").write_text(json.dumps(record), encoding="utf-8")
+    (root / f"{material_id}.expires").write_text(str(time.time() + 600), encoding="utf-8")
+    stored = evidence_pack.load_material(material_id, root=root)
+    block = evidence_pack.build_source_document(stored, material_id)["blocks"][0]
+    return material_id, block
+
+
+def _knowledge_body(material_id, block, **overrides):
+    body = {
+        "type": "principle",
+        "title": "Cite the block, not the impression",
+        "summary": "A citation names a block and a place in the source.",
+        "trigger": "citing a paragraph that must survive review",
+        "inputs": ["a retained material", "the block id"],
+        "conditions": ["the material is retained"],
+        "steps": ["open the block", "quote it"],
+        "limitations": ["only as good as the stored revision"],
+        "source_refs": [
+            {
+                "material_id": material_id,
+                "evidence_id": block["evidence_id"],
+                "locator": block["locator"],
+                "source_revision": "rev-k",
+            }
+        ],
+        "tests": [{"kind": "positive", "question": "Does the quote carry a locator?"}],
+    }
+    body.update(overrides)
+    return body
+
+
+def test_mcp_knowledge_promotes_only_after_evidence_resolves(tmp_path, monkeypatch, capsys):
+    from envoy_cli import knowledge_units, mcp, storage
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units")
+    storage.reset_root_cache()
+    material_id, block = _knowledge_material(tmp_path)
+
+    def call(call_id, arguments):
+        return {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": "envoy_knowledge", "arguments": arguments},
+        }
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "create", "body": _knowledge_body(material_id, block)}),
+    ])
+    created = [json.loads(line) for line in capsys.readouterr().out.splitlines()][-1]
+    assert created["result"]["isError"] is False
+    unit = created["result"]["structuredContent"]["unit"]
+    assert unit["status"] == "candidate"
+    assert unit["trigger"] == "citing a paragraph that must survive review"
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "promote", "unit_id": unit["unit_id"]}),
+        call(3, {"action": "verify", "unit_id": unit["unit_id"]}),
+        call(4, {"action": "promote", "unit_id": unit["unit_id"]}),
+    ])
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    refused, verified, promoted = (item["result"] for item in responses[-3:])
+    # The gate is the point: nothing publishes on the model's say-so.
+    assert refused["isError"] is True
+    assert refused["structuredContent"]["error"]["code"] == "needs_verification"
+    assert verified["structuredContent"]["unit"]["status"] == "verified"
+    assert promoted["isError"] is False
+    assert promoted["structuredContent"]["unit"]["status"] == "promoted"
+    assert knowledge_units.load_unit(unit["unit_id"])["status"] == "promoted"
+
+
+def test_mcp_knowledge_refuses_a_ref_that_names_nothing_retained(tmp_path, monkeypatch, capsys):
+    from envoy_cli import mcp, storage
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units")
+    storage.reset_root_cache()
+    material_id, block = _knowledge_material(tmp_path)
+    body = _knowledge_body(material_id, block)
+    body["source_refs"][0]["material_id"] = "mat-" + "9" * 24
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_knowledge",
+                "arguments": {"action": "create", "body": body},
+            },
+        },
+    ])
+    # create records the claim it was given; verify is where the lie is caught.
+    created = [json.loads(line) for line in capsys.readouterr().out.splitlines()][-1]
+    unit_id = created["result"]["structuredContent"]["unit"]["unit_id"]
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_knowledge",
+                "arguments": {"action": "verify", "unit_id": unit_id},
+            },
+        },
+    ])
+    blocked = [json.loads(line) for line in capsys.readouterr().out.splitlines()][-1]
+    assert blocked["result"]["isError"] is True
+    error = blocked["result"]["structuredContent"]["error"]
+    assert error["code"] == "evidence_unresolved"
+    assert "mat-" + "9" * 24 in error["details"]["problems"][0]
+
+
+def test_mcp_knowledge_writes_need_the_extension_but_listing_does_not(
+    tmp_path, monkeypatch, capsys
+):
+    from envoy_cli import mcp, storage
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("ENVOY_EXTENSIONS", raising=False)
+    storage.reset_root_cache()
+    material_id, block = _knowledge_material(tmp_path)
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "envoy_knowledge", "arguments": {"action": "list"}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_knowledge",
+                "arguments": {
+                    "action": "create",
+                    "body": _knowledge_body(material_id, block),
+                },
+            },
+        },
+    ])
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    listed, blocked = (item["result"] for item in responses[-2:])
+    assert listed["isError"] is False
+    assert listed["structuredContent"]["units"] == []
+    assert blocked["isError"] is True
+    assert blocked["structuredContent"]["error"]["code"] == "extension_disabled"

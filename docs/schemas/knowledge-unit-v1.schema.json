@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "unit_id",
+    "content_hash",
     "version",
     "status",
     "type",
@@ -30,6 +31,11 @@
     "unit_id": {
       "type": "string",
       "pattern": "^ku-[a-f0-9]{16}$"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{16}$",
+      "description": "The first 16 hex characters of sha256 over the claim's own fields; it is what unit_id is cut from."
     },
     "version": {
       "type": "integer",
