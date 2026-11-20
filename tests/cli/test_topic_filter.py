@@ -91,3 +91,10 @@ def test_scoring_prefers_a_full_token_over_a_partial_one():
     tokens = goal_tokens("界面设计")
 
     assert topic_score("界面设计系统", tokens) > topic_score("界面杂谈", tokens)
+
+
+def test_a_run_without_a_topic_scores_nothing():
+    result = select_by_topic(_candidates("UI 排版", "后端开发"), "")
+    assert result["mode"] == "no_topic"
+    assert len(result["kept"]) == 2
+    assert all("topic_score" not in item for item in result["kept"])

@@ -91,7 +91,7 @@ def capability_catalog() -> dict:
             },
             {
                 "tool": "envoy_discover",
-                "use": "Return a bounded, persisted snapshot of public Douyin profile candidates; metadata is a selection hint, not content evidence.",
+                "use": "Return a bounded, persisted snapshot of a public favourites feed, space or playlist, split by the topic the person stated; metadata is a selection hint, not content evidence.",
             },
             {
                 "tool": "envoy_collection_checkpoint",

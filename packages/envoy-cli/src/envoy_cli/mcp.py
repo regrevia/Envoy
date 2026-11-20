@@ -40,6 +40,7 @@ from .collections import (
     list_collections,
     update_collection,
 )
+from . import topic_filter
 from .tasks import TaskError, handle as handle_task
 from .local_source import (
     classify_local_source,
@@ -348,8 +349,11 @@ TOOLS = [
             "Discover a bounded page of public Douyin video and image-note "
             "candidates, of a Bilibili space, collection or series, or of a "
             "YouTube playlist. Returns titles and metadata as selection hints "
-            "only; does not download media, run ASR, extract frames, or decide "
-            "relevance."
+            "only; does not download media, run ASR, or extract frames. Pass "
+            "goal when the person named a topic: the page comes back split into "
+            "the candidates it asks about and the ones it does not, with the "
+            "matched words reported, so unrelated entries are never handed on "
+            "as if they were wanted."
         ),
         "inputSchema": {
             "type": "object",
@@ -360,6 +364,14 @@ TOOLS = [
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
                 "cursor": {"type": ["string", "null"]},
                 "max_work_seconds": {"type": "integer", "minimum": 1, "maximum": 600, "default": 60},
+                "goal": {
+                    "type": "string",
+                    "maxLength": 400,
+                    "description": (
+                        "The topic the person stated, in their own words. Empty "
+                        "means the whole page is wanted."
+                    ),
+                },
             },
         },
     },
@@ -2763,6 +2775,20 @@ def handle_message(
                 cursor=arguments.get("cursor"),
                 max_work_seconds=int(arguments.get("max_work_seconds") or 60),
             )}
+            goal = str(arguments.get("goal") or "").strip()
+            if goal:
+                selected = topic_filter.select_by_topic(
+                    list(payload.get("candidates") or []), goal
+                )
+                payload["candidates"] = selected["kept"]
+                payload["topic"] = {
+                    "goal": selected["goal"],
+                    "tokens": selected["tokens"],
+                    "mode": selected["mode"],
+                    "kept": len(selected["kept"]),
+                    "dropped": len(selected["dropped"]),
+                    "min_score": selected["min_score"],
+                }
         elif name == "envoy_collection_checkpoint":
             action = str(arguments.get("action") or "")
             collection_id = str(arguments.get("collection_id") or "")

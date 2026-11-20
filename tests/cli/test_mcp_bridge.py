@@ -2254,3 +2254,66 @@ def test_a_public_page_error_keeps_its_handoff_on_the_payload(monkeypatch):
     assert payload["result"] == "blocked"
     assert payload["needs_user_action"]["kind"] == "login_or_verification"
     assert response["result"]["isError"] is True
+
+
+def test_a_stated_goal_decides_which_favourites_are_handed_on(monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setattr(mcp, "discover_profile", lambda url, **kwargs: {
+        "profile_url": url,
+        "discovery_revision": "a" * 20,
+        "candidates": [
+            {"candidate_id": "v1", "title": "UI 动效的节奏", "position": 0},
+            {"candidate_id": "v2", "title": "做后端的第一年", "position": 1},
+        ],
+    })
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_discover",
+                "arguments": {
+                    "profile_url": "https://www.douyin.com/user/self?showTab=favorite_collection",
+                    "goal": "我要整理 ui 相关的那些视频",
+                },
+            },
+        },
+    ])
+
+    response = [json.loads(line) for line in capsys.readouterr().out.splitlines()][1]
+    payload = response["result"]["structuredContent"]
+    assert [item["candidate_id"] for item in payload["candidates"]] == ["v1"]
+    assert payload["topic"]["mode"] == "topic_filtered"
+    assert payload["topic"]["dropped"] == 1
+
+
+def test_without_a_goal_the_whole_page_is_handed_on(monkeypatch, capsys):
+    from envoy_cli import mcp
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setattr(mcp, "discover_profile", lambda url, **kwargs: {
+        "profile_url": url,
+        "discovery_revision": "a" * 20,
+        "candidates": [{"candidate_id": "v1", "title": "做后端的第一年", "position": 0}],
+    })
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "envoy_discover",
+                "arguments": {"profile_url": "https://space.bilibili.com/1"},
+            },
+        },
+    ])
+
+    response = [json.loads(line) for line in capsys.readouterr().out.splitlines()][1]
+    payload = response["result"]["structuredContent"]
+    assert [item["candidate_id"] for item in payload["candidates"]] == ["v1"]
+    assert "topic" not in payload

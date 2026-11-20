@@ -181,6 +181,10 @@ def select_by_topic(
 
     An empty goal keeps everything: "整理一下" with no topic is a request to
     process the whole collection, not to guess one.
+
+    The shape of `kept` depends on the mode: under "topic_filtered" every item
+    carries the `topic_score` that earned it, and under "no_topic" no item is
+    scored at all, so callers must not read a score there.
     """
 
     tokens = _prune_by_document_frequency(goal_tokens(goal), candidates)
