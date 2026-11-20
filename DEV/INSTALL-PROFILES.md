@@ -1,9 +1,12 @@
-# 安装档位：三档装什么，为什么默认（曾经是完整档，现为最小档）
+# 安装档位：三档装什么，为什么默认完整档
 
-> 2026-11-06 起默认档从 `full` 翻成 `minimal`：默认安装 ≈178 MB，Chromium（≈683 MB）
-> 与 Whisper 权重（≈140 MB）在首次需要时由报错里的命令取回。下面第一至五节保留
-> 0.1.26 时「默认完整档」的原始论证，作为当时的决策记录；当前行为与体积证据见
-> `docs/acceptance/minimal-install-2026-11-06.md`。
+> 2026-11-20 起默认档从 `minimal` 翻回 `full`：默认安装 ≈1.0 GB（runtime 178 +
+> Chromium 683 + Whisper `base` GGML 权重 141），装完全部能力离线可用，第一次读
+> 不再等下载。翻回前的 blocker 是 `envoy asr install` 会在 whisper.cpp 机器上仍拉
+> torch（≈700 MB 的引擎 Envoy 根本不用）；该路径已改为先探引擎，有 whisper.cpp
+> 就只下 GGML 权重，141 MB 是实测下载体积，因此「完整档 ≈1.0 GB」有明确上界。
+> `minimal`（≈178 MB）保留给 CI 与容器，2026-11-06 至 2026-11-20 期间它曾是默认。
+> 下面第一至五节是 0.1.26 时「默认完整档」的原始论证，仍然成立。
 
 - 基线：`main`（本文随 0.1.26 一起发）
 - 起因：用户要求「base 默认塞进去」+「可以提供多几个等级，用户可选简洁安装和完整安装，建议完整安装」
@@ -13,13 +16,15 @@
 
 | 档位 | 装什么 | 实测体积 | 首次使用时会不会下载 |
 | --- | --- | --- | --- |
-| `minimal` 简洁（当前默认） | runtime | 178 MB | 读网页/PDF/图片不会；视频页、转写会 |
+| `full` 完整（当前默认） | runtime + Chromium + Whisper `base` | 178 + 683 + 141 MB ≈ 1.0 GB | 不会 |
 | `standard` 标准 | runtime + Chromium | 178 + 683 MB | 视频页不会；转写会 |
-| `full` 完整（0.1.26 时的默认） | 上一档 + Whisper `base` | 上一档 + Whisper 依赖 + 权重 | 不会 |
+| `minimal` 简洁 | runtime | 178 MB | 读网页/PDF/图片不会；视频页、转写会 |
 
-0.1.26 时默认 `full`：当时的契约是「装完就是完整的」，一次装齐比事后补救便宜；`minimal`/`standard`
-留给 CI、容器、磁盘吃紧的用户。2026-11-06 改成默认 `minimal`：首次使用时的下载会明确点名命令，
-把 800+ MB 的选择权交回用户。
+0.1.26 时默认 `full`：契约是「装完就是完整的」，一次装齐比事后补救便宜。
+2026-11-06 改成默认 `minimal`：首次使用时的下载会明确点名命令，把 800+ MB 的
+选择权交回用户。2026-11-20 翻回 `full`：`envoy asr install` 现在只取 GGML 权重，
+完整档体积有了 1.0 GB 的明确上界，而「装完离线全能用」对首次体验更重要；`minimal`
+留给 CI、容器、磁盘吃紧的用户。
 
 ## 二、数字来源
 
@@ -30,9 +35,10 @@ du -sm ~/.local/share/uv/tools/envoy-cli/lib/python3.11/site-packages/playwright
 envoy asr status --json                                     # asr_models_cached / asr_model_available
 ```
 
-- Whisper `base` 权重（`base.pt`）约 139 MB，是本仓库之外的上游体积；`openai-whisper`
-  的依赖里 torch 占大头，**各平台差异大、本仓库没有实测数字**，所以文档只写「约 140 MB 权重 + 依赖」，
-  不给总安装体积的假精度。
+- Whisper `base` 的 GGML 权重（`ggml-base.bin`）147,951,465 字节 ≈141 MB，是本仓库之外的
+  上游体积；`full` 档走 whisper.cpp 时只下这一个文件，实测下载 44.9 s（`tiny`，74.1 MB，
+  774 KB/s→1.7 MB/s）。机器上没有 whisper.cpp 时落到 openai-whisper + torch，torch 各平台
+  差异大、本仓库没有实测数字——那种机器的 `full` 档不给总安装体积的假精度。
 - 本机 `envoy doctor --json` 实测：`browser ready, asr missing: run envoy asr install --model base`
    —— 说明「不装 ASR 时自检会点名给出修复命令」这条是真的。
 

@@ -18,17 +18,19 @@
 #   ENVOY_VERSION        runtime version to install (default: release manifest)
 #   ENVOY_HOME           private runtime root (default: ~/.local/share/envoy-dsh/runtime)
 #   ENVOY_RUNTIME_BIN    explicit runtime to reuse instead of installing one
-#   ENVOY_PROFILE       minimal | standard | full (default: minimal)
-#                       minimal (default): runtime only, ~180 MB; Chromium (~683 MB)
-#                        and the Whisper weights (~140 MB for `base`) are fetched
-#                        the first time a capability is needed, by the command the
-#                        capability error names
-#                       standard: runtime + Chromium, ~860 MB
-#                       full: runtime + Chromium + Whisper base, nothing downloads
-#                        on first use
+#   ENVOY_PROFILE       minimal | standard | full (default: full)
+#                       full (default): runtime (~180 MB) + Chromium (~683 MB) +
+#                        Whisper base weights (~141 MB), ~1.0 GB; every capability
+#                        works offline after install, nothing downloads on first use
+#                       standard: runtime + Chromium, ~860 MB; no speech recognition
+#                       minimal: runtime only, ~180 MB, for CI and containers;
+#                        Chromium and the weights are fetched the first time a
+#                        capability is needed, by the command its error names
 #   ENVOY_SETUP_BROWSER override the profile's browser step: 1 download, 0 skip
 #   ENVOY_SETUP_MEDIA   override the profile's speech-recognition step: 1 setup, 0 skip
-#   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base)
+#   ENVOY_ASR_MODEL     Whisper model the full profile prefetches (default: base);
+#                        a whisper.cpp machine downloads ggml-<model>.bin (~141 MB
+#                        for base), any other machine the openai-whisper stack
 #   ENVOY_DETECT_DESKTOP_APP 1 (default) also finds the DeepSeek Harness app bundle
 #   DSH_PROFILE          Harness profile for the DSH bundle (default: web)
 #   ENVOY_MANIFEST_URL   release manifest to read (default: raw.githubusercontent main)
@@ -50,7 +52,7 @@ RUNTIME_BIN="$RUNTIME_HOME/bin/envoy"
 RUNTIME_PIN="${ENVOY_RUNTIME_PIN:-$HOME/.envoy/runtime-path}"
 DSH_PROFILE="${DSH_PROFILE:-web}"
 DRY_RUN="${ENVOY_DRY_RUN:-0}"
-PROFILE="${ENVOY_PROFILE:-minimal}"
+PROFILE="${ENVOY_PROFILE:-full}"
 SETUP_BROWSER="${ENVOY_SETUP_BROWSER:-}"
 SETUP_MEDIA="${ENVOY_SETUP_MEDIA:-}"
 ASR_MODEL="${ENVOY_ASR_MODEL:-base}"
@@ -73,16 +75,16 @@ usage() {
   cat <<'EOF'
 usage: install.sh [--profile minimal|standard|full] [dsh|claude-code|codex|mcp|skill|all|path]
 
-  (no argument) every host detected on this machine, minimal profile
+  (no argument) every host detected on this machine, full profile
 
-  --profile minimal   runtime only, about 180 MB (the default); Chromium and the
-                      Whisper weights are fetched the first time you need them,
-                      and the error names the command that fetches them
+  --profile full      runtime + Chromium + Whisper base model, about 1.0 GB
+                      (the default); every capability this host exposes works
+                      offline after install, nothing downloads on first use
   --profile standard  runtime + Chromium, about 860 MB; reads rendered pages
                       and video pages, no speech recognition
-  --profile full      runtime + Chromium + Whisper base model; every capability
-                      this host exposes works offline after install, nothing
-                      downloads on first use
+  --profile minimal   runtime only, about 180 MB, for CI and containers;
+                      Chromium and the Whisper weights are fetched the first
+                      time you need them, and the error names the command
 
   ENVOY_PROFILE sets the same thing without the flag; ENVOY_SETUP_BROWSER and
   ENVOY_SETUP_MEDIA override one step of the chosen profile.
@@ -275,10 +277,11 @@ expose_runtime() {
 }
 
 # Three profiles, one axis: how much of the optional surface is provisioned up
-# front. The default is minimal: the runtime is ~180 MB on disk, and the two large
-# artifacts (Chromium ~683 MB, Whisper `base` ~140 MB) are fetched the first time
-# a capability is needed, where the error names the exact command. A machine that
-# must never download later passes --profile full instead.
+# front. The default is full: runtime (~180 MB), Chromium (~683 MB) and the
+# Whisper `base` weights (~141 MB) all arrive here, so the install ends with
+# every capability working offline and the first link never waits. minimal keeps
+# the runtime alone for CI and containers, where the two large artifacts are
+# fetched the first time a capability is needed and the error names the command.
 apply_profile() {
   case "$PROFILE" in
     minimal|standard|full) ;;
@@ -299,8 +302,8 @@ apply_profile() {
 }
 
 # Chromium takes a minute or two. `standard`/`full` fetch it here so the first
-# link never waits; the minimal default leaves it to `envoy browser setup`, and
-# the capability error names that command instead of reporting a failed page.
+# link never waits; `minimal` leaves it to `envoy browser setup`, and the
+# capability error names that command instead of reporting a failed page.
 provision_browser() {
   if [ "$SETUP_BROWSER" != "1" ]; then
     printf 'envoy install: skipped browser setup (profile %s); Chromium (~683 MB) is fetched by `envoy browser setup` the first time a page needs it\n' "$PROFILE"
@@ -312,13 +315,15 @@ provision_browser() {
 
 # Speech recognition is the only base capability whose weights are not in the
 # wheel. `full` prefetches them so the first audio or subtitle-less video never
-# waits; the minimal default leaves them to `envoy asr install --model base`.
+# waits; `minimal` leaves them to `envoy asr install --model base`. The command
+# behind this probes the engine first: whisper.cpp machines get the GGML file
+# (~141 MB), everything else the torch stack.
 provision_media() {
   if [ "$SETUP_MEDIA" != "1" ]; then
     printf 'envoy install: skipped speech recognition (profile %s); Whisper weights (~140 MB for `base`) are fetched by `envoy asr install --model %s` the first time audio needs them\n' "$PROFILE" "$ASR_MODEL"
     return 0
   fi
-  printf 'envoy install: speech recognition (Whisper %s, one-time; tens to hundreds of MB)\n' "$ASR_MODEL"
+  printf 'envoy install: speech recognition (Whisper %s, one-time; about 141 MB with whisper.cpp, more without it)\n' "$ASR_MODEL"
   run "$1" asr install --model "$ASR_MODEL" \
     || printf 'envoy install: speech recognition did not finish; run `envoy asr install --model %s` later\n' "$ASR_MODEL" >&2
 }

@@ -149,28 +149,35 @@ printf '%s' '{"protocol_version":"envoy.read/1","request_id":"install-check","so
 
 ## 三档安装 / Three profiles
 
-默认是最小档：装完只有 runtime。「首次使用时才下载」的两项（Chromium、Whisper
-权重）由缺失时报错里的命令取回；想装完就能离线用全部能力，选 `full`。
+默认是完整档：runtime、Chromium 与 Whisper `base` 权重一次装齐，≈1.0 GB，装完
+全部能力离线可用，第一次读不再等下载。CI 与容器选 `minimal`，装完只有 runtime，
+Chromium 与权重由缺失时报错里的命令取回。
 
 | 档位 | 装什么 | 大致体积 | 适合 |
 | --- | --- | --- | --- |
-| `minimal` 简洁（默认） | 只有 runtime：读普通网页、PDF、图片 | 178 MB | 磁盘吃紧的容器 / CI，愿意首次需要时再下载 |
-| `standard` 标准 | runtime + Chromium：再加必须渲染的页面、视频页 | 178 + 683 MB | 只用网页能力，不需要转写 |
-| `full` 完整（推荐给离线/计量网络） | 上一档 + Whisper `base`：字幕、语音、无字幕视频都能转写 | 上一档 + Whisper 依赖 + 权重约 140 MB | 装完不再下载，全部能力离线可用 |
+| `full` 完整（默认） | runtime + Chromium + Whisper `base`：普通网页与 PDF 之外，需要渲染的页面、视频页、字幕、语音、无字幕视频都能处理 | 178 + 683 + 141 MB ≈ 1.0 GB | 装完不再下载，全部能力离线可用 |
+| `standard` 标准 | runtime + Chromium：再加必须渲染的页面、视频页 | 178 + 683 MB ≈ 860 MB | 只用网页能力，不需要转写 |
+| `minimal` 简洁 | 只有 runtime：读普通网页、PDF、图片 | 178 MB | CI / 容器，愿意首次需要时再下载 |
+
+Whisper 那 141 MB 是 whisper.cpp 的 GGML `base` 权重（`ggml-base.bin`，实际
+147,951,465 字节）。机器上没有 whisper.cpp 时，`envoy asr install` 会落到
+openai-whisper + torch：功能相同，但要多一份 torch，体积以那一刻的下载为准。
 
 ```bash
-# 不写 --profile 就是最小档（178 MB）
+# 不写 --profile 就是完整档（≈1.0 GB）
 curl -fsSL https://raw.githubusercontent.com/regrevia/Envoy/main/integrations/install.sh | sh
-# 只装 runtime
+# CI / 容器：只装 runtime
 curl -fsSL .../install.sh | sh -s -- --profile minimal dsh
+# 不要转写
+curl -fsSL .../install.sh | sh -s -- --profile standard dsh
 # Windows
-powershell -ExecutionPolicy Bypass -File install.ps1 -Profile standard
+powershell -ExecutionPolicy Bypass -File install.ps1 -Profile minimal
 ```
 
 缺能力时的报错会带 `command`、`download`、`ask_first`：先说明这一档补上什么、
 需要下载多少，再问用户要不要装，不要静默下载几百 MB。
 
-`ENVOY_PROFILE=minimal` 与 `--profile` 等价；`ENVOY_SETUP_BROWSER=0`、
+`ENVOY_PROFILE=minimal` 与 `--profile` 等价（不设就是 `full`）；`ENVOY_SETUP_BROWSER=0`、
 `ENVOY_SETUP_MEDIA=0` 覆盖所选档位里的某一步（CI 里既想要完整档的插件接线、又不想
 下载时用）；`ENVOY_ASR_MODEL` 换 `full` 档预取的模型（默认 `base`）。
 
@@ -185,19 +192,22 @@ Playwright 每升一次就换个浏览器版本、从不删旧的，所以升级
 `envoy browser setup` 装完会自动清掉被替换掉的旧版本，`envoy browser prune` 可手动
 重跑（`--dry-run` 只报不删）。
 
-体积口径：runtime 与 Chromium 是在本机（macOS，`du`）实测；Whisper 依赖里 torch
-占大头，各平台不同，本仓库没有实测数字，只保证 `full` 档装完即可离线转写。
+体积口径：runtime 178 MB 与 Chromium 683 MB（Windows，mac 上 573 MB）实测；
+Whisper `base` 的 GGML 权重 141 MB 按官方发布体积（147,951,465 字节）计。机器上
+没有 whisper.cpp 时改走 torch，那一份体积各平台不同，本仓库没有实测数字。
 后装的补法：`minimal`/`standard` 想升级能力，重跑安装脚本并带 `--profile full`
 即可，两步都是幂等的。
 
 English: the installer takes `--profile minimal|standard|full` (`ENVOY_PROFILE` is
-the same knob) and defaults to `minimal` — the runtime alone, about 178 MB. The
-first page that needs rendering names `envoy browser setup` (a one-time ~683 MB
-Chromium download) and the first transcript names `envoy asr install --model base`
-(~140 MB of weights); `--profile full` prefetches both, so nothing downloads on
-first use. Runtime 178 MB was measured on macOS and Chromium 683 MB on the
-measured Windows host (see the size note above); the Whisper dependency set (torch
-is most of it) varies by platform and is not measured here.
+the same knob) and defaults to `full` — runtime, Chromium and the Whisper `base`
+weights, about 1.0 GB (178 + 683 + 141 MB), so every capability works offline and
+nothing downloads on first use. `minimal` is the runtime alone, about 178 MB, for
+CI and containers: the first page that needs rendering names `envoy browser setup`
+(a one-time ~683 MB Chromium download) and the first transcript names
+`envoy asr install --model base` (~141 MB of GGML weights on a whisper.cpp
+machine). Runtime 178 MB was measured on macOS and Chromium 683 MB on the measured
+Windows host (see the size note above); a machine without whisper.cpp resolves to
+the openai-whisper + torch stack, which is not measured here.
 
 ## 更新与卸载 / Update and remove
 

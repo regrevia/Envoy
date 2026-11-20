@@ -169,6 +169,9 @@ def test_stale_python_venv_is_rebuilt_and_health_uses_the_runtime(tmp_path):
         "ENVOY_HOME": str(runtime),
         "ENVOY_VERSION": "0.1.14",
         "ENVOY_DRY_RUN": "0",
+        # The stub runtime has no browser or Whisper, so this exercises the
+        # runtime install's own health check, not the profile's provisioning.
+        "ENVOY_PROFILE": "minimal",
     }
     result = subprocess.run(
         ["sh", str(SCRIPT), "mcp"], env=env, capture_output=True, text=True, timeout=120
@@ -261,9 +264,9 @@ def test_unreachable_checksum_list_is_announced(tmp_path):
 
 
 def test_profiles_choose_how_much_is_provisioned(tmp_path):
-    """One knob, three tiers. The minimal profile is the ~180 MB runtime alone;
-    Chromium and Whisper arrive on first use, so a box that must never download
-    later asks for the complete tier explicitly."""
+    """One knob, three tiers. full is every capability offline after install;
+    minimal is the ~180 MB runtime alone, where Chromium and Whisper arrive on
+    first use, which is what CI and containers want."""
     expected = {
         "minimal": (False, False),
         "standard": (True, False),
@@ -277,14 +280,28 @@ def test_profiles_choose_how_much_is_provisioned(tmp_path):
         assert ("speech recognition (Whisper" in result.stdout) is wants_media, profile
 
 
-def test_minimal_is_the_default_profile(tmp_path):
-    """No argument is the ~180 MB runtime: the two large downloads stay out and
-    the installer names the command that fetches each on first use."""
+def test_full_is_the_default_profile(tmp_path):
+    """No argument provisions everything: the install ends with every capability
+    working offline, so the first link never waits on a download."""
     _, env = _stubs(tmp_path)
     result = _run(["mcp"], env)
     assert result.returncode == 0, result.stderr
+    assert "browser runtime (one-time" in result.stdout
+    assert "speech recognition (Whisper base" in result.stdout
+    assert "skipped browser setup" not in result.stdout
+    assert "skipped speech recognition" not in result.stdout
+
+
+def test_minimal_is_the_ci_opt_out(tmp_path):
+    """CI and containers take the ~180 MB runtime and nothing else; the installer
+    still names the command that fetches each large artifact on first use."""
+    _, env = _stubs(tmp_path / "minimal")
+    result = _run(["--profile", "minimal", "mcp"], env)
+    assert result.returncode == 0, result.stderr
     assert "browser runtime (one-time" not in result.stdout
     assert "speech recognition (Whisper base" not in result.stdout
+    assert "skipped browser setup" in result.stdout
+    assert "skipped speech recognition" in result.stdout
     assert "envoy browser setup" in result.stdout
     assert "envoy asr install --model base" in result.stdout
 

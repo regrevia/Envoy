@@ -13,11 +13,12 @@
 #   ENVOY_HOME          private runtime root (default: %LOCALAPPDATA%\envoy-dsh\runtime)
 #   ENVOY_UV_HOME       where the self-fetched uv binary is cached (default: %LOCALAPPDATA%\envoy-dsh\tools\uv)
 #   ENVOY_RUNTIME_BIN   explicit runtime to reuse instead of installing one
-#   ENVOY_PROFILE       minimal | standard | full (default: minimal)
-#                       minimal (default): runtime only, about 180 MB; Chromium
-#                        (about 683 MB) and the Whisper weights (about 140 MB for
-#                        base) are fetched the first time a capability is needed,
-#                        by the command the capability error names
+#   ENVOY_PROFILE       minimal | standard | full (default: full)
+#                       full (default): runtime (about 180 MB) + Chromium (about
+#                        683 MB) + Whisper base weights (about 141 MB), about
+#                        1.0 GB; every capability works offline after install
+#                       standard: runtime + Chromium, about 860 MB
+#                       minimal: runtime only, about 180 MB, for CI and containers
 #                       standard: runtime + Chromium, about 860 MB
 #                       full: runtime + Chromium + Whisper base, nothing downloads
 #                        on first use
@@ -70,11 +71,11 @@ $Script:ShimDir = Join-Path $Script:EnvoyHome "bin"
 $Script:DshProfile = if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { "web" }
 $Script:DryRun = ($env:ENVOY_DRY_RUN -eq "1")
 # Three profiles, one axis: how much optional surface is provisioned up front.
-# The default is minimal: the runtime is about 180 MB on disk, and the two large
-# artifacts (Chromium about 683 MB, Whisper base about 140 MB) are fetched the
-# first time a capability is needed, where the error names the exact command. A
-# machine that must never download later passes -Profile full instead.
-$Script:Profile = if ($Profile) { $Profile.ToLowerInvariant() } elseif ($env:ENVOY_PROFILE) { $env:ENVOY_PROFILE.ToLowerInvariant() } else { "minimal" }
+# The default is full: runtime, Chromium and the Whisper base weights all arrive
+# here, so the install ends with every capability working offline and the first
+# link never waits. minimal keeps the runtime alone for CI and containers, where
+# the two large artifacts are fetched the first time a capability is needed.
+$Script:Profile = if ($Profile) { $Profile.ToLowerInvariant() } elseif ($env:ENVOY_PROFILE) { $env:ENVOY_PROFILE.ToLowerInvariant() } else { "full" }
 $Script:SetupBrowser = if ($env:ENVOY_SETUP_BROWSER) { $env:ENVOY_SETUP_BROWSER } elseif ($Script:Profile -eq "minimal") { "0" } else { "1" }
 $Script:SetupMedia = if ($env:ENVOY_SETUP_MEDIA) { $env:ENVOY_SETUP_MEDIA } elseif ($Script:Profile -eq "full") { "1" } else { "0" }
 $Script:AsrModel = if ($env:ENVOY_ASR_MODEL) { $env:ENVOY_ASR_MODEL } else { "base" }
@@ -415,8 +416,8 @@ function Install-Runtime {
 }
 
 # Chromium takes a minute or two. standard/full fetch it here so the first link
-# never waits; the minimal default leaves it to `envoy browser setup`, and the
-# capability error names that command instead of reporting a failed page.
+# never waits; minimal leaves it to `envoy browser setup`, and the capability
+# error names that command instead of reporting a failed page.
 function Provision-Browser {
     param([string]$Binary)
     if ($Script:SetupBrowser -ne "1") {
@@ -433,14 +434,16 @@ function Provision-Browser {
 
 # Speech recognition is the only base capability whose weights are not in the
 # wheel. full prefetches them so the first audio or subtitle-less video never
-# waits; the minimal default leaves them to `envoy asr install --model base`.
+# waits; minimal leaves them to `envoy asr install --model base`. The command
+# behind this probes the engine first: whisper.cpp machines get the GGML file
+# (about 141 MB), everything else the torch stack.
 function Provision-Media {
     param([string]$Binary)
     if ($Script:SetupMedia -ne "1") {
-        Write-Host "envoy install: skipped speech recognition (profile $($Script:Profile)); the Whisper weights (about 140 MB for base) are fetched by ``envoy asr install --model $($Script:AsrModel)`` the first time audio needs them"
+        Write-Host "envoy install: skipped speech recognition (profile $($Script:Profile)); the Whisper weights (about 141 MB for base) are fetched by ``envoy asr install --model $($Script:AsrModel)`` the first time audio needs them"
         return
     }
-    Write-Host "envoy install: speech recognition (Whisper $($Script:AsrModel), one-time; tens to hundreds of MB)"
+    Write-Host "envoy install: speech recognition (Whisper $($Script:AsrModel), one-time; about 141 MB with whisper.cpp, more without it)"
     try {
         Invoke-Step $Binary @("asr", "install", "--model", $Script:AsrModel)
     } catch {

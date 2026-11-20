@@ -1,5 +1,11 @@
 # 默认安装体积：≈178 MB（2026-11-06）
 
+> **已过时（2026-11-20）**：默认档已翻回 `full`（≈1.0 GB = runtime 178 + Chromium 683 +
+> Whisper `base` GGML 权重 141），`minimal` 降为 CI/容器的显式选项。翻回的前提是
+> `envoy asr install` 现在先探引擎、有 whisper.cpp 只下 GGML 权重，不再顺带拉 torch。
+> 本文其余内容记录当时 `minimal` 默认的行为与证据，第 4 节的报错文案（点名
+> `envoy browser setup` / `envoy asr install --model base`）在 `minimal` 下仍然成立。
+
 - 基线：`main` 工作区（HEAD `19edcbc`；版本仍为 `0.1.45`，本次不改版本、不改 CHANGELOG）
 - 结论：`pip install envoy-cli` / 安装脚本默认只装 runtime（≈178 MB）；Chromium（≈683 MB）
   与 Whisper 权重（≈140 MB）改为首次使用时按需获取，缺失时报错里直接给出获取命令。
