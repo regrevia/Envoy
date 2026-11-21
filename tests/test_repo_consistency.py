@@ -135,6 +135,37 @@ def _markdown_link_targets(text: str) -> list[str]:
     return re.findall(r"\]\(([^)\s]+)\)", "\n".join(prose))
 
 
+def _tracked_markdown() -> list[Path]:
+    """Markdown files git actually carries.
+
+    Discovery used to walk the working tree, so a local virtualenv, an ignored
+    ``tmp/`` scratch directory or an extracted package ran its own README
+    through this test — none of them ship, and none of them can be fixed by
+    editing the repository. Git's own index is the definition of "in the repo".
+    """
+
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--", "*.md"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return sorted(
+            path
+            for path in ROOT.rglob("*.md")
+            if ".git" not in path.parts
+            and "node_modules" not in path.parts
+            and "build" not in path.parts
+        )
+    return sorted(
+        ROOT / name
+        for name in listed.decode("utf-8").split("\0")
+        if name and (ROOT / name).is_file()
+    )
+
+
 def test_markdown_links_are_relative_and_land_inside_the_repository():
     """A link that points at one machine's disk is a dead link for everyone else.
 
@@ -143,13 +174,7 @@ def test_markdown_links_are_relative_and_land_inside_the_repository():
     which is why they survived; this keeps them relative and real.
     """
 
-    markdown = [
-        path
-        for path in ROOT.rglob("*.md")
-        if ".git" not in path.parts
-        and "node_modules" not in path.parts
-        and "build" not in path.parts
-    ]
+    markdown = _tracked_markdown()
     assert markdown
 
     absolute: list[str] = []

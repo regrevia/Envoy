@@ -131,7 +131,7 @@ def capability_catalog() -> dict:
             },
             {
                 "tool": "envoy_knowledge",
-                "use": "Keep a claim only if its cited evidence still resolves on this machine: the caller states the unit, Envoy stores it as a candidate, re-checks every locator on verify, and publishes nothing without a trigger, conditions, steps, limits and a test. No model is called.",
+                "use": "Keep a claim only if its cited evidence still resolves on this machine: the caller states the unit, Envoy stores it as a candidate, re-checks every locator on verify, and publishes nothing without a trigger, conditions, steps, limits and a test. A promoted unit compiles into a SKILL.md for Codex, Claude Code or DSH. No model is called.",
             },
         ],
         "outputs": [

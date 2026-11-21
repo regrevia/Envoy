@@ -102,7 +102,7 @@ not. The host agent already has the material in its context — it called
 let Envoy judge it:
 
 - `envoy_knowledge` (new MCP tool): `create` / `verify` / `promote` / `list` /
-  `relate` over the existing store.
+  `relate` over the existing store, plus `compile` once a unit is promoted.
 - The agent submits a body with `source_refs` it took from the material it just
   read. Envoy checks `material_id` and `evidence_id` against the pack index and
   the locator against the material's own. A claim whose refs do not resolve is
@@ -125,10 +125,13 @@ mechanical and the model cannot talk its way past it.
    and the store is exposed over MCP as `envoy_knowledge`. Acceptance held: an
    agent creates a unit from a material it read, a unit with a wrong locator is
    refused with `evidence_unresolved`, `list` answers with trigger and status.
-2. **Compiler.** `envoy knowledge compile <unit_id> --target codex|claude|dsh`
-   emitting `SKILL.md` plus a manifest from the stored body. Deterministic:
-   same unit, same bytes. Acceptance: golden-file test per target, and a compiled
-   skill that names the material revision it came from.
+2. **Compiler — shipped in 0.1.63.** `envoy knowledge compile <unit_id> --target
+   codex|claude|dsh` emits `SKILL.md` plus a manifest from the stored body, under
+   `skill_distillation` and only for a promoted unit. It is a local, deterministic
+   step: no model, no write-back to the unit, artifacts written beside the store
+   rather than into it. Acceptance held: three golden files (one per target) match
+   byte for byte, a second compile reports nothing written, and the manifest names
+   the material revision and unit revision the skill came from.
 3. **Composition.** `composed_of` and `alternative_to`; `envoy knowledge pack`
    over a set of units with dependency closure; routing by `trigger`.
 4. **Evaluation.** Three arms against the same tasks and budget. Report task
@@ -136,4 +139,6 @@ mechanical and the model cannot talk its way past it.
 5. **Evolution.** Diff a re-ingested material against the revision a unit was
    verified against; list affected units; re-verify only those.
 
-Phase 1 is the only one that needs to be right now, and it is small.
+Phases 1 and 2 are what exists today and they are small on purpose: a unit is
+only an execution rule when its evidence still resolves, and a skill is only a
+rendering of such a unit.

@@ -1,5 +1,69 @@
 # 更新日志 / Changelog
 
+## 0.1.63 - 2026-11-21
+
+### 中文
+
+- 新增 `envoy knowledge compile <unit_id> --target codex|claude|dsh`：把一个已 `promote`
+  的知识单元渲染成目标运行时能直接加载的 `SKILL.md`，外加一份 `manifest.json`，装到
+  `.codex/skills/`、`.claude/skills/` 或 `.dsh/skills/` 下。三个运行时的 frontmatter
+  实测只认 `name` 和 `description`，其余可选，所以只写这两个（DSH 多带一条 `metadata`
+  写死单元身份），一份文件在两边都能读。
+- 编译是一个本地确定性步骤，不调模型、不改单元、不写回 `content_hash`：同一个单元编两
+  次，字节完全相同，第二次 `written` 是空列表。产物写在单元库旁边的 `skills/`，不写进
+  `knowledge-units/`——派生物和事实分开。
+- 只有 `promoted` 的单元能编译。候选单元回 `needs_promotion`，已归档回 `unit_archived`，
+  验证后 locator 被改动过回 `evidence_unresolved` 并列出问题，验证指纹对不上回
+  `verification_stale`——一份会被当成指令读的文件，引用错了比没有更糟。
+- 每个 skill 都带 `## When to Use This Skill`（来自 `trigger`）、`## Inputs` 和
+  `## Evidence`：证据一节逐条写出 `material_id`、`evidence_id`、locator 和 material
+  的 revision，manifest 同时钉住单元 version、`content_hash` 与 `verified_against`。
+  换句话说，skill 说得出自己是从哪一版材料里长出来的。
+- 三个目标各一份 golden 文件测试（`tests/fixtures/skills/{codex,claude,dsh}/`），加上
+  同名同字节、只写变化、候选/归档/证据失效/未知目标/目录冲突各一条拒绝对照，共 18 条。
+- MCP 的 `envoy_knowledge` 加了 `compile`（`target` / `force`），开关是
+  `skill_distillation`，与 `knowledge_units` 互相独立：能读能写单元不等于能出 skill。
+- 修 `tests/test_repo_consistency.py` 的 Markdown 链接发现范围：原先在工作区里 `rglob`
+  所有 `.md`，于是本地虚拟环境、被忽略的 `tmp/`、解出来的包各自的 README 都被当成仓库
+  文档，链接一坏就挂在这台机器上（且只能靠删本地文件“修好”）。改成只查 `git ls-files`
+  收录的 Markdown——进不了仓库的文件，本来也不该由仓库的测试负责。
+
+### English
+
+- New `envoy knowledge compile <unit_id> --target codex|claude|dsh`: render a promoted
+  knowledge unit into a `SKILL.md` the target runtime loads directly, plus a
+  `manifest.json`, installed under `.codex/skills/`, `.claude/skills/` or
+  `.dsh/skills/`. Measured against all three runtimes, their skills need only `name`
+  and `description`; everything else is optional, so only those two are written (DSH
+  gets a `metadata` block pinning the unit identity), and one file reads in either place.
+- Compilation is a local, deterministic step: no model call, no unit mutation, no
+  `content_hash` write-back. Compile the same unit twice and the bytes are identical,
+  with the second run reporting an empty `written` list. Artifacts land in `skills/`
+  beside the unit store, never inside `knowledge-units/` — a derived thing and a fact
+  are stored separately.
+- Only a `promoted` unit compiles. A candidate answers `needs_promotion`, an archived
+  unit `unit_archived`, a locator edited after verification `evidence_unresolved` with
+  the problems listed, and a moved verification fingerprint `verification_stale` — a
+  file that will be read as an instruction is worse than missing when its citation is
+  broken.
+- Every skill carries `## When to Use This Skill` (from `trigger`), `## Inputs`, and
+  `## Evidence`: that section names each `material_id`, `evidence_id`, locator and the
+  material revision, while the manifest pins the unit version, `content_hash` and
+  `verified_against`. A skill can therefore say which revision of which material it
+  grew out of.
+- One golden file per target (`tests/fixtures/skills/{codex,claude,dsh}/`), plus
+  same-bytes-on-recompile, write-only-changes, and one refusal case each for candidate,
+  archived, stale evidence, unknown target and directory conflict: 18 tests.
+- MCP `envoy_knowledge` gained `compile` (`target` / `force`), gated on
+  `skill_distillation` independently of `knowledge_units`: being able to read and write
+  units does not mean being able to emit a skill.
+- Fixed the Markdown link discovery in `tests/test_repo_consistency.py`: it walked every
+  `.md` in the working tree, so a local virtualenv, an ignored `tmp/` scratch directory
+  and an extracted package each had their own README checked as repository docs, and a
+  broken link there failed on this machine only (fixable only by deleting local files).
+  Discovery now uses `git ls-files`: a file git does not carry is not the repository's
+  test's business.
+
 ## 0.1.62 - 2026-11-21
 
 ### 中文

@@ -1,0 +1,29 @@
+{
+  "evidence": [
+    {
+      "evidence_id": "ev-aa57eaa6c01ea5b0",
+      "locator": {
+        "block_id": "blk-0001",
+        "source_url": "https://example.com/a",
+        "type": "web"
+      },
+      "material_id": "mat-111111111111111111111111",
+      "source_revision": "rev-1"
+    }
+  ],
+  "files": [
+    "SKILL.md",
+    "manifest.json"
+  ],
+  "install_path": ".dsh/skills/cite-the-block-not-the-impression-216311ab/SKILL.md",
+  "schema": "envoy.skill/1",
+  "skill_name": "cite-the-block-not-the-impression-216311ab",
+  "target": "dsh",
+  "unit": {
+    "content_hash": "216311abf0741f14",
+    "schema_version": "envoy.knowledge-unit/3",
+    "unit_id": "ku-216311abf0741f14",
+    "verified_against": "b562ab6c637883a3b08da85ebbbafafdf88a7e6fdfb7f3bedc532d6d6711e782",
+    "version": 1
+  }
+}

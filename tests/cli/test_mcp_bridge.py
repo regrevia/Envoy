@@ -2510,3 +2510,48 @@ def test_mcp_knowledge_writes_need_the_extension_but_listing_does_not(
     assert listed["structuredContent"]["units"] == []
     assert blocked["isError"] is True
     assert blocked["structuredContent"]["error"]["code"] == "extension_disabled"
+
+
+def test_mcp_knowledge_compiles_a_promoted_unit_but_not_a_candidate(
+    tmp_path, monkeypatch, capsys
+):
+    from envoy_cli import mcp, storage
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units,skill_distillation")
+    storage.reset_root_cache()
+    material_id, block = _knowledge_material(tmp_path)
+
+    def call(call_id, arguments):
+        return {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": "envoy_knowledge", "arguments": arguments},
+        }
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "create", "body": _knowledge_body(material_id, block)}),
+    ])
+    created = [json.loads(line) for line in capsys.readouterr().out.splitlines()][-1]
+    unit = created["result"]["structuredContent"]["unit"]
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "compile", "unit_id": unit["unit_id"], "target": "codex"}),
+        call(3, {"action": "verify", "unit_id": unit["unit_id"]}),
+        call(4, {"action": "promote", "unit_id": unit["unit_id"]}),
+        call(5, {"action": "compile", "unit_id": unit["unit_id"], "target": "codex"}),
+    ])
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    refused, _, _, compiled = (item["result"] for item in responses[-4:])
+
+    # A candidate is never an execution rule, so it is never a skill either.
+    assert refused["isError"] is True
+    assert refused["structuredContent"]["error"]["code"] == "needs_promotion"
+    assert compiled["isError"] is False
+    skill = compiled["structuredContent"]["skill"]
+    assert skill["target"] == "codex"
+    assert skill["manifest"]["install_path"].startswith(".codex/skills/")

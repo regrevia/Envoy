@@ -42,6 +42,7 @@ from .collections import (
 )
 from . import extensions as extension_flags
 from . import knowledge_units
+from . import skill_compiler
 from . import topic_filter
 from .tasks import TaskError, handle as handle_task
 from .local_source import (
@@ -314,6 +315,7 @@ KNOWLEDGE_SCHEMA = {
                 "show",
                 "list",
                 "relate",
+                "compile",
             ],
         },
         "body": {
@@ -327,6 +329,18 @@ KNOWLEDGE_SCHEMA = {
         },
         "unit_id": {"type": ["string", "null"]},
         "status": {"type": ["string", "null"]},
+        "target": {
+            "type": ["string", "null"],
+            "enum": ["codex", "claude", "dsh", None],
+            "description": (
+                "compile only: which runtime reads the SKILL.md. The file is "
+                "written beside the units, never into them."
+            ),
+        },
+        "force": {
+            "type": ["boolean", "null"],
+            "description": "compile only: replace a skill directory that came from another unit.",
+        },
         "expected_version": {"type": ["integer", "null"], "minimum": 1},
         "relation": {
             "type": ["object", "null"],
@@ -2390,10 +2404,27 @@ def _knowledge_payload(arguments: dict) -> dict:
                 list(relation.get("evidence") or []),
                 expected_version=expected_version,
             )
+        elif action == "compile":
+            if not extension_flags.enabled(extension_flags.SKILL_DISTILLATION):
+                raise KnowledgeToolError(
+                    "extension_disabled",
+                    f"{extension_flags.SKILL_DISTILLATION} is off; enable it with: "
+                    f"envoy extensions enable {extension_flags.SKILL_DISTILLATION}",
+                )
+            compiled = skill_compiler.compile_unit(
+                str(arguments.get("unit_id") or ""),
+                target=str(arguments.get("target") or ""),
+                force=bool(arguments.get("force")),
+            )
+            return {
+                "tool": "envoy_knowledge",
+                "action": "compile",
+                "skill": compiled,
+            }
         else:
             raise KnowledgeToolError(
                 "invalid_request",
-                "choose: create|update|verify|promote|archive|show|list|relate",
+                "choose: create|update|verify|promote|archive|show|list|relate|compile",
             )
     except knowledge_units.UnitError as exc:
         raise KnowledgeToolError(exc.code, str(exc), details=exc.details) from exc
