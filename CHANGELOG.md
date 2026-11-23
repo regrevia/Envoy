@@ -18,6 +18,10 @@
   而是快速失败并回 `profile_busy`。
 - `envoy auth shot` 遇到失败态不再打印一份看似正常的回执：把 `reason` 写 stderr 并回
   退出码 2。
+- 风控页不再被当成「登录成功、可以继续」：`auth verify` / `auth resume` / `auth open`
+  复检时先认风控（`300012`、`IP存在风险`、`切换可靠网络`、`访问过于频繁` 这类），命中就
+  回 `reason: egress_blocked`、`headless_reusable: false`，不写会话记录、`envoy auth
+  verify` 也不回 0 —— 站点拒绝的是这条网络的出口，不是这一步登录，换个网络重试才有意义。
 
 ### English
 
@@ -40,6 +44,12 @@
   on the same directory.
 - `envoy auth shot` on a failed payload no longer prints a receipt that looks healthy:
   the `reason` goes to stderr and the exit code is 2.
+- A network risk-control page is no longer read as a cleared sign-in: the re-check behind
+  `auth verify` / `auth resume` / `auth open` tests for it first (`300012`,
+  `IP存在风险`, `切换可靠网络`, `访问过于频繁` and friends) and answers
+  `reason: egress_blocked` with `headless_reusable: false`, writes no session record and
+  exits non-zero. What the site refused was this network's egress, not that sign-in step,
+  so another network is the only thing that changes the answer.
 
 ## 0.1.63 - 2026-11-21
 

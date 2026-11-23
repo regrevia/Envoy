@@ -601,6 +601,8 @@ def _run_auth_open(args) -> int:
         ]
     if verification.get("headless_reusable"):
         lines.append("The link is readable again. Continue the paused task.")
+    elif verification.get("egress_blocked"):
+        lines.append("The site refused this network, not the sign-in. Use another network, then check again.")
     elif verification.get("page_access"):
         lines.append("The page loads, but the media is still missing. Try a different sign-in or another source.")
     else:
@@ -624,11 +626,10 @@ def _run_auth_verify(args) -> int:
         "verification": verification,
         "resume_token": updated.get("resume_token"),
     }
-    _emit(
-        payload,
-        bool(args.json),
-        [f"{verification.get('reason')} (status {updated.get('status')})"],
-    )
+    lines = [f"{verification.get('reason')} (status {updated.get('status')})"]
+    if verification.get("egress_blocked"):
+        lines.append("The site refused this network, not the sign-in. Use another network, then check again.")
+    _emit(payload, bool(args.json), lines)
     return 0 if verification.get("headless_reusable") else 1
 
 
@@ -649,14 +650,22 @@ def _run_auth_resume(args) -> int:
         "verification": verification,
         "resume_token": updated.get("resume_token"),
     }
-    _emit(
-        payload,
-        bool(args.json),
-        [
+    if verification.get("headless_reusable"):
+        lines = [
             f"{updated.get('host')}: {verification.get('reason')}",
             f"Resume the task for {updated.get('source_url')}.",
-        ],
-    )
+        ]
+    elif verification.get("egress_blocked"):
+        lines = [
+            f"{updated.get('host')}: the site refused this network, not the sign-in.",
+            "Use another network, then resume the same token.",
+        ]
+    else:
+        lines = [
+            f"{updated.get('host')}: {verification.get('reason')}",
+            f"Resume the task for {updated.get('source_url')}.",
+        ]
+    _emit(payload, bool(args.json), lines)
     return 0 if verification.get("headless_reusable") else 1
 
 
