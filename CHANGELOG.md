@@ -1,5 +1,46 @@
 # 更新日志 / Changelog
 
+## 未发布 / Unreleased
+
+### 中文
+
+- 登录墙现在两条路都通：扫码（`envoy_auth` 返回的截图里那张码）优先，扫码不方便时
+  同一个页面上的手机号 + 短信验证码也认。工具描述、`instruction`、CLI 回执和
+  `docs/product/qr-signin-handoff.md` 统一按这个顺序说，不再只写扫码。
+- 判「进去了」改用站点自己发的会话 cookie（只在页面看起来还是登录墙时才查）：登录成
+  功后常见的那个「还要再确认一步」的过渡页，文字仍然像拦截页，光看文字会继续干等。
+  cookie 比页面上的字更难伪造。
+- 拿到登录态后、关闭浏览器之前，把没有过期时间的会话 cookie 补一个期限写回 profile。
+  否则 cookie 随这次 context 一起消失，下一次无头读取看到的仍是匿名 profile。
+- `auth_session` 的 worker 打开浏览器时持有 profile 锁（与 `auth open` 同一条锁），
+  Chromium 启动参数补 `--no-proxy-server`，与其它读取腿一致：代理不能让登录页落在
+  之后读取落不到的地方。第二个登录请求不再开第二个 Chromium 去抢同一个 profile 目录，
+  而是快速失败并回 `profile_busy`。
+- `envoy auth shot` 遇到失败态不再打印一份看似正常的回执：把 `reason` 写 stderr 并回
+  退出码 2。
+
+### English
+
+- A login wall now has two ways through: scanning the code in the picture `envoy_auth`
+  returns (preferred), or the phone number and SMS code the same page offers when
+  scanning is not handy. Tool description, `instruction`, CLI receipt and
+  `docs/product/qr-signin-handoff.md` all state them in that order instead of naming
+  only the scan.
+- "Signed in" is decided by the site's own session cookie, checked only while the page
+  still looks like a gate: the post-login interstitial that still reads like a block no
+  longer holds the action waiting on page text. A cookie the site set is harder
+  evidence than its words.
+- Before closing the browser, a session cookie with no expiry gets a horizon written
+  back to the profile. Without it the cookie dies with that context and the next
+  headless read sees an anonymous profile again.
+- The `auth_session` worker holds the profile lock while the browser is open (the same
+  lock `auth open` takes) and passes `--no-proxy-server`, matching every other leg so a
+  proxy cannot land the sign-in page somewhere the later read will not. A second
+  sign-in request fails fast with `profile_busy` instead of starting a second Chromium
+  on the same directory.
+- `envoy auth shot` on a failed payload no longer prints a receipt that looks healthy:
+  the `reason` goes to stderr and the exit code is 2.
+
 ## 0.1.63 - 2026-11-21
 
 ### 中文

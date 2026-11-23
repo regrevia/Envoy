@@ -532,9 +532,16 @@ def _run_auth_shot(args) -> int:
     except (ValueError, RuntimeError) as exc:
         print(f"envoy auth shot: {exc}", file=sys.stderr)
         return 2
+    if str(payload.get("status") or "") == "failed":
+        print(
+            f"envoy auth shot: {payload.get('reason') or 'the sign-in page did not open'}",
+            file=sys.stderr,
+        )
+        return 2
     lines = [
         f"{payload.get('host') or payload.get('source_url')}: sign-in page saved as a picture",
         f"picture: {payload.get('screen_path') or '(waiting for the first frame)'}",
+        "the person scans the QR code in that picture, or uses the phone number + SMS code on that page",
         f"the browser stays in the background until {payload.get('timeout_seconds')}s pass",
         f"next: envoy auth verify --action-id {payload.get('action_id')} after the person signs in",
     ]

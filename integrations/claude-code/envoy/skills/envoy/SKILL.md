@@ -309,7 +309,8 @@ the request. Envoy does not read credentials from the user's personal browser.
 When a page requires login, do not ask the user to leave the chat. Call
 `envoy_auth` with `action: "open"` and the blocked `url`: it puts the site's
 sign-in page in a background browser and returns `screen_path`, a picture of that
-page (usually the QR code). Show the picture, ask the user to scan or confirm it,
+page (usually the QR code). Show the picture, ask the user to scan it, or to use
+the phone number and SMS code that same page offers when scanning is not handy,
 and keep working on the rest of the request. When they say they are done, call
 `envoy_auth` with `action: "status"`; a `signed_in` status means the same link
 now reads with `envoy_read`, and a still-`waiting` status means show the picture

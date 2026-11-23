@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
+import types
 from pathlib import Path
 
 import pytest
 
-from envoy_cli import auth_session, mcp
+from envoy_cli import auth_session, authflow, cli, mcp
 
 
 @pytest.fixture(autouse=True)
@@ -229,3 +232,176 @@ def test_auth_payload_open_stops_at_the_network_verdict(monkeypatch):
     assert "picture_markdown" not in payload
     assert "different network egress" in payload["instruction"]
     assert "scan" in payload["instruction"]
+
+def _fake_qr_browser(monkeypatch, tmp_path, *, cookies):
+    """A Playwright stand-in: one page that stays on the site's gate."""
+
+    added: list[list[dict]] = []
+    launched: list[dict] = []
+
+    class _Page:
+        url = "https://www.zhihu.com/signin"
+
+        def goto(self, *a, **k):
+            return None
+
+        def title(self):
+            return "知乎 - 登录"
+
+        def inner_text(self, *a, **k):
+            return "扫码登录 请使用知乎App扫描二维码"
+
+        def screenshot(self, path=None, **k):
+            Path(path).write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    class _Context:
+        pages = [_Page()]
+
+        def cookies(self):
+            return [dict(cookie) for cookie in cookies]
+
+        def add_cookies(self, keep):
+            added.append([dict(item) for item in keep])
+
+        def close(self):
+            return None
+
+    class _Chromium:
+        def launch_persistent_context(self, profile, **kwargs):
+            launched.append({"profile": profile, **kwargs})
+            return _Context()
+
+    class _Playwright:
+        chromium = _Chromium()
+
+    class _Manager:
+        def __enter__(self):
+            return _Playwright()
+
+        def __exit__(self, *exc):
+            return False
+
+    module = types.ModuleType("playwright.sync_api")
+    module.sync_playwright = lambda: _Manager()
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", module)
+    monkeypatch.setenv("ENVOY_BROWSER_PROFILE_DIR", str(tmp_path / "browser-profile"))
+    return launched, added
+
+
+def test_the_sign_in_browser_keeps_its_session_cookie_for_later_reads(tmp_path, monkeypatch):
+    # The QR path used to close its context and leave a cookie with no expiry
+    # behind, so the profile let the next headless read look anonymous.
+    launched, added = _fake_qr_browser(
+        monkeypatch,
+        tmp_path,
+        cookies=[
+            {
+                "name": "z_c0",
+                "value": "tok",
+                "domain": ".zhihu.com",
+                "path": "/",
+                "expires": -1,
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "Lax",
+            }
+        ],
+    )
+    work = auth_session._session_dir("auth-qr")
+    work.mkdir(parents=True)
+    assert auth_session._worker("https://www.zhihu.com/signin", "auth-qr", work, 30, False) == 0
+    assert launched[0]["args"] == [
+        "--disable-dev-shm-usage",
+        "--no-proxy-server",
+        "--new-window",
+    ]
+    assert added and added[0][0]["name"] == "z_c0"
+    assert added[0][0]["expires"] > time.time()
+    assert auth_session.read_state("auth-qr")["status"] == "signed_in"
+    assert authflow.profile_session_known("zhihu.com") is True
+
+
+def test_a_profile_held_by_another_browser_fails_without_claiming_a_sign_in(tmp_path, monkeypatch):
+    # Two Chromium instances on one profile corrupt each other, so the second
+    # sign-in must stop at the lease instead of launching anyway.
+    work = auth_session._session_dir("auth-busy")
+    work.mkdir(parents=True)
+    busied: list[str] = []
+
+    class _Busy:
+        def __enter__(self):
+            raise TimeoutError("Another Envoy browser is using this profile.")
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_lease(seconds):
+        busied.append("lease")
+        return _Busy()
+
+    monkeypatch.setattr(auth_session.auth_window, "_lease", fake_lease)
+    code = auth_session._worker("https://www.zhihu.com/signin", "auth-busy", work, 30, False)
+    assert busied == ["lease"]
+    assert code == 2
+    state = auth_session.read_state("auth-busy")
+    assert state["status"] == "failed"
+    assert state["reason"].startswith("profile_busy:")
+    assert auth_session.read_state("auth-busy").get("screenshot") in (None, "")
+
+
+def test_auth_shot_tells_the_person_both_ways_past_the_wall(monkeypatch, capsys):
+    args = types.SimpleNamespace(
+        url="https://zhuanlan.zhihu.com/p/1",
+        action_id=None,
+        timeout=300,
+        visible=False,
+        json=False,
+    )
+    monkeypatch.setattr(
+        auth_session,
+        "start",
+        lambda url, **kwargs: {
+            "action_id": "auth-abc",
+            "host": "zhuanlan.zhihu.com",
+            "source_url": url,
+            "status": "waiting",
+            "screen_path": "/tmp/sign-in.png",
+            "screen_mime": "image/png",
+            "timeout_seconds": 300,
+        },
+    )
+    assert cli._run_auth_shot(args) == 0
+    printed = capsys.readouterr().out
+    assert "QR code" in printed and "SMS code" in printed
+
+    monkeypatch.setattr(
+        auth_session,
+        "start",
+        lambda url, **kwargs: {
+            "action_id": "auth-abc",
+            "status": "failed",
+            "reason": "profile_busy: another Envoy browser is using this profile",
+            "timeout_seconds": 300,
+        },
+    )
+    assert cli._run_auth_shot(args) == 2
+    assert "profile_busy" in capsys.readouterr().err
+
+
+def test_auth_payload_open_offers_the_phone_form_as_well_as_the_code(monkeypatch):
+    monkeypatch.setattr(
+        auth_session,
+        "start",
+        lambda url, **kwargs: {
+            "action_id": "auth-abc",
+            "host": "www.xiaohongshu.com",
+            "source_url": url,
+            "status": "waiting",
+            "screen_path": "/tmp/sign-in.png",
+            "screen_mime": "image/png",
+        },
+    )
+    payload = mcp._auth_payload({"action": "open", "url": "https://www.xiaohongshu.com/explore/1"})
+    assert "SMS code" in payload["instruction"]
+    assert "picture_markdown" in payload["instruction"]

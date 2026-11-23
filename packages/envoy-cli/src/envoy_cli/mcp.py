@@ -713,9 +713,11 @@ TOOLS = [
             "own sign-in page in a background browser of its own and returns a "
             "screenshot of it (usually the QR code to scan); show that picture to "
             "the user with its absolute path, then call action 'status' after they "
-            "finish and re-read the original link. The browser stays open in the "
-            "background between calls, so a scan is enough and the user never has "
-            "to find a terminal. action 'cancel' closes it. The session stays in "
+            "finish and re-read the original link. The page in that picture also "
+            "accepts a phone number and an SMS code when scanning is not handy, so "
+            "either way the person never leaves the chat. The browser stays open "
+            "in the background between calls and the user never has to find a "
+            "terminal. action 'cancel' closes it. The session stays in "
             "Envoy's own profile and every later read of that site uses it, "
             "including video subtitle and stream requests, so one sign-in fixes "
             "the link. action 'import' with browser 'chrome'/'edge'/'safari' is "
@@ -2496,7 +2498,8 @@ def _auth_payload(arguments: dict) -> dict:
         payload["result"] = "ready" if result.get("screen_path") else "starting"
         payload["instruction"] = (
             "show the user the picture at screen_path (it is usually their sign-in "
-            "QR code) and ask them to scan or finish the verification; the browser "
+            "QR code) and ask them to scan it; if the page in the picture offers a "
+            "phone number and an SMS code instead, that works too. The browser "
             "keeps running in the background. Relay picture_markdown as a line of "
             "its own so the picture renders in the chat, and keep screen_path in "
             "case they open it directly. When they say they are done, call "
@@ -2534,7 +2537,8 @@ def _auth_payload(arguments: dict) -> dict:
             "second sign-in."
             if signed_in
             else "still waiting for the human; relay picture_markdown again if they "
-            "lost it, do not re-read the source yet"
+            "lost it and remind them they can scan the code or use the phone number "
+            "and SMS code on that page instead; do not re-read the source yet"
         )
     elif action == "cancel":
         if not action_id:

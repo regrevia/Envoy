@@ -2555,3 +2555,98 @@ def test_mcp_knowledge_compiles_a_promoted_unit_but_not_a_candidate(
     skill = compiled["structuredContent"]["skill"]
     assert skill["target"] == "codex"
     assert skill["manifest"]["install_path"].startswith(".codex/skills/")
+
+
+def test_mcp_knowledge_compile_refusals_cross_the_boundary(tmp_path, monkeypatch, capsys):
+    """Every reason a unit cannot become a skill is a code, not a paragraph."""
+
+    from envoy_cli import knowledge_units, mcp, storage
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units,skill_distillation")
+    storage.reset_root_cache()
+    material_id, block = _knowledge_material(tmp_path)
+
+    def call(call_id, arguments):
+        return {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": "envoy_knowledge", "arguments": arguments},
+        }
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "create", "body": _knowledge_body(material_id, block)}),
+        call(3, {"action": "verify", "unit_id": ""}),
+    ])
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    unit = responses[-2]["result"]["structuredContent"]["unit"]
+
+    directory = tmp_path / "elsewhere"
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "verify", "unit_id": unit["unit_id"]}),
+        call(3, {"action": "promote", "unit_id": unit["unit_id"]}),
+        call(4, {"action": "compile", "unit_id": unit["unit_id"], "target": "nope"}),
+        call(
+            5,
+            {
+                "action": "compile",
+                "unit_id": unit["unit_id"],
+                "target": "claude",
+                "out": str(directory),
+            },
+        ),
+        call(
+            6,
+            {
+                "action": "compile",
+                "unit_id": unit["unit_id"],
+                "target": "claude",
+                "out": str(directory),
+                "force": True,
+            },
+        ),
+    ])
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    _, _, bad_target, out_ignored, forced = (item["result"] for item in responses[-5:])
+
+    assert bad_target["isError"] is True
+    assert bad_target["structuredContent"]["error"]["code"] == "invalid_request"
+    # ``out`` is a CLI convenience; the tool has one place to write and it ignores
+    # a path the agent supplies, so the same call twice is a conflict, not a write.
+    assert out_ignored["isError"] is False
+    assert out_ignored["structuredContent"]["skill"]["output_dir"].startswith(
+        str(tmp_path / "skills")
+    )
+    assert forced["isError"] is False
+
+
+def test_mcp_knowledge_compile_stops_when_skill_distillation_is_off(
+    tmp_path, monkeypatch, capsys
+):
+    from envoy_cli import mcp, storage
+
+    monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
+    monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ENVOY_EXTENSIONS", "knowledge_units")
+    storage.reset_root_cache()
+
+    def call(call_id, arguments):
+        return {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": "envoy_knowledge", "arguments": arguments},
+        }
+
+    mcp.run_lines([
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        call(2, {"action": "compile", "unit_id": "ku-" + "0" * 16, "target": "dsh"}),
+    ])
+    refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()][-1]
+    assert refused["result"]["isError"] is True
+    assert refused["result"]["structuredContent"]["error"]["code"] == "extension_disabled"
+    assert "skill_distillation" in refused["result"]["structuredContent"]["error"]["message"]

@@ -8,8 +8,9 @@ was impossible to complete from the chat.
 
 `envoy_auth` closes that gap. It opens the sign-in page in a **background**
 browser session, saves a picture of it, and returns the picture's path to the
-model. The model shows the picture; the user scans it; the same link reads
-normally afterwards.
+model. The model shows the picture; the user scans it — or, when scanning is not
+handy, uses the phone number and SMS code the same page offers; the same link
+reads normally afterwards.
 
 ## Off by default
 
@@ -90,17 +91,19 @@ from a terminal, for scripts and hosts without MCP.
 3. `envoy_auth open` returns `screen_path` after the first frame (≤ 20 s), with
    `status: "waiting"`, `screen_mime: "image/png"`, and an `instruction` that
    names the next call. The image is what the model shows the user.
-4. The user scans or confirms. Nothing else is needed from them in the terminal.
-5. `envoy_auth` with `action: "status"` reports `signed_in` once the page body is
-   non-empty and free of login/captcha hints; the action moves to `verifying`
-   and the model re-reads the original link with `envoy_read`.
+4. The user scans the code, or enters the phone number and SMS code on that same
+   page. Nothing else is needed from them in the terminal.
+5. `envoy_auth` with `action: "status"` reports `signed_in` once the site's own
+   session cookie is present, or once the page body is non-empty and free of
+   login/captcha hints; the action moves to `verifying` and the model re-reads
+   the original link with `envoy_read`.
 6. `action: "cancel"` stops the worker (`os.killpg`) and marks the action
    `canceled`.
 
-The browser is not closed between steps, so one scan covers every paused link
-for the same site in the same batch. `start()` reuses a live worker instead of
-launching a second one, which also avoids two Chromium instances competing for
-the same profile.
+The browser is not closed between steps, so one sign-in — one scan, or one phone
+number and SMS code — covers every paused link for the same site in the same
+batch. `start()` reuses a live worker instead of launching a second one, which
+also avoids two Chromium instances competing for the same profile.
 
 ## Why the picture, not a command
 
@@ -134,5 +137,12 @@ the same profile.
   session fixed it.
 - The worker expires after `timeout_seconds` (30–900 s, default 300). After
   expiry `status` reports `not_running` and `open` starts a fresh worker.
-- One profile, one browser: concurrent reads that need the browser serialize on
-  the profile lock; sequential use, as the tools intend, is unaffected.
+- One profile, one browser: the worker holds the profile lock for as long as the
+  browser is open, and concurrent reads that need the browser serialize on it. A
+  second sign-in attempt while one is live fails fast with `profile_busy` instead
+  of starting a second Chromium on the same directory; sequential use, as the
+  tools intend, is unaffected.
+- A session cookie that the site sets without an expiry would die with the
+  worker's browser, leaving the profile anonymous for the next headless read.
+  Before closing, the worker re-writes those cookies with a horizon so the
+  sign-in survives the handoff.

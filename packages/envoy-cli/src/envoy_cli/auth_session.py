@@ -21,7 +21,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import authflow, process_control
+from . import authflow, auth_window, process_control
 
 _LOGIN_HINTS = (
     "登录",
@@ -318,12 +318,17 @@ def _worker(
     risk_blocked = False
     status = "waiting"
     final_url = ""
+    host = urllib.parse.urlsplit(url).hostname or ""
     try:
-        with sync_playwright() as playwright:
+        with sync_playwright() as playwright, auth_window._lease(15):
+            # One profile, one browser: the lease keeps a second sign-in from
+            # writing the same Chromium directory while this one is open. The
+            # direct egress matches every other leg, so a proxy cannot make the
+            # sign-in page load somewhere the later read will not.
             context = playwright.chromium.launch_persistent_context(
                 str(browser_profile_dir()),
                 headless=not visible,
-                args=["--disable-dev-shm-usage", "--new-window"],
+                args=["--disable-dev-shm-usage", "--no-proxy-server", "--new-window"],
             )
             try:
                 page = context.pages[0] if context.pages else context.new_page()
@@ -384,6 +389,12 @@ def _worker(
                     if _risk_controlled(_title, text, final_url):
                         risk_blocked = True
                         break
+                    # The session cookie the site itself sets is harder
+                    # evidence than any text on the page: it survives a
+                    # post-login interstitial that still reads like a gate.
+                    if challenged and auth_window._has_sign_in_cookie(context, host):
+                        signed_in = True
+                        break
                     if (
                         challenged
                         and len(text.strip()) > 20
@@ -395,11 +406,32 @@ def _worker(
                         challenged = True
                     time.sleep(1.5)
                 status = "failed" if risk_blocked else ("signed_in" if signed_in else "waiting")
+                if status == "signed_in":
+                    # A session cookie with no expiry dies with this context, so
+                    # the profile on disk would still look anonymous to the next
+                    # headless read. Give those cookies a horizon while the
+                    # context can still write them.
+                    try:
+                        auth_window._persist_session_cookies(context, host)
+                    except Exception:  # noqa: BLE001 - closing the browser still matters
+                        pass
             finally:
                 try:
                     context.close()
                 except Exception:
                     pass
+    except TimeoutError as exc:
+        # Another Envoy browser holds the profile. Failing fast is the honest
+        # answer: two Chromium instances on one profile corrupt each other.
+        _write_state(
+            action_id,
+            {
+                "status": "failed",
+                "reason": f"profile_busy: {exc}",
+                "updated_at": time.time(),
+            },
+        )
+        return 2
     except Exception as exc:  # pragma: no cover - depends on the local browser
         _write_state(
             action_id,
@@ -416,7 +448,7 @@ def _worker(
         # this marker makes the cheap legs (page fetch, yt-dlp jar) pay for a
         # profile read; a public link never touches the browser.
         try:
-            authflow.mark_profile_session(urllib.parse.urlsplit(url).hostname or "")
+            authflow.mark_profile_session(host)
         except Exception:  # noqa: BLE001 - the record must still be written
             pass
     _write_state(
