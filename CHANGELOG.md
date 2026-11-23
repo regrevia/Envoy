@@ -37,6 +37,19 @@
 - `envoy_knowledge` 多一个 `pack` action，闸门顺序与 `compile` 一致：`knowledge_units`
   关着时连读都拦，开着但 `skill_distillation` 关着时 `compile` / `pack` 一起回
   `extension_disabled`。
+- 公开接口这条读取腿（Stack Exchange、npm、Hacker News、Bilibili、豆瓣、掘金、少数派、
+  Vimeo）失败时不再只剩一个 `None`：每行后端把自己的失败交成一份带错误码的记录，回包
+  里写明是哪个后端、问的是哪个地址、这个码属于哪一类、换同一个接口重试有没有用，以及
+  下一步该做什么。**「这个地址不归任何后端管」仍然是 `None`**，所以原本按 `None` 判断
+  的调用方一行没改。
+- 已经 `BLOCKED` 的读取会把这份记录挂到它本来就要回的那条错误上（`details` 里的
+  `public_endpoint_failure`），只挂一次、只在第一条 `network_error` /
+  `source_unavailable` / `empty_content` 上，且只解释「为什么这个后端什么都没给」——
+  不改结果、不改错误码、不冒充「已经读到东西」。
+- `envoy doctor --json` 的能力目录新增 `failures` 表：13 个 `error.code` 全在里面，每行
+  给这个码的种类、能不能重试、是不是非得人动手、以及该做什么。这张表不在目录里另写一份，
+  它就是把 `diagnosis` 对每个码已有的回答公开出来，所以不会和真正回包时的说法走岔。
+- 目录的 `selection_policy` 多一条：读失败时按错误码分支，不解析 `message` 里的文字。
 
 ### English
 
@@ -82,6 +95,23 @@
 - `envoy_knowledge` gains a `pack` action behind the same gates as `compile`: with
   `knowledge_units` off even a read is refused, and with it on but `skill_distillation`
   off both `compile` and `pack` answer `extension_disabled`.
+- The public-endpoint read leg (Stack Exchange, npm, Hacker News, Bilibili, Douban,
+  Juejin, SSPAI, Vimeo) no longer collapses every failure into a bare `None`: a backend
+  hands back a record naming which backend was asked, which address, which error code,
+  what kind of failure that code is, whether asking the same endpoint again can help, and
+  what to do instead. **A URL no backend claims is still `None`**, so callers that branch
+  on `None` needed no change.
+- A read that is already `BLOCKED` now attaches that record to the error it was going to
+  return anyway (`details.public_endpoint_failure`): once, on the first `network_error` /
+  `source_unavailable` / `empty_content` only, and only to explain *why* the endpoint gave
+  nothing — it does not change the result, the code, or claim material was delivered.
+- `envoy doctor --json` publishes a `failures` table in the capability catalog: all 13
+  `error.code` values with the kind of failure each is, whether retrying helps, whether a
+  human must act, and the next step. The table is not written there by hand; it is what
+  `diagnosis` already answers per code, published so it cannot disagree with the response
+  a host actually receives.
+- The catalog's `selection_policy` gains one line: on a failed read, branch on the error
+  code instead of parsing `message` text.
 
 ## 0.1.63 - 2026-11-21
 
