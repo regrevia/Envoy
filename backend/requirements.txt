@@ -6,7 +6,7 @@ pymysql==1.1.1
 cryptography==50.0.2
 pydantic==2.14.3
 python-multipart==0.0.32
-redis==5.2.1
+redis==8.1.0
 celery==5.4.0
 httpx==0.28.1
 minio==7.2.15
