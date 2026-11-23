@@ -22,6 +22,21 @@
   复检时先认风控（`300012`、`IP存在风险`、`切换可靠网络`、`访问过于频繁` 这类），命中就
   回 `reason: egress_blocked`、`headless_reusable: false`，不写会话记录、`envoy auth
   verify` 也不回 0 —— 站点拒绝的是这条网络的出口，不是这一步登录，换个网络重试才有意义。
+- 新增 `envoy knowledge pack <unit_id>... --target codex|claude|dsh`：从一个或多个单元
+  出发，沿 `depends_on` / `composed_of` 做依赖闭包，把整组单元编成一个包——`PACK.md`
+  加 `manifest.json`，每个成员各自的 `SKILL.md` 装在包的目录下。同一个包编两次字节相同，
+  第二次 `written` 为空。
+- 关系类型补齐 `composed_of` 和 `alternative_to`，并把「会拉进包」和「只是退路」分开
+  写进代码常量：`REQUIRING_RELATIONS = ("depends_on", "composed_of")`（没它就装不成），
+  `FALLBACK_RELATIONS = ("alternative_to",)`（这条路被挡住时有别的走法）。`alternative_to`
+  永不进成员列表，只写进 `PACK.md` 的 `## If a Step Is Blocked`，否则每个包都会被备选
+  方案撑大。
+- 依赖闭包里任何一个成员编不出来，整个包就不落地：候选单元回 `needs_promotion` 并点名是
+  哪个单元，locator 失效回 `evidence_unresolved`，已经存在的 `PACK.md` 不会被半成品覆盖。
+  环路被切断并记进 manifest 的 `cycles`，不是死循环也不是悄悄删掉。
+- `envoy_knowledge` 多一个 `pack` action，闸门顺序与 `compile` 一致：`knowledge_units`
+  关着时连读都拦，开着但 `skill_distillation` 关着时 `compile` / `pack` 一起回
+  `extension_disabled`。
 
 ### English
 
@@ -50,6 +65,23 @@
   `reason: egress_blocked` with `headless_reusable: false`, writes no session record and
   exits non-zero. What the site refused was this network's egress, not that sign-in step,
   so another network is the only thing that changes the answer.
+- `envoy knowledge pack <unit_id>... --target codex|claude|dsh` walks `depends_on` and
+  `composed_of` from the units named and compiles the whole set into one pack: a `PACK.md`
+  and a `manifest.json`, with each member's `SKILL.md` installed under the pack directory.
+  Same units in, same bytes out; a second build writes nothing.
+- The relation vocabulary gains `composed_of` and `alternative_to`, and the difference that
+  matters is a pair of constants rather than a comment: `REQUIRING_RELATIONS` is
+  `("depends_on", "composed_of")` — the set cannot be applied without them — while
+  `FALLBACK_RELATIONS` is `("alternative_to",)`, a way round a blocked step. An alternative
+  never becomes a member; it only appears under `## If a Step Is Blocked`, because a
+  fallback that silently joins every pack inflates all of them.
+- If any member of the closure cannot be compiled, nothing lands: a candidate returns
+  `needs_promotion` naming the unit, a moved locator returns `evidence_unresolved`, and an
+  existing `PACK.md` is never left half-overwritten. Loops are cut and recorded in the
+  manifest's `cycles` rather than hanging or being quietly dropped.
+- `envoy_knowledge` gains a `pack` action behind the same gates as `compile`: with
+  `knowledge_units` off even a read is refused, and with it on but `skill_distillation`
+  off both `compile` and `pack` answer `extension_disabled`.
 
 ## 0.1.63 - 2026-11-21
 
