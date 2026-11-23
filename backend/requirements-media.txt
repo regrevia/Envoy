@@ -2,4 +2,4 @@
 # The heavy ASR/OCR stack lives in requirements-media-extras.txt behind WITH_MEDIA.
 setuptools<85
 yt-dlp>=2026.10.26
-playwright>=1.52.0
+playwright>=1.65.2
