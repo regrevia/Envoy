@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from urllib.parse import urlparse
 
-from .browser import _page_state, browser_profile_dir
+from .browser import _EGRESS_CONTROL_MARKERS, _page_state, browser_profile_dir
 from .media import interprocess_file_lock
 
 # A site only sets these once a person is actually signed in; their presence in
@@ -205,6 +205,28 @@ def open_login_window(
     }
 
 
+# One list, not two: `browser._EGRESS_CONTROL_MARKERS` already names the wording a
+# site uses when it refuses this network rather than this reader, and a copy here
+# would drift until the re-check and the read disagreed about the same page.
+# Xiaohongshu answers the QR create API with error_code 300012 and lands on
+# /website-login/error with "当前网络存在风险" instead of a QR panel; no scan can
+# clear that, so neither the session worker nor a headless re-check may report a
+# sign-in from such a page.
+_RISK_CONTROL_HINTS = _EGRESS_CONTROL_MARKERS
+
+
+def _risk_controlled(title: str, text: str, url: str = "") -> bool:
+    """True when the site refused the network, not the sign-in step.
+
+    A readable page is not proof that the wall came down: the site can serve the
+    risk-control page with 200 and real text, and the fetch can also happen to
+    land past it while the sign-in path itself is still refused.
+    """
+
+    haystack = f"{title}\n{text}\n{url}".lower()
+    return any(hint in haystack for hint in _RISK_CONTROL_HINTS)
+
+
 def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
     """Headless check of the original link; never signs anything in."""
 
@@ -222,6 +244,7 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
     status = None
     title = ""
     text = ""
+    final_url = str(source_url or "")
     media_urls: list[str] = []
     with _lease(15):
         with sync_playwright() as playwright:
@@ -239,6 +262,10 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
                     status = getattr(response, "status", None)
                 except Exception:
                     status = None
+                try:
+                    final_url = page.url or final_url
+                except Exception:
+                    pass
                 try:
                     title, text, _challenge = _page_state(page)
                 except Exception:
@@ -260,13 +287,20 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
 
     lowered = f"{title}\n{text}".lower()
     looks_like_login = any(hint in lowered for hint in _LOGIN_HINTS)
+    risk_blocked = _risk_controlled(title, text, final_url)
     page_access = bool(status and 200 <= int(status) < 400) and bool(
         text.strip() or media_urls
     )
     if looks_like_login and not media_urls:
         page_access = False
+    if risk_blocked:
+        # A 200 carrying the risk-control page is not access to the material;
+        # reporting it as access would let the caller resume a task it cannot do.
+        page_access = False
     media_access = bool(media_urls)
-    headless_reusable = bool(page_access and not (looks_like_login and not media_access))
+    headless_reusable = bool(
+        page_access and not (looks_like_login and not media_access) and not risk_blocked
+    )
     if headless_reusable:
         reason = "readable"
         try:
@@ -275,6 +309,10 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
             authflow.mark_profile_session(urlparse(str(source_url or "")).hostname or "")
         except Exception:  # noqa: BLE001 - the verification result still stands
             pass
+    elif risk_blocked:
+        # Not a login failure and not a success: the egress was refused, so the
+        # same call from another network is the only thing that can change it.
+        reason = "egress_blocked"
     elif looks_like_login:
         reason = "still_behind_login"
     elif not page_access:
@@ -288,4 +326,5 @@ def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:
         "reason": reason,
         "http_status": status,
         "media_urls": len(media_urls),
+        "egress_blocked": risk_blocked,
     }

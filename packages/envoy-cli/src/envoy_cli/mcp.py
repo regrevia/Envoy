@@ -41,6 +41,7 @@ from .collections import (
     update_collection,
 )
 from . import extensions as extension_flags
+from . import knowledge_pack
 from . import knowledge_units
 from . import skill_compiler
 from . import topic_filter
@@ -316,6 +317,7 @@ KNOWLEDGE_SCHEMA = {
                 "list",
                 "relate",
                 "compile",
+                "pack",
             ],
         },
         "body": {
@@ -328,18 +330,25 @@ KNOWLEDGE_SCHEMA = {
             ),
         },
         "unit_id": {"type": ["string", "null"]},
+        "unit_ids": {
+            "type": ["array", "null"],
+            "items": {"type": "string"},
+            "description": "pack only: the units the pack starts from; dependencies close over them.",
+        },
         "status": {"type": ["string", "null"]},
         "target": {
             "type": ["string", "null"],
             "enum": ["codex", "claude", "dsh", None],
             "description": (
-                "compile only: which runtime reads the SKILL.md. The file is "
-                "written beside the units, never into them."
+                "compile and pack: which runtime reads the SKILL.md. The files "
+                "are written beside the units, never into them."
             ),
         },
         "force": {
             "type": ["boolean", "null"],
-            "description": "compile only: replace a skill directory that came from another unit.",
+            "description": (
+                "compile and pack: replace an output directory that came from other units."
+            ),
         },
         "expected_version": {"type": ["integer", "null"], "minimum": 1},
         "relation": {
@@ -652,9 +661,13 @@ TOOLS = [
             "this machine still holds, refusing the ones that do not "
             "(evidence_unresolved). promote additionally requires a trigger, "
             "conditions, steps, limitations and a test: a unit that is true but "
-            "cannot be found or bounded stays verified. No model is called by "
-            "this tool. Requires the 'full' MCP toolset and the knowledge_units "
-            "extension."
+            "cannot be found or bounded stays verified. compile renders one unit "
+            "as a SKILL.md for codex, claude or dsh; pack walks depends_on and "
+            "composed_of from the units you name and renders the whole set as one "
+            "pack, with alternatives noted as fallbacks rather than members. No "
+            "model is called by this tool. Requires the 'full' MCP toolset and the "
+            "knowledge_units extension; compile and pack also need "
+            "skill_distillation."
         ),
         "inputSchema": KNOWLEDGE_SCHEMA,
     },
@@ -2423,10 +2436,27 @@ def _knowledge_payload(arguments: dict) -> dict:
                 "action": "compile",
                 "skill": compiled,
             }
+        elif action == "pack":
+            if not extension_flags.enabled(extension_flags.SKILL_DISTILLATION):
+                raise KnowledgeToolError(
+                    "extension_disabled",
+                    f"{extension_flags.SKILL_DISTILLATION} is off; enable it with: "
+                    f"envoy extensions enable {extension_flags.SKILL_DISTILLATION}",
+                )
+            packed = knowledge_pack.build_pack(
+                [str(item) for item in (arguments.get("unit_ids") or [])],
+                target=str(arguments.get("target") or ""),
+                force=bool(arguments.get("force")),
+            )
+            return {
+                "tool": "envoy_knowledge",
+                "action": "pack",
+                "pack": packed,
+            }
         else:
             raise KnowledgeToolError(
                 "invalid_request",
-                "choose: create|update|verify|promote|archive|show|list|relate|compile",
+                "choose: create|update|verify|promote|archive|show|list|relate|compile|pack",
             )
     except knowledge_units.UnitError as exc:
         raise KnowledgeToolError(exc.code, str(exc), details=exc.details) from exc
