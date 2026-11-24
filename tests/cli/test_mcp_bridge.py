@@ -2560,7 +2560,7 @@ def test_mcp_knowledge_compiles_a_promoted_unit_but_not_a_candidate(
 def test_mcp_knowledge_compile_refusals_cross_the_boundary(tmp_path, monkeypatch, capsys):
     """Every reason a unit cannot become a skill is a code, not a paragraph."""
 
-    from envoy_cli import knowledge_units, mcp, storage
+    from envoy_cli import mcp, storage
 
     monkeypatch.setenv(mcp.TOOLSET_ENV, "full")
     monkeypatch.setenv("ENVOY_LOCAL_DATA_DIR", str(tmp_path))
