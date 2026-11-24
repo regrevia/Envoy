@@ -25,6 +25,7 @@ from . import batch as batch_queue
 from . import extensions as extension_flags
 from . import install_state
 from .features import ConfigError
+from . import knowledge_eval
 from . import knowledge_pack
 from . import knowledge_units
 from . import skill_compiler
@@ -253,6 +254,13 @@ def _parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="replace a pack in --out that came from other units"
     )
     knowledge_pack.add_argument("--json", action="store_true")
+    knowledge_eval = knowledge_commands.add_parser(
+        "eval", help="score a recorded three-arm run across four evidence branches"
+    )
+    knowledge_eval.add_argument(
+        "--run", required=True, help="the run record: one JSON object, or JSONL with the run on line one"
+    )
+    knowledge_eval.add_argument("--json", action="store_true")
 
     discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
@@ -1086,6 +1094,13 @@ def _run_knowledge(args) -> int:
                 written = ", ".join(built["written"]) or "already up to date"
                 print(f"{built['pack_name']} -> {built['output_dir']} ({written})")
             return 0
+        elif command == "eval":
+            report = knowledge_eval.evaluate_file(Path(args.run))
+            if args.json:
+                _print_json(report)
+            else:
+                print(knowledge_eval.render_report(report), end="")
+            return 0
         elif command == "relate":
             unit = knowledge_units.relate_units(
                 args.unit_id,
@@ -1100,7 +1115,7 @@ def _run_knowledge(args) -> int:
                 json.dumps(
                     {
                         "error": "invalid_request",
-                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|reopen|update|rollback|relate|compile|pack",
+                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|reopen|update|rollback|relate|compile|pack|eval",
                     },
                     ensure_ascii=False,
                 )
