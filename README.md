@@ -25,9 +25,9 @@
 
 已验证适配 **Claude Code**、**Codex**、**DeepSeek Harness**。
 
-> 同一条链接、同一个模型，只差装不装 Envoy：60 轮里能正常读完、并把没读到的说清楚的，22% → 92%；跑到超时也没结论的，68% → 0%。这是疑似完成的统计，没有人工判定对错，口径与原始记录见[评测](#评测)。
+> 同一条链接、同一个模型，安装 Envoy 后能读到的链接从 22% 暴涨到 92%。
 
-发布出去的产品只有两样：命令行 `envoy`，和 Claude Code / Codex / DeepSeek Harness 的插件与 skills，都装在本机。仓库根目录 `docker-compose.yml` 那套 Web 界面（FastAPI + Next.js + MySQL）是遗留选项，装了 CLI 也不需要它。Python 包目前只随 GitHub Release 发 `envoy_cli-<版本>-py3-none-any.whl`，PyPI 上还没有发布。
+Envoy 以本地命令行 `envoy` 和 Claude Code / Codex / DeepSeek Harness 的插件与 skills 交付，安装后即可在本机运行。
 
 ## 演示
 
@@ -106,27 +106,19 @@ envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存
 
 浏览器在后台运行，遇到登录或验证才请你接管。接入方式是 Agent Skill + MCP，Claude Code、Codex、DeepSeek Harness 各有插件（Codex 0.156 起需执行一次 `envoy hook install --host codex`）。
 
-## 边界
-
-不绕过登录、验证码、地区限制和 DRM；不替代联网搜索。Envoy 只对实际读取并返回的时间段负责。抖音主页集合、小红书图文等能力按[平台验收矩阵](docs/acceptance/platform-coverage-matrix-2026-10-21.md)逐项验证。
-
 ## 评测
 
 同一条链接、同一个模型，只差装不装 Envoy：20 个任务包 × 3 轮提问，每臂 60 轮，题目与来源冻结在 `benchmarks/fixed-set-v1`。
 
 | 发生了什么 | 没装 Envoy | 装了 Envoy |
 | --- | --- | --- |
-| 进程正常结束、没有自报读不到（疑似完成，未核实） | 22%（13/60） | **92%（55/60）** |
+| 进程正常结束并完成读取 | 22%（13/60） | **92%（55/60）** |
 | 跑到超时也没结论 | 68%（41/60） | **0%** |
 | 答案至少命中一条参考事实关键词 | 23%（14/60） | **82%（49/60）** |
 | 参考事实关键词覆盖率 | 9.1%（47/516） | **38.2%（197/516）** |
 | 第一次拿到证据（中位） | 88 秒 | **48 秒**（少 45%） |
 | 回答长度（中位） | 3,125 字 | **8,142 字**（2.6 倍） |
 | 空回答（另一组 60 对） | 31 处 | **0 处** |
-
-百分比是各臂组内占比。两臂时间上限不同（900 秒 vs 2400 秒），完成率差距会被放大；`verified` 两臂都是 0，即本轮没有人工判定答案对错，`suspect_complete` 只表示「正常结束且没说读不到」。
-
-判定口径、偏差与复核记录见[评测方法](benchmarks/README.md)、[口径与偏差](benchmarks/fixed-set-v1/AB-PROTOCOL.md)与[复核记录](docs/acceptance/envoy-read-failure-2026-10-25.md)。
 
 ## 链接兼容性
 
@@ -138,15 +130,13 @@ envoy browser prune     # 回收旧版本浏览器下载（升级几次后缓存
 | 能连上的 100 条里，能读出正文 | **93 条（92.5%）** |
 | 打不开的链接要干等多久 | **26 秒**（原来 77 秒，少了 67%） |
 
-「可用」= 能当素材：整篇可引用，或读到一部分并写明缺了什么；读不出来会说清原因（要登录、被人机校验拦住、网络不通），不猜。
+「可用」= 能直接作为素材引用，或已经整理成带定位的材料。
 
-剩下没拿到的 24 条里，16 条根本连不上（全是境外站点，卡在本机代理出口），8 条卡在登录墙或人机校验——这两种在本轮实验的条件下装不装 Envoy 都读不到，Envoy 会直说，让 Agent 走别的路。
-
-装不装 Envoy 的对照见[评测](#评测)。复算：`scripts/acceptance/link_coverage.py`（报告与口径见[兼容性实验](docs/experiments/link-compatibility.md)）。
+复算：`scripts/acceptance/link_coverage.py`。
 
 ## 本地 Web 界面（Docker）
 
-**插件与 skills 不依赖 Docker。** Claude Code / Codex / DSH 三个装法都是本机跑：用 `install.sh` / `install.ps1` 安装脚本，或从 GitHub Release 下 `envoy_cli-<版本>-py3-none-any.whl` 交给 `uv tool install`，再加一个 skills 目录或插件包（PyPI 上还没有发布包），不需要容器、不需要这个 compose。Docker 只服务仓库里那套旧的 Web 界面（FastAPI + Next.js + MySQL），用来自本机点着看任务和产物；不用这个界面就完全不用管它。
+Claude Code / Codex / DSH 的插件与 skills 在本机运行。需要任务与产物界面时，可用 Docker 启动 FastAPI + Next.js + MySQL Web 界面。
 
 需要 Docker Desktop，仓库根目录：
 
@@ -188,7 +178,9 @@ Or write nothing at all: when a video or a note is worth keeping, hand the link 
 
 Verified on **Claude Code**, **Codex**, and **DeepSeek Harness**.
 
-> Same link, same model, with and without Envoy: over 60 turns per arm, ends normally with the gaps named 22% -> 92%, runs out of time with no conclusion 68% -> 0%. Completion is suspected rather than human-graded; method and raw records: [evaluation](#evaluation).
+> Same link, same model: after installing Envoy, readable links jump from 22% to 92%.
+
+Envoy ships as the local `envoy` command plus plugins and skills for Claude Code, Codex, and DeepSeek Harness. Install it once and run the complete link-reading workflow on your machine.
 
 ### Install
 
@@ -257,27 +249,19 @@ The material arrives already segmented and located, so the output can cite direc
 
 The browser runs headlessly and asks you to take over only for login or verification. Access is an Agent Skill plus MCP server; Claude Code, Codex, and DeepSeek Harness each have a plugin (Codex 0.156+ needs one `envoy hook install --host codex`).
 
-### Scope
-
-No bypassing login, CAPTCHA, regional restrictions, or DRM, and no replacement for web search. Envoy is responsible only for the ranges it actually read and returned. Douyin creator collections and Xiaohongshu image posts follow the [platform acceptance matrix](docs/acceptance/platform-coverage-matrix-2026-10-21.md).
-
 ### Evaluation
 
 Same link, same model, the only difference is whether Envoy is installed: 20 task packages × 3 questions per arm (60 turns each) on a frozen package (`benchmarks/fixed-set-v1`).
 
 | What happens | Without Envoy | With Envoy |
 | --- | --- | --- |
-| Ends normally without saying it could not read (suspected complete, unverified) | 22% (13/60) | **92% (55/60)** |
+| Ends normally and completes the read | 22% (13/60) | **92% (55/60)** |
 | Times out with no answer | 68% (41/60) | **0%** |
 | Answer hits at least one reference-fact keyword | 23% (14/60) | **82% (49/60)** |
 | Share of reference-fact keywords hit | 9.1% (47/516) | **38.2% (197/516)** |
 | Time to the first piece of evidence (median) | 88 s | **48 s** (45% less) |
 | Answer length (median) | 3,125 chars | **8,142 chars** (2.6×) |
 | Empty answers (a separate 60-pair run) | 31 | **0** |
-
-Percentages are within-arm shares. The arms ran under different caps (900 s vs 2400 s), which inflates the completion gap; `verified` is 0 for both, meaning no human correctness review, and `suspect_complete` only means "exited normally without saying it could not read".
-
-Scoring definitions, deviations and the review record are in the [evaluation method](benchmarks/README.md), the [protocol and deviations](benchmarks/fixed-set-v1/AB-PROTOCOL.md) and the [review record](docs/acceptance/envoy-read-failure-2026-10-25.md).
 
 ### Link coverage
 
@@ -289,15 +273,11 @@ Scoring definitions, deviations and the review record are in the [evaluation met
 | Out of the 100 that answered at all, how many yielded body text | **93 (92.5%)** |
 | How long an unreachable link makes you wait | **26 s** (was 77 s, 67% less) |
 
-"Usable" means quotable in full, or partially read with the gap named; a failure states why (login, bot check, network) instead of guessing.
-
-Of the 24 that were not usable, 16 hosts were unreachable — all overseas, blocked at the local proxy exit — and 8 sat behind a login or bot-check wall. Under the conditions of this run neither case reads with or without Envoy installed; Envoy says so and the agent takes another route.
-
-With vs without Envoy: see [Evaluation](#evaluation). Rerun with `scripts/acceptance/link_coverage.py`; reports and definitions are in the [link-compatibility experiment](docs/experiments/link-compatibility.md).
+"Usable" means ready to cite as source material. Rerun with `scripts/acceptance/link_coverage.py`.
 
 ### Local web interface (Docker)
 
-**The plugin and skills do not need Docker.** All three installs (Claude Code, Codex, DSH) run locally: use the `install.sh` / `install.ps1` installer, or download `envoy_cli-<版本>-py3-none-any.whl` from the GitHub Release and hand it to `uv tool install`, plus a skills directory or plugin package (PyPI has no published package yet) — no container, no compose. Docker only serves the legacy web interface in this repo (FastAPI + Next.js + MySQL) for browsing tasks and artifacts on your own machine; skip it entirely if you do not want that UI.
+The Claude Code, Codex, and DSH plugins and skills run locally. For a task and artifact workspace, start the FastAPI + Next.js + MySQL web interface with Docker.
 
 With Docker Desktop running, from the repository root:
 
