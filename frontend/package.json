@@ -18,7 +18,7 @@
     "@types/node": "26.6.6",
     "@types/react": "19.3.0",
     "autoprefixer": "10.7.0",
-    "eslint": "10.14.0",
+    "eslint": "10.15.0",
     "eslint-config-next": "16.4.6",
     "postcss": "8.5.33",
     "tailwindcss": "4.3.5",
