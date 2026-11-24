@@ -2,20 +2,41 @@
 
 Each backend answers from a documented, unauthenticated public endpoint, so a
 page that JavaScript renders client-side still yields real text. Only the exact
-URL shapes listed in ``_ROUTES`` are handled; anything else returns ``None``.
-Every failure (transport, status, malformed JSON, missing fields) also returns
-``None``: a fallback may never raise into the reader.
+URL shapes in ``SITE_BACKENDS`` are handled; anything else returns ``None``.
+
+The routes are one ordered table, not a chain of ``if`` checks: a URL is walked
+down ``SITE_BACKENDS`` in order and the first pattern that matches decides the
+backend. The pattern list is shared with the read-support verdict a host sees
+before it reads, so the row that advertises a site and the row that answers it
+cannot drift apart; adding a site is one row, no control flow.
+
+A route that matches but fails does not collapse into the same ``None`` as a
+route that never matched. :func:`public_api_fallback_outcome` reports it as a
+:class:`FallbackFailure` carrying one code from the reader's closed
+``ErrorCode`` set, whether retrying the same endpoint can help, and the
+behavioural next step that already describes that code in
+:mod:`envoy_cli.diagnosis`. :func:`public_api_fallback` stays the ``dict |
+None`` seam the reader calls, and still never raises: the distinction exists so
+the reason can be recorded, not so callers must handle an exception.
 """
 
 from __future__ import annotations
 
+import contextvars
 import re
 import time
+from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Any
-from urllib.parse import quote
+from typing import Any, Callable
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
+
+from envoy_core.schemas.read_v1 import ErrorCode
+
+from . import diagnosis
+
+SCHEMA = "envoy.public-api-fallback/1"
 
 _MAX_TEXT = 60_000
 _HTTP_TIMEOUT = 8.0
@@ -65,6 +86,88 @@ SITE_BACKENDS: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("sspai", _SSPAI, "https://sspai.com/post/117529"),
     ("vimeo", _VIMEO, "https://vimeo.com/76979871"),
 )
+
+# A retry re-runs the same endpoint. Only a transport failure is worth that: an
+# HTTP status or a body the endpoint did not fill is an answer, and asking again
+# spends the read's remaining budget to hear the same answer.
+_RETRYABLE_CODES = frozenset({ErrorCode.NETWORK_ERROR})
+
+
+def _display_url(url: str) -> str:
+    """The URL as it may be shown: credentials never leave this module."""
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    if not parts.username and not parts.password:
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
+@dataclass(frozen=True)
+class FallbackFailure:
+    """Why a route that matched produced no text.
+
+    ``code`` is one of the reader's closed ``ErrorCode`` members, so a failure
+    here is expressible anywhere else in the read path and needs no vocabulary
+    of its own. The next step is not written here either: :func:`as_dict` asks
+    :mod:`envoy_cli.diagnosis` what that code means, which is the same sentence
+    the host agent already receives when the read itself fails that way.
+
+    ``final`` means re-asking this endpoint cannot help. It is the whole point
+    of not returning a bare ``None``: an agent that cannot tell "no route here"
+    from "the route answered nothing" retries the wrong thing.
+    """
+
+    backend: str
+    code: ErrorCode
+    url: str
+    detail: str = ""
+
+    @property
+    def retryable(self) -> bool:
+        return self.code in _RETRYABLE_CODES
+
+    @property
+    def final(self) -> bool:
+        return not self.retryable
+
+    def as_dict(self) -> dict[str, object]:
+        """One envelope: the closed code, the diagnosis kind, the next step."""
+
+        found = diagnosis.diagnose(self.code, message=self.detail)
+        return {
+            "schema_version": SCHEMA,
+            "backend": self.backend,
+            "url": _display_url(self.url),
+            "code": self.code.value,
+            "failure_kind": found.kind,
+            "retryable": self.retryable,
+            "final": self.final,
+            "summary": found.summary,
+            "next_step": found.next_step,
+        }
+
+
+def _classify(exc: BaseException) -> tuple[ErrorCode, str]:
+    """The reader's own code for a way an endpoint can fail."""
+
+    if isinstance(exc, httpx.TimeoutException):
+        return ErrorCode.NETWORK_ERROR, "the endpoint did not answer in time"
+    if isinstance(exc, _CONNECTION_ERRORS):
+        return ErrorCode.NETWORK_ERROR, "the connection to the endpoint did not carry the request"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code if exc.response is not None else 0
+        return ErrorCode.SOURCE_UNAVAILABLE, f"the endpoint answered {status}"
+    if isinstance(exc, httpx.HTTPError):
+        return ErrorCode.SOURCE_UNAVAILABLE, "the endpoint broke the exchange"
+    if isinstance(exc, ValueError):
+        return ErrorCode.SOURCE_UNAVAILABLE, "the endpoint did not answer with readable JSON"
+    return ErrorCode.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"[:200]
 
 
 class _PlainText(HTMLParser):
@@ -498,59 +601,138 @@ def _vimeo(client: httpx.Client, video_id: str, budget: float) -> dict | None:
     )
 
 
-def public_api_fallback(
-    url: str, *, goal: str = "", max_work_seconds: int = 20
+# One row per backend: the order is the order the walk tries them, and the
+# pattern is the only thing that decides which row a URL belongs to. Handlers
+# take the match, extract the id they need, and answer with a result dict or
+# ``None`` when the endpoint answered without the fields a read needs.
+_Backend = Callable[[httpx.Client, "re.Match[str]", float], "dict | None"]
+
+
+def _bilibili_route(
+    client: httpx.Client, match: "re.Match[str]", budget: float
 ) -> dict | None:
-    """Answer a supported page from its public API, or return None."""
+    """A video URL answers directly; a b23.tv short link is resolved first."""
+
+    bvid = match.group("bvid")
+    if bvid:
+        return _bilibili(client, bvid, budget)
+    resolved = _resolve_b23(client, match.group("short"), budget)
+    if not resolved:
+        return None
+    redirected = _BILIBILI.match(resolved)
+    if not redirected or not redirected.group("bvid"):
+        return None
+    return _bilibili(client, redirected.group("bvid"), budget)
+
+
+_BACKENDS: dict[str, _Backend] = {
+    "stackexchange": lambda c, m, b: _stackexchange(c, m.group("id"), b),
+    "npm": lambda c, m, b: _npm(c, m.group("name"), b),
+    "hackernews": lambda c, m, b: _hacker_news(c, m.group("id"), b),
+    "bilibili": _bilibili_route,
+    "douban": lambda c, m, b: _douban(c, m.group("id"), b),
+    "juejin": lambda c, m, b: _juejin(c, m.group("id"), b),
+    "sspai": lambda c, m, b: _sspai(c, m.group("id"), b),
+    "vimeo": lambda c, m, b: _vimeo(c, m.group("id"), b),
+}
+
+# The last typed failure this task produced, so a caller that went through the
+# plain ``dict | None`` seam can still say why nothing came back. Scoped to the
+# task: two reads in different tasks never see each other's failure.
+_LAST_FAILURE: contextvars.ContextVar[FallbackFailure | None] = contextvars.ContextVar(
+    "envoy_public_api_failure", default=None
+)
+
+
+def route_backend(url: str) -> str | None:
+    """The backend a URL belongs to, without touching the network."""
 
     if not isinstance(url, str) or not url.strip():
         return None
-    url = url.strip()
-    stackoverflow = _STACKOVERFLOW.match(url)
-    npm = _NPM.match(url)
-    hacker_news = _HACKER_NEWS.match(url)
-    bilibili = _BILIBILI.match(url)
-    douban = _DOUBAN.match(url)
-    juejin = _JUEJIN.match(url)
-    sspai = _SSPAI.match(url)
-    vimeo = _VIMEO.match(url)
-    if not (
-        stackoverflow
-        or npm
-        or hacker_news
-        or bilibili
-        or douban
-        or juejin
-        or sspai
-        or vimeo
-    ):
+    probe = url.strip()
+    for backend, pattern, _sample in SITE_BACKENDS:
+        if pattern.match(probe):
+            return backend
+    return None
+
+
+def failure_for(url: str) -> FallbackFailure | None:
+    """The failure recorded for this URL, if this task called the seam for it.
+
+    A short link is resolved before the endpoint is asked, so the recorded URL
+    can be the expanded one while the caller holds the original. Both route to
+    the same backend, and that is the weaker match allowed here.
+    """
+
+    failure = _LAST_FAILURE.get()
+    if failure is None:
         return None
+    asked = str(url or "").strip()
+    if _display_url(failure.url) == _display_url(asked):
+        return failure
+    if route_backend(asked) == failure.backend:
+        return failure
+    return None
+
+
+def public_api_fallback_outcome(
+    url: str, *, goal: str = "", max_work_seconds: int = 20
+) -> dict | FallbackFailure | None:
+    """Answer a supported page from its public API.
+
+    Three outcomes, and they are not interchangeable: a result dict, a
+    :class:`FallbackFailure` naming why the endpoint produced nothing, and
+    ``None`` for a URL no backend claims. A caller that only wants text takes
+    :func:`public_api_fallback` instead.
+    """
+
+    if not isinstance(url, str) or not url.strip():
+        _LAST_FAILURE.set(None)
+        return None
+    url = url.strip()
+    route = None
+    for backend, pattern, _sample in SITE_BACKENDS:
+        match = pattern.match(url)
+        if match is not None:
+            route = (backend, match)
+            break
+    if route is None:
+        _LAST_FAILURE.set(None)
+        return None
+    backend, match = route
     deadline = time.monotonic() + max(1, int(max_work_seconds))
     try:
         with _client() as client:
-            budget = deadline - time.monotonic()
-            if stackoverflow:
-                return _stackexchange(client, stackoverflow.group("id"), budget)
-            if npm:
-                return _npm(client, npm.group("name"), budget)
-            if hacker_news:
-                return _hacker_news(client, hacker_news.group("id"), budget)
-            if douban:
-                return _douban(client, douban.group("id"), budget)
-            if juejin:
-                return _juejin(client, juejin.group("id"), budget)
-            if sspai:
-                return _sspai(client, sspai.group("id"), budget)
-            if vimeo:
-                return _vimeo(client, vimeo.group("id"), budget)
-            if bilibili.group("bvid"):
-                return _bilibili(client, bilibili.group("bvid"), budget)
-            resolved = _resolve_b23(client, bilibili.group("short"), budget)
-            if not resolved:
-                return None
-            match = _BILIBILI.match(resolved)
-            if not match or not match.group("bvid"):
-                return None
-            return _bilibili(client, match.group("bvid"), deadline - time.monotonic())
-    except Exception:  # noqa: BLE001 — a fallback must never raise into the reader
-        return None
+            result = _BACKENDS[backend](client, match, deadline - time.monotonic())
+    except Exception as exc:  # noqa: BLE001 — a fallback must never raise into the reader
+        code, detail = _classify(exc)
+        failure = FallbackFailure(backend=backend, code=code, url=url, detail=detail)
+        _LAST_FAILURE.set(failure)
+        return failure
+    if isinstance(result, dict):
+        _LAST_FAILURE.set(None)
+        return result
+    failure = FallbackFailure(
+        backend=backend,
+        code=ErrorCode.EMPTY_CONTENT,
+        url=url,
+        detail=f"the {backend} endpoint answered without the fields a read needs",
+    )
+    _LAST_FAILURE.set(failure)
+    return failure
+
+
+def public_api_fallback(
+    url: str, *, goal: str = "", max_work_seconds: int = 20
+) -> dict | None:
+    """Answer a supported page from its public API, or return None.
+
+    The reader's seam: text or nothing, never an exception. Why nothing came
+    back is kept in :func:`failure_for`, so recording the reason does not ask
+    every caller to branch on it.
+    """
+
+    outcome = public_api_fallback_outcome(
+        url, goal=goal, max_work_seconds=max_work_seconds
+    )
+    return outcome if isinstance(outcome, dict) else None

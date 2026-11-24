@@ -11059,7 +11059,53 @@ def _read_public_page_with_retries(request: ReadRequest) -> ReadResponse:
                 ),
             }
         return rescued.model_copy(update={"coverage": coverage})
-    return response
+    return _annotate_public_endpoint_failure(request, response)
+
+
+def _annotate_public_endpoint_failure(
+    request: ReadRequest, response: ReadResponse
+) -> ReadResponse:
+    """Record why the public endpoint gave nothing, if it was asked at all.
+
+    The fallback seam answers ``None`` both for "no backend claims this URL" and
+    for "the backend claimed it and answered nothing". The reader needs the
+    first to keep walking; the host needs to tell the second from a page that
+    simply has no text. The seam keeps the reason for the task, and this puts it
+    on the error the read already returns instead of inventing a new one.
+    """
+
+    if response.result != ReadResult.BLOCKED or not response.errors:
+        return response
+    try:
+        from .fallbacks import failure_for
+    except Exception:  # noqa: BLE001 - an annotation must never fail a read
+        return response
+    try:
+        failure = failure_for(str(request.source.url))
+    except Exception:  # noqa: BLE001 - an annotation must never fail a read
+        return response
+    if failure is None:
+        return response
+    report = failure.as_dict()
+    errors = []
+    annotated = False
+    for error in response.errors:
+        if annotated or error.code not in {
+            ErrorCode.NETWORK_ERROR,
+            ErrorCode.SOURCE_UNAVAILABLE,
+            ErrorCode.EMPTY_CONTENT,
+        }:
+            errors.append(error)
+            continue
+        errors.append(
+            error.model_copy(
+                update={"details": {**(error.details or {}), "public_endpoint_failure": report}}
+            )
+        )
+        annotated = True
+    if not annotated:
+        return response
+    return response.model_copy(update={"errors": errors})
 
 
 def _attach_github_material(
