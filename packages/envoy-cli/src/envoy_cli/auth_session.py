@@ -60,22 +60,6 @@ _BLOCKED_HINTS = (
     "forbidden",
     "too many requests",
 )
-# A risk-control page refuses the sign-in entry itself (Xiaohongshu answers the
-# QR create API with error_code 300012 and lands on /website-login/error). No
-# scan can clear it: the verdict is about the network egress, so the state must
-# say so instead of reporting a sign-in that never happened.
-_RISK_CONTROL_HINTS = (
-    "安全限制",
-    "ip存在风险",
-    "ip 存在风险",
-    "切换可靠网络",
-    "访问过于频繁",
-    "请求过于频繁",
-    "too many requests",
-    "300012",
-)
-# A page that still sits on the site's sign-in path has not moved past the gate
-# even when its wording carries no hint word (a password form, a QR panel).
 _LOGIN_PATH_HINTS = ("/login", "/signin", "/sign-in", "/passport", "/auth/", "/sso")
 
 
@@ -103,13 +87,9 @@ def _looks_blocked(text: str) -> bool:
     return any(hint in lowered for hint in _BLOCKED_HINTS)
 
 
-def _risk_controlled(title: str, text: str, url: str = "") -> bool:
-    """True when the site refused the network itself, not the sign-in step."""
-
-    haystack = f"{title}\n{text}\n{url}".lower()
-    if not haystack.strip():
-        return False
-    return any(hint in haystack for hint in _RISK_CONTROL_HINTS)
+# One implementation for both walls: the worker and the re-check must agree on
+# what a risk-control page is, or one of them will call the other's block a pass.
+_risk_controlled = auth_window._risk_controlled
 
 
 def _login_url(url: str) -> str:

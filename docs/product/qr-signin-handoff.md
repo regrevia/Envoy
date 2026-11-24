@@ -125,6 +125,14 @@ also avoids two Chromium instances competing for the same profile.
   (`~/.envoy/auth/actions/<action-id>/sign-in.png`, 1280×720).
 - `envoy auth shot --url <link> --json` returns the same payload outside a host,
   for terminals and scripts.
+- Live run against xiaohongshu on a network it refused: the QR create API
+  answered `error_code=300012` and the page landed on
+  `/website-login/error?...error_msg=当前网络存在风险，请切换可靠网络后重试`, while
+  `https://www.xiaohongshu.com/explore` fetched fine headless (status 200, title
+  `小红书 - 你的生活兴趣社区`, feed text present). A readable public page and a
+  refused sign-in page coexist on one host, so the check judges the URL it
+  actually fetched, and the refusal is reported as `egress_blocked` rather than
+  as a cleared wall.
 - Unit tests: `tests/cli/test_auth_session.py` (page-choice rules, stale-worker
   state, first-frame handoff, tool payloads, toolset membership).
 
@@ -133,8 +141,12 @@ also avoids two Chromium instances competing for the same profile.
 - The fallback map covers zhihu, xiaohongshu, weibo, douyin; other sites are
   photographed as they are, which is still the page a sign-in needs.
 - A site that blocks by IP rather than by identity can stay blocked after
-  sign-in; the read then still reports the challenge instead of pretending the
-  session fixed it.
+  sign-in. The re-check tests for that case before it decides anything: the
+  worker and `verify_source` share one risk-control predicate
+  (`auth_window._risk_controlled`), and a hit reports `reason: egress_blocked`
+  with `headless_reusable: false`, writes no session record and exits non-zero
+  from `envoy auth verify`. Scanning a code never clears a network block, so the
+  receipt names the network instead of asking for another sign-in.
 - The worker expires after `timeout_seconds` (30–900 s, default 300). After
   expiry `status` reports `not_running` and `open` starts a fresh worker.
 - One profile, one browser: the worker holds the profile lock for as long as the

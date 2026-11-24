@@ -25,6 +25,7 @@ from . import batch as batch_queue
 from . import extensions as extension_flags
 from . import install_state
 from .features import ConfigError
+from . import knowledge_pack
 from . import knowledge_units
 from . import skill_compiler
 from . import cangjie_adapter
@@ -242,6 +243,16 @@ def _parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="replace a skill in --out that came from another unit"
     )
     knowledge_compile.add_argument("--json", action="store_true")
+    knowledge_pack = knowledge_commands.add_parser(
+        "pack", help="build one pack over a set of units, dependencies included"
+    )
+    knowledge_pack.add_argument("unit_ids", nargs="+", help="the units the pack starts from")
+    knowledge_pack.add_argument("--target", required=True, choices=list(skill_compiler.TARGETS))
+    knowledge_pack.add_argument("--out", help="write the pack here instead of the skills directory")
+    knowledge_pack.add_argument(
+        "--force", action="store_true", help="replace a pack in --out that came from other units"
+    )
+    knowledge_pack.add_argument("--json", action="store_true")
 
     discover = subparsers.add_parser("discover", help="discover bounded public Douyin, Bilibili or YouTube playlist candidates")
     discover.add_argument("--url", required=True)
@@ -601,6 +612,8 @@ def _run_auth_open(args) -> int:
         ]
     if verification.get("headless_reusable"):
         lines.append("The link is readable again. Continue the paused task.")
+    elif verification.get("egress_blocked"):
+        lines.append("The site refused this network, not the sign-in. Use another network, then check again.")
     elif verification.get("page_access"):
         lines.append("The page loads, but the media is still missing. Try a different sign-in or another source.")
     else:
@@ -624,11 +637,10 @@ def _run_auth_verify(args) -> int:
         "verification": verification,
         "resume_token": updated.get("resume_token"),
     }
-    _emit(
-        payload,
-        bool(args.json),
-        [f"{verification.get('reason')} (status {updated.get('status')})"],
-    )
+    lines = [f"{verification.get('reason')} (status {updated.get('status')})"]
+    if verification.get("egress_blocked"):
+        lines.append("The site refused this network, not the sign-in. Use another network, then check again.")
+    _emit(payload, bool(args.json), lines)
     return 0 if verification.get("headless_reusable") else 1
 
 
@@ -649,14 +661,22 @@ def _run_auth_resume(args) -> int:
         "verification": verification,
         "resume_token": updated.get("resume_token"),
     }
-    _emit(
-        payload,
-        bool(args.json),
-        [
+    if verification.get("headless_reusable"):
+        lines = [
             f"{updated.get('host')}: {verification.get('reason')}",
             f"Resume the task for {updated.get('source_url')}.",
-        ],
-    )
+        ]
+    elif verification.get("egress_blocked"):
+        lines = [
+            f"{updated.get('host')}: the site refused this network, not the sign-in.",
+            "Use another network, then resume the same token.",
+        ]
+    else:
+        lines = [
+            f"{updated.get('host')}: {verification.get('reason')}",
+            f"Resume the task for {updated.get('source_url')}.",
+        ]
+    _emit(payload, bool(args.json), lines)
     return 0 if verification.get("headless_reusable") else 1
 
 
@@ -1008,7 +1028,7 @@ def _run_knowledge(args) -> int:
     writing = command in {"create", "update", "verify", "promote", "archive", "reopen", "relate", "rollback"}
     if writing and not extension_flags.enabled(extension_flags.KNOWLEDGE_UNITS):
         return _extension_off(extension_flags.KNOWLEDGE_UNITS)
-    if command == "compile" and not extension_flags.enabled(extension_flags.SKILL_DISTILLATION):
+    if command in {"compile", "pack"} and not extension_flags.enabled(extension_flags.SKILL_DISTILLATION):
         return _extension_off(extension_flags.SKILL_DISTILLATION)
     try:
         if command == "create":
@@ -1053,6 +1073,19 @@ def _run_knowledge(args) -> int:
                 written = ", ".join(compiled["written"]) or "already up to date"
                 print(f"{compiled['skill_name']} -> {compiled['output_dir']} ({written})")
             return 0
+        elif command == "pack":
+            built = knowledge_pack.build_pack(
+                args.unit_ids,
+                target=args.target,
+                out=Path(args.out) if args.out else None,
+                force=args.force,
+            )
+            if args.json:
+                _print_json(built)
+            else:
+                written = ", ".join(built["written"]) or "already up to date"
+                print(f"{built['pack_name']} -> {built['output_dir']} ({written})")
+            return 0
         elif command == "relate":
             unit = knowledge_units.relate_units(
                 args.unit_id,
@@ -1067,7 +1100,7 @@ def _run_knowledge(args) -> int:
                 json.dumps(
                     {
                         "error": "invalid_request",
-                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|reopen|update|rollback|relate|compile",
+                        "message": "choose: envoy knowledge create|list|show|verify|promote|archive|reopen|update|rollback|relate|compile|pack",
                     },
                     ensure_ascii=False,
                 )

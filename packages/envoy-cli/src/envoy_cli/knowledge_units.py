@@ -44,7 +44,16 @@ ARCHIVED = "archived"
 STATUSES = (CANDIDATE, VERIFIED, PROMOTED, ARCHIVED)
 
 UNIT_TYPES = ("principle", "procedure", "method", "example", "counterexample", "condition")
-RELATION_TYPES = ("supports", "contradicts", "extends", "depends_on")
+# A relation is one fact with two ends, and every type here reads left to right:
+# ``depends_on`` and ``composed_of`` say the source cannot be applied without the
+# target (the first is a prerequisite, the second a part), so assembling a pack
+# over the source has to carry the target along. ``alternative_to`` is a fallback
+# rather than a requirement: when the source's path is blocked, the target can
+# stand in for it, which is a choice the reader makes, not closure.
+RELATION_TYPES = ("supports", "contradicts", "extends", "depends_on", "composed_of", "alternative_to")
+# The two types that pull another unit into a pack, and the one that offers a way out.
+REQUIRING_RELATIONS = ("depends_on", "composed_of")
+FALLBACK_RELATIONS = ("alternative_to",)
 TEST_KINDS = ("positive", "near_miss", "negative", "boundary")
 TITLE_LIMIT = 120
 SHORT_LIMIT = 2000
