@@ -50,6 +50,21 @@
   给这个码的种类、能不能重试、是不是非得人动手、以及该做什么。这张表不在目录里另写一份，
   它就是把 `diagnosis` 对每个码已有的回答公开出来，所以不会和真正回包时的说法走岔。
 - 目录的 `selection_policy` 多一条：读失败时按错误码分支，不解析 `message` 里的文字。
+- 新增 `envoy knowledge eval --run <record>`：把一次三臂（`plain` / `material` / `bundle`）
+  实验的录像打分成四支——证据、蒸馏、技能、运行时——并给出这次能不能对外说结论。
+  打分时每一支都从存储里重新推导：引用要重新解析到材料和字节定位器，技能产物要拿
+  `render_skill` 重新渲染到字节相同，声明成员要重新跑包闭包，运行时的 token 只认宿主
+  上报的用量。录像里说自己对了，这个引擎不认。
+- 「一条推论」要有两个独立评审人才算数：只有一个评审人的单元记成阻断项
+  `single_reviewer:<unit_id>`，不是记 0 分；两人不一致又没留裁决记录的，记
+  `unadjudicated_disagreement:<unit_id>`。没有标注时 precision 是 `null` 而不是 `0`
+  ——「没人看过」和「看过了全是错的」不是一件事。
+- 配对差值只有在整个置信区间都在 0 以上才算「成立」：`material − plain` 量的是材料的
+  价值，`bundle − material` 量的是知识单元的价值，区间跨过 0 就回 `not supported`，
+  不给一个偏向正的区间冒充结果。宿主没交用量时该对的 token 差直接被排除，不拿 Envoy
+  自己的字数估算去顶替厂商计数。
+- 录像里出现这个 schema 不认识的字段一律回 `invalid_record` 拒收，而不是忽略它继续打分：
+  否则悄悄加一列的那次实验会显得比没加的好看。
 
 ### English
 
@@ -112,6 +127,27 @@
   a host actually receives.
 - The catalog's `selection_policy` gains one line: on a failed read, branch on the error
   code instead of parsing `message` text.
+- New `envoy knowledge eval --run <record>` scores one recorded three-arm run
+  (`plain` / `material` / `bundle`) across four branches — evidence, distillation, skill,
+  runtime — and says whether any claim can be made from it. Every branch re-derives its
+  numbers from the store at scoring time: citations are re-resolved to a material and a
+  byte locator, a skill artifact is re-rendered through `render_skill` and compared byte
+  for byte, declared pack membership is recomputed from the closure, and tokens are only
+  what the host reported. A run that says it was right is not evidence that it was.
+- A distilled unit needs two independent reviewers to count: one reviewer records a
+  blocker, `single_reviewer:<unit_id>`, rather than a score of zero, and two reviewers
+  who disagree with no adjudication on file record
+  `unadjudicated_disagreement:<unit_id>`. With no labels, precision is `null`, never
+  `0` — nobody looked and everybody was wrong are different facts.
+- A paired delta counts as supported only when the whole interval sits above zero:
+  `material − plain` isolates what the material was worth and `bundle − material` what
+  the knowledge units were worth, an interval that straddles zero answers
+  `not supported`, and a merely positive-leaning interval is not a result. When the host
+  reported no usage for a pair, that pair's token delta is dropped instead of being
+  filled in with Envoy's own character estimate.
+- A record carrying a field this schema does not know is refused with `invalid_record`
+  instead of being scored with the field ignored, because a run that quietly adds a
+  column would otherwise look better than one that does not.
 
 ## 0.1.63 - 2026-11-21
 
