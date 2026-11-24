@@ -66,10 +66,11 @@ Three things, in descending order of value:
 2. **`trigger` and `inputs`.** A `steps` list is a procedure; a procedure is not
    routable. Routing needs "reach for this when …" as its own field, because it
    is not the same sentence as the conditions under which the claim is true.
-3. **Composition relations.** `depends_on` exists. `composed_of` and
-   `alternative_to` do not, and both are needed the moment a pack is assembled
-   from several bundles: `composed_of` says what a pack contains, `alternative_to`
-   says what to fall back to when one path is blocked.
+3. **Composition relations — done.** `depends_on` existed alone; `composed_of`
+   and `alternative_to` now sit beside it, and both were needed the moment a pack
+   is assembled from several units: `composed_of` says what a pack contains, and
+   `alternative_to` says what to fall back to when one path is blocked without
+   pretending the fallback is part of the plan.
 
 ## 3. What should be cut or deferred
 
@@ -132,8 +133,18 @@ mechanical and the model cannot talk its way past it.
    rather than into it. Acceptance held: three golden files (one per target) match
    byte for byte, a second compile reports nothing written, and the manifest names
    the material revision and unit revision the skill came from.
-3. **Composition.** `composed_of` and `alternative_to`; `envoy knowledge pack`
-   over a set of units with dependency closure; routing by `trigger`.
+3. **Composition — built, not released yet.** `composed_of` and `alternative_to`
+   join the relation vocabulary, and `envoy knowledge pack <unit_id>... --target`
+   walks `depends_on` / `composed_of` from the units named and compiles the whole
+   set into one `PACK.md` plus a manifest, each member keeping its own `SKILL.md`.
+   Two constants carry the only distinction that can silently rot:
+   `REQUIRING_RELATIONS = ("depends_on", "composed_of")` closes the pack, while
+   `FALLBACK_RELATIONS = ("alternative_to",)` only records an escape and never
+   adds a member. Acceptance held: a dependency appears ahead of what needs it, an
+   alternative appears under `## If a Step Is Blocked` but not in `members`, a
+   candidate in the closure refuses with `needs_promotion`, a moved locator
+   refuses with `evidence_unresolved`, a loop is cut into `cycles`, and a second
+   build writes nothing. Routing by `trigger` is still open.
 4. **Evaluation.** Three arms against the same tasks and budget. Report task
    success, not skill count.
 5. **Evolution.** Diff a re-ingested material against the revision a unit was
