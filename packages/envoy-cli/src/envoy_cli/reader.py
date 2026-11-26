@@ -11059,53 +11059,7 @@ def _read_public_page_with_retries(request: ReadRequest) -> ReadResponse:
                 ),
             }
         return rescued.model_copy(update={"coverage": coverage})
-    return _annotate_public_endpoint_failure(request, response)
-
-
-def _annotate_public_endpoint_failure(
-    request: ReadRequest, response: ReadResponse
-) -> ReadResponse:
-    """Record why the public endpoint gave nothing, if it was asked at all.
-
-    The fallback seam answers ``None`` both for "no backend claims this URL" and
-    for "the backend claimed it and answered nothing". The reader needs the
-    first to keep walking; the host needs to tell the second from a page that
-    simply has no text. The seam keeps the reason for the task, and this puts it
-    on the error the read already returns instead of inventing a new one.
-    """
-
-    if response.result != ReadResult.BLOCKED or not response.errors:
-        return response
-    try:
-        from .fallbacks import failure_for
-    except Exception:  # noqa: BLE001 - an annotation must never fail a read
-        return response
-    try:
-        failure = failure_for(str(request.source.url))
-    except Exception:  # noqa: BLE001 - an annotation must never fail a read
-        return response
-    if failure is None:
-        return response
-    report = failure.as_dict()
-    errors = []
-    annotated = False
-    for error in response.errors:
-        if annotated or error.code not in {
-            ErrorCode.NETWORK_ERROR,
-            ErrorCode.SOURCE_UNAVAILABLE,
-            ErrorCode.EMPTY_CONTENT,
-        }:
-            errors.append(error)
-            continue
-        errors.append(
-            error.model_copy(
-                update={"details": {**(error.details or {}), "public_endpoint_failure": report}}
-            )
-        )
-        annotated = True
-    if not annotated:
-        return response
-    return response.model_copy(update={"errors": errors})
+    return response
 
 
 def _attach_github_material(
@@ -11549,7 +11503,12 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     f"Standalone media extraction is unavailable for {detected_media.source['mime_type']}",
                 )
             except PublicPageError as exc:
-                if exc.code != ErrorCode.AUTH_REQUIRED:
+                use_browser_fallback = (
+                    exc.code == ErrorCode.NETWORK_ERROR
+                    and classify_public_url(source_url)
+                    in {"xiaohongshu_note", "xiaohongshu_share"}
+                )
+                if exc.code != ErrorCode.AUTH_REQUIRED and not use_browser_fallback:
                     raise
                 browser_page, browser_error = _read_with_isolated_browser(
                     request,
@@ -11558,6 +11517,8 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                 )
                 browser_attempted = True
                 if browser_page is None:
+                    if use_browser_fallback:
+                        raise exc
                     return _blocked(
                         request,
                         _browser_read_failure_code(browser_error),

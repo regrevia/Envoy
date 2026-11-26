@@ -153,7 +153,10 @@ def is_collection_url(value: str) -> bool:
         # `showTab=favorite_collection` is the user's own favourites.
         return bool(re.match(r"^/user/[^/]+/?$", path)) and "showTab=" in (parsed.query or "")
     if host in _XHS_HOSTS:
-        return bool(re.match(r"^/user/profile/[0-9a-zA-Z]{5,40}/?$", path))
+        # A Xiaohongshu profile is a creator page, not a single-item
+        # collection. Its note cards can be discovered from the profile page,
+        # while ``/explore/<id>`` remains the single-note route.
+        return False
     return False
 
 

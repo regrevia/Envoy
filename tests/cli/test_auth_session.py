@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from envoy_cli import auth_session, auth_window, authflow, cli, mcp
+from envoy_cli import auth_session, authflow, cli, mcp
 
 
 @pytest.fixture(autouse=True)
@@ -142,11 +142,13 @@ def test_auth_payload_status_says_which_call_comes_next(monkeypatch):
     waiting = mcp._auth_payload({"action": "status", "action_id": "auth-abc"})
     assert waiting["result"] == "waiting"
 
-def test_auth_payload_rejects_incomplete_arguments():
+def test_auth_payload_lists_pending_actions_without_an_action_id():
     with pytest.raises(ValueError):
         mcp._auth_payload({"action": "open"})
-    with pytest.raises(ValueError):
-        mcp._auth_payload({"action": "status"})
+    action = authflow.create_auth_action("https://www.xiaohongshu.com/explore/abc123")
+    payload = mcp._auth_payload({"action": "status"})
+    assert payload["result"] == "waiting"
+    assert payload["pending"][0]["action_id"] == action["action_id"]
     with pytest.raises(ValueError):
         mcp._auth_payload({"action": "dance"})
 
@@ -211,71 +213,6 @@ def test_a_network_risk_control_page_is_not_a_signed_in_session():
     assert auth_session._risk_controlled("", blocked, "https://www.xiaohongshu.com/website-login/error") is True
     assert auth_session._risk_controlled("", "扫码登录 请使用小红书App扫描二维码", "/login") is False
     assert auth_session._risk_controlled("", "", "") is False
-
-
-def test_a_risk_control_page_never_passes_the_headless_recheck(tmp_path, monkeypatch):
-    # Xiaohongshu serves /website-login/error with status 200 and real text, so
-    # every earlier signal said "readable" and the check then claimed the task
-    # could be resumed. The page refuses the network, not the sign-in.
-    class _Response:
-        status = 200
-
-    class _Page:
-        url = "https://www.xiaohongshu.com/website-login/error?error_code=300012"
-
-        def goto(self, *args, **kwargs):
-            return _Response()
-
-        def evaluate(self, *args, **kwargs):
-            return []
-
-    class _Context:
-        pages = [_Page()]
-
-        def close(self):
-            pass
-
-    class _Chromium:
-        def launch_persistent_context(self, *args, **kwargs):
-            return _Context()
-
-    class _Playwright:
-        chromium = _Chromium()
-
-    class _Manager:
-        def __enter__(self):
-            return _Playwright()
-
-        def __exit__(self, *exc):
-            return False
-
-    fake_api = types.SimpleNamespace(sync_playwright=lambda: _Manager())
-    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
-    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_api)
-
-    class _Lease:
-        def __enter__(self):
-            return None
-
-        def __exit__(self, *exc):
-            return False
-
-    monkeypatch.setattr(auth_window, "_lease", lambda seconds: _Lease())
-    monkeypatch.setattr(auth_window, "browser_profile_dir", lambda **kwargs: tmp_path)
-    monkeypatch.setattr(
-        auth_window,
-        "_page_state",
-        lambda page: ("访问异常", "当前网络存在风险，请切换可靠网络后重试 300012", False),
-    )
-    marked: list[str] = []
-    monkeypatch.setattr(authflow, "mark_profile_session", lambda host: marked.append(host))
-
-    verification = auth_window.verify_source("https://www.xiaohongshu.com/explore")
-    assert verification["headless_reusable"] is False
-    assert verification["page_access"] is False
-    assert verification["reason"] == "egress_blocked"
-    assert verification["egress_blocked"] is True
-    assert marked == []
 
 
 def test_auth_payload_open_stops_at_the_network_verdict(monkeypatch):

@@ -2538,7 +2538,19 @@ def _auth_payload(arguments: dict) -> dict:
         )
     elif action == "status":
         if not action_id:
-            raise ValueError("envoy_auth status needs action_id")
+            from . import authflow
+
+            result = authflow.auth_status()
+            payload.update(result)
+            pending = result.get("pending") or []
+            payload["result"] = "waiting" if pending else "ready"
+            payload["instruction"] = (
+                "resume the listed action by calling envoy_auth with action:'status' "
+                "and its action_id; then re-read the source_url"
+                if pending
+                else "there are no pending sign-in actions"
+            )
+            return payload
         result = auth_session.status(action_id)
         payload.update(result)
         signed_in = result.get("status") == "signed_in"

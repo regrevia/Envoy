@@ -149,5 +149,5 @@ def test_the_favourites_link_is_offered_as_a_collection():
     from envoy_cli.platforms import is_collection_url
 
     assert is_collection_url("https://www.douyin.com/user/self?showTab=favorite_collection")
-    assert is_collection_url("https://www.xiaohongshu.com/user/profile/5f1a2b3c4d5e6f7a8b9c0d1e")
+    assert not is_collection_url("https://www.xiaohongshu.com/user/profile/5f1a2b3c4d5e6f7a8b9c0d1e")
     assert not is_collection_url("https://www.douyin.com/video/7300000000000000000")
