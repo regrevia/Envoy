@@ -2650,3 +2650,26 @@ def test_mcp_knowledge_compile_stops_when_skill_distillation_is_off(
     assert refused["result"]["isError"] is True
     assert refused["result"]["structuredContent"]["error"]["code"] == "extension_disabled"
     assert "skill_distillation" in refused["result"]["structuredContent"]["error"]["message"]
+
+
+@pytest.mark.parametrize("arguments, expected_visual, expected_image", [
+    ({}, True, "local_file"),
+    ({"include_visual": False}, False, "none"),
+    ({"scope": {"include_visual": False}}, False, "none"),
+    ({"host_capabilities": {"image_input": "none"}}, False, "none"),
+    ({"host_capabilities": {"image_input": "none"}, "include_visual": True}, True, "none"),
+    ({"host_capabilities": {"image_input": "local_file", "video_input": "frames"}}, True, "local_file"),
+])
+def test_explicit_remote_video_defaults_to_leased_frames(arguments, expected_visual, expected_image):
+    from envoy_cli import mcp
+
+    prepared = mcp._server_arguments("envoy_read", {
+        "source": {"url": "https://v.douyin.com/example/", "kind": "video"},
+        "goal": "Extract the title, date and spoken words.",
+        **arguments,
+    })
+    request = mcp.ReadRequest.model_validate(prepared)
+    assert request.scope.include_visual is expected_visual
+    assert request.host_capabilities.image_input == expected_image
+    expected_video = "frames" if expected_image == "local_file" else "none"
+    assert request.host_capabilities.video_input == expected_video

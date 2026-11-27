@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from urllib.parse import urlparse
 
-from .browser import browser_profile_dir
+from .browser import _EGRESS_CONTROL_MARKERS, browser_profile_dir
 from .media import interprocess_file_lock
 
 # A site only sets these once a person is actually signed in; their presence in
@@ -203,6 +203,18 @@ def open_login_window(
         "pages_seen": pages_seen,
         "final_url": final_url,
     }
+
+
+def _risk_controlled(title: str, text: str, url: str = "") -> bool:
+    """True when the site refused the network, not the sign-in step.
+
+    A readable page is not proof that the wall came down: the site can serve the
+    risk-control page with 200 and real text, and the fetch can also happen to
+    land past it while the sign-in path itself is still refused.
+    """
+
+    haystack = f"{title}\n{text}\n{url}".lower()
+    return any(hint in haystack for hint in _EGRESS_CONTROL_MARKERS)
 
 
 def verify_source(source_url: str, *, timeout_ms: int = 45000) -> dict:

@@ -153,3 +153,12 @@ def test_visible_text_without_declaration_warns_instead_of_inventing_visuals():
 
     assert "No frames or images were delivered" in text
     assert "visual_requirement" not in text
+
+
+def test_page_images_do_not_count_as_video_frames():
+    payload = _payload(None)
+    payload["resources"] = [{"resource_id": "page-image"}]
+    payload["blocks"] = [{"kind": "image"}]
+    request = _request(video_input="frames", image_input="local_file")
+
+    assert "No video frames were delivered" in mcp._evidence_text(payload, request)

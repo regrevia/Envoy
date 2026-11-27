@@ -591,10 +591,11 @@ TOOLS = [
             "those observations plus text evidence. Report any "
             "uninspected resources; do not repeat envoy_read merely to clear the "
             "original status, and sparse frames never imply full-video coverage. "
-            "Request frames with scope.include_visual=true plus "
-            "host_capabilities {video_input:'frames', image_input:'local_file'}; a "
-            "video read without that declaration returns text and names the exact "
-            "fields to send, so re-read with them instead of opening the page in a "
+            "An HTTP(S) source explicitly marked kind:'video' requests local "
+            "sampled frames by default. Set include_visual:false for transcript "
+            "only. For other reads request frames with scope.include_visual=true "
+            "and host_capabilities {video_input:'frames', image_input:'local_file'}. "
+            "Use the returned frame files instead of opening the page in a "
             "separate browser view. retention {raw_media:'persistent'} keeps the "
             "source file for later frame extraction. The returned text carries "
             "`material_id`, `source_revision`, the block text, and the resource ids: "
@@ -978,7 +979,7 @@ def _payload_visual_requirement(payload: dict) -> dict | None:
 def _visual_requirement_text(requirement: dict) -> str:
     block = json.dumps(requirement, ensure_ascii=False, separators=(", ", ": "))
     return (
-        f" Frames require {block}; this read omitted that declaration, so no images "
+        f" Frames require {block}; this read omitted that declaration, so no video frames "
         "were delivered. Re-read with those fields rather than opening the page in "
         "a separate browser view."
     )
@@ -1002,6 +1003,17 @@ def _evidence_text(payload: dict, request) -> str:
             " No frames or images were delivered; do not describe on-screen visuals "
             "or shot rhythm as if they were observed."
         )
+    if include_visual and "video" in modalities:
+        resource_ids = {resource.get("resource_id") for resource in resources}
+        if not any(
+            block.get("kind") == "video_frame"
+            and (block.get("content") or {}).get("resource_id") in resource_ids
+            for block in (payload.get("blocks") or [])
+        ):
+            return (
+                " No video frames were delivered. Page images do not establish "
+                "what appeared in the video."
+            )
     return ""
 
 
@@ -2763,6 +2775,28 @@ def _server_arguments(name: str, arguments: dict) -> dict:
         if merged is not None:
             prepared["scope"] = merged
     if name == "envoy_read":
+        source = prepared.get("source")
+        if (
+            isinstance(source, dict)
+            and source.get("kind") == "video"
+            and str(source.get("url") or "").lower().startswith(("http://", "https://"))
+        ):
+            scope = prepared.get("scope")
+            if scope is None or isinstance(scope, dict):
+                host = prepared.get("host_capabilities")
+                default_frames = "host_capabilities" not in prepared or (
+                    isinstance(host, dict)
+                    and host.get("video_input") == "frames"
+                    and host.get("image_input") == "local_file"
+                )
+                prepared["scope"] = {"include_visual": default_frames, **(scope or {})}
+                # Use the local artifact delivery route for compact stdio calls.
+                # Explicit host limitations always take precedence.
+                if prepared["scope"]["include_visual"] and "host_capabilities" not in prepared:
+                    prepared["host_capabilities"] = {
+                        "video_input": "frames",
+                        "image_input": "local_file",
+                    }
         _default_budget_for(name, prepared)
     return prepared
 
@@ -2922,7 +2956,8 @@ def handle_message(
                     read_arguments = {
                         key: value for key, value in arguments.items() if key != "refresh"
                     }
-                    response = read_public_page(ReadRequest.model_validate(read_arguments))
+                    request = ReadRequest.model_validate(read_arguments)
+                    response = read_public_page(request)
                     payload = _read_payload(response, compact=modern_request)
                     fresh_read = True
                     if payload.get("result") in _BLOCKED_RESULTS:
