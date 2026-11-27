@@ -1429,9 +1429,11 @@ def test_browser_video_evidence_marks_unavailable_asr_and_frame_capability(
 
 
 
+@pytest.mark.parametrize("include_visual", [False, True])
 def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
     monkeypatch,
     tmp_path,
+    include_visual,
 ):
     signed_media_url = (
         "https://cdn.example.test/video.mp4?"
@@ -1439,6 +1441,7 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
     )
     request = ReadRequest.model_validate({
         "request_id": "browser-video-signed-source",
+        "scope": {"include_visual": include_visual},
         "source": {
             "url": "https://www.douyin.com/video/7698386448961683813",
             "kind": "video",
@@ -1506,6 +1509,17 @@ def test_browser_video_evidence_uses_signed_url_locally_without_exposing_it(
     )
 
     assert result.result == ReadResult.PARTIAL
+    video = result.coverage.modalities["video"]
+    if include_visual:
+        assert video.details["frame_inspection"] == "host_capability_missing"
+        assert video.details["visual_requirement"]["host_capabilities"] == {
+            "video_input": "frames",
+            "image_input": "local_file",
+        }
+    else:
+        assert video.details["frame_inspection"] == "not_requested"
+        assert "visual_requirement" not in video.details
+        assert not any("host did not declare" in note for note in video.unresolved)
     assert downloaded["url"] == signed_media_url
     serialized = result.model_dump_json()
     for secret in ("short-lived", "playback", "session-proof"):

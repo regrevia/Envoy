@@ -960,6 +960,14 @@ def test_requested_video_frames_are_leased_and_source_located(tmp_path, monkeypa
     assert frame_block.locator.type == "video_time"
     assert frame_block.locator.start_seconds == 5
     assert response.coverage.modalities["video"].delivered == 1
+    assert response.coverage.modalities["video"].details["visual_inspection"] == "waiting_for_host"
+    assert "transcript evidence only" not in response.model_dump_json()
+    assert "were inspected" not in response.model_dump_json()
+    stored = reader._load_matching_material(
+        response.material_id, response.source_revision, request.session_id
+    )
+    assert stored["visual_resources"]
+    assert not any("transcript evidence only" in note for note in stored["source_coverage_unresolved"])
 
 
 def test_direct_video_no_speech_still_hands_off_requested_frames(tmp_path, monkeypatch):

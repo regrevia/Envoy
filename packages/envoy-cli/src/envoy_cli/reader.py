@@ -3095,7 +3095,9 @@ def _attach_browser_video_evidence(
                     "speech_seconds": round(speech_seconds, 3),
                     "speech_coverage": round(speech_ratio, 4),
                     "transcript_confidence": confidence,
-                    "frame_inspection": "requested" if frame_enabled else "host_capability_missing",
+                    "frame_inspection": (
+                        "requested" if request.scope.include_visual else "not_requested"
+                    ),
                     "media_fetched": True,
                     "raw_media_retention": retention_mode,
                     "raw_media_reused": media_reused,
@@ -3127,24 +3129,12 @@ def _attach_browser_video_evidence(
                 }),
                 "result": ReadResult.PARTIAL,
             })
-            if frame_enabled:
-                frame_response = _attach_video_frames(
-                    request,
-                    source_url,
-                    evidence_response,
-                    downloaded_media=downloaded,
-                )
-            else:
-                video_coverage = video_coverage.model_copy(update={
-                    "unresolved": list(dict.fromkeys([
-                        *video_coverage.unresolved,
-                        "The host did not declare local image input and frame inspection capability",
-                    ])),
-                })
-                modalities["video"] = video_coverage
-                frame_response = evidence_response.model_copy(update={
-                    "coverage": evidence_response.coverage.model_copy(update={"modalities": modalities}),
-                })
+            frame_response = _attach_video_frames(
+                request,
+                source_url,
+                evidence_response,
+                downloaded_media=downloaded,
+            )
     except MediaBudgetExceeded as exc:
         unresolved.append(str(exc))
     except MediaUnsafeAddress:
@@ -5128,6 +5118,14 @@ def _store_material_unlocked(material_id: str, data: dict, *, merge: bool = True
                 merged[(item.get("resource_id"), item.get("source_block_id"))] = item
             if merged:
                 data["visual_observations"] = list(merged.values())[-32:]
+    if _TRANSCRIPT_ONLY_VISUAL_GAP in (data.get("source_coverage_unresolved") or []) and any(
+        isinstance(item, dict) and item.get("frame_path")
+        for item in (data.get("visual_resources") or [])
+    ):
+        data["source_coverage_unresolved"] = [
+            note for note in data["source_coverage_unresolved"]
+            if note != _TRANSCRIPT_ONLY_VISUAL_GAP
+        ]
     descriptor, temporary_path = tempfile.mkstemp(prefix=".material-", dir=str(root))
     expiry_descriptor, expiry_temporary_path = tempfile.mkstemp(prefix=".expiry-", dir=str(root))
     try:
@@ -9545,6 +9543,11 @@ def _video_transcript_budget(
     }
 
 
+_TRANSCRIPT_ONLY_VISUAL_GAP = (
+    "Video frames were not inspected; this material contains transcript evidence only"
+)
+
+
 def _video_subtitle_response(
     request: ReadRequest,
     source_url: str,
@@ -9608,7 +9611,7 @@ def _video_subtitle_response(
     retention_disabled = request.retention.derived_ttl_seconds <= 0
     can_continue = response_partial and not source_truncated and not retention_disabled
     source_unresolved = [
-        "Video frames were not inspected; this material contains transcript evidence only"
+        _TRANSCRIPT_ONLY_VISUAL_GAP
     ]
     speech_confidence = "normal"
     speech_seconds = 0.0
@@ -9730,7 +9733,7 @@ def _video_subtitle_response(
     if text_block:
         blocks.append(text_block)
     video_unresolved = [
-        "Video frames were not inspected; this material contains transcript evidence only"
+        _TRANSCRIPT_ONLY_VISUAL_GAP
     ]
     if no_cues_in_requested_range:
         video_unresolved.append(
@@ -10038,6 +10041,7 @@ def _attach_video_frames(
             ])),
             "details": {
                 **video_coverage.details,
+                "frame_inspection": "host_capability_missing",
                 "visual_requirement": {
                     "host_capabilities": {
                         "video_input": "frames",
@@ -10426,13 +10430,14 @@ def _attach_video_frames(
         "delivered": len(visual_records),
         "extraction": "partial",
         "unresolved": list(dict.fromkeys([
-            *video_coverage.unresolved,
-            "Only the reported sparse frames were inspected; unreported times remain unobserved",
+            *(note for note in video_coverage.unresolved if note != _TRANSCRIPT_ONLY_VISUAL_GAP),
+            "Only sparse frames were delivered for inspection; other times remain unobserved",
         ])),
         "details": {
             **video_coverage.details,
             "duration_seconds": duration,
             "visual_inspection": "waiting_for_host",
+            "frame_inspection": "waiting_for_host",
             "frame_count": len(visual_records),
             "frame_timestamps": [item["timestamp"] for item in visual_records],
             "downloaded_bytes": downloaded.get("downloaded_bytes"),
@@ -10455,7 +10460,12 @@ def _attach_video_frames(
         "execution_state": ExecutionState.WAITING_FOR_HOST,
         "result": ReadResult.NEEDS_HOST,
         "coverage": _replace_video_coverage(
-            response.coverage,
+            response.coverage.model_copy(update={
+                "unresolved": [
+                    note for note in response.coverage.unresolved
+                    if note != _TRANSCRIPT_ONLY_VISUAL_GAP
+                ],
+            }),
             video_coverage,
             [{
                 "modality": "video_frame",
