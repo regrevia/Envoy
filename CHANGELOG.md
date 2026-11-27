@@ -4,6 +4,20 @@
 
 ### 中文
 
+- 购物站点接进同一套路由：闲鱼、淘宝、天猫、京东的个人主页、收藏夹、商品详情和分享
+  短链都归 `platform_page`，短链照旧不预解析，由隔离浏览器跟随重定向后按落地页分类。
+  分类表仍然只有 `platforms.py` 一份。
+- 主页和收藏夹走 `envoy_discover`：闲鱼主页按 `userId` 归一，淘宝收藏夹只有
+  `favorites.taobao.com/favorite` 一种写法，京东补了 `if not path` 才认根路径。商品
+  详情不进候选列表——一条商品不是一批商品。
+- 购物站点的收藏夹在未登录时返回登录转交，不是空列表：四个域名都有自己的收藏页，未
+  登录一律先拦。淘宝宝贝收藏夹未登录会落到首页，那份正文不会被当成「收藏为空」。
+- 风控页与「读到薄内容」分开判：闲鱼给静态抓取的永远是应用外壳，被限流时外壳只剩
+  「网络不见了 / 暂时没有推荐」，JD 商品落到 `pc-frequent-pro` 403 页写「暂时无法展示」。
+  这些外壳有标题也有句子，长度阈值拦不住，会被报成只读到一点正文的商品页。现在按措辞
+  判 `source_blocked`，且只在这四个域名上判——同一句 `请稍后重试` 在别处是普通文案。
+- 风控页不自带登录转交：`SOURCE_BLOCKED` 已在 `_SESSION_CANNOT_FIX` 里，登录清不掉限流，
+  所以拒一次就不再多给一步没用的动作。
 - 登录墙现在两条路都通：扫码（`envoy_auth` 返回的截图里那张码）优先，扫码不方便时
   同一个页面上的手机号 + 短信验证码也认。工具描述、`instruction`、CLI 回执和
   `docs/product/qr-signin-handoff.md` 统一按这个顺序说，不再只写扫码。
@@ -68,6 +82,26 @@
 
 ### English
 
+- Shopping sites join the same routing table: a Xianyu, Taobao, Tmall or JD profile,
+  favourites list, item page and share short link all classify as `platform_page`.
+  Short links are still not pre-resolved; the isolated browser follows the redirect and
+  the landing URL decides. `platforms.py` stays the only copy of the rule table.
+- Profiles and favourites go through `envoy_discover`: a Xianyu profile normalizes on
+  its `userId`, a Taobao favourites list has one spelling
+  (`favorites.taobao.com/favorite`), and JD needed `if not path` before it recognized
+  its own root. An item page never becomes a candidate list -- one item is not a set.
+- A shopping favourites list that is signed out asks for the sign-in instead of
+  reporting an empty list. Taobao's signed-out favourites lands on the homepage, and
+  that body is not read as "no favourites".
+- A risk-control page is no longer read as thin content. Xianyu only ever serves an app
+  shell to a static fetch, and a throttled shell says 「网络不见了 / 暂时没有推荐」; a JD
+  item lands on `pc-frequent-pro` with 「暂时无法展示」. Those shells have a title and
+  sentences, so no length check stops them, and they used to be reported as an item
+  page that read a little. The wording now yields `source_blocked`, and only on those
+  four hosts -- the same 「请稍后重试」 is ordinary copy anywhere else.
+- That refusal carries no sign-in handoff: `SOURCE_BLOCKED` is already in
+  `_SESSION_CANNOT_FIX`, and a session does not lift a rate limit, so one refusal does
+  not offer a step that cannot work.
 - A login wall now has two ways through: scanning the code in the picture `envoy_auth`
   returns (preferred), or the phone number and SMS code the same page offers when
   scanning is not handy. Tool description, `instruction`, CLI receipt and

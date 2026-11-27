@@ -32,6 +32,14 @@ def test_a_collection_link_is_recognized(url):
         "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
         "https://space.bilibili.com/2142762/video",
         "https://example.com/playlist?list=1",
+        # A marketplace profile, favourites tab, share link and single item
+        # are page reads: item enumeration needs the marketplace's own list
+        # page, which the collection discovery path already owns.
+        "https://www.goofish.com/personal?userId=3604975982",
+        "https://www.goofish.com/item?id=1073935850465",
+        "https://pages.goofish.com/sharexy?userId=3604975982",
+        "https://favorites.taobao.com/favorite",
+        "https://favorites.jd.com/",
     ],
 )
 def test_a_single_item_link_is_not_a_collection(url):

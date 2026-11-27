@@ -195,6 +195,93 @@ def test_a_rate_limit_page_is_source_blocked_not_a_sign_in(monkeypatch):
     assert "envoy_auth" not in text
 
 
+def test_a_marketplace_risk_control_shell_is_a_block_not_a_thin_item(monkeypatch):
+    """The shell a throttled Xianyu or JD request gets reads as a real page.
+
+    It has a title and a sentence, so nothing downstream calls it empty -- and
+    reporting it as partial content says an item was read that never loaded.
+    """
+
+    _offline(
+        monkeypatch,
+        "<html><head><title>闲鱼</title></head><body>"
+        "<p>网络不见了</p><p>亲，小闲鱼暂时没有推荐～</p></body></html>",
+    )
+
+    response = reader._read_public_page_once(
+        _request("https://www.goofish.com/item?id=800000000000")
+    )
+    payload = mcp._read_payload(response)
+    failure = payload["diagnosis"]
+
+    assert payload["result"] == "blocked"
+    assert failure["kind"] == diagnosis.SOURCE_BLOCKED
+    assert failure["retryable"] is True
+    # A session does not lift a risk-control shell, so no sign-in step may reach
+    # the host even though the code this refusal carries is "challenge".
+    assert payload.get("needs_user_action") is None
+    assert payload.get("needs") is None
+
+
+def test_the_same_wording_on_an_ordinary_site_is_not_a_marketplace_block(monkeypatch):
+    """"请稍后重试" is ordinary copy; only the marketplace hosts make it a refusal."""
+
+    html = (
+        "<html><head><title>Status</title></head><body>"
+        "<p>请稍后重试</p>"
+        + "<p>" + ("The service is briefly unavailable while we deploy. " * 12) + "</p>"
+        + "</body></html>"
+    )
+    _offline(monkeypatch, html)
+
+    response = reader._read_public_page_once(_request("https://example.com/status"))
+    payload = mcp._read_payload(response)
+
+    assert payload["result"] != "blocked"
+    assert not reader._challenge_suggests_marketplace_block(
+        "https://example.com/status", "Status", "请稍后重试"
+    )
+
+
+def test_a_marketplace_item_that_really_loaded_is_not_a_block(monkeypatch):
+    """The wording check must never fire on a page that carries the listing."""
+
+    html = (
+        "<html><head><title>闲鱼 - 商品详情</title></head><body>"
+        + "<p>" + ("Ninebot 平衡车 九成新，同城自提，价格可小刀。" * 8) + "</p>"
+        + "</body></html>"
+    )
+    assert not reader._challenge_suggests_marketplace_block(
+        "https://www.goofish.com/item?id=123456789",
+        "闲鱼 - 商品详情",
+        "Ninebot 平衡车 九成新，同城自提，价格可小刀。",
+    )
+
+
+def test_a_marketplace_sign_in_wall_says_the_sign_in_page_is_not_the_page():
+    """Taobao answers a signed-out item with its own sign-in host.
+
+    The generic handoff talks about a player and a video, which is not what was
+    asked for: the landing page is the sign-in form itself, so the only step is
+    to sign in and read the same link again.
+    """
+    market = reader._login_user_action("https://login.taobao.com/havanaone/login/login.htm")
+    ordinary = reader._login_user_action("https://example.com/some/page")
+
+    assert market["host"] == "login.taobao.com"
+    assert "signed-out read" in market["question"]
+    assert market["question"] != ordinary["question"]
+    assert "player" not in market["question"]
+    assert market["requires_human"] is True
+
+
+def test_a_jd_risk_control_host_counts_as_the_marketplace_sign_in():
+    """The JD 403 page lives on a subdomain of jd.com, not on item.jd.com."""
+    action = reader._login_user_action("https://pc-frequent-pro.pf.jd.com/?from=pc_item&reason=403")
+
+    assert "signed-out read" in action["question"]
+
+
 def test_cli_stdout_lifts_the_handoff_and_the_diagnosis(monkeypatch, tmp_path, capsys):
     """A caller outside the MCP bridge must not have to dig in `errors[0].details`."""
     from envoy_cli import cli

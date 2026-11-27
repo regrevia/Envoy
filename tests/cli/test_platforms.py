@@ -691,3 +691,61 @@ def test_short_links_and_chinese_content_sites_are_classified():
         "https://mp.weixin.qq.com/s/AbCdEfGhIjKlMn",
     ):
         assert is_platform_page(url) is True
+
+
+def test_shopping_pages_are_platform_reads_not_generic():
+    """Xianyu, Taobao/Tmall and JD are client-rendered shells, not generic pages."""
+
+    from envoy_cli.platforms import classify_public_url, is_platform_page
+
+    for url in (
+        "https://www.goofish.com/item?id=800000000000",
+        "https://www.goofish.com/personal?userId=3604975982",
+        "https://m.goofish.com/item?id=800000000000",
+        "https://pages.goofish.com/sharexy?utsk=abc",
+        "https://m.tb.cn/h.jnU2OZ6",
+        "https://item.taobao.com/item.htm?id=612345678901",
+        "https://detail.tmall.com/item.htm?id=612345678901",
+        "https://favorites.taobao.com/favorite",
+        "https://item.jd.com/100012043978.html",
+        "https://u.jd.com/abcdEFz",
+        "https://item.jd.hk/100012043978.html",
+    ):
+        assert classify_public_url(url) == "platform_page"
+        assert is_platform_page(url) is True
+
+
+def test_a_shared_shopping_link_is_read_as_a_page_not_a_collection():
+    """A share token names no list, and discovery only enumerates video platforms."""
+
+    from envoy_cli.platforms import is_collection_url
+
+    for url in (
+        "https://m.tb.cn/h.jnU2OZ6",
+        "https://u.jd.com/abcdEFz",
+        "https://favorites.taobao.com/favorite",
+        "https://www.goofish.com/personal?userId=3604975982",
+    ):
+        assert is_collection_url(url) is False
+
+
+def test_a_signed_out_favourites_tab_is_not_an_empty_list(monkeypatch, tmp_path):
+    """A block page must never be reported as 「nothing saved」."""
+
+    from envoy_cli import collections
+
+    def _blocked(_url, **_kwargs):
+        raise AssertionError("the browser is stubbed below")
+
+    class _Page:
+        url = "https://favorites.taobao.com/favorite"
+        html = "<html><body><p>非法访问</p></body></html>"
+        text = "非法访问 请稍后重试"
+
+    monkeypatch.setattr("envoy_cli.browser.read_page", lambda *_a, **_k: _Page(), raising=False)
+    monkeypatch.setattr(collections, "_collection_root", lambda: tmp_path / "collections")
+
+    with pytest.raises(collections.CollectionError) as raised:
+        collections.discover_profile("https://favorites.taobao.com/favorite")
+
+    assert "block page" in str(raised.value)

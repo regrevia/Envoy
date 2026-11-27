@@ -46,6 +46,7 @@ from .platforms import (
     classify_public_url,
     extract_xhs_note_images,
     is_collection_url,
+    is_marketplace_page,
     is_platform_page,
 )
 from . import diagnosis, http_cache, storage
@@ -1673,6 +1674,37 @@ def _challenge_suggests_egress_issue(title: str, text: str) -> bool:
     """True when a block page blames the network exit rather than the visitor."""
     haystack = f"{title}\n{text}".lower()
     return any(marker in haystack for marker in EGRESS_CHALLENGE_MARKERS)
+
+
+MARKETPLACE_BLOCK_MARKERS = (
+    "非法访问",
+    "访问受限",
+    "访问异常",
+    "网络不见了",
+    "暂时没有推荐",
+    "暂时无法展示",
+    "页面加载失败",
+    "亲，小二正忙",
+    "pc-frequent-pro",
+    "请稍后重试",
+)
+
+
+def _challenge_suggests_marketplace_block(url: str, title: str, text: str) -> bool:
+    """True when a marketplace answered with a risk-control shell.
+
+    Xianyu and JD ship an app shell that a static fetch cannot render, and the
+    shell they serve to a throttled request says so in its own words. Left to
+    the duration checks that follow, that shell reads as a thin but valid page
+    and is reported as partial content -- an item that loaded with no price and
+    no title. The wording only counts on the four marketplace hosts, because
+    "请稍后重试" is ordinary copy everywhere else.
+    """
+
+    if not is_marketplace_page(url):
+        return False
+    haystack = f"{title}\n{text}"
+    return any(marker in haystack for marker in MARKETPLACE_BLOCK_MARKERS)
 
 
 def _read_with_isolated_browser(
@@ -11651,6 +11683,17 @@ def _read_public_page_once(request: ReadRequest) -> ReadResponse:
                     )
                     text = _clean_text(parser.text_parts)
                     browser_error = None
+        if _challenge_suggests_marketplace_block(final_url, title, text):
+            return _blocked(
+                request,
+                ErrorCode.CHALLENGE_REQUIRED,
+                "The marketplace answered with its risk-control page instead of the "
+                "requested listing, so nothing on it describes an item. "
+                f"{browser_error or 'Reading it again later usually works.'}",
+                action_required=False,
+                details={"failure_kind": diagnosis.SOURCE_BLOCKED},
+                page=browser_snapshot,
+            )
         if _looks_like_access_challenge(title, text) or _looks_like_machine_error_payload(text):
             # A rate limit and a sign-in wall both arrive as a page that is not
             # the source, but only one of them yields to a session: offering a
@@ -12641,6 +12684,14 @@ def _login_user_action(
             "source, and a signed-in account is not necessarily what it wants. "
             "Open its sign-in page with envoy_auth so the site sets the cookies "
             "itself; importing cookies from another browser is the fallback."
+        )
+    elif is_marketplace_page(str(source_url or "")):
+        question = (
+            f"{host or 'This marketplace'} sends a signed-out read of a profile, a "
+            "favourites list or an item to its own sign-in page across every host "
+            "it owns, so what came back describes nobody's list. Sign the user in "
+            "once from the chat and read the same link again: the sign-in page "
+            "itself is not the page that was asked for."
         )
 
     from . import features

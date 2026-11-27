@@ -151,3 +151,93 @@ def test_the_favourites_link_is_offered_as_a_collection():
     assert is_collection_url("https://www.douyin.com/user/self?showTab=favorite_collection")
     assert not is_collection_url("https://www.xiaohongshu.com/user/profile/5f1a2b3c4d5e6f7a8b9c0d1e")
     assert not is_collection_url("https://www.douyin.com/video/7300000000000000000")
+
+
+def test_a_xianyu_item_keeps_only_its_id():
+    """`spm`/`ut_sk` track the share, not the listing."""
+
+    from envoy_cli.collections import canonical_candidate_url
+
+    assert canonical_candidate_url(
+        "https://www.goofish.com/item?id=800000000000&spm=a21ybx.home.feeds.1&ut_sk=1.abc"
+    ) == "https://www.goofish.com/item?id=800000000000"
+
+
+def test_a_xianyu_user_page_is_a_collection_profile():
+    from envoy_cli.collections import canonical_profile_url
+
+    canonical, platform = canonical_profile_url(
+        "https://www.goofish.com/personal?userId=3604975982&spm=a21ybx"
+    )
+
+    assert canonical == "https://www.goofish.com/personal?userId=3604975982"
+    assert platform == "goofish"
+
+
+def test_taobao_and_tmall_items_keep_their_own_host():
+    from envoy_cli.collections import canonical_candidate_url
+
+    assert canonical_candidate_url(
+        "https://item.taobao.com/item.htm?id=612345678901&spm=a1z10"
+    ) == "https://item.taobao.com/item.htm?id=612345678901"
+    assert canonical_candidate_url(
+        "https://detail.tmall.com/item.htm?id=612345678901"
+    ) == "https://detail.tmall.com/item.htm?id=612345678901"
+
+
+def test_the_taobao_favourites_list_is_a_collection_profile():
+    from envoy_cli.collections import canonical_profile_url
+
+    assert canonical_profile_url("https://favorites.taobao.com/favorite") == (
+        "https://favorites.taobao.com/favorite",
+        "taobao",
+    )
+
+
+def test_a_jd_item_is_one_sku_whatever_host_served_it():
+    from envoy_cli.collections import canonical_candidate_url
+
+    assert canonical_candidate_url("https://item.jd.hk/100012043978.html") == (
+        "https://item.jd.com/100012043978.html"
+    )
+    assert canonical_candidate_url(
+        "https://item.jd.com/100012043978.html?extension_id=abc"
+    ) == "https://item.jd.com/100012043978.html"
+
+
+def test_the_jd_favourites_list_is_a_collection_profile():
+    from envoy_cli.collections import canonical_profile_url
+
+    assert canonical_profile_url("https://favorites.jd.com/") == (
+        "https://favorites.jd.com/",
+        "jd",
+    )
+
+
+def test_a_shared_shopping_link_names_no_item_until_it_is_opened():
+    from envoy_cli.collections import CollectionError, canonical_candidate_url
+
+    for url in ("https://u.jd.com/abcdEFz", "https://m.tb.cn/h.jnU2OZ6"):
+        with pytest.raises(CollectionError):
+            canonical_candidate_url(url)
+
+
+def test_shopping_candidates_carry_their_marketplace_and_title():
+    from envoy_cli.collections import _shopping_candidates
+
+    html = (
+        '<a href="https://www.goofish.com/item?id=800000000001&spm=x" title="iPhone 15">'
+        "<img></a>"
+        '<a href="https://item.jd.com/100012043978.html" aria-label="AirPods Pro">'
+        "<div></div></a>"
+        '<a href="https://item.taobao.com/item.htm?id=612345678901"><img alt="机械键盘"></a>'
+        '<a href="https://www.goofish.com/item?id=800000000001">dup</a>'
+    )
+
+    rows = _shopping_candidates(html)
+
+    assert [(row["platform"], row["item_type"], row["title"]) for row in rows] == [
+        ("goofish", "listing", "iPhone 15"),
+        ("jd", "listing", "AirPods Pro"),
+        ("taobao", "listing", "机械键盘"),
+    ]

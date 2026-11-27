@@ -27,6 +27,30 @@ class CollectionRevisionConflict(CollectionError):
 
 
 _PROFILE_WORKS_ERROR_MARKERS = ("服务异常，重新刷新拉取数据",)
+# A marketplace answers a script-throttled or signed-out request with a block
+# page whose wording is stable, and those words never appear in an item card:
+# reading one as an empty favourites list would report "nothing saved" for a
+# list that was never shown.
+_MARKETPLACE_BLOCKED_MARKERS = (
+    "非法访问",
+    "访问受限",
+    "访问异常",
+    "操作频繁",
+    "访问过于频繁",
+    "安全验证",
+    "人机验证",
+    "滑块",
+    "请稍后重试",
+    "暂时无法展示",
+    "页面加载失败",
+    "亲，小二正忙",
+    # A marketplace that renders its shell but never hydrates its list leaves
+    # these strings where the cards should be, so an empty read is a failed
+    # read rather than a profile with nothing in it.
+    "网络不见了",
+    "暂时没有推荐",
+    "没有这个用户",
+)
 
 
 def _operation_fingerprint(**payload) -> str:
@@ -188,6 +212,55 @@ def _bilibili_part(query: str) -> str:
     return ""
 
 
+_GOOFISH_ITEM_ID = re.compile(r"^\d{6,24}$")
+_TAOBAO_ITEM_ID = re.compile(r"^\d{6,24}$")
+_JD_SKU = re.compile(r"^/(\d{5,20})(?:\.html)?$")
+# A share token (m.tb.cn, u.jd.com, 3.cn) hides the landing page until it is
+# opened, so these hosts name no item on their own.
+_GOOFISH_SHORT_HOSTS = {"m.tb.cn", "e.tb.cn", "tb.cn", "www.tb.cn", "u.jd.com", "3.cn", "www.3.cn"}
+
+
+def _query_id(query: str, key: str, pattern: re.Pattern[str]) -> str:
+    for name, value in parse_qsl(query, keep_blank_values=True):
+        if name == key and pattern.fullmatch(value or ""):
+            return value
+    return ""
+
+
+def _shopping_listing(host: str, path: str, query: str) -> str:
+    """Canonicalize one marketplace item URL, or return "" when it is not one.
+
+    Item identity is the numeric id and nothing else: the share parameters
+    (`spm`, `scm`, `ut_sk`, `share*`) change per share and must not split one
+    item into several candidates.
+    """
+    if host in _GOOFISH_SHORT_HOSTS:
+        raise CollectionError("A shared shopping link must be opened before it names an item")
+    if host.endswith(".goofish.com") or host == "goofish.com":
+        item_id = _query_id(query, "id", _GOOFISH_ITEM_ID)
+        if item_id and path in {"/item", "/item.htm"}:
+            return f"https://www.goofish.com/item?id={item_id}"
+        return ""
+    if host.endswith(".taobao.com") or host == "taobao.com":
+        item_id = _query_id(query, "id", _TAOBAO_ITEM_ID)
+        if item_id and path in {"/item.htm", "/item"}:
+            return f"https://item.taobao.com/item.htm?id={item_id}"
+        return ""
+    if host.endswith(".tmall.com") or host == "tmall.com":
+        item_id = _query_id(query, "id", _TAOBAO_ITEM_ID)
+        if item_id and path in {"/item.htm", "/item"}:
+            return f"https://detail.tmall.com/item.htm?id={item_id}"
+        return ""
+    if host.endswith(".jd.com") or host == "jd.com" or host.endswith(".jd.hk"):
+        sku = _JD_SKU.fullmatch(path)
+        if not sku and path.startswith("/product/"):
+            sku = _JD_SKU.fullmatch(path[len("/product"):])
+        if sku:
+            return f"https://item.jd.com/{sku.group(1)}.html"
+        return ""
+    return ""
+
+
 def canonical_candidate_url(value: str) -> str:
     parts = urlsplit(str(value or "").strip())
     host = (parts.hostname or "").lower()
@@ -238,8 +311,12 @@ def canonical_candidate_url(value: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
             raise CollectionError("URL does not identify a canonical YouTube video")
         return f"https://www.youtube.com/watch?v={video_id}"
+    listing = _shopping_listing(host, path, parts.query)
+    if listing:
+        return listing
     raise CollectionError(
-        "Only public Douyin, Xiaohongshu, Bilibili or YouTube post URLs can be canonicalized"
+        "Only public Douyin, Xiaohongshu, Bilibili, YouTube, Xianyu, Taobao or JD "
+        "post URLs can be canonicalized"
     )
 
 
@@ -251,6 +328,12 @@ def candidate_id(source_url: str) -> str:
         prefix = "xhs-"
     elif "youtube.com" in canonical:
         prefix = "yt-"
+    elif "goofish.com" in canonical:
+        prefix = "goofish-"
+    elif "taobao.com" in canonical or "tmall.com" in canonical:
+        prefix = "taobao-"
+    elif "jd.com" in canonical or "jd.hk" in canonical:
+        prefix = "jd-"
     else:
         prefix = "douyin-"
     return prefix + hashlib.sha256(canonical.encode()).hexdigest()[:24]
@@ -275,7 +358,7 @@ def _session_required_hint(platform: str, extractor_error: object, html: str) ->
     the hint cannot echo credentials back into a message.
     """
 
-    if platform not in {"bilibili", "douyin", "xiaohongshu"}:
+    if platform not in {"bilibili", "douyin", "xiaohongshu", "goofish", "taobao", "jd"}:
         return ""
     text = f"{extractor_error or ''} {(html or '')[:4000]}".lower()
     if not any(marker in text for marker in _SESSION_BLOCKED_MARKERS):
@@ -284,7 +367,10 @@ def _session_required_hint(platform: str, extractor_error: object, html: str) ->
 
     # A favourites list is private by design, so an empty one is normal until
     # the session is there; a public space may simply be empty.
-    target = "collection" if platform in {"douyin", "xiaohongshu"} else "space"
+    if platform in {"douyin", "xiaohongshu", "goofish", "taobao", "jd"}:
+        target = "collection"
+    else:
+        target = "space"
     if features.sign_in_enabled():
         return (
             f". This {target} only answers a signed-in session: open its sign-in page with "
@@ -299,6 +385,39 @@ def _session_required_hint(platform: str, extractor_error: object, html: str) ->
         f". This {target} only answers a signed-in session: the user can turn the in-chat "
         "sign-in back on with `envoy auth handoff on`, then retry."
     )
+
+
+def _shopping_profile(host: str, path: str, query: str) -> tuple[str, str] | None:
+    """Canonicalize one marketplace favourites or seller page, or return None.
+
+    Every marketplace keeps its own tab vocabulary, so the tab is kept as a
+    query the marketplace itself understands rather than translated between
+    them: a favourites tab means a favourites list on Xianyu and on Taobao
+    alike, and dropping it would silently read the seller's listings instead.
+    """
+    if host in _GOOFISH_SHORT_HOSTS:
+        raise CollectionError("A shared shopping link must be opened before it names a profile")
+    # The caller strips the trailing slash, so a bare host arrives as an empty
+    # path; both spellings mean the same tab and must not split the canonical URL.
+    if not path:
+        path = "/"
+    if host.endswith(".goofish.com") or host == "goofish.com":
+        user = _query_id(query, "userId", re.compile(r"^\d{4,24}$"))
+        if user and path in {"/personal", "/user"}:
+            return f"https://www.goofish.com/personal?userId={user}", "goofish"
+        return None
+    if host.endswith(".taobao.com") or host == "taobao.com" or host.endswith(".tmall.com") or host == "tmall.com":
+        if path in {"/", "/favorite", "/favorites", "/favor"}:
+            # The favourites list is the whole point of this link, so it stays
+            # the canonical URL even without a session: the read then answers
+            # with the sign-in handoff instead of a portal page.
+            return "https://favorites.taobao.com/favorite", "taobao"
+        return None
+    if host.endswith(".jd.com") or host == "jd.com" or host.endswith(".jd.hk"):
+        if path in {"/", "/favorite", "/favorites", "/myfavorite"}:
+            return "https://favorites.jd.com/", "jd"
+        return None
+    return None
 
 
 def canonical_profile_url(value: str) -> tuple[str, str]:
@@ -376,8 +495,12 @@ def canonical_profile_url(value: str) -> tuple[str, str]:
         if not match:
             raise CollectionError("A public Bilibili space URL is required")
         return f"https://space.bilibili.com/{match.group(1)}/video", "bilibili"
+    shopping = _shopping_profile(host, path, parts.query)
+    if shopping:
+        return shopping
     raise CollectionError(
-        "A public Douyin, Xiaohongshu, Bilibili or YouTube playlist URL is required"
+        "A public Douyin, Xiaohongshu, Bilibili, YouTube, Xianyu, Taobao or JD "
+        "favourites or profile URL is required"
     )
 
 
@@ -444,7 +567,70 @@ def _feed_scroll_settings(platform: str) -> dict:
             "wheel": True,
             "click_labels": ("收藏", "收藏夹", "Collect") if platform == "douyin" else None,
         }
+    if platform in {"goofish", "taobao", "jd"}:
+        # A favourites list is a tab on the same profile, so the run starts by
+        # clicking into it; the cards below it load on the wheel like any feed.
+        return {
+            "scroll_rounds": _FEED_SCROLL_ROUNDS,
+            "wheel": True,
+            "click_labels": ("收藏", "收藏夹", "我的收藏", "Favorites"),
+        }
     return {}
+
+
+_ANCHOR = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.S | re.IGNORECASE)
+_ANCHOR_HREF = re.compile(r"""href\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+_SHOPPING_ITEM_LINKS = (
+    ("goofish", re.compile(r"goofish\.com/item.*?\bid=(\d{6,24})")),
+    ("taobao", re.compile(r"(?:item\.taobao\.com/item|detail\.tmall\.com/item).*?\bid=(\d{6,24})")),
+    ("jd", re.compile(r"item\.jd\.(?:com|hk)/(\d{5,20})\.html")),
+)
+_SHOPPING_TITLE_ATTR = re.compile(
+    r"""(?:title|aria-label|alt)\s*=\s*["']([^"']{1,200})["']""", re.IGNORECASE
+)
+
+
+def _shopping_candidates(html: str, *, limit: int = 100) -> list[dict]:
+    """Read the item links a rendered marketplace page actually shows.
+
+    The three marketplaces embed their cards differently but agree on one thing:
+    each card is an anchor whose href names the item id. The id alone is enough
+    to make a candidate, and the title comes from the anchor's own
+    `title`/`aria-label`/`alt` or its inner text, so nothing is guessed from the
+    surrounding markup.
+    """
+    document = str(html or "")
+    cards: dict[tuple[str, str], list[str]] = {}
+    for attributes, inner in _ANCHOR.findall(document):
+        href = _ANCHOR_HREF.search(attributes)
+        if not href:
+            continue
+        for platform, pattern in _SHOPPING_ITEM_LINKS:
+            found = pattern.search(href.group(1))
+            if found:
+                cards.setdefault((platform, found.group(1)), []).append(
+                    f"{attributes}>{inner}"
+                )
+                break
+    rows: list[dict] = []
+    for (platform, item_id), inners in cards.items():
+        if platform == "goofish":
+            url = f"https://www.goofish.com/item?id={item_id}"
+        elif platform == "taobao":
+            url = f"https://item.taobao.com/item.htm?id={item_id}"
+        else:
+            url = f"https://item.jd.com/{item_id}.html"
+        title = ""
+        for inner in inners:
+            found = _SHOPPING_TITLE_ATTR.search(inner)
+            if found:
+                title = " ".join(_HTML_TAG.sub(" ", found.group(1)).split())[:200]
+            if not title:
+                title = " ".join(_HTML_TAG.sub(" ", inner.split(">", 1)[-1]).split())[:200]
+            if title:
+                break
+        rows.append({"url": url, "title": title})
+    return _candidate_records(rows, limit=limit)
 
 
 _XHS_NOTE_LINK = re.compile(
@@ -537,10 +723,24 @@ def _candidate_records(entries: list[dict], *, offset: int = 0, limit: int = 100
                 if "youtube.com" in canonical
                 else "xiaohongshu"
                 if "xiaohongshu.com" in canonical
+                else "goofish"
+                if "goofish.com" in canonical
+                else "taobao"
+                if "taobao.com" in canonical or "tmall.com" in canonical
+                else "jd"
+                if "jd.com" in canonical or "jd.hk" in canonical
                 else "douyin"
             ),
             "item_type": (
-                "image_note" if path_kind == "note" or "xiaohongshu.com" in canonical else "video"
+                "image_note"
+                if path_kind == "note" or "xiaohongshu.com" in canonical
+                else "listing"
+                if "goofish.com" in canonical
+                or "taobao.com" in canonical
+                or "tmall.com" in canonical
+                or "jd.com" in canonical
+                or "jd.hk" in canonical
+                else "video"
             ),
             "title": str(entry.get("title") or ""),
             "published_at": entry.get("upload_date"),
@@ -597,6 +797,79 @@ def discover_profile(
             "next_cursor": f"{revision}:{next_offset}" if has_more else None,
             "stop_reason": "page_limit" if has_more else snapshot.get("stop_reason", "source_end_unknown"),
             "discovered_at": snapshot.get("discovered_at"),
+        }
+    if platform in {"goofish", "taobao", "jd"}:
+        from . import browser
+        from .reader import _is_public_http_url
+
+        # No yt-dlp extractor serves a marketplace, so the gate below would fail
+        # on an installed binary and blame the user for a missing dependency.
+        # The isolated browser is the only path here: the cards are rendered from
+        # an authenticated XHR, which is also why an empty list is reported as a
+        # possible missing session rather than an empty favourites list.
+        try:
+            page = browser.read_page(
+                canonical_profile,
+                max_work_seconds=max(int(max_work_seconds), 1),
+                **_feed_scroll_settings(platform),
+            )
+        except Exception as exc:
+            raise CollectionError(
+                f"isolated-browser discovery failed ({type(exc).__name__}): {str(exc)[:240]}"
+            ) from exc
+        if not _is_public_http_url(page.url, {}):
+            raise CollectionError(
+                "The isolated browser resolved the marketplace page to a non-public address"
+            )
+        page_html = str(getattr(page, "html", "") or "")
+        page_text = str(getattr(page, "text", "") or "")
+        if any(marker in page_text for marker in _MARKETPLACE_BLOCKED_MARKERS):
+            raise CollectionError(
+                "The marketplace served a block page instead of the requested list; "
+                "no candidate list is trusted"
+                + _session_required_hint(platform, None, page_text)
+            )
+        candidates = _shopping_candidates(page_html, limit=100)
+        cursor_mode = "isolated_browser_bounded_snapshot"
+        if not candidates:
+            raise CollectionError(
+                "No public candidates were discovered: the marketplace exposed no item "
+                "links, which is what a signed-out favourites tab renders"
+                + _session_required_hint(platform, None, page_html + page_text)
+            )
+        revision = uuid.uuid4().hex[:20]
+        discovered_at = datetime.now(timezone.utc).isoformat()
+        snapshot = {
+            "profile_url": canonical_profile,
+            "platform": platform,
+            "discovery_revision": revision,
+            "cursor_mode": cursor_mode,
+            "ordering": "source",
+            "candidates": candidates,
+            "has_more": None,
+            "stop_reason": (
+                "hard_candidate_limit" if len(candidates) >= 100 else "source_end_unknown"
+            ),
+            "discovered_at": discovered_at,
+            "expires_at": time.time() + 7 * 24 * 60 * 60,
+        }
+        snapshot_path = _collection_root() / f"discovery-{revision}.json"
+        with _locked(snapshot_path):
+            _write(snapshot_path, snapshot)
+        page_candidates = candidates[:limit]
+        next_offset = offset + len(page_candidates)
+        has_more = len(candidates) > limit
+        return {
+            "profile_url": canonical_profile,
+            "platform": platform,
+            "discovery_revision": revision,
+            "cursor_mode": cursor_mode,
+            "ordering": "source",
+            "candidates": page_candidates,
+            "has_more": has_more,
+            "next_cursor": f"{revision}:{next_offset}" if has_more else None,
+            "stop_reason": "page_limit" if has_more else snapshot["stop_reason"],
+            "discovered_at": discovered_at,
         }
     youtube_dl, _extractors = _load_yt_dlp()
     if youtube_dl is None:

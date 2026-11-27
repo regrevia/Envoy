@@ -47,6 +47,58 @@ _WECHAT_CHANNELS_HOSTS = {"channels.weixin.qq.com"}
 _XIAOYUZHOU_HOSTS = {"xiaoyuzhoufm.com", "www.xiaoyuzhoufm.com"}
 _FEED_SUFFIXES = (".xml", ".rss", ".atom")
 
+# 闲鱼 / 淘宝 / 天猫 / 京东 share one behaviour: the HTML shell is a client-rendered
+# app and the item, profile and favourites payloads all arrive from an
+# authenticated XHR. A static fetch returns a page title and essentially no body
+# text, so these are platform pages - read through the isolated browser, which
+# can hold a login, rather than through the static text route.
+_GOOFISH_HOSTS = {
+    "goofish.com",
+    "www.goofish.com",
+    "m.goofish.com",
+    "h5.m.goofish.com",
+    "pages.goofish.com",
+}
+_GOOFISH_HOST_SUFFIXES = (".goofish.com",)
+
+# m.tb.cn / e.tb.cn is the short host shared by Taobao item shares and Xianyu
+# profile shares, so it cannot be narrowed statically: the isolated browser
+# follows the redirect and the landed URL is classified instead.
+_TAOBAO_SHORT_HOSTS = {"m.tb.cn", "e.tb.cn", "tb.cn", "www.tb.cn"}
+_TAOBAO_HOSTS = {
+    "taobao.com",
+    "www.taobao.com",
+    "m.taobao.com",
+    "item.taobao.com",
+    "world.taobao.com",
+    "2.taobao.com",
+    "shop.taobao.com",
+    "s.taobao.com",
+    "favorites.taobao.com",
+    "favor.taobao.com",
+    "tmall.com",
+    "www.tmall.com",
+    "m.tmall.com",
+    "detail.tmall.com",
+}
+_TAOBAO_HOST_SUFFIXES = (".taobao.com", ".tmall.com")
+# A favourites list needs the signed-in session, so it is the one Taobao
+# surface that reaches the login handoff rather than the rendered shell.
+_TAOBAO_FAVORITE_HOSTS = {"favorites.taobao.com", "favor.taobao.com"}
+_JD_SHORT_HOSTS = {"u.jd.com", "3.cn", "www.3.cn"}
+_JD_HOSTS = {
+    "jd.com",
+    "www.jd.com",
+    "m.jd.com",
+    "item.jd.com",
+    "item.m.jd.com",
+    "item.jd.hk",
+    "npcitem.jd.hk",
+    "mall.jd.com",
+    "shop.m.jd.com",
+}
+_JD_HOST_SUFFIXES = (".jd.com", ".jd.hk")
+
 
 def classify_public_url(value: str) -> str:
     parsed = urlparse(str(value or "").strip())
@@ -115,6 +167,20 @@ def classify_public_url(value: str) -> str:
         return "platform_page"
     if host in _XIAOYUZHOU_HOSTS:
         return "platform_page"
+    if host in _TAOBAO_SHORT_HOSTS or host in _JD_SHORT_HOSTS:
+        # A share token hides the landing page until it is opened, so the short
+        # link stays a page read and the browser re-classifies the landed URL.
+        return "platform_page"
+    if host in _GOOFISH_HOSTS or host.endswith(_GOOFISH_HOST_SUFFIXES):
+        # An item, a seller profile and the `/` feed are rendered by the same
+        # client, so every Goofish path is a page read and none is generic.
+        return "platform_page"
+    if host in _TAOBAO_HOSTS or host.endswith(_TAOBAO_HOST_SUFFIXES):
+        # An item, a shop, a profile and a favourites list are all rendered by
+        # the same client, so none of them is a video page and none is generic.
+        return "platform_page"
+    if host in _JD_HOSTS or host.endswith(_JD_HOST_SUFFIXES):
+        return "platform_page"
     if path.endswith(_FEED_SUFFIXES):
         return "platform_page"
     return "generic"
@@ -157,6 +223,9 @@ def is_collection_url(value: str) -> bool:
         # collection. Its note cards can be discovered from the profile page,
         # while ``/explore/<id>`` remains the single-note route.
         return False
+    # Shopping profiles, favourites lists and shop catalogues are also sets, but
+    # `envoy_discover` only enumerates video platforms: rejecting the read here
+    # would leave no route at all, so they stay single-page reads.
     return False
 
 
@@ -169,6 +238,31 @@ def is_platform_page(value: str) -> bool:
         "xiaohongshu_note",
         "xiaohongshu_share",
     }
+
+
+def is_marketplace_page(value: str) -> bool:
+    """True for a Xianyu / Taobao / Tmall / JD link.
+
+    These four hosts serve an app shell to a static fetch, so the wording left
+    on the page is what decides whether the read succeeded: the same host
+    answers with an item card or with a risk-control notice. Callers use this
+    to keep block-page wording scoped to the sites that actually produce it.
+    """
+
+    parsed = urlparse(str(value or "").strip())
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return (
+        host in _GOOFISH_HOSTS
+        or host in _TAOBAO_HOSTS
+        or host in _TAOBAO_SHORT_HOSTS
+        or host in _JD_HOSTS
+        or host in _JD_SHORT_HOSTS
+        or host.endswith(_GOOFISH_HOST_SUFFIXES)
+        or host.endswith(_TAOBAO_HOST_SUFFIXES)
+        or host.endswith(_JD_HOST_SUFFIXES)
+    )
 
 
 # ---------------------------------------------------------------------------

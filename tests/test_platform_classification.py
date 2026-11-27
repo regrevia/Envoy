@@ -42,6 +42,19 @@ NEW_CASES = [
     # Podcast feeds: the feed itself is a page read, not a media download.
     ("https://feeds.example.org/podcast/feed.xml", "platform_page"),
     ("https://feeds.example.org/show.rss", "platform_page"),
+    # Marketplaces: a profile, a favourites tab and one item are all page
+    # reads. Short links stay unresolved here and are classified after the
+    # browser follows the redirect.
+    ("https://www.goofish.com/personal?userId=3604975982", "platform_page"),
+    ("https://www.goofish.com/item?id=1073935850465", "platform_page"),
+    ("https://m.tb.cn/h.jnU2OZ6?tk=IejA66LwN2O", "platform_page"),
+    ("https://e.tb.cn/h.abc", "platform_page"),
+    ("https://item.taobao.com/item.htm?id=654321098765", "platform_page"),
+    ("https://detail.tmall.com/item.htm?id=654321098765", "platform_page"),
+    ("https://favorites.taobao.com/favorite", "platform_page"),
+    ("https://u.jd.com/abc123", "platform_page"),
+    ("https://item.jd.com/100012043978.html", "platform_page"),
+    ("https://favorites.jd.com/", "platform_page"),
 ]
 
 UNCHANGED_CASES = [

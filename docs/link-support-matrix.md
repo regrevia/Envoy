@@ -17,6 +17,15 @@
 | 微信视频号 | `https://channels.weixin.qq.com/web/pages/feed?feedId=…` | `generic` | `platform_page` | 隔离浏览器读取；登录限制按需转交人类 |
 | 小宇宙播客 | `https://www.xiaoyuzhoufm.com/episode/<id>` | `generic` | `platform_page` | 隔离浏览器读取节目页正文 |
 | 播客 RSS | `https://example.org/feed.xml`、`*.rss`、`*.atom` | `generic` | `platform_page` | 读取订阅源文本；音频需由节目页或直链单独读取，不自动下载 |
+| 闲鱼主页 | `https://www.goofish.com/personal?userId=<id>` | `generic` | `platform_page` | 隔离浏览器读取主页与在售列表；收藏夹走 `envoy_discover` |
+| 闲鱼商品 | `https://www.goofish.com/item?id=<id>` | `generic` | `platform_page` | 页面读取商品详情；风险控制页判为 `source_blocked`，不再当薄内容 |
+| 淘宝/天猫短链 | `https://m.tb.cn/h.xxxxxx?tk=…`、`e.tb.cn`、`tb.cn` | `generic` | `platform_page` | 隔离浏览器跟随重定向后按落地页分类 |
+| 淘宝商品 | `https://item.taobao.com/item.htm?id=<id>` | `generic` | `platform_page` | 页面读取；落地到登录页转交登录 |
+| 天猫商品 | `https://detail.tmall.com/item.htm?id=<id>` | `generic` | `platform_page` | 页面读取 |
+| 淘宝收藏夹 | `https://favorites.taobao.com/favorite` | `generic` | `platform_page` | 收藏夹走 `envoy_discover`，未登录返回登录转交而不是空列表 |
+| 京东短链 | `https://u.jd.com/xxxxxx`、`3.cn` | `generic` | `platform_page` | 隔离浏览器跟随重定向 |
+| 京东商品 | `https://item.jd.com/<sku>.html`、`item.jd.hk` | `generic` | `platform_page` | 页面读取；`pc-frequent-pro` 403 页判为 `source_blocked` |
+| 京东店铺/收藏 | `https://mall.jd.com/…`、`https://favorites.jd.com/` | `generic` | `platform_page` | 店铺与收藏夹走 `envoy_discover` |
 
 已支持项（本轮未改）：小红书（含 `xhslink` 短链，本表刻意跳过）、B 站（含 `b23.tv` / `bili2233.cn`）、知乎、微信公众号文章、YouTube / `youtu.be`、Vimeo、Dailymotion、Instagram、X、`kuaishou.com` 主域。
 
@@ -26,6 +35,8 @@
 - 短链不预解析、不探测，短链域名与长链域名可能落到不同类型的读取路径，以重定向后的 URL 重新分类为准。
 - RSS 只按订阅源读取，不把源内音频当作请求目标；需要音频时读取节目页或音频直链。
 - `platform_page` 与 `article_page` 都进入隔离浏览器路径，区别仅在语义标注。
+- 购物站点的四种落地形态都按 `platform_page` 处理：个人主页、收藏夹、商品详情、分享短链。短链不预解析，落地后重新分类；主页与收藏夹再经 `is_collection_url()` 之外的判定进入 `envoy_discover`，商品详情不进。
+- 购物站点给静态抓取的永远是应用外壳，正文由浏览器渲染。外壳里出现的风控措辞（`非法访问`、`网络不见了`、`暂时无法展示`、`pc-frequent-pro`）只在这四个域名上算拒绝；同一句 `请稍后重试` 在别处是普通文案。
 
 ## 判定与降级
 
@@ -53,3 +64,19 @@ uv run --python 3.11 --with-editable packages/envoy-core \
 ```
 
 CI 的 `dsh-plugin` job 跑 `--check` 与 `node --test integrations/dsh/envoy-dsh/index.test.js`。JS 测试用显式文件而非 `node --test <目录>`：Node ≥22 的目录形式不会发现 `*.test.js`。
+
+## 实测（2026-11-27）
+
+下表是本机隔离浏览器实读结果，不是推断。短链一列给的是重定向后的落地页。
+
+| 输入 | 落地 | 结果 | 说明 |
+| --- | --- | --- | --- |
+| `https://www.goofish.com/personal?userId=3604975982` | 同左 | 读到主页正文 | 昵称、城市、粉丝/关注数、在售列表与价格都在正文里 |
+| 闲鱼分享文案短链 `https://m.tb.cn/h.jnU2OZ6?tk=IejA66LwN2O` | 上面的主页 | 读到主页正文 | 分享 token 决定落地；裸 user-ID 分享链会落到 `personal?userId=undefined` |
+| `https://www.goofish.com/item?id=<随机 id>` | 同左 | `source_blocked` | 外壳只有「网络不见了 / 暂时没有推荐」，没有任何商品字段 |
+| `https://item.jd.com/<随机 sku>.html` | `pc-frequent-pro.pf.jd.com/?from=pc_item&reason=403` | `source_blocked` | 403 页写「暂时无法展示该商品的信息，请稍后重试」 |
+| 淘宝/天猫商品 | `login.taobao.com/havanaone/login/login.htm` | `auth_required` | 未登录一律跳登录，转交人工登录后重读 |
+| 淘宝收藏夹（未登录） | `https://www.taobao.com/` | 读到首页正文 | 未登录不给收藏列表，也不报空列表 |
+| 京东短链 | `https://www.jd.com/` | 读到首页正文 | 短链落地后按落地页分类 |
+
+风控页与「读到了空内容」是两件事：外壳有标题、有句子，长度判定不会拦它，所以判定必须落在措辞上，且必须发生在长度阈值之前。
